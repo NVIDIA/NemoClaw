@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { decideReviewAction } from "../../../tools/pr-review-coordinator/decision.mts";
 import {
+  collectEligibleExistingSamples,
   type CoordinatorShadowResult,
   parseCoordinatorShadowResult,
   selectCoordinatorShadowSample,
@@ -50,6 +51,35 @@ const sourceRun = {
   attempt: 1,
   createdAt: "2026-09-21T12:00:00Z",
 };
+
+function eligibleSourceRun(run = sourceRun) {
+  return {
+    id: run.id,
+    run_attempt: run.attempt,
+    created_at: run.createdAt,
+    path: ".github/workflows/pr-review-advisor.yaml",
+    event: "workflow_run",
+    status: "completed",
+    conclusion: "success",
+    head_branch: "main",
+    repository: { full_name: "NVIDIA/NemoClaw" },
+    head_repository: { full_name: "NVIDIA/NemoClaw" },
+  };
+}
+
+function eligibleSampleProducerRun(id: number, sourceRunId: number) {
+  return {
+    id,
+    display_title: `Shadow sample after Advisor run ${sourceRunId}`,
+    path: ".github/workflows/pr-review-coordinator-shadow-sample.yaml",
+    event: "workflow_run",
+    status: "completed",
+    conclusion: "success",
+    head_branch: "main",
+    repository: { full_name: "NVIDIA/NemoClaw" },
+    head_repository: { full_name: "NVIDIA/NemoClaw" },
+  };
+}
 
 describe("coordinator shadow rollout sample", () => {
   it("captures five distinct PR decisions and then stops", () => {
@@ -103,6 +133,58 @@ describe("coordinator shadow rollout sample", () => {
         sourceRun,
       ),
     ).toThrow("distinct pull requests");
+  });
+
+  it("ignores an artifact from another workflow before it can spend a slot", async () => {
+    const foreignArtifact = { id: 41, workflowRunId: 4001 };
+    const trustedArtifact = { id: 42, workflowRunId: 4002 };
+    const trustedSample = selectCoordinatorShadowSample(result(12091), [], sourceRun)!;
+    const samples = new Map([
+      [foreignArtifact.id, selectCoordinatorShadowSample(result(12090), [], sourceRun)!],
+      [trustedArtifact.id, trustedSample],
+    ]);
+    const runs = new Map<number, unknown>([
+      [
+        foreignArtifact.workflowRunId,
+        {
+          ...eligibleSampleProducerRun(foreignArtifact.workflowRunId, sourceRun.id),
+          path: ".github/workflows/untrusted.yaml",
+        },
+      ],
+      [
+        trustedArtifact.workflowRunId,
+        eligibleSampleProducerRun(trustedArtifact.workflowRunId, sourceRun.id),
+      ],
+      [sourceRun.id, eligibleSourceRun()],
+    ]);
+    const readSampleIds: number[] = [];
+
+    const existing = await collectEligibleExistingSamples([foreignArtifact, trustedArtifact], {
+      readRun: async (id) => runs.get(id),
+      readSample: async (artifact) => {
+        readSampleIds.push(artifact.id);
+        return samples.get(artifact.id);
+      },
+    });
+
+    expect(existing).toEqual([trustedSample]);
+    expect(readSampleIds).toEqual([trustedArtifact.id]);
+    expect(selectCoordinatorShadowSample(result(12090), existing, sourceRun)?.ordinal).toBe(2);
+  });
+
+  it("ignores a stored sample whose recorded Advisor run is ineligible", async () => {
+    const artifact = { id: 43, workflowRunId: 4003 };
+    const stored = selectCoordinatorShadowSample(result(12090), [], sourceRun)!;
+    const existing = await collectEligibleExistingSamples([artifact], {
+      readRun: async (id) =>
+        id === artifact.workflowRunId
+          ? eligibleSampleProducerRun(id, sourceRun.id)
+          : { ...eligibleSourceRun(), path: ".github/workflows/untrusted.yaml" },
+      readSample: async () => stored,
+    });
+
+    expect(existing).toEqual([]);
+    expect(selectCoordinatorShadowSample(result(12090), existing, sourceRun)?.ordinal).toBe(1);
   });
 
   it("validates downloaded bytes independently from artifact metadata size", () => {

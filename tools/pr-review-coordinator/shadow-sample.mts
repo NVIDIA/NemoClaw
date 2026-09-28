@@ -16,9 +16,12 @@ import {
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const SOURCE_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
+const SAMPLE_WORKFLOW_PATH = ".github/workflows/pr-review-coordinator-shadow-sample.yaml";
+const SAMPLE_RUN_TITLE_PREFIX = "Shadow sample after Advisor run ";
 const SAMPLE_ARTIFACT_NAME = "pr-review-coordinator-shadow-sample";
 const SAMPLE_FILE = "sample.json";
 const SAMPLE_LIMIT = 5;
+const MAX_ARTIFACT_CANDIDATES = 100;
 const MAX_ARCHIVE_BYTES = 1024 * 1024;
 const MAX_JSON_BYTES = 256 * 1024;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -50,6 +53,11 @@ export type SourceRun = Readonly<{
   id: number;
   attempt: number;
   createdAt: string;
+}>;
+
+type SampleProducerRun = Readonly<{
+  id: number;
+  sourceRunId: number;
 }>;
 
 type Artifact = Readonly<{
@@ -207,6 +215,34 @@ export function parseEligibleSourceRun(value: unknown, expectedId: number): Sour
   return { id, attempt, createdAt };
 }
 
+function parseEligibleSampleProducerRun(
+  value: unknown,
+  expectedId: number,
+): SampleProducerRun | null {
+  const run = record(value, "sample workflow run");
+  const repository = record(run.repository, "sample workflow repository");
+  const headRepository = record(run.head_repository, "sample workflow head repository");
+  const id = positiveInteger(run.id, "sample workflow run id");
+  const title = typeof run.display_title === "string" ? run.display_title : "";
+  const sourceRunText = title.startsWith(SAMPLE_RUN_TITLE_PREFIX)
+    ? title.slice(SAMPLE_RUN_TITLE_PREFIX.length)
+    : "";
+  if (
+    id !== expectedId ||
+    run.path !== SAMPLE_WORKFLOW_PATH ||
+    run.event !== "workflow_run" ||
+    run.status !== "completed" ||
+    run.conclusion !== "success" ||
+    run.head_branch !== "main" ||
+    repository.full_name !== REPOSITORY ||
+    headRepository.full_name !== REPOSITORY ||
+    !/^[1-9][0-9]*$/u.test(sourceRunText)
+  ) {
+    return null;
+  }
+  return { id, sourceRunId: positiveInteger(Number(sourceRunText), "sample source run id") };
+}
+
 export function validateShadowSampleWorkflowCondition(value: unknown): void {
   if (
     typeof value !== "string" ||
@@ -216,12 +252,12 @@ export function validateShadowSampleWorkflowCondition(value: unknown): void {
   }
 }
 
-function parseArtifactList(value: unknown, expectedName: string): Artifact[] {
+function parseArtifactList(value: unknown, expectedName: string, limit: number): Artifact[] {
   const root = record(value, "artifact listing");
   if (!Number.isSafeInteger(root.total_count) || Number(root.total_count) < 0) {
     throw new Error("artifact listing total must be a non-negative integer");
   }
-  if (!Array.isArray(root.artifacts) || root.artifacts.length > SAMPLE_LIMIT) {
+  if (!Array.isArray(root.artifacts) || root.artifacts.length > limit) {
     throw new Error("artifact listing exceeds the shadow sample bound");
   }
   if (root.total_count !== root.artifacts.length) {
@@ -260,8 +296,9 @@ async function listArtifacts(
   apiPath: string,
   expectedName: string,
   githubToken: string,
+  limit = SAMPLE_LIMIT,
 ): Promise<Artifact[]> {
-  return parseArtifactList(await githubJson(apiPath, githubToken), expectedName);
+  return parseArtifactList(await githubJson(apiPath, githubToken), expectedName, limit);
 }
 
 async function downloadArtifact(artifact: Artifact, githubToken: string): Promise<Buffer> {
@@ -310,6 +347,38 @@ async function readArtifactJson(
   return JSON.parse(entries[0].bytes.toString("utf8"));
 }
 
+export async function collectEligibleExistingSamples<T extends Readonly<{ workflowRunId: number }>>(
+  artifacts: readonly T[],
+  dependencies: Readonly<{
+    readRun(id: number): Promise<unknown>;
+    readSample(artifact: T): Promise<unknown>;
+  }>,
+): Promise<CoordinatorShadowSample[]> {
+  const existing: CoordinatorShadowSample[] = [];
+  for (const artifact of artifacts) {
+    const producer = parseEligibleSampleProducerRun(
+      await dependencies.readRun(artifact.workflowRunId),
+      artifact.workflowRunId,
+    );
+    if (!producer) continue;
+    const sample = parseCoordinatorShadowSample(await dependencies.readSample(artifact));
+    if (sample.sourceRun.id !== producer.sourceRunId) continue;
+    const source = parseEligibleSourceRun(
+      await dependencies.readRun(sample.sourceRun.id),
+      sample.sourceRun.id,
+    );
+    if (
+      !source ||
+      source.attempt !== sample.sourceRun.attempt ||
+      source.createdAt !== sample.sourceRun.createdAt
+    ) {
+      continue;
+    }
+    existing.push(sample);
+  }
+  return existing;
+}
+
 function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (output) fs.appendFileSync(output, `${name}=${value}\n`);
@@ -350,16 +419,15 @@ async function main(): Promise<void> {
     await readArtifactJson(sourceArtifacts[0]!, "decision.json", githubToken),
   );
   const existingArtifacts = await listArtifacts(
-    `repos/${REPOSITORY}/actions/artifacts?name=${SAMPLE_ARTIFACT_NAME}&per_page=5`,
+    `repos/${REPOSITORY}/actions/artifacts?name=${SAMPLE_ARTIFACT_NAME}&per_page=${MAX_ARTIFACT_CANDIDATES}`,
     SAMPLE_ARTIFACT_NAME,
     githubToken,
+    MAX_ARTIFACT_CANDIDATES,
   );
-  const existing: CoordinatorShadowSample[] = [];
-  for (const artifact of existingArtifacts) {
-    existing.push(
-      parseCoordinatorShadowSample(await readArtifactJson(artifact, SAMPLE_FILE, githubToken)),
-    );
-  }
+  const existing = await collectEligibleExistingSamples(existingArtifacts, {
+    readRun: (id) => githubJson(`repos/${REPOSITORY}/actions/runs/${id}`, githubToken),
+    readSample: (artifact) => readArtifactJson(artifact, SAMPLE_FILE, githubToken),
+  });
   const sample = selectCoordinatorShadowSample(result, existing, source);
   if (!sample) {
     appendOutput("sampled", "false");

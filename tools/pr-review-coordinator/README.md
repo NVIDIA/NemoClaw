@@ -28,6 +28,8 @@ captures the first five distinct PR decisions in a serialized, artifact-backed s
 quiet. Duplicate runs for one PR do not consume another slot. The collector has read-only repository
 permissions, posts no comments or reviews, and retains each sample for maintainers to compare with the
 expected outcome before phase 2 enables selected changes-requested reviews.
+Only artifacts produced by the trusted collector workflow from an independently eligible Advisor run
+count toward the five-sample gate.
 
 Automatic runs inherit a passing required-check state only from the successful exact-head CI trigger;
 manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
