@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   createUninstallSandboxLifecycle,
@@ -15,6 +17,54 @@ import {
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import { resolveLegacyModelRouterPort } from "../../core/model-router-port";
+
+interface RecordedModelRouter {
+  pid: number | null;
+  port: number | null;
+  expected: boolean;
+}
+
+export function readOnboardSessionModelRouter(stateDir: string): RecordedModelRouter {
+  const sessionFile = path.join(stateDir, "onboard-session.json");
+  try {
+    const raw = fs.readFileSync(sessionFile, "utf-8");
+    const data = JSON.parse(raw) as {
+      provider?: unknown;
+      endpointUrl?: unknown;
+      routerCredentialHash?: unknown;
+      routerPid?: unknown;
+      routerPort?: unknown;
+    };
+    if (data.routerPort === null && data.routerPid === null && data.routerCredentialHash === null) {
+      return { pid: null, port: null, expected: false };
+    }
+    const pid =
+      typeof data.routerPid === "number" && Number.isInteger(data.routerPid) && data.routerPid > 0
+        ? data.routerPid
+        : null;
+    const port =
+      typeof data.routerPort === "number" &&
+      Number.isInteger(data.routerPort) &&
+      data.routerPort > 0 &&
+      data.routerPort <= 65535
+        ? data.routerPort
+        : data.routerPort == null
+          ? resolveLegacyModelRouterPort(data)
+          : null;
+    return {
+      pid,
+      port,
+      expected:
+        data.provider === "nvidia-router" ||
+        pid !== null ||
+        typeof data.routerCredentialHash === "string",
+    };
+  } catch {
+    /* ignore — State step deletes the file shortly anyway */
+  }
+  return { pid: null, port: null, expected: false };
+}
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;

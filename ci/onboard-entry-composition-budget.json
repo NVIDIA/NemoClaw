@@ -22,7 +22,7 @@
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
     "handleVllmSelection.queryVllmModels": 1,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 8,
+    "runOnboard": 7,
     "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
     "selectAndValidateOllamaModel": 19
   }

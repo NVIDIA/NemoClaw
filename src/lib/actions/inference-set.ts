@@ -674,12 +674,7 @@ function resolveOpenClawContextWindowForSwitch(
     provider: string;
     model: string;
     sandboxName: string;
-    previousProvider: string;
-    previousModel: string;
-    previousInferenceApi: string | null;
-    previousEndpointUrl: string | null;
-    inferenceApi: string | null;
-    endpointUrl: string | null;
+    routeChanged: boolean;
   },
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
 ): number | null | undefined {
@@ -688,13 +683,7 @@ function resolveOpenClawContextWindowForSwitch(
     deps.log(`  Context window for '${options.model}': ${contextWindow} tokens`);
     return contextWindow;
   }
-  const routeChanged = [
-    [options.previousProvider, options.provider],
-    [options.previousModel, options.model],
-    [options.previousInferenceApi, options.inferenceApi],
-    [options.previousEndpointUrl, options.endpointUrl],
-  ].some(([previous, next]) => previous !== next);
-  if (routeChanged) {
+  if (options.routeChanged) {
     deps.log(
       `  Warning: could not determine the context window for '${options.model}'; removing the ` +
         `previous route's value. Run '${CLI_NAME} ${options.sandboxName} rebuild' to re-probe it.`,
@@ -1103,6 +1092,18 @@ async function runInferenceSetWithoutHostLock(
   assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
+  // Capture before registry writes: a retry already has the new route, while
+  // the sandbox config can still carry the previous endpoint's context window.
+  const retryingOpenClawConfigSync = entry.openClawConfigSyncPending === true;
+  const openClawConfigSyncPending =
+    agentName === "openclaw" &&
+    (retryingOpenClawConfigSync ||
+      [
+        [previousProvider, provider],
+        [previousModel, model],
+        [previousInferenceApi, preMutationInferenceApi],
+        [entry.endpointUrl ?? null, registryMetadata.endpointUrl ?? null],
+      ].some(([previous, next]) => previous !== next));
   if (probeDirectSandboxBridge && (!previousProvider || !previousModel)) {
     throw new InferenceSetError(
       `Cannot verify the sandbox-only provider route because sandbox '${sandboxName}' does not record ` +
@@ -1314,8 +1315,8 @@ async function runInferenceSetWithoutHostLock(
 
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
-    const registryFields = (preferredInferenceApi: string | null) =>
-      inferenceSelectionRegistryFields({
+    const registryFields = (preferredInferenceApi: string | null) => ({
+      ...inferenceSelectionRegistryFields({
         provider,
         model,
         endpointUrl: registryMetadata.endpointUrl ?? null,
@@ -1329,7 +1330,9 @@ async function runInferenceSetWithoutHostLock(
               : (entry.compatibleEndpointReasoningEffort ?? null)
             : null,
         nimContainer: registryMetadata.nimContainer ?? null,
-      });
+      }),
+      ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
+    });
     if (
       !deps.updateSandbox(
         sandboxName,
@@ -1408,12 +1411,7 @@ async function runInferenceSetWithoutHostLock(
           provider,
           model,
           sandboxName,
-          previousProvider,
-          previousModel,
-          previousInferenceApi,
-          previousEndpointUrl: entry.endpointUrl ?? null,
-          inferenceApi: preferredInferenceApi,
-          endpointUrl: registryMetadata.endpointUrl ?? null,
+          routeChanged: openClawConfigSyncPending,
         },
         deps,
       );
@@ -1465,10 +1463,25 @@ async function runInferenceSetWithoutHostLock(
         `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );
     }
+    if (inSandboxConfigSynced && openClawConfigSyncPending) {
+      try {
+        if (!deps.updateSandbox(sandboxName, { openClawConfigSyncPending: undefined })) {
+          throw new Error("sandbox registry entry is unavailable");
+        }
+      } catch {
+        inSandboxConfigSynced = false;
+        deps.log(
+          `  Warning: the OpenClaw config was written, but its pending synchronization record could not be cleared. ` +
+            `Retry this command or run '${CLI_NAME} ${sandboxName} rebuild' to finish recovery.`,
+        );
+      }
+    }
     const mutation = finalizeInferenceMutation(
       {
         agentName,
-        configChanged: patched.changed,
+        // A prior failed hash/receipt write can leave the new file on disk
+        // without ever activating it in the running gateway.
+        configChanged: patched.changed || retryingOpenClawConfigSync,
         openClawPairingTarget:
           agentName === "openclaw"
             ? {

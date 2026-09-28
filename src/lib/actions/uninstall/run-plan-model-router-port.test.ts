@@ -12,132 +12,68 @@ import { runUninstallPlan, type RunResult } from "./run-plan";
 const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
 const missing = (): RunResult => ({ status: 1, stdout: "", stderr: "" });
 
-it("uses the recorded router port when the current blueprint changed", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-port-"));
-  const blueprintDir = path.join(root, "nemoclaw-blueprint");
-  const stateDir = path.join(root, ".nemoclaw");
-  const routerPort = 14000;
-  const routerPid = 55680;
-  fs.mkdirSync(blueprintDir, { recursive: true });
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(stateDir, "onboard-session.json"),
-    JSON.stringify({ provider: "nvidia-router", routerPort }),
-  );
-  fs.writeFileSync(
-    path.join(blueprintDir, "blueprint.yaml"),
-    [
-      "components:",
-      "  inference:",
-      "    profiles:",
-      "      routed:",
-      "        model: test/model",
-      "  router:",
-      "    enabled: true",
-      "    port: 15000",
-      "",
-    ].join("\n"),
-  );
-  const killed: number[] = [];
-  const errors: string[] = [];
-  const exited = new Set<number>();
-  const run = vi.fn((command: string, args: string[]): RunResult => {
-    switch (command) {
-      case "lsof":
-        return args[1] === `:${String(routerPort)}` ? ok(`${String(routerPid)}\n`) : ok();
-      case "ps":
-        switch (args[3]) {
-          case "user=":
-            return ok("testuser\n");
-          case "args=":
-            return ok(
-              `/home/test/.nemoclaw/model-router-venv/bin/python /home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port ${String(routerPort)}\n`,
-            );
-          case "pid=":
-          case "stat=":
-            return exited.has(routerPid) ? missing() : ok(`${String(routerPid)}\n`);
-          default:
-            return missing();
-        }
-      case "openshell":
-        return args[0] === "gateway" && args[1] === "list"
-          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-          : ok();
-      default:
-        return args[0] === "-c" ? ok("/fake/bin/tool\n") : ok();
-    }
-  });
-
-  try {
-    const result = await runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: { HOME: root, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
-        error: (message) => errors.push(message),
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          exited.add(pid);
-          return true;
-        },
-        log: () => undefined,
-        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-          endpoint: null,
-          gatewayName,
-          gatewayPort,
-          mode: "nemoclaw-managed",
-          requiredCapabilities: [],
-          source: "packaged-service",
-          stateDir: null,
-          supervisor: null,
-        }),
-        rmSync: vi.fn(),
-        run,
-        runDocker: () => ok(),
-      },
-    );
-
-    expect(result.exitCode, errors.join("\n")).toBe(0);
-    expect(run).toHaveBeenCalledWith("lsof", ["-ti", `:${String(routerPort)}`], {
-      env: expect.any(Object),
-    });
-    expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":15000"], expect.anything());
-    expect(killed).toContain(routerPid);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-it.each([false, true])(
-  "uninstalls a router session without a port only after its receipt is cleared (cleared=%s)",
-  async (cleared) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-no-port-"));
+it.each(["recorded", "legacy"])(
+  "uses the %s router port when the current blueprint changed",
+  async (receipt) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-port-"));
+    const blueprintDir = path.join(root, "nemoclaw-blueprint");
     const stateDir = path.join(root, ".nemoclaw");
+    const routerPort = 14000;
+    const routerPid = 55680;
+    fs.mkdirSync(blueprintDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "onboard-session.json"),
-      JSON.stringify(
-        cleared
-          ? {
-              provider: "nvidia-router",
-              routerPid: null,
-              routerPort: null,
-              routerCredentialHash: null,
-            }
-          : { provider: "nvidia-router", routerPid: 55681 },
-      ),
+      JSON.stringify({
+        provider: "nvidia-router",
+        routerPid,
+        ...(receipt === "recorded"
+          ? { routerPort }
+          : { endpointUrl: `http://host.openshell.internal:${routerPort}` }),
+      }),
     );
-    const errors: string[] = [];
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        "components:",
+        "  inference:",
+        "    profiles:",
+        "      routed:",
+        "        model: test/model",
+        "  router:",
+        "    enabled: true",
+        "    port: 15000",
+        "",
+      ].join("\n"),
+    );
     const killed: number[] = [];
-    const logs: string[] = [];
+    const errors: string[] = [];
+    const exited = new Set<number>();
     const run = vi.fn((command: string, args: string[]): RunResult => {
-      return command === "openshell" && args[0] === "gateway" && args[1] === "list"
-        ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-        : args[0] === "-c"
-          ? ok("/fake/bin/tool\n")
-          : ok();
+      switch (command) {
+        case "lsof":
+          return args[1] === `:${String(routerPort)}` ? ok(`${String(routerPid)}\n`) : ok();
+        case "ps":
+          switch (args[3]) {
+            case "user=":
+              return ok("testuser\n");
+            case "args=":
+              return ok(
+                `/home/test/.nemoclaw/model-router-venv/bin/python /home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port ${String(routerPort)}\n`,
+              );
+            case "pid=":
+            case "stat=":
+              return exited.has(routerPid) ? missing() : ok(`${String(routerPid)}\n`);
+            default:
+              return missing();
+          }
+        case "openshell":
+          return args[0] === "gateway" && args[1] === "list"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok();
+        default:
+          return args[0] === "-c" ? ok("/fake/bin/tool\n") : ok();
+      }
     });
 
     try {
@@ -151,9 +87,10 @@ it.each([false, true])(
           isTty: false,
           kill: (pid) => {
             killed.push(pid);
+            exited.add(pid);
             return true;
           },
-          log: (message) => logs.push(message),
+          log: () => undefined,
           resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
             endpoint: null,
             gatewayName,
@@ -164,12 +101,92 @@ it.each([false, true])(
             stateDir: null,
             supervisor: null,
           }),
-          rmSync: fs.rmSync,
+          rmSync: vi.fn(),
           run,
           runDocker: () => ok(),
         },
       );
 
+      expect(result.exitCode, errors.join("\n")).toBe(0);
+      expect(run).toHaveBeenCalledWith("lsof", ["-ti", `:${String(routerPort)}`], {
+        env: expect.any(Object),
+      });
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":15000"], expect.anything());
+      expect(killed).toContain(routerPid);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains incomplete router state until receipt cleanup or verified PID absence (cleared=%s)",
+  async (cleared) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-no-port-"));
+    const stateDir = path.join(root, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify(
+        cleared
+          ? {
+              provider: "nvidia-router",
+              routerPid: null,
+              routerPort: null,
+              routerCredentialHash: null,
+              endpointUrl: "http://host.openshell.internal:14000",
+            }
+          : { provider: "nvidia-router", routerPid: 55681 },
+      ),
+    );
+    const errors: string[] = [];
+    const killed: number[] = [];
+    const logs: string[] = [];
+    let processObservation = ok("55681\n");
+    const run = vi.fn((command: string, args: string[]): RunResult => {
+      return command === "ps"
+        ? processObservation
+        : command === "openshell" && args[0] === "gateway" && args[1] === "list"
+          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+          : args[0] === "-c"
+            ? ok("/fake/bin/tool\n")
+            : ok();
+    });
+
+    try {
+      const uninstall = () =>
+        runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => true,
+            env: { HOME: root, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+            error: (message) => errors.push(message),
+            existsSync: (target) =>
+              (target === stateDir || target === path.join(stateDir, "onboard-session.json")) &&
+              fs.existsSync(target),
+            isTty: false,
+            kill: (pid) => {
+              killed.push(pid);
+              return true;
+            },
+            log: (message) => logs.push(message),
+            resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+              endpoint: null,
+              gatewayName,
+              gatewayPort,
+              mode: "nemoclaw-managed",
+              requiredCapabilities: [],
+              source: "packaged-service",
+              stateDir: null,
+              supervisor: null,
+            }),
+            rmSync: fs.rmSync,
+            run,
+            runDocker: () => ok(),
+          },
+        );
+
+      const result = await uninstall();
       expect(result.exitCode).toBe(cleared ? 0 : 1);
       expect(errors.filter((message) => message.includes("Model Router cleanup"))).toEqual(
         cleared
@@ -182,8 +199,16 @@ it.each([false, true])(
       );
       expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
       expect(killed).toEqual([]);
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":14000"], expect.anything());
       expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(cleared);
-      expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(true);
+      expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(!cleared);
+      processObservation = { status: 2, stdout: "", stderr: "process inventory unavailable" };
+      expect((await uninstall()).exitCode).toBe(cleared ? 0 : 1);
+      expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(!cleared);
+      processObservation = missing();
+      expect((await uninstall()).exitCode).toBe(0);
+      expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(false);
+      expect(killed).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

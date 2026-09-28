@@ -108,7 +108,11 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       model: "model-b",
       preferredInferenceApi: "openai-completions",
     });
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-endpoint",
@@ -145,10 +149,11 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ credentialEnv: NO_AUTH_CREDENTIAL_ENV }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ credentialEnv: NO_AUTH_CREDENTIAL_ENV })]);
   });
 
   it("keeps a recorded legacy no-auth route after the proxy port moves", async () => {
@@ -210,7 +215,11 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         model: "model-b",
         preferredInferenceApi: "openai-completions",
       });
-      expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      expect(
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
+      ).toEqual([
         "alpha",
         expect.objectContaining({
           endpointUrl,
@@ -354,7 +363,11 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.log).toHaveBeenCalledWith(
       "  Waiting 2s for OpenShell route convergence after the sandbox probe did not receive an HTTP status (probe 1/3)...",
     );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({ model: "model-b", credentialEnv: NO_AUTH_CREDENTIAL_ENV }),
     ]);
@@ -487,9 +500,10 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ credentialEnv: "COMPATIBLE_API_KEY" }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ credentialEnv: "COMPATIBLE_API_KEY" })]);
   });
 });

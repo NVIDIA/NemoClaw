@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
+import { resolveLegacyModelRouterPort } from "../core/model-router-port";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
@@ -341,35 +342,6 @@ export function listRecordedGatewayPorts(home: string): number[] {
   return [...ports].sort((left, right) => left - right);
 }
 
-/** Recover the router port from a retained session or registry route identity. */
-function legacySessionModelRouterPort(session: Record<string, unknown>): number | null {
-  const hasRouterIdentity =
-    session.provider === "nvidia-router" ||
-    (typeof session.routerPid === "number" &&
-      Number.isInteger(session.routerPid) &&
-      session.routerPid > 0) ||
-    (typeof session.routerCredentialHash === "string" && session.routerCredentialHash.length > 0);
-  if (!hasRouterIdentity || typeof session.endpointUrl !== "string") return null;
-  try {
-    const endpoint = new URL(session.endpointUrl);
-    const port = endpoint.port ? Number(endpoint.port) : null;
-    return endpoint.protocol === "http:" &&
-      endpoint.hostname === "host.openshell.internal" &&
-      !endpoint.username &&
-      !endpoint.password &&
-      !endpoint.search &&
-      !endpoint.hash &&
-      port !== null &&
-      Number.isInteger(port) &&
-      port >= 1 &&
-      port <= 65535
-      ? port
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Enumerate exact Model Router ports retained by onboarding state on this host. */
 export function listRecordedModelRouterPorts(home: string): number[] {
   const ports = new Set<number>();
@@ -397,7 +369,7 @@ export function listRecordedModelRouterPorts(home: string): number[] {
       if (routerPort === null && parsed.routerPid === null && parsed.routerCredentialHash === null)
         continue;
       if (routerPort === undefined || routerPort === null) {
-        const legacyPort = legacySessionModelRouterPort(parsed);
+        const legacyPort = resolveLegacyModelRouterPort(parsed);
         if (legacyPort !== null) ports.add(legacyPort);
         continue;
       }
@@ -418,7 +390,7 @@ export function listRecordedModelRouterPorts(home: string): number[] {
     }
   }
   for (const { entry } of listHostGatewayRegistryEntries(home)) {
-    const port = legacySessionModelRouterPort(entry);
+    const port = resolveLegacyModelRouterPort(entry);
     if (port !== null) ports.add(port);
   }
   return [...ports].sort((left, right) => left - right);

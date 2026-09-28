@@ -132,6 +132,7 @@ import {
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
+  readOnboardSessionModelRouter,
   removeForceFreshReceiptVolumes,
 } from "./runtime-commands";
 import {
@@ -1138,52 +1139,6 @@ function stopOllamaAuthProxy(
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
-interface RecordedModelRouter {
-  pid: number | null;
-  port: number | null;
-  expected: boolean;
-}
-
-function readOnboardSessionModelRouter(paths: UninstallPaths): RecordedModelRouter {
-  const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
-  try {
-    const raw = fs.readFileSync(sessionFile, "utf-8");
-    const data = JSON.parse(raw) as {
-      provider?: unknown;
-      routerCredentialHash?: unknown;
-      routerPid?: unknown;
-      routerPort?: unknown;
-    };
-    const pid =
-      typeof data.routerPid === "number" && Number.isInteger(data.routerPid) && data.routerPid > 0
-        ? data.routerPid
-        : null;
-    const port =
-      typeof data.routerPort === "number" &&
-      Number.isInteger(data.routerPort) &&
-      data.routerPort > 0 &&
-      data.routerPort <= 65535
-        ? data.routerPort
-        : null;
-    return {
-      pid,
-      port,
-      expected:
-        (data.provider === "nvidia-router" &&
-          !(
-            data.routerPort === null &&
-            data.routerPid === null &&
-            data.routerCredentialHash === null
-          )) ||
-        pid !== null ||
-        typeof data.routerCredentialHash === "string",
-    };
-  } catch {
-    /* ignore — State step deletes the file shortly anyway */
-  }
-  return { pid: null, port: null, expected: false };
-}
-
 function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
   runtime.kill(pid);
   if (waitForPidExit(pid, runtime, 1000)) {
@@ -1209,13 +1164,30 @@ function stopModelRouter(
   // cleanup must not guess from the current blueprint because that blueprint
   // may have changed since the process started.
   const stopped = new Set<number>();
-  const recorded = readOnboardSessionModelRouter(paths);
+  const recorded = readOnboardSessionModelRouter(paths.nemoclawStateDir);
   if (recorded.port === null) {
     if (recorded.expected) {
+      if (recorded.pid !== null) {
+        const observed = runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], {
+          env: runtime.env,
+        });
+        // Only ps's no-match result proves absence. A command or permission
+        // failure must retain the cleanup receipt for another attempt.
+        if (observed.status === 1 && !observed.stdout.trim() && !observed.stderr.trim()) {
+          runtime.log(
+            `Recorded Model Router PID ${recorded.pid} is absent; continuing state cleanup.`,
+          );
+          return true;
+        }
+      }
       const pidDetail =
         recorded.pid === null ? "" : ` The recorded process is PID ${recorded.pid}.`;
+      const recovery =
+        recorded.pid === null
+          ? "Recover the router's recorded port before retrying uninstall."
+          : "Stop the verified Model Router process, then rerun nemoclaw uninstall.";
       runtime.warn(
-        `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} Stop the verified Model Router process, then rerun nemoclaw uninstall. The onboarding session was retained for recovery.`,
+        `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} ${recovery} The onboarding session was retained for recovery.`,
       );
       return false;
     } else {

@@ -187,6 +187,7 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  resolveConfiguredModelRouterPort,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
@@ -2783,7 +2784,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         session,
         selectedAgentName: agent?.name,
-        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+        routerPort: resolveConfiguredModelRouterPort(),
         note,
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");
