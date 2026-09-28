@@ -42,12 +42,12 @@ function source(name: string) {
     }),
   );
   fs.writeFileSync(path.join(directory, "unrelated-private-file"), "not declared state");
-  return { sandboxName: name, directory, assertCurrent: vi.fn() };
+  return { sandboxName: name, agentName: "openclaw" as const, directory, assertCurrent: vi.fn() };
 }
 
 it("publishes sanitized declared state from a stopped source without a sandbox connection", () => {
   const captured = source("stopped-good");
-  const result = state.backupSandboxState("stopped-good", { capturedOpenClawState: captured });
+  const result = state.backupSandboxState("stopped-good", { capturedAgentState: captured });
   expect(result.success, result.error).toBe(true);
   expect(result.manifest?.backupComplete).toBe(true);
   const destination = result.manifest!.backupPath;
@@ -67,7 +67,61 @@ it("publishes sanitized declared state from a stopped source without a sandbox c
   );
 });
 
+it("preserves stopped Deep Agents state and nested skills while excluding private MCP input and credentials (#11165)", () => {
+  const name = "stopped-dcode";
+  registry.registerSandbox({ name, agent: "langchain-deepagents-code" });
+  const directory = fs.mkdtempSync(path.join(home, "captured-dcode-"));
+  fs.mkdirSync(path.join(directory, ".state"));
+  fs.mkdirSync(path.join(directory, "agent", "skills"), { recursive: true });
+  fs.writeFileSync(path.join(directory, ".state", "conversation.txt"), "retained conversation");
+  fs.writeFileSync(path.join(directory, "agent", "skills", "retained.md"), "retained skill");
+  fs.writeFileSync(path.join(directory, "config.toml"), "[ui]\nshow_scrollbar = true\n");
+  fs.writeFileSync(path.join(directory, ".mcp.json"), '{"mcpServers":{}}');
+  fs.writeFileSync(path.join(directory, ".env"), "DO-NOT-PUBLISH-CREDENTIAL");
+  const result = state.backupSandboxState(name, {
+    capturedAgentState: {
+      sandboxName: name,
+      agentName: "langchain-deepagents-code",
+      directory,
+      assertCurrent: vi.fn(),
+    },
+  });
+  expect(result.success, result.error).toBe(true);
+  expect(result.manifest?.backupComplete).toBe(true);
+  const destination = result.manifest!.backupPath;
+  expect(fs.readFileSync(path.join(destination, ".state", "conversation.txt"), "utf8")).toBe(
+    "retained conversation",
+  );
+  expect(fs.readFileSync(path.join(destination, "agent", "skills", "retained.md"), "utf8")).toBe(
+    "retained skill",
+  );
+  expect(fs.readFileSync(path.join(destination, "config.toml"), "utf8")).toContain(
+    "show_scrollbar = true",
+  );
+  expect(fs.existsSync(path.join(destination, ".mcp.json"))).toBe(false);
+  expect(fs.existsSync(path.join(destination, ".env"))).toBe(false);
+  expect(fs.existsSync(path.join(directory, ".mcp.json"))).toBe(true);
+});
+
 it.each([
+  {
+    name: "stopped-dcode-parent-link",
+    prepare: (captured: ReturnType<typeof source>) => {
+      registry.updateSandbox(captured.sandboxName, { agent: "langchain-deepagents-code" });
+      Object.assign(captured, { agentName: "langchain-deepagents-code" });
+      fs.mkdirSync(path.join(captured.directory, "workspace", "skills"));
+      fs.writeFileSync(
+        path.join(captured.directory, "workspace", "skills", "private.md"),
+        "undeclared state",
+      );
+      fs.symlinkSync("workspace", path.join(captured.directory, "agent"));
+    },
+  },
+  {
+    name: "stopped-wrong-agent",
+    prepare: (captured: ReturnType<typeof source>) =>
+      Object.assign(captured, { agentName: "langchain-deepagents-code" }),
+  },
   {
     name: "stopped-link",
     prepare: (captured: ReturnType<typeof source>) =>
@@ -85,7 +139,7 @@ it.each([
 ])("preserves the source and publishes no snapshot for $name", ({ name, prepare }) => {
   const captured = source(name);
   prepare(captured);
-  const result = state.backupSandboxState(name, { capturedOpenClawState: captured });
+  const result = state.backupSandboxState(name, { capturedAgentState: captured });
   expect(result.success).toBe(false);
   expect(result.manifest).toBeUndefined();
   expect(state.listBackups(name)).toEqual([]);

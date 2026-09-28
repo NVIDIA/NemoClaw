@@ -160,32 +160,43 @@ describe("MCP adapter teardown rollback", () => {
     },
   );
 
-  it("preserves captured OpenClaw MCP intent without executing in or detaching the stopped source", async () => {
-    mocks.getSandboxOrThrow.mockReturnValue({ name: "alpha", agent: "openclaw" });
-    const source = { sandboxName: "alpha", directory: "/private/captured", assertCurrent: vi.fn() };
-    const nativeEntry = { ...entry, agent: "openclaw", adapter: "openclaw-config" as const };
-    const result = await prepareMcpBridgesForStoppedSandboxRebuild(
-      "alpha",
-      [nativeEntry],
-      source,
-      runtimeSelection,
-    );
-    expect(result.entries).toEqual([nativeEntry]);
-    expect(result.detachedProviderEntries).toEqual([]);
-    expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalled();
-    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
-    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
-    expect(mocks.detachProvider).not.toHaveBeenCalled();
-    expect(source.assertCurrent).toHaveBeenCalledTimes(2);
-    await expect(result.revalidateBeforeDelete?.()).resolves.toBeUndefined();
-    mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
-      "version: 1\nnetwork_policies:\n  changed: {}\n",
-    );
-    await expect(result.revalidateBeforeDelete?.()).rejects.toThrow("policy changed");
-    await expect(
-      prepareMcpBridgesForStoppedSandboxRebuild("beta", [nativeEntry], source, runtimeSelection),
-    ).rejects.toThrow("does not match");
-  });
+  it.each([
+    ["openclaw", "openclaw-config"],
+    ["langchain-deepagents-code", "deepagents-config"],
+  ] as const)(
+    "preserves captured %s MCP intent without executing in or detaching the stopped source (#11165)",
+    async (agentName, adapter) => {
+      mocks.getSandboxOrThrow.mockReturnValue({ name: "alpha", agent: agentName });
+      const source = {
+        sandboxName: "alpha",
+        agentName,
+        directory: "/private/captured",
+        assertCurrent: vi.fn(),
+      };
+      const nativeEntry = { ...entry, agent: agentName, adapter };
+      const result = await prepareMcpBridgesForStoppedSandboxRebuild(
+        "alpha",
+        [nativeEntry],
+        source,
+        runtimeSelection,
+      );
+      expect(result.entries).toEqual([nativeEntry]);
+      expect(result.detachedProviderEntries).toEqual([]);
+      expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalled();
+      expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(source.assertCurrent).toHaveBeenCalledTimes(2);
+      await expect(result.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+      mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
+        "version: 1\nnetwork_policies:\n  changed: {}\n",
+      );
+      await expect(result.revalidateBeforeDelete?.()).rejects.toThrow("policy changed");
+      await expect(
+        prepareMcpBridgesForStoppedSandboxRebuild("beta", [nativeEntry], source, runtimeSelection),
+      ).rejects.toThrow("does not match");
+    },
+  );
 
   it("preserves distinct credential endpoints in an absent-sandbox rebuild handoff", async () => {
     const distinct = {
