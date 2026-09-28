@@ -167,16 +167,14 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 export async function prepareMcpBridgesForStoppedSandboxRebuild(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
-  source: import("../../state/state-directory-restore").CapturedOpenClawState,
+  source: import("../../state/state-directory-restore").CapturedAgentState,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
   if (
     source.sandboxName !== sandboxName ||
-    (getSandboxOrThrow(sandboxName).agent ?? "openclaw") !== "openclaw"
+    (getSandboxOrThrow(sandboxName).agent ?? "openclaw") !== source.agentName
   ) {
-    throw new McpBridgeError(
-      "Stopped MCP preservation does not match the captured OpenClaw sandbox.",
-    );
+    throw new McpBridgeError("Stopped MCP preservation does not match the captured agent sandbox.");
   }
   source.assertCurrent();
   const prepared = await prepareMcpBridgesWithoutSourceMutation(
