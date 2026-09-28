@@ -600,29 +600,34 @@ export function resolvePageLinksByText(
 const GENERATED_AGENT_VARIANT_SOURCE_RE =
   /^_build\/agent-variants\/.+\.(?:openclaw|hermes|deepagents|pi)\.generated\.mdx$/;
 
-// A broken link already has an open fix in flight; skip it here so this
-// checker does not duplicate that edit. Remove the entry once the fix merges.
+// A broken link already has an open fix in flight. Skip only that one link so
+// this checker does not duplicate the edit; every other link on the page still
+// gets checked. Remove the entry once the fix merges.
 const PENDING_LINK_FIXES = new Set([
-  "get-started/quickstart-hermes.mdx", // NemoClaw#12326
+  "get-started/quickstart-hermes.mdx\0../inference/set-up-ollama#use-portable-ollama-with-hermes", // NemoClaw#12326
 ]);
 
 /** Every source page that Fern actually publishes, derived from docs/index.yml. */
 export function publishedSourcePages(index: PublishedRouteIndex): string[] {
   return [...index.sourceToRoutes.keys()]
-    .filter(
-      (source) =>
-        !GENERATED_AGENT_VARIANT_SOURCE_RE.test(source) && !PENDING_LINK_FIXES.has(source),
-    )
+    .filter((source) => !GENERATED_AGENT_VARIANT_SOURCE_RE.test(source))
     .sort();
+}
+
+/** Drop violations that match a known pending link fix. */
+export function withoutPendingLinkFixes(violations: RouteViolation[]): RouteViolation[] {
+  return violations.filter(
+    (violation) => !PENDING_LINK_FIXES.has(`${violation.sourcePath}\0${violation.target}`),
+  );
 }
 
 function main(): void {
   const index = buildPublishedRouteIndex();
   const sources = publishedSourcePages(index);
-  const violations = [
+  const violations = withoutPendingLinkFixes([
     ...sources.flatMap((source) => findBrokenPublishedRoutes(source, index)),
     ...findBrokenChangelogRoutes(index),
-  ];
+  ]);
   const redirectViolations = findBrokenPublishedRedirects(index);
   const legacyHtmlRedirectViolations = [
     ...findMissingDirectLegacyManageSandboxRedirects(),
