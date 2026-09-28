@@ -2229,7 +2229,8 @@ async function restoreNativeSandboxState(
         '    if [ -w "$target_dir" ]; then',
         '      mv -- "$source_item" "$target_dir"/',
         "    else",
-        '      rm -rf -- "$source_item"',
+        '      echo "native restore target directory is not writable: $target_dir" >&2',
+        "      exit 22",
         "    fi",
         "  done",
         "}",
@@ -2237,8 +2238,9 @@ async function restoreNativeSandboxState(
       ].join("\n");
       // The target image's non-agent-owned entries remain authoritative. The
       // recursive ownership merge replaces every agent-owned path without a
-      // path allowlist, while retaining trust scaffolding beneath root-owned,
-      // non-writable parents even when a leaf is intentionally agent-writable.
+      // path allowlist, while retaining image-owned trust scaffolding. If an
+      // archived child is absent below a non-writable scaffold, restoration
+      // fails instead of silently dropping that archived state.
       const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),

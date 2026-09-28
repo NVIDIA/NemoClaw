@@ -789,6 +789,18 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("selects stopped-phase survival coverage when its direct live test changes", () => {
+    const changedFile = "test/e2e/live/sandbox-survival.test.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-survival",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-survival",
+    );
+  });
+
   it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
     "selects both Hermes onboarding scenarios when %s changes",
     (changedFile) => {

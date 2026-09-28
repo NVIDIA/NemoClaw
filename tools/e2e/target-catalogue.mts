@@ -1735,7 +1735,10 @@ export function catalogueTargetsForChangedFiles(
     return [...E2E_TARGET_CATALOGUE];
   }
   return E2E_TARGET_CATALOGUE.filter((entry) =>
-    files.some((file) => entry.owningPaths.some((owner) => pathMatches(file, owner))),
+    files.some(
+      (file) =>
+        file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
+    ),
   );
 }
 

@@ -179,7 +179,7 @@ class CompleteNativeStateArchiveTransform extends Transform {
   readonly #rootName: string;
   #buffer = Buffer.alloc(0);
   #rootSeen = false;
-  #ended = false;
+  #consecutiveZeroBlocks = 0;
   #pendingPath: string | undefined;
   #pendingLink: string | undefined;
   #entry:
@@ -232,12 +232,13 @@ class CompleteNativeStateArchiveTransform extends Transform {
       const header = this.#buffer.subarray(0, TAR_BLOCK_BYTES);
       this.#buffer = this.#buffer.subarray(TAR_BLOCK_BYTES);
       if (header.every((byte) => byte === 0)) {
-        this.#ended = true;
+        this.#consecutiveZeroBlocks += 1;
         continue;
       }
-      if (this.#ended || !tarChecksumIsValid(header)) {
+      if (this.#consecutiveZeroBlocks >= 2 || !tarChecksumIsValid(header)) {
         rejectStoppedCapture("Stopped state archive was malformed.");
       }
+      this.#consecutiveZeroBlocks = 0;
       const size = tarNumber(header, 124, 12);
       if (size === null) rejectStoppedCapture("Stopped state archive had an invalid size.");
       const padded = Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
@@ -306,7 +307,7 @@ class CompleteNativeStateArchiveTransform extends Transform {
       this.#consume();
       if (
         !this.#rootSeen ||
-        !this.#ended ||
+        this.#consecutiveZeroBlocks < 2 ||
         this.#entry !== undefined ||
         this.#pendingPath !== undefined ||
         this.#pendingLink !== undefined ||

@@ -377,6 +377,7 @@ describe("stopped Docker recovery capture", () => {
         ]);
       })(),
     ],
+    ["only one TAR end block", Buffer.concat([tarHeader("sandbox", "5"), Buffer.alloc(512)])],
   ])("rejects a forged Docker copy stream with %s", async (_name, forgedArchive) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-forged-test-"));
     const archive = path.join(root, "archive");

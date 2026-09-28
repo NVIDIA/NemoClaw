@@ -24,12 +24,12 @@ OpenShell-owned credential stores and host-only secrets are outside the agent ho
 
 Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw <name> rebuild` or onboarding must replace a sandbox, NemoClaw performs one bounded migration:
 
-1. Capture the native home/workspace as an opaque private archive, remove OpenClaw's machine-local `gateway.auth` authority from the archive copy, and verify that the archive does not contain credential material.
+1. Capture the native home/workspace as an opaque private archive, remove machine-local agent authority from the archive copy, and verify that the archive does not contain credential material.
 2. Create the replacement through OpenShell.
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
-The OpenClaw gateway authentication value is machine-local: NemoClaw leaves the live source configuration unchanged, omits `gateway.auth` only from the private archive copy, and lets the replacement establish fresh gateway authentication. Apart from that explicit credential boundary, the transfer does not sanitize, merge, or discard unknown agent paths. A credential-bearing file, an uninspectable recognized configuration file, or a capture failure stops the workflow before replacement. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
+OpenClaw's `gateway.auth` value and Hermes's `.hermes/.env` `API_SERVER_KEY` are machine-local. NemoClaw leaves both live source files unchanged, omits those values only from the private archive copy, and lets the replacement establish fresh local authority. Apart from that explicit credential boundary, the transfer does not sanitize, merge, or discard unknown agent paths. A credential-bearing file, an uninspectable recognized configuration file, or a capture failure stops the workflow before replacement. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 
 For an eligible stopped container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture.
 
