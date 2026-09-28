@@ -251,6 +251,82 @@ describe("sandbox config sync helpers", () => {
     },
   );
 
+  itUnix("reconciles a custom image route before native gateway restart", () => {
+    const homeDir = createConfigSyncHome();
+    const openclawDir = path.join(homeDir, ".openclaw");
+    const openclawConfig = path.join(openclawDir, "openclaw.json");
+    const customRouteReceipt = path.join(openclawDir, ".nemoclaw-custom-route-pending");
+    fs.mkdirSync(openclawDir, { mode: 0o700 });
+    const inheritedConfig = {
+      agents: {
+        defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
+      },
+      models: {
+        providers: {
+          inference: {
+            models: [
+              {
+                id: "nvidia/nemotron-3-super-120b-a12b",
+                name: "inference/nvidia/nemotron-3-super-120b-a12b",
+                contextWindow: 131072,
+                maxTokens: 4096,
+              },
+            ],
+          },
+        },
+      },
+    };
+    fs.writeFileSync(openclawConfig, `${JSON.stringify(inheritedConfig, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    fs.writeFileSync(
+      customRouteReceipt,
+      `${createHash("sha256").update(fs.readFileSync(openclawConfig)).digest("hex")}  openclaw.json\n`,
+      { mode: 0o600 },
+    );
+
+    const script = buildSandboxConfigSyncScript(selection, false, true);
+    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+
+    const reconciled = JSON.parse(fs.readFileSync(openclawConfig, "utf8"));
+    expect(reconciled.agents.defaults.model.primary).toBe(`inference/${selection.model}`);
+    expect(reconciled.models.providers.inference.models[0]).toEqual({
+      id: selection.model,
+      name: `inference/${selection.model}`,
+    });
+    const expectedHash = createHash("sha256").update(fs.readFileSync(openclawConfig)).digest("hex");
+    expect(fs.readFileSync(customRouteReceipt, "utf8")).toBe(`${expectedHash}  openclaw.json\n`);
+    expect(fs.readFileSync(path.join(openclawDir, ".config-hash"), "utf8")).toBe(
+      `${expectedHash}  openclaw.json\n`,
+    );
+    expect(nativeCalls.map((call) => call.split("|")[0])).toEqual(["config validate"]);
+  });
+
+  itUnix("refuses custom route reconciliation when its receipt is missing", () => {
+    const homeDir = createConfigSyncHome();
+    const openclawDir = path.join(homeDir, ".openclaw");
+    fs.mkdirSync(openclawDir, { mode: 0o700 });
+    fs.writeFileSync(
+      path.join(openclawDir, "openclaw.json"),
+      '{"agents":{"defaults":{"model":{"primary":"inference/base"}}}}\n',
+      { mode: 0o600 },
+    );
+
+    const script = buildSandboxConfigSyncScript(selection, false, true);
+    const { result, nativeCalls } = runConfigSyncScript(
+      script,
+      homeDir,
+      String(process.getuid?.()),
+      undefined,
+      { expectedStatus: 1 },
+    );
+
+    expect(result.stderr).toContain(
+      "Refusing custom OpenClaw route reconciliation without its regular receipt",
+    );
+    expect(nativeCalls).toEqual([]);
+  });
+
   itUnix("syncs selection metadata and completes managed OpenClaw session state", () => {
     const homeDir = createConfigSyncHome();
     const openclawDir = path.join(homeDir, ".openclaw");

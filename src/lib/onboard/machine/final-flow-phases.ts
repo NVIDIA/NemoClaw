@@ -89,6 +89,7 @@ export function createFinalOnboardFlowPhases<
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
+      customOpenclawImage: Boolean(context.fromDockerfile) && context.agent === null,
       deps: options.agentSetupDeps,
     });
     return {

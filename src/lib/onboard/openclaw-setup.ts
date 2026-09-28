@@ -107,6 +107,7 @@ export interface ConfigureOpenclawSandboxDeps {
     model: string,
     revalidateSandboxIdentity?: (operation: string) => void,
     managedProfileApplied?: boolean,
+    reconcileCustomOpenClawRoute?: boolean,
   ): Promise<void>;
   reconcileWebSearch(
     sandboxName: string,
@@ -123,14 +124,26 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
     managedProfileApplied = false,
+    reconcileCustomOpenClawRoute = false,
   ): Promise<void> {
-    await deps.syncNemoClawConfigInSandbox(
-      sandboxName,
-      provider,
-      model,
-      revalidateSandboxIdentity,
-      managedProfileApplied,
-    );
+    if (reconcileCustomOpenClawRoute) {
+      await deps.syncNemoClawConfigInSandbox(
+        sandboxName,
+        provider,
+        model,
+        revalidateSandboxIdentity,
+        managedProfileApplied,
+        true,
+      );
+    } else {
+      await deps.syncNemoClawConfigInSandbox(
+        sandboxName,
+        provider,
+        model,
+        revalidateSandboxIdentity,
+        managedProfileApplied,
+      );
+    }
     await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
   };
 }
@@ -153,6 +166,8 @@ export interface OpenclawSetupDeps {
     provider: string,
     webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied?: boolean,
+    reconcileCustomOpenClawRoute?: boolean,
   ): Promise<void>;
 }
 
@@ -163,16 +178,29 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     provider: string,
     webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
+    reconcileCustomOpenClawRoute = false,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    await deps.configureOpenclawSandbox(
-      sandboxName,
-      model,
-      provider,
-      webSearchConfig,
-      revalidateSandboxIdentity,
-    );
+    if (reconcileCustomOpenClawRoute) {
+      await deps.configureOpenclawSandbox(
+        sandboxName,
+        model,
+        provider,
+        webSearchConfig,
+        revalidateSandboxIdentity,
+        false,
+        true,
+      );
+    } else {
+      await deps.configureOpenclawSandbox(
+        sandboxName,
+        model,
+        provider,
+        webSearchConfig,
+        revalidateSandboxIdentity,
+      );
+    }
     if (deps.shouldRestartNativeGateway(provider)) {
       revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
       const restart = await deps.restartNativeGateway(sandboxName);

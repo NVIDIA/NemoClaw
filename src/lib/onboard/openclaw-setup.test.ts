@@ -115,6 +115,25 @@ describe("OpenClaw sandbox setup", () => {
     expect(reconcileWebSearch).not.toHaveBeenCalled();
   });
 
+  it("forwards custom-image route reconciliation to config sync", async () => {
+    const syncNemoClawConfigInSandbox = vi.fn(async () => undefined);
+    const configureOpenclawSandbox = createConfigureOpenclawSandbox({
+      syncNemoClawConfigInSandbox,
+      reconcileWebSearch: vi.fn(async () => undefined),
+    });
+
+    await configureOpenclawSandbox("spark-box", "model", "provider", null, undefined, false, true);
+
+    expect(syncNemoClawConfigInSandbox).toHaveBeenCalledExactlyOnceWith(
+      "spark-box",
+      "provider",
+      "model",
+      undefined,
+      false,
+      true,
+    );
+  });
+
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
     const configureOpenclawSandbox = vi.fn(async () => undefined);
     const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
@@ -137,6 +156,31 @@ describe("OpenClaw sandbox setup", () => {
       revalidateSandboxIdentity,
     );
     expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
+    expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
+  });
+
+  it("reconciles a custom-image route before restarting the native gateway", async () => {
+    const configureOpenclawSandbox = vi.fn(async () => undefined);
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox,
+      restartNativeGateway,
+      shouldRestartNativeGateway: () => true,
+    });
+
+    await setup("spark-box", "selected-model", "provider", null, undefined, true);
+
+    expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
+      "spark-box",
+      "selected-model",
+      "provider",
+      null,
+      undefined,
+      false,
+      true,
+    );
     expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
   });
 

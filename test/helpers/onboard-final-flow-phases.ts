@@ -78,6 +78,14 @@ export type RecorderOverrides = {
     Agent | null,
     WebSearchConfig
   >["deps"]["setupPoliciesWithSelection"];
+  setupOpenclaw?: (
+    sandboxName: string,
+    model: string,
+    provider: string,
+    webSearchConfig: WebSearchConfig | null,
+    revalidateSandboxIdentity?: (operation: string) => void,
+    reconcileCustomOpenClawRoute?: boolean,
+  ) => Promise<void>;
 };
 
 function cloneSession(session: Session): Session {
@@ -220,9 +228,11 @@ export function createPhases(
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
-      setupOpenclaw: vi.fn(async () => {
-        order.push("openclaw");
-      }),
+      setupOpenclaw:
+        recorders.setupOpenclaw ??
+        vi.fn(async () => {
+          order.push("openclaw");
+        }),
       configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??

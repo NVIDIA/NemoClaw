@@ -360,6 +360,24 @@ describe("handleAgentSetupState", () => {
     });
   });
 
+  it("requests route reconciliation for a fresh custom OpenClaw image", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      customOpenclawImage: true,
+    });
+
+    expect(calls.setupOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      undefined,
+      true,
+    );
+  });
+
   it("waits for managed OpenClaw before syncing selection metadata without legacy setup", async () => {
     const { deps, calls } = createDeps();
     calls.controlPlaneReady.mockResolvedValue(true);

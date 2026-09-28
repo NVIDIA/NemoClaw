@@ -123,6 +123,22 @@ describe("final onboard flow phases", () => {
     expect(order).toEqual(["openclaw", "agent-forward", "policies", "set-default", "verify"]);
   });
 
+  it("reconciles the route only for a fresh custom OpenClaw image", async () => {
+    const setupOpenclaw = vi.fn(async () => undefined);
+    const [branchPhase] = createPhases("openclaw", [], { setupOpenclaw });
+
+    await branchPhase.run(context({ fromDockerfile: "/tmp/CustomDockerfile" }));
+
+    expect(setupOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      null,
+      undefined,
+      true,
+    );
+  });
+
   it("carries merged policy messaging channels into the final flow context", async () => {
     const mergePolicyMessagingChannels = vi.fn(() => ["slack", "discord"]);
     const [, policiesPhase] = createPhases("openclaw", [], { mergePolicyMessagingChannels });
