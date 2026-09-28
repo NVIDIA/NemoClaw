@@ -59,7 +59,6 @@
     "test/agents/hermes/hermes-runtime-api-key.test.ts": 9872,
     "test/agents/hermes/hermes-tool-gateway-broker.test.ts": 8095,
     "test/agents/hermes/nemohermes-alias.test.ts": 14670,
-    "test/agents/openclaw/openclaw-config-guard.test.ts": 22936,
     "test/agents/openclaw/openclaw-device-self-approval-patch.test.ts": 36649,
     "test/agents/openclaw/openclaw-device-stored-auth-patch.test.ts": 8297,
     "test/agents/openclaw/openclaw-gemini-inference-compat-runtime.test.ts": 36915,

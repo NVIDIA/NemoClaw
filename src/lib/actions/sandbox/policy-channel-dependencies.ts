@@ -54,6 +54,11 @@ type MessagingHostForwardModule = typeof import("../../onboard/messaging-host-fo
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  resolveConfigRuntimeSelection(sandboxName: string) {
+    const runtime =
+      require("./mcp-bridge-provider-inspection") as typeof import("./mcp-bridge-provider-inspection");
+    return runtime.resolveSandboxConfigRuntimeSelection(sandboxName);
+  },
   createMessagingHostForwardPreEnableHookRegistry() {
     const messagingHostForward =
       require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;

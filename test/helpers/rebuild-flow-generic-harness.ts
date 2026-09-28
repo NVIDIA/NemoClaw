@@ -984,30 +984,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       },
     }),
   );
-  vi.spyOn(openClawLifecycle, "beginUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
-    async (sandboxName, runtimeSelection) => ({
-      ok: true,
-      window: {
-        sandboxName,
-        ...(runtimeSelection ? { runtimeSelection } : {}),
-      },
-    }),
-  );
-  const runOpenClawPostRestoreDoctorSpy = vi
-    .spyOn(openClawLifecycle, "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor")
-    .mockImplementation(async (window) => {
-      const result = await (
-        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
-      )();
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        window: {
-          sandboxName: window.sandboxName,
-          ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
-        },
-      };
-    });
   vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
     async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
       return {
@@ -1032,9 +1008,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
   vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
-  vi.spyOn(openClawLifecycle, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
-    ok: true,
-  });
+  const finishOpenClawMaintenanceWindowSpy = vi
+    .spyOn(openClawLifecycle, "finishUnregisteredOpenClawPostRestoreDoctor")
+    .mockResolvedValue({ ok: true });
   vi.spyOn(openClawLifecycle, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
@@ -1063,9 +1039,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
-  vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(
-    overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
-  );
   vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
     verified: true,
     errors: [],
@@ -1173,7 +1146,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restartSandboxGatewaySpy,
     errorSpy,
     executeSandboxExecCommandSpy,
-    runOpenClawPostRestoreDoctorSpy,
+    finishOpenClawMaintenanceWindowSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     ensureRebuildAgentBaseImageSpy,
     ensureAgentBaseImageSpy,

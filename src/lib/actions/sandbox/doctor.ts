@@ -32,14 +32,9 @@ import {
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import {
-  inspectMutableConfigPerms,
-  repairMutableConfigPerms,
-} from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
-import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
@@ -129,10 +124,7 @@ function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | 
   const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
     console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
-    console.log(
-      `  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`,
-    );
-    console.log(`          and approve pending allowlisted dashboard/CLI tool-scope upgrades`);
+    console.log(`  --fix   Approve pending allowlisted dashboard/CLI tool-scope upgrades`);
     return null;
   }
   if (unknown.length > 0) {
@@ -142,11 +134,9 @@ function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | 
     console.error(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
     process.exit(1);
   }
-  // `--fix` mutates sandbox permissions; `--json` is the machine-readable
-  // readiness-gate path. Refuse the combination so automation consuming JSON
-  // can never trigger a silent repair (the JSON report has no dedicated
-  // repair-intent field). Run `doctor --json` to detect, then `doctor --fix`
-  // to repair.
+  // `--fix` approves pending tool-scope changes; `--json` is the
+  // machine-readable readiness-gate path. Refuse the combination so automation
+  // consuming JSON can never trigger a silent mutation.
   if (wantsFix && asJson) {
     console.error(`  ${CLI_NAME} doctor: --fix cannot be combined with --json`);
     console.error(
@@ -467,12 +457,6 @@ async function collectRegisteredSandboxChecks(
   checks.push(
     buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),
   );
-  const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
-    inspect: inspectMutableConfigPerms,
-    repair: repairMutableConfigPerms,
-    cliName: CLI_NAME,
-  });
-  if (permsCheck) checks.push(permsCheck);
   checks.push(...(await collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable)));
   return checks;
 }

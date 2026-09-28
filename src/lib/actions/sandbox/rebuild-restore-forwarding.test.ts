@@ -26,13 +26,13 @@ describe("rebuild restore target forwarding", () => {
     await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "langchain-deepagents-code",
-      backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
+      backupManifest: { agentType: "openclaw", backupPath: "/backups/alpha/timestamp" } as never,
       log: vi.fn(),
     });
 
     expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
+      expect.objectContaining({ backupPath: "/backups/alpha/timestamp" }),
       {
         targetAgentType: "langchain-deepagents-code",
       },

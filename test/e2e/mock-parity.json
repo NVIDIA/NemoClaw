@@ -1100,16 +1100,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/runtime-overrides.test.ts",
-      "fast": [
-        "test/generation/generate-openclaw-config.test.ts",
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/tunnel-lifecycle.test.ts",
       "liveSources": ["test/e2e/live/tunnel-lifecycle-helpers.ts"],
       "fast": [

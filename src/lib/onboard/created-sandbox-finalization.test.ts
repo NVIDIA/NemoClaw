@@ -35,13 +35,6 @@ beforeEach(() => {
     ok: true,
     window: { sandboxName: "spark-box", kind: "backup" },
   });
-  vi.spyOn(
-    restoreWindow,
-    "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor",
-  ).mockResolvedValue({
-    ok: true,
-    window: { sandboxName: "spark-box" },
-  });
   vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
@@ -772,18 +765,12 @@ describe("created OpenClaw sandbox finalization", () => {
   it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
     vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mockImplementation(async () => {
-      order.push("quiesce");
+      order.push("maintenance-begin");
       return { ok: true, window: { sandboxName: "openclaw", kind: "backup" } };
-    });
-    vi.mocked(
-      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-    ).mockImplementation(async () => {
-      order.push("doctor-on-restored-state");
-      return { ok: true, window: { sandboxName: "openclaw" } };
     });
     vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
-        order.push("doctor-finish");
+        order.push("native-start");
         return { ok: true };
       },
     );
@@ -844,11 +831,10 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(result).toBe(publishedTarget);
     expect(order).toEqual([
       "prepare",
-      "quiesce",
+      "maintenance-begin",
       "restore",
       "revalidate",
-      "doctor-on-restored-state",
-      "doctor-finish",
+      "native-start",
       "revalidate",
       "register",
     ]);
@@ -969,9 +955,7 @@ describe("created OpenClaw sandbox finalization", () => {
     async ({ copySuccess, doctorCalls }) => {
       const prepared = { name: "openclaw" } as SandboxEntry;
       const register = vi.fn();
-      vi.mocked(
-        restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-      ).mockResolvedValue({
+      vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
         ok: false,
         stage: "doctor",
         detail: "doctor did not complete on restored state",
@@ -1015,10 +999,9 @@ describe("created OpenClaw sandbox finalization", () => {
       ).rejects.toThrow("exit 1");
 
       expect(register).not.toHaveBeenCalled();
-      expect(
-        restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-      ).toHaveBeenCalledTimes(doctorCalls);
-      expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+      expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledTimes(
+        doctorCalls,
+      );
     },
   );
 

@@ -41,13 +41,13 @@ This directory remains writable so the agent can manage its own config, install 
 NemoClaw does not provide post-provisioning immutability for the OpenClaw config or state tree.
 
 - **DAC permissions (default).**
-  When the existing process checks verify that the agent and gateway share the sandbox identity, `/sandbox/.openclaw` uses native mode `0700` and `openclaw.json` uses `0600`.
-  Separate gateway identities and unverified layouts retain `2770` (setgid `sandbox:sandbox`) and `0660` so existing shared access continues.
+  Sandbox-user images create `/sandbox/.openclaw` with native mode `0700` and `openclaw.json` with `0600`.
+  Root-mode images use `2770` (setgid `sandbox:sandbox`) and `0660` for the separate gateway identity.
   Rebuild existing sandboxes after updating NemoClaw to apply these defaults.
-- **Config integrity hash.**
-  The image includes a SHA256 hash of `openclaw.json`.
-  In mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor.
-  Use supported host config commands so the config and hash change together.
+- **Native config ownership.**
+  OpenClaw owns `openclaw.json` after first launch.
+  NemoClaw does not maintain a config hash, seal, last-good copy, recovery anchor, baseline, or config guard for this file.
+  Use `openclaw configure`, `openclaw config set`, or `openclaw config unset` inside the sandbox.
 - **Gateway token environment.**
   The entrypoint exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions.
   The gateway process reads the token from `openclaw.json` instead.
@@ -56,7 +56,7 @@ NemoClaw does not provide post-provisioning immutability for the OpenClaw config
 | Aspect | Detail |
 |---|---|
 | Default | The sandbox user owns writable config and state, with private permissions for verified same-user launches. The entrypoint places `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
-| What you can change | Use supported host commands for managed config changes. Use OpenShell policy to constrain filesystem access outside the writable agent state tree. |
+| What you can change | Use native OpenClaw commands for agent configuration. Use NemoClaw and OpenShell commands for inference routes, credential bindings, network policy, and sandbox lifecycle. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | Treat agent config and state as agent-controlled. Keep credentials in OpenShell providers, restrict network policy, and recreate the sandbox from trusted state after suspected compromise. |
 
