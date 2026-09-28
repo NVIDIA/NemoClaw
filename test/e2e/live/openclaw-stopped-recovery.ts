@@ -10,23 +10,25 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
-/** Live 0.0.116 regression: a dead source must retain data and restore usable agent state. */
-export async function proveKilledDockerOpenClawRecovery(
+/** A dead source must retain declared data and restore usable native agent state. */
+export async function proveStoppedDockerAgentRecovery(
   sandbox: SandboxClient,
   runtime: RuntimeProviderPrerequisite,
   artifacts: ArtifactSink,
   sandboxName: string,
   rebuildAndProveState: () => Promise<void>,
   restorationProof: "provider-backed-mcp" | "native-readiness",
+  agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
 ): Promise<void> {
+  const prefix = agentName === "openclaw" ? "openclaw" : "deepagents";
   if (
     runtime.id !== "docker" ||
     process.env.NEMOCLAW_EXPERIMENTAL_PROFILE ||
     process.env.E2E_TARGET_ID === "mcp-bridge-dev"
   ) {
-    await artifacts.writeJson("openclaw-stopped-source-recovery.json", {
+    await artifacts.writeJson(`${prefix}-stopped-source-recovery.json`, {
       applicable: false,
-      reason: "This added compatibility proof owns the pinned native Docker OpenClaw target.",
+      reason: "This recovery proof owns native Docker OpenClaw and Deep Agents targets.",
     });
     return;
   }
@@ -36,7 +38,7 @@ export async function proveKilledDockerOpenClawRecovery(
   let observation = 0;
   const readSource = async (): Promise<{ id: string; phase: string }> => {
     const result = await sandbox.openshell(["sandbox", "list", "-g", gateway, "-o", "json"], {
-      artifactName: `openclaw-stopped-source-observation-${observation++}`,
+      artifactName: `${prefix}-stopped-source-observation-${observation++}`,
       env,
       timeoutMs: 10_000,
     });
@@ -50,7 +52,7 @@ export async function proveKilledDockerOpenClawRecovery(
   assert(typeof source.id === "string" && /^[A-Za-z0-9._-]{1,512}$/u.test(source.id));
   assert.equal(source.phase, "Ready");
   const container = await runtime.resolveSandboxResourceHandle(sandboxName, {
-    artifactName: "openclaw-stopped-source-container",
+    artifactName: `${prefix}-stopped-source-container`,
   });
   assert.match(container, /^[a-f0-9]{64}$/u);
   const identity = await runtime.command(
@@ -62,7 +64,7 @@ export async function proveKilledDockerOpenClawRecovery(
       "[{{json .Id}},{{json .Config.Labels}},{{json .State.Running}}]",
       container,
     ],
-    { artifactName: "openclaw-stopped-source-identity" },
+    { artifactName: `${prefix}-stopped-source-identity` },
   );
   assertExitZero(identity, "verify the exact runtime before fault injection");
   const [observedId, labels, running] = JSON.parse(identity.stdout);
@@ -72,22 +74,36 @@ export async function proveKilledDockerOpenClawRecovery(
   assert.equal(labels["openshell.ai/sandbox-id"], source.id);
   assert.equal(running, true);
   const marker = `stopped-source-${Date.now()}`;
-  const markerPath = "/sandbox/.openclaw/workspace/.stopped-recovery-marker";
-  assertExitZero(
-    await sandbox.exec(
-      sandboxName,
-      [
-        "sh",
-        "-c",
-        `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)}; sync`,
-      ],
-      { artifactName: "openclaw-stopped-source-write-marker", env },
-    ),
-    "write stopped-recovery marker",
-  );
+  const markerPath =
+    agentName === "openclaw"
+      ? "/sandbox/.openclaw/workspace/.stopped-recovery-marker"
+      : "/sandbox/.deepagents/.state/.stopped-recovery-marker";
+  const writeMarker = `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)}`;
+  // #11165: retain agent-owned state while the managed login profile is broken.
+  // The ordinary healthy rebuild above this proof remains a separate control.
+  const prepared =
+    agentName === "langchain-deepagents-code"
+      ? await runtime.execSandboxAsRoot(
+          sandboxName,
+          [
+            "/bin/sh",
+            "-c",
+            `${writeMarker} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
+          ],
+          {
+            artifactName: `${prefix}-stopped-source-write-marker`,
+            sanitizeEnvironment: true,
+            timeoutMs: 10_000,
+          },
+        )
+      : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarker} && sync`], {
+          artifactName: `${prefix}-stopped-source-write-marker`,
+          env,
+        });
+  assertExitZero(prepared, "prepare the stopped-recovery source and marker");
   assertExitZero(
     await runtime.command(["kill", container], {
-      artifactName: "openclaw-stopped-source-kill",
+      artifactName: `${prefix}-stopped-source-kill`,
       timeoutMs: 30_000,
     }),
     "kill the identified test container once",
@@ -103,21 +119,23 @@ export async function proveKilledDockerOpenClawRecovery(
   assert(terminal, "OpenShell did not report the killed source as Error");
   await rebuildAndProveState();
   const replacement = await runtime.resolveSandboxResourceHandle(sandboxName, {
-    artifactName: "openclaw-stopped-replacement-container",
+    artifactName: `${prefix}-stopped-replacement-container`,
   });
   assert.notEqual(replacement, container);
   const restored = await sandbox.exec(sandboxName, ["cat", markerPath], {
-    artifactName: "openclaw-stopped-source-restored-marker",
+    artifactName: `${prefix}-stopped-source-restored-marker`,
     env,
   });
   assertExitZero(restored, "read restored workspace state");
   assert.equal(restored.stdout.trim(), marker);
-  await artifacts.writeJson("openclaw-stopped-source-recovery.json", {
+  await artifacts.writeJson(`${prefix}-stopped-source-recovery.json`, {
     applicable: true,
+    agentName,
+    ...(agentName === "langchain-deepagents-code" ? { sourceProfile: "broken-symlink" } : {}),
     sourceContainerId: container,
     replacementContainerId: replacement,
     sourcePhase: "Error",
-    workspacePreserved: true,
+    ...(agentName === "openclaw" ? { workspacePreserved: true } : { agentStatePreserved: true }),
     restorationProof,
   });
 }

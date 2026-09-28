@@ -481,7 +481,7 @@ sandbox remains ready after the read-only command.
 Registry targets on Podman require the unsupported-runtime refusal and no output file.
 They retain source identity observations, state checks, target-specific checks, and cleanup.
 Successful-export schema, secret, and pinned-consumer checks remain on Docker because v1alpha1 export does not support Podman.
-The fixture contract is covered in `support/e2e-phase-config-export-validation.test.ts`; runtime refusal and Brave gating are covered in `support/podman-config-export-refusal.test.ts`.
+The fixture contract is covered in `support/e2e-phase-config-export-validation.test.ts`; runtime refusal and Brave gating are covered in `support/brave-search-config.test.ts`.
 
 The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
 OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the

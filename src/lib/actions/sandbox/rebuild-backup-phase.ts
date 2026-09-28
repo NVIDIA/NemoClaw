@@ -74,7 +74,7 @@ export interface RebuildBackupPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState;
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -157,10 +157,10 @@ export async function runRebuildBackupPhase(
           input.runtimeSelection,
         );
   let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
-  input.capturedOpenClawState?.assertCurrent();
+  input.capturedAgentState?.assertCurrent();
   if (
     !preparedRecoveryManifest &&
-    !input.capturedOpenClawState &&
+    !input.capturedAgentState &&
     !input.staleRecovery &&
     (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
@@ -183,7 +183,7 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
-        ...(input.capturedOpenClawState ? ([input.capturedOpenClawState] as const) : ([] as const)),
+        ...(input.capturedAgentState ? ([input.capturedAgentState] as const) : ([] as const)),
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
