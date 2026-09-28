@@ -15,7 +15,13 @@ import {
   cliOpenShellSandboxPolicyReader,
   cliOpenShellSandboxPolicyWriter,
 } from "./sandbox-policy-cli";
-import { captureResolvedOpenshell, captureResolvedOpenshellAsync, runOpenshell } from "./runtime";
+import {
+  captureResolvedOpenshell,
+  captureResolvedOpenshellAsync,
+  getStatusProbeTimeoutMs,
+  runOpenshell,
+} from "./runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 const directories: string[] = [];
 
@@ -94,6 +100,20 @@ describe("runOpenshell", () => {
 
     expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOBUFS");
     expect(exit).not.toHaveBeenCalled();
+  });
+});
+
+describe("getStatusProbeTimeoutMs", () => {
+  it.each([
+    ["50", 50],
+    ["2147483647", 2147483647],
+    ["2147483648", OPENSHELL_PROBE_TIMEOUT_MS],
+    ["0", OPENSHELL_PROBE_TIMEOUT_MS],
+    ["invalid", OPENSHELL_PROBE_TIMEOUT_MS],
+  ])("resolves NEMOCLAW_STATUS_PROBE_TIMEOUT_MS=%s to %d", (value, expected) => {
+    vi.stubEnv("NEMOCLAW_STATUS_PROBE_TIMEOUT_MS", value);
+
+    expect(getStatusProbeTimeoutMs()).toBe(expected);
   });
 });
 

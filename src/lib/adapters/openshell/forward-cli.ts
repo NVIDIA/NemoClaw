@@ -7,6 +7,7 @@ import net from "node:net";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
+import { MAX_TIMER_DELAY_MS } from "../../core/timer";
 import { isValidName } from "../../name-validation";
 import {
   captureOpenshellCommandAsyncResult,
@@ -40,7 +41,6 @@ const DEFAULT_RELEASE_TIMEOUT_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_PROC_WORK_LIMIT = 50_000;
-const MAX_TIMER_TIMEOUT_MS = 2_147_483_647;
 const SAFE_FORWARD_SIGNALS = new Set([
   "SIGABRT",
   "SIGHUP",
@@ -423,7 +423,7 @@ function validRuntimeSelection(runtimeSelection: OpenShellRuntimeSelection): boo
 function validTimeout(timeoutMs: number | undefined): boolean {
   return (
     timeoutMs === undefined ||
-    (Number.isSafeInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_TIMER_TIMEOUT_MS)
+    (Number.isSafeInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_TIMER_DELAY_MS)
   );
 }
 
@@ -1185,7 +1185,7 @@ export function createCliOpenShellForwardAdapter(
     deps.pollIntervalMs !== undefined &&
     Number.isSafeInteger(deps.pollIntervalMs) &&
     deps.pollIntervalMs > 0 &&
-    deps.pollIntervalMs <= MAX_TIMER_TIMEOUT_MS
+    deps.pollIntervalMs <= MAX_TIMER_DELAY_MS
       ? deps.pollIntervalMs
       : DEFAULT_POLL_INTERVAL_MS;
   const run = deps.run ?? defaultRun;

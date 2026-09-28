@@ -13,6 +13,7 @@ import {
   type OpenShellRuntimeSelection,
 } from "../openshell/runtime-selection";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { parseTimerDelayMs } from "../../core/timer";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   buildSandboxExecMarkedCommand,
@@ -56,7 +57,7 @@ export async function executeSandboxExecCommandTransport(
   timeout: number,
   options: SandboxExecCommandOptions,
 ): Promise<SandboxCommandResult> {
-  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
+  const timeoutOverride = parseTimerDelayMs(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS);
   const completed = await deps.commandExecutor.runBuffered({
     sandboxName,
     target: options.gatewayName
@@ -65,9 +66,7 @@ export async function executeSandboxExecCommandTransport(
     command: ["sh", "-c", deps.buildSandboxExecMarkedCommand(command)],
     environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
     timeoutMilliseconds:
-      !options.honorCallerTimeout && Number.isFinite(timeoutOverride) && timeoutOverride > 0
-        ? timeoutOverride
-        : timeout,
+      !options.honorCallerTimeout && timeoutOverride !== undefined ? timeoutOverride : timeout,
   });
   if (completed.outcome.kind === "failed") {
     throw new SandboxCommandTransportError(completed.outcome.error.kind);
