@@ -641,14 +641,15 @@ The worker backend returns deterministic search results and HTTP 401, 403, 429, 
 The test removes its worker and temporary files after success or failure.
 
 The `brave-search` live target retains the Brave-specific isolation regression for #7425.
-It onboards a real OpenShell sandbox with a synthetic Brave credential, then reads the running OpenClaw gateway's `/proc` environment, starts a real `openclaw agent` command, and opens a fresh login shell.
+It onboards a real OpenShell sandbox with a synthetic Brave credential, then starts a real `openclaw agent` command and opens a fresh login shell.
 The agent probe waits for the command's wrapper to exec Node, inspects only that child, and terminates its process group after inspection; it does not assert an inference result.
-All three observations must show an absent key or an OpenShell placeholder; missing or unreadable process evidence fails.
+It observes its own child because Yama blocks `/proc` environment reads across unrelated process trees, including the already-running gateway.
+Both observations must show an absent key or an OpenShell placeholder; missing or unreadable process evidence fails.
 The test uses the `nvidia-inference` profile and never reads a real Brave secret.
 Its host curl wrapper routes validation to the loopback backend and delegates unrelated requests.
 A test-only Node preload intercepts only onboarding's optional Brave egress subprocess and returns a failed probe without sending the request.
 The OpenShell CLI and installed component paths remain unchanged, so the production component-integrity check reads the real binaries.
-Sandbox creation, provider attachment, the production isolation guard, and the three runtime observations still execute through real OpenShell.
+Sandbox creation, provider attachment, the production isolation guard, and the two runtime observations still execute through real OpenShell.
 The fixture verifies that validation ran and the configured Brave probe was intercepted, so disabled search cannot pass as isolation evidence.
 Cleanup destroys the sandbox and removes the mock backend, curl wrapper, and preload.
 Backend startup and request-report waits each have a five-second deadline; a failed wait terminates the worker and removes its temporary directory.

@@ -17,7 +17,7 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
-import { BRAVE_PROCESS_BOUNDARY, BRAVE_SHELL_BOUNDARY } from "./brave-search-helpers.ts";
+import { BRAVE_AGENT_BOUNDARY, BRAVE_SHELL_BOUNDARY } from "./brave-search-helpers.ts";
 
 const SANDBOX_NAME = "e2e-brave-search";
 
@@ -28,7 +28,6 @@ test(
     meta: {
       e2ePhases: [
         "onboard Brave-enabled OpenClaw sandbox with synthetic credentials",
-        "inspect running OpenClaw credential isolation",
         "inspect OpenClaw agent command credential isolation",
         "inspect fresh login shell credential isolation",
       ],
@@ -38,11 +37,10 @@ test(
     await artifacts.target.declare({
       id: "brave-search",
       boundary:
-        "real OpenShell Brave provider attachment, gateway and agent /proc environments, and fresh login shell; mocked Brave HTTP",
+        "real OpenShell Brave provider attachment, agent /proc environment, and fresh login shell; mocked Brave HTTP",
       sandboxName: SANDBOX_NAME,
       contracts: [
         "production onboarding attaches Brave using a synthetic credential",
-        "BRAVE_API_KEY is absent or an OpenShell placeholder in the running OpenClaw gateway",
         "BRAVE_API_KEY is absent or an OpenShell placeholder in the OpenClaw agent command",
         "BRAVE_API_KEY is absent or an OpenShell placeholder in a fresh login shell",
       ],
@@ -98,26 +96,13 @@ test(
       "blocked\n",
     );
 
-    progress.phase("inspect running OpenClaw credential isolation");
-    const running = await sandbox.exec(SANDBOX_NAME, ["python3", "-c", BRAVE_PROCESS_BOUNDARY], {
-      artifactName: "running-openclaw-brave-isolation",
+    progress.phase("inspect OpenClaw agent command credential isolation");
+    const agent = await sandbox.exec(SANDBOX_NAME, ["python3", "-c", BRAVE_AGENT_BOUNDARY], {
+      artifactName: "openclaw-agent-brave-isolation",
       env,
       redactionValues,
-      timeoutMs: 60_000,
+      timeoutMs: 30_000,
     });
-    expect(running.exitCode, resultText(running)).toBe(0);
-
-    progress.phase("inspect OpenClaw agent command credential isolation");
-    const agent = await sandbox.exec(
-      SANDBOX_NAME,
-      ["python3", "-c", BRAVE_PROCESS_BOUNDARY, "--launch-agent"],
-      {
-        artifactName: "openclaw-agent-brave-isolation",
-        env,
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
     expect(agent.exitCode, resultText(agent)).toBe(0);
 
     progress.phase("inspect fresh login shell credential isolation");

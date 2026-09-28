@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BRAVE_PROCESS_BOUNDARY, BRAVE_SHELL_BOUNDARY } from "../live/brave-search-helpers.ts";
+import { BRAVE_AGENT_BOUNDARY, BRAVE_SHELL_BOUNDARY } from "../live/brave-search-helpers.ts";
 
 import { startBraveBackend, writeBraveEgressPreload } from "../fixtures/brave-backend.ts";
 
@@ -47,20 +47,55 @@ describe("Brave runtime credential boundary probes", () => {
     ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY", 0],
     ["BRAVE_API_KEY=synthetic-raw-key", 98],
     ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY\0BRAVE_API_KEY=synthetic-raw-key", 98],
-  ])("classifies a running gateway environment without exposing %s", (environment, status) => {
+  ])("classifies a running agent environment without exposing %s", (environment, status) => {
     const root = temporaryDirectory();
     fs.mkdirSync(path.join(root, "123"));
-    fs.writeFileSync(path.join(root, "123/cmdline"), "openclaw-gateway\0");
+    fs.writeFileSync(path.join(root, "123/cmdline"), "node\0/app/openclaw.mjs\0agent\0");
     fs.writeFileSync(path.join(root, "123/environ"), environment);
-    const result = spawnSync("python3", ["-c", BRAVE_PROCESS_BOUNDARY, root], { encoding: "utf8" });
+    const result = spawnSync(
+      "python3",
+      ["-c", BRAVE_AGENT_BOUNDARY, "--inspect-process", path.join(root, "123")],
+      { encoding: "utf8" },
+    );
     expect(result.status).toBe(status);
     expect(result.stdout + result.stderr).toBe("");
   });
 
-  it("fails closed when no gateway exists", () => {
-    const result = spawnSync("python3", ["-c", BRAVE_PROCESS_BOUNDARY, temporaryDirectory()]);
+  it("fails closed when no agent exists", () => {
+    const result = spawnSync("python3", [
+      "-c",
+      BRAVE_AGENT_BOUNDARY,
+      "--inspect-process",
+      temporaryDirectory(),
+    ]);
     expect(result.status).toBe(97);
   });
+
+  it.each(["FileNotFoundError", "ProcessLookupError", "PermissionError"])(
+    "fails closed without output when the agent environment raises %s",
+    (errorType) => {
+      const processDirectory = temporaryDirectory();
+      fs.writeFileSync(path.join(processDirectory, "cmdline"), "node\0/app/openclaw.mjs\0agent\0");
+      const injectReadFailure = `import pathlib, sys
+from unittest.mock import patch
+probe = sys.argv.pop(1)
+read_bytes = pathlib.Path.read_bytes
+def read(path):
+    if path.name == "environ":
+        raise ${errorType}()
+    return read_bytes(path)
+with patch.object(pathlib.Path, "read_bytes", read):
+    exec(probe)
+`;
+      const result = spawnSync(
+        "python3",
+        ["-c", injectReadFailure, BRAVE_AGENT_BOUNDARY, "--inspect-process", processDirectory],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(97);
+      expect(result.stdout + result.stderr).toBe("");
+    },
+  );
 
   it.each([
     ["node\0/app/openclaw/openclaw.mjs\0agent\0", "", 0],
@@ -80,21 +115,30 @@ describe("Brave runtime credential boundary probes", () => {
     fs.mkdirSync(path.join(root, "456"));
     fs.writeFileSync(path.join(root, "456/cmdline"), "node\0/app/openclaw.mjs\0agent\0");
     fs.writeFileSync(path.join(root, "456/environ"), "BRAVE_API_KEY=another-process-raw-key");
-    const result = spawnSync("python3", ["-c", BRAVE_PROCESS_BOUNDARY, root, "agent", "123"], {
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      "python3",
+      ["-c", BRAVE_AGENT_BOUNDARY, "--inspect-process", path.join(root, "123")],
+      {
+        encoding: "utf8",
+      },
+    );
     expect(result.status).toBe(status);
     expect(result.stdout + result.stderr).toBe("");
   });
 
   it.each([
-    ["unavailable environment", "node\0/app/openclaw/openclaw.mjs\0gateway\0run\0"],
-    ["shell wrapper only", "sh\0-c\0openclaw gateway run\0"],
+    ["unavailable environment", "node\0/app/openclaw/openclaw.mjs\0agent\0"],
+    ["shell wrapper only", "sh\0-c\0openclaw agent\0"],
   ])("fails closed with %s", (_condition, command) => {
     const root = temporaryDirectory();
     fs.mkdirSync(path.join(root, "123"));
     fs.writeFileSync(path.join(root, "123/cmdline"), command);
-    const result = spawnSync("python3", ["-c", BRAVE_PROCESS_BOUNDARY, root]);
+    const result = spawnSync("python3", [
+      "-c",
+      BRAVE_AGENT_BOUNDARY,
+      "--inspect-process",
+      path.join(root, "123"),
+    ]);
     expect(result.status).not.toBe(0);
   });
 
@@ -136,7 +180,7 @@ describe("Brave runtime credential boundary probes", () => {
     ["creation", ["sandbox", "create", "--name", "test"]],
     [
       "running process",
-      ["sandbox", "exec", "--name", "test", "--", "python3", "-c", BRAVE_PROCESS_BOUNDARY],
+      ["sandbox", "exec", "--name", "test", "--", "python3", "-c", BRAVE_AGENT_BOUNDARY],
     ],
     ["login shell", ["sandbox", "exec", "--name", "test", "--", "sh", "-lc", BRAVE_SHELL_BOUNDARY]],
     [
