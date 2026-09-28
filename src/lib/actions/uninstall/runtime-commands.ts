@@ -23,6 +23,7 @@ interface RecordedModelRouter {
   pid: number | null;
   port: number | null;
   expected: boolean;
+  readFailed?: true;
 }
 
 export function readOnboardSessionModelRouter(stateDir: string): RecordedModelRouter {
@@ -36,6 +37,9 @@ export function readOnboardSessionModelRouter(stateDir: string): RecordedModelRo
       routerPid?: unknown;
       routerPort?: unknown;
     };
+    if (data === null || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("The onboarding session must be an object");
+    }
     if (data.routerPort === null && data.routerPid === null && data.routerCredentialHash === null) {
       return { pid: null, port: null, expected: false };
     }
@@ -60,8 +64,10 @@ export function readOnboardSessionModelRouter(stateDir: string): RecordedModelRo
         pid !== null ||
         typeof data.routerCredentialHash === "string",
     };
-  } catch {
-    /* ignore — State step deletes the file shortly anyway */
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { pid: null, port: null, expected: true, readFailed: true };
+    }
   }
   return { pid: null, port: null, expected: false };
 }

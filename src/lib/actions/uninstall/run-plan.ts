@@ -1165,6 +1165,12 @@ function stopModelRouter(
   // may have changed since the process started.
   const stopped = new Set<number>();
   const recorded = readOnboardSessionModelRouter(paths.nemoclawStateDir);
+  if (recorded.readFailed) {
+    runtime.warn(
+      `Model Router cleanup cannot read a valid onboarding session at ${path.join(paths.nemoclawStateDir, "onboard-session.json")}. Restore file access or repair the session before rerunning uninstall. The session was retained for recovery.`,
+    );
+    return false;
+  }
   if (recorded.port === null) {
     if (recorded.expected) {
       if (recorded.pid !== null) {
@@ -1195,6 +1201,33 @@ function stopModelRouter(
     }
     return true;
   }
+  // A scoped uninstall must leave shared inference services running, including
+  // their owning state and virtual environment. Do not advance to state removal
+  // while sibling gateways may still depend on this recorded router.
+  if (!scanOrphans) {
+    const process =
+      recorded.pid === null
+        ? { status: 1, stdout: "", stderr: "" }
+        : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
+    const listener = runtime.commandExists("lsof")
+      ? runtime.run("lsof", ["-ti", `:${String(recorded.port)}`], { env: runtime.env })
+      : null;
+    if (
+      process.status === 1 &&
+      !process.stdout.trim() &&
+      !process.stderr.trim() &&
+      listener?.status === 1 &&
+      !listener.stdout.trim() &&
+      !listener.stderr.trim()
+    ) {
+      runtime.log("The recorded shared Model Router is absent; continuing state cleanup.");
+      return true;
+    }
+    runtime.warn(
+      `Sibling gateways remain; kept the shared Model Router and its onboarding session and runtime files. Stop the verified router on port ${String(recorded.port)} only after its dependent sandboxes no longer need it, then rerun uninstall. Uninstall must confirm both process and listener absence before removing this shared state.`,
+    );
+    return false;
+  }
   const routerPort = recorded.port;
 
   const recordedPid = recorded.pid;
@@ -1204,11 +1237,6 @@ function stopModelRouter(
     isModelRouterPid(recordedPid, routerPort, runtime)
   ) {
     if (tryStopModelRouterPid(recordedPid, runtime)) stopped.add(recordedPid);
-  }
-
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway model router found");
-    return true;
   }
 
   if (!runtime.commandExists("lsof")) {
