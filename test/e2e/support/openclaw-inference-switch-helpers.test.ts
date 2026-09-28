@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,7 +14,29 @@ import {
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
+  stageNonRootCustomOpenClawImageDockerfile,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+describe("openclaw-inference-switch custom image fixture", () => {
+  it("bakes divergent model limits and restores the sandbox image user (#12033)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-image-fixture-"));
+    try {
+      const dockerfile = fs.readFileSync(
+        stageNonRootCustomOpenClawImageDockerfile(
+          home,
+          "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:test",
+        ),
+        "utf8",
+      );
+      expect(dockerfile).toContain('const staleModel = "nvidia/baked-stale-model";');
+      expect(dockerfile).toContain("model.contextWindow = 131072;");
+      expect(dockerfile).toContain("model.maxTokens = 4095;");
+      expect(dockerfile.trimEnd().endsWith("USER sandbox")).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

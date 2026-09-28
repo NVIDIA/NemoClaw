@@ -192,6 +192,139 @@ export interface PatchStagedDockerfileOptions {
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
+  reconcileCustomOpenClawModel?: boolean;
+}
+
+function appendCustomOpenClawModelReconcile(
+  dockerfile: string,
+  model: string,
+  explicitLimits: { contextWindow?: string; maxTokens?: string },
+): string {
+  if (!model || model.length > 512 || !isSafeModelId(model)) {
+    throw new Error("Custom OpenClaw model reconciliation requires a valid model identifier.");
+  }
+  const instructions = dockerfileInstructions(dockerfile);
+  const finalFromIndex = instructions.reduce(
+    (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
+    -1,
+  );
+  const finalUser = instructions
+    .slice(finalFromIndex + 1)
+    .reduce<DockerfileInstruction | null>(
+      (last, instruction) => (/^USER(?:\s|$)/i.test(instruction.text) ? instruction : last),
+      null,
+    );
+  const finalUserIdentity =
+    finalUser &&
+    /^USER\s+([A-Za-z_][A-Za-z0-9_-]*|[0-9]+)(?::(?:[A-Za-z_][A-Za-z0-9_-]*|[0-9]+))?$/i.exec(
+      finalUser.text,
+    );
+  if (!finalUserIdentity || /^(?:0|root)$/i.test(finalUserIdentity[1]!)) {
+    throw new Error(
+      "Custom OpenClaw Dockerfile must end with a non-root USER before NemoClaw can reconcile its model config.",
+    );
+  }
+
+  const encodedModel = Buffer.from(model, "utf8").toString("base64");
+  const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
+  return `${dockerfile.trimEnd()}
+
+# Reconcile inherited OpenClaw model metadata with this custom image's selected route.
+ARG NEMOCLAW_CUSTOM_MODEL_B64=${encodedModel}
+ARG NEMOCLAW_CUSTOM_MODEL_LIMITS_B64=${encodedLimits}
+USER root
+RUN NEMOCLAW_CUSTOM_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \\
+    NEMOCLAW_CUSTOM_MODEL_B64="\${NEMOCLAW_CUSTOM_MODEL_B64}" \\
+    NEMOCLAW_CUSTOM_MODEL_LIMITS_B64="\${NEMOCLAW_CUSTOM_MODEL_LIMITS_B64}" \\
+    /usr/bin/python3 -I - <<'PYNEMOCLAWCUSTOMMODEL'
+import base64
+import hashlib
+import json
+import os
+import re
+import stat
+
+config_path = os.environ["NEMOCLAW_CUSTOM_CONFIG_PATH"]
+hash_path = os.path.join(os.path.dirname(config_path), ".config-hash")
+model = base64.b64decode(os.environ["NEMOCLAW_CUSTOM_MODEL_B64"], validate=True).decode()
+limits = json.loads(
+    base64.b64decode(os.environ["NEMOCLAW_CUSTOM_MODEL_LIMITS_B64"], validate=True)
+)
+if re.fullmatch(r"[A-Za-z0-9._:/-]+", model) is None:
+    raise SystemExit("custom OpenClaw model identifier is invalid")
+if not isinstance(limits, dict) or set(limits) - {"contextWindow", "maxTokens"}:
+    raise SystemExit("custom OpenClaw model limits are invalid")
+for field, value in limits.items():
+    if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]*", value) is None:
+        raise SystemExit("custom OpenClaw model limits are invalid")
+    if field == "contextWindow" and int(value) > ${MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}:
+        raise SystemExit("custom OpenClaw context window is too large")
+
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+try:
+    config_fd = os.open(config_path, os.O_RDWR | os.O_CLOEXEC | nofollow)
+except FileNotFoundError:
+    raise SystemExit(0)
+try:
+    metadata = os.fstat(config_fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise OSError("OpenClaw config is not a regular unlinked file")
+    with os.fdopen(config_fd, "r+", encoding="utf-8", closefd=False) as config_file:
+        config = json.load(config_file)
+        qualified_model = model if model.startswith("inference/") else f"inference/{model}"
+        bare_model = model.removeprefix("inference/")
+        config.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})[
+            "primary"
+        ] = qualified_model
+        inference = config.setdefault("models", {}).setdefault("providers", {}).setdefault(
+            "inference", {}
+        )
+        models = inference.get("models")
+        if not isinstance(models, list) or not models:
+            models = [{}]
+            inference["models"] = models
+        first = models[0]
+        if not isinstance(first, dict):
+            first = {}
+            models[0] = first
+        model_changed = first.get("id") not in (bare_model, qualified_model)
+        first["id"] = bare_model
+        first["name"] = qualified_model
+        for field in ("contextWindow", "maxTokens"):
+            if field in limits:
+                first[field] = int(limits[field])
+            elif model_changed:
+                first.pop(field, None)
+        config_file.seek(0)
+        json.dump(config, config_file, indent=2)
+        config_file.write("\\n")
+        config_file.truncate()
+        config_file.flush()
+        os.fsync(config_fd)
+        config_file.seek(0)
+        digest = hashlib.sha256(config_file.read().encode()).hexdigest()
+
+    hash_fd = os.open(
+        hash_path,
+        os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC | nofollow,
+        stat.S_IMODE(metadata.st_mode),
+    )
+    try:
+        hash_metadata = os.fstat(hash_fd)
+        if not stat.S_ISREG(hash_metadata.st_mode) or hash_metadata.st_nlink != 1:
+            raise OSError("OpenClaw config hash is not a regular unlinked file")
+        os.fchown(hash_fd, metadata.st_uid, metadata.st_gid)
+        os.fchmod(hash_fd, stat.S_IMODE(metadata.st_mode))
+        os.ftruncate(hash_fd, 0)
+        os.write(hash_fd, f"{digest}  openclaw.json\\n".encode())
+        os.fsync(hash_fd)
+    finally:
+        os.close(hash_fd)
+finally:
+    os.close(config_fd)
+PYNEMOCLAWCUSTOMMODEL
+${finalUser.text}
+`;
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
@@ -703,6 +836,16 @@ export function patchStagedDockerfile(
           "trust anchor and external TLS through the corporate proxy may fail",
       );
     }
+  }
+  if (options.reconcileCustomOpenClawModel) {
+    dockerfile = appendCustomOpenClawModelReconcile(dockerfile, sanitizedModel, {
+      ...(contextWindow &&
+      POSITIVE_INT_RE.test(contextWindow) &&
+      Number(contextWindow) <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+        ? { contextWindow }
+        : {}),
+      ...(maxTokens && POSITIVE_INT_RE.test(maxTokens) ? { maxTokens } : {}),
+    });
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);

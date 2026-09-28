@@ -406,6 +406,39 @@ describe("prepareSandboxDockerfilePatch", () => {
     });
   });
 
+  it("selects build-time model reconciliation only for a custom OpenClaw image (#12033)", async () => {
+    const patchStagedDockerfile = vi.fn();
+
+    await prepareSandboxDockerfilePatch({
+      agent: { name: "openclaw" } as any,
+      fromDockerfile: "/repo/Containerfile",
+      sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      sandboxBaseTag: "latest",
+      stagedDockerfile: "/tmp/Dockerfile",
+      model: "selected-model",
+      chatUiUrl: "",
+      provider: "custom",
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        pullAndResolveBaseImageDigest: vi.fn(() => null),
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+        now: () => 1,
+      },
+    });
+
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toMatchObject({
+      agentName: "openclaw",
+      buildIdPolicy: "rewrite",
+      reconcileCustomOpenClawModel: true,
+      requireToolDisclosureContract: true,
+    });
+  });
+
   it("keeps the per-run rewrite for managed agents that consume the build id", async () => {
     const patchStagedDockerfile = vi.fn();
 

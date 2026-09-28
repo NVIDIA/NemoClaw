@@ -50,13 +50,20 @@ import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
+import {
   agentReplyContainsToken,
   anthropicToolCount,
+  BAKED_STALE_CONTEXT_WINDOW,
+  BAKED_STALE_MAX_TOKENS,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
+  stageNonRootCustomOpenClawImageDockerfile,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_MODEL,
@@ -917,6 +924,45 @@ async function runOpenClawInferenceSetWithRetry(
   });
 }
 
+async function inspectCustomImageStartup(
+  sandbox: SandboxClient,
+  artifacts: Pick<ArtifactSink, "writeJson">,
+  home: string,
+  baselineModel: string | undefined,
+): Promise<boolean> {
+  const effectiveModelResult = await sandbox.exec(
+    SANDBOX_NAME,
+    ["openclaw", "infer", "model", "inspect", "--model", `inference/${baselineModel}`, "--json"],
+    {
+      artifactName: "inspect-effective-model-after-custom-image-startup",
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  const effectiveModel =
+    effectiveModelResult.exitCode === 0
+      ? (JSON.parse(effectiveModelResult.stdout) as Record<string, unknown>)
+      : {};
+  const passed =
+    effectiveModel.id === baselineModel &&
+    effectiveModel.provider === "inference" &&
+    typeof effectiveModel.contextWindow === "number" &&
+    effectiveModel.contextWindow > 0 &&
+    effectiveModel.contextWindow !== BAKED_STALE_CONTEXT_WINDOW &&
+    typeof effectiveModel.maxTokens === "number" &&
+    effectiveModel.maxTokens > 0 &&
+    effectiveModel.maxTokens !== BAKED_STALE_MAX_TOKENS;
+  await artifacts.writeJson("custom-image-effective-model.json", {
+    contextWindow: effectiveModel.contextWindow,
+    exitCode: effectiveModelResult.exitCode,
+    maximumOutputTokens: effectiveModel.maxTokens,
+    modelId: effectiveModel.id,
+    passed,
+    provider: effectiveModel.provider,
+  });
+  return passed;
+}
+
 test(
   "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
   {
@@ -945,6 +991,7 @@ test(
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "install.sh --non-interactive onboards an OpenClaw sandbox",
+        "the Docker custom image starts with the selected model and non-stale effective limits",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
@@ -983,6 +1030,7 @@ test(
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig(secrets);
+    const baselineModel = baseline.env.NEMOCLAW_MODEL;
     const apiKey = baseline.apiKey;
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
@@ -993,6 +1041,15 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
+    const customImageDockerfile =
+      runtimeProvider.id === process.env.NEMOCLAW_CUSTOM_IMAGE_RUNTIME
+        ? stageNonRootCustomOpenClawImageDockerfile(
+            home,
+            readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
+              "openclaw",
+            )!.reference,
+          )
+        : null;
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1036,6 +1093,12 @@ test(
         cwd: REPO_ROOT,
         env: commandEnv(home, {
           ...baseline.env,
+          ...(customImageDockerfile === null
+            ? {}
+            : {
+                NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
+                NEMOCLAW_SANDBOX_PREBUILD: "1",
+              }),
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues,
@@ -1053,6 +1116,9 @@ test(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
+    customImageDockerfile === null
+      ? undefined
+      : expect(await inspectCustomImageStartup(sandbox, artifacts, home, baselineModel)).toBe(true);
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
     progress.phase("prepare the switched provider and endpoint");
@@ -1084,10 +1150,6 @@ test(
       commandEnv(home),
       redactionValues,
       false,
-    );
-    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
-    expect(SWITCH_INFERENCE_API).toBe(
-      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
     );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(

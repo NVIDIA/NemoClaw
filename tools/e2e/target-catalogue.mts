@@ -1172,6 +1172,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/onboard/dockerfile-patch.ts",
+      "src/lib/onboard/sandbox-dockerfile-patch-flow.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
       "scripts/patch-openclaw-device-self-approval.mts",
       "test/e2e/live/openclaw-admin-scope.ts",
@@ -1188,6 +1190,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      NEMOCLAW_CUSTOM_IMAGE_RUNTIME: "docker",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
