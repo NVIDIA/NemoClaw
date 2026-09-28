@@ -258,7 +258,7 @@ describe("full-uninstall bulk sandbox cleanup", () => {
   });
 
   it("revalidates explicit gateway state ownership inside the default root (#11831)", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-ownership-"));
+    const home = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-bulk-ownership-"));
     try {
       const gatewayStateDir = path.join(
         home,
@@ -316,7 +316,7 @@ describe("full-uninstall bulk sandbox cleanup", () => {
   });
 
   it("revalidates the custom gateway process before bulk cleanup (#11831)", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-process-"));
+    const home = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-bulk-process-"));
     try {
       const gatewayStateDir = path.join(home, "custom-gateway-state");
       ensureManagedGatewayStateRoot({
