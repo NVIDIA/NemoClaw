@@ -549,7 +549,7 @@ export function managedOpenClawHeartbeatProbe(
   return [
     configProbe,
     `cd ${shellQuote(path.dirname(configPath))}`,
-    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
+    `if test -e .config-hash || test -L .config-hash; then ${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null; fi`,
   ].join(" && ");
 }
 
@@ -598,7 +598,7 @@ export function managedImageOpenShellProbe(
     ...(agent === "openclaw"
       ? [
           probeStep(
-            "OpenClaw managed isolated heartbeat and configuration hash",
+            "OpenClaw managed isolated heartbeat and legacy configuration hash when present",
             managedOpenClawHeartbeatProbe(),
           ),
         ]

@@ -50,20 +50,34 @@ const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
 
 function runManagedOpenClawHeartbeatProbe(
   heartbeat: { every: string; isolatedSession: boolean },
-  postHashAppend = "",
+  hashState: "absent" | "matching" | "stale" | "dangling" = "absent",
 ) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-heartbeat-'$HOME`pwd`-"));
   const configPath = path.join(directory, "openclaw.json");
   try {
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { heartbeat } } }));
-    const hash = spawnSync("sha256sum", ["openclaw.json"], {
-      cwd: directory,
-      encoding: "utf8",
-    });
-    expect(hash.status, hash.stderr).toBe(0);
-    fs.writeFileSync(path.join(directory, ".config-hash"), hash.stdout);
-    fs.appendFileSync(configPath, postHashAppend);
-
+    const writeMatchingHash = () => {
+      const hash = spawnSync("sha256sum", ["openclaw.json"], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      expect(hash.status, hash.stderr).toBe(0);
+      fs.writeFileSync(path.join(directory, ".config-hash"), hash.stdout);
+    };
+    const hashSetups: Record<typeof hashState, () => void> = {
+      absent: () => undefined,
+      matching: writeMatchingHash,
+      stale: () => {
+        writeMatchingHash();
+        fs.appendFileSync(configPath, "\n");
+      },
+      dangling: () =>
+        fs.symlinkSync(
+          path.join(directory, "missing-config-hash"),
+          path.join(directory, ".config-hash"),
+        ),
+    };
+    hashSetups[hashState]();
     return spawnSync(
       "/bin/sh",
       ["-c", managedOpenClawHeartbeatProbe(configPath, process.execPath, "sha256sum")],
@@ -663,11 +677,20 @@ describe("protected managed-image runtime contract", () => {
     },
   );
 
-  it("accepts an isolated OpenClaw heartbeat with a matching configuration hash (#10262)", () => {
-    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true });
+  it.each([
+    ["no legacy configuration hash", "absent"],
+    ["a matching legacy configuration hash", "matching"],
+  ] as const)(
+    "accepts an isolated OpenClaw heartbeat with %s (#10262)",
+    (_description, hashState) => {
+      const result = runManagedOpenClawHeartbeatProbe(
+        { every: "2m", isolatedSession: true },
+        hashState,
+      );
 
-    expect(result.status, result.stderr).toBe(0);
-  });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   it.each([
     ["a main-session heartbeat", { every: "2m", isolatedSession: false }],
@@ -678,8 +701,20 @@ describe("protected managed-image runtime contract", () => {
     expect(result.status).toBe(1);
   });
 
-  it("rejects a stale managed OpenClaw configuration hash (#10262)", () => {
-    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true }, "\n");
+  it("rejects a stale legacy managed OpenClaw configuration hash (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe(
+      { every: "2m", isolatedSession: true },
+      "stale",
+    );
+
+    expect(result.status).toBe(1);
+  });
+
+  it("rejects a dangling legacy managed OpenClaw configuration hash entry (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe(
+      { every: "2m", isolatedSession: true },
+      "dangling",
+    );
 
     expect(result.status).toBe(1);
   });
