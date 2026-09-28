@@ -1337,9 +1337,14 @@ preflight_usage_notice_prompt() {
 
 # spin "label" cmd [args...]
 #   Runs a command in the background, showing a braille spinner until it exits.
-#   Stdout/stderr are captured; dumped only on failure.
+#   Stdout/stderr are captured; --show-output also prints them on success.
 #   Falls back to plain output when stdout is not a TTY (CI / piped installs).
 spin() {
+  local show_output=0
+  if [[ "${1:-}" == "--show-output" ]]; then
+    show_output=1
+    shift
+  fi
   local msg="$1"
   shift
 
@@ -1379,6 +1384,7 @@ spin() {
 
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
+    if [[ "$show_output" == 1 ]]; then cat "$log"; fi
   else
     printf "\r  ${C_RED}✗${C_RESET}  %s\n\n" "$msg"
     cat "$log" >&2
@@ -2476,11 +2482,11 @@ maybe_install_openshell_during_install() {
     macos_install_method="$(observed_macos_openshell_install_method)" || return 1
   fi
   if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
-    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+    spin --show-output "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
       && truthy_env "${FORCE_FRESH_INSTALL:-}" \
       && _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
-        spin "Verifying the installed OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+        spin --show-output "Verifying the installed OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
       warn "Homebrew reported an install failure after placing OpenShell; the pinned OpenShell verifier passed, so force-fresh installation will continue."
     else
       return 1
