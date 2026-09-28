@@ -296,11 +296,11 @@ check_local_provider_health() {
       curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
       ;;
     llmman-local)
-      # Any HTTP status counts: an authenticated daemon answers 401 without a key.
+      # 200 means unauthenticated access; 401/403 means an authenticated daemon is up.
       local status
-      status="$(curl -s -o /dev/null -w '%{http_code}' \
+      status="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' \
         "http://localhost:17434/api/version" 2>/dev/null)" || return 1
-      [ -n "$status" ] && [ "$status" != "000" ]
+      [ "$status" = "200" ] || [ "$status" = "401" ] || [ "$status" = "403" ]
       ;;
     *)
       return 1
