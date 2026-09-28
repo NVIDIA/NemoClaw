@@ -51,6 +51,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
   runFullE2eInferenceCommand,
+  retainFullE2eInferenceAvailability,
 } from "./full-e2e-inference-probe.ts";
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
@@ -949,17 +950,10 @@ test(
 
     const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
       runFullE2eInferenceCommand({
-        onEvidence: async (evidence) => {
-          await artifacts.writeJson(`${attempt.artifactName}-availability.json`, evidence);
-          // Brev retains the aggregate log after deleting the guest artifact directory.
-          console.log(
-            "NEMOCLAW_INFERENCE_AVAILABILITY",
-            JSON.stringify({
-              replyAttempt: attempt.attempt,
-              ...evidence,
-            }),
-          );
-        },
+        onEvidence: (evidence) =>
+          retainFullE2eInferenceAvailability(attempt.attempt, evidence, () =>
+            artifacts.writeJson(`${attempt.artifactName}-availability.json`, evidence),
+          ),
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,

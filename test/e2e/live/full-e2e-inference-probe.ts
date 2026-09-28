@@ -170,6 +170,16 @@ export function parseFullE2eInferenceResponse(body: string): FullE2eInferenceRes
   };
 }
 
+export async function retainFullE2eInferenceAvailability(
+  replyAttempt: number,
+  evidence: RetryEvidence,
+  writeArtifact: () => Promise<unknown>,
+): Promise<void> {
+  // Brev retains this log even if the guest artifact write fails.
+  console.log("NEMOCLAW_INFERENCE_AVAILABILITY", JSON.stringify({ replyAttempt, ...evidence }));
+  await writeArtifact();
+}
+
 /** Retry only an unavailable HTTP service on the stateless arithmetic probe. */
 export async function runFullE2eInferenceCommand<Result extends InferenceCommandResult>(options: {
   run: (attempt: number) => Promise<Result>;

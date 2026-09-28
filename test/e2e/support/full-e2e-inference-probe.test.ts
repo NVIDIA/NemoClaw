@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildFullE2eInferenceRequest,
@@ -12,6 +12,7 @@ import {
   parseFullE2eInferenceResponse,
   runFullE2eInferenceProbe,
   runFullE2eInferenceCommand,
+  retainFullE2eInferenceAvailability,
 } from "../live/full-e2e-inference-probe.ts";
 
 function commandResult(stdout: string, exitCode = 0, stderr = ""): InferenceCommandResult {
@@ -304,6 +305,35 @@ describe("full E2E sandbox inference probe", () => {
 
 describe("full E2E inference service availability", () => {
   const unavailable = commandResult("", 22, "curl: (22) The requested URL returned error: 503\n");
+
+  it("retains availability in the aggregate log when the artifact write fails", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const writeError = new Error("artifact write failed");
+    try {
+      await expect(
+        runFullE2eInferenceCommand({
+          run: async () => unavailable,
+          sleep: async () => {},
+          onEvidence: (evidence) =>
+            retainFullE2eInferenceAvailability(1, evidence, async () => {
+              expect(log).toHaveBeenCalledOnce();
+              throw writeError;
+            }),
+        }),
+      ).rejects.toBe(writeError);
+      expect(log.mock.calls[0][0]).toBe("NEMOCLAW_INFERENCE_AVAILABILITY");
+      expect(JSON.parse(log.mock.calls[0][1])).toMatchObject({
+        replyAttempt: 1,
+        outcome: "exhausted",
+        attempts: [
+          { attempt: 1, failureClass: "transient-external", retryScheduled: true },
+          { attempt: 2, failureClass: "transient-external", retryScheduled: false },
+        ],
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
 
   it("retains both attempts when HTTP 503 recovers", async () => {
     const attempts: number[] = [];
