@@ -1111,21 +1111,34 @@ function writeArchiveRange(descriptor: number, position: number, content: Buffer
   return true;
 }
 
+function withoutHermesMachineLocalApiKey(payload: Buffer): Buffer {
+  const source = payload.toString("latin1");
+  const sanitized = source.replace(
+    /^[\t ]*(?:export[\t ]+)?API_SERVER_KEY[\t ]*=[^\r\n]*(?:\r?\n|$)/gmu,
+    (line) => {
+      const newline = line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "";
+      return `${" ".repeat(line.length - newline.length)}${newline}`;
+    },
+  );
+  return sanitized === source ? payload : Buffer.from(sanitized, "latin1");
+}
+
 /**
- * Remove OpenClaw's machine-local gateway authority from the private archive
- * copy. The live native tree is never modified, and all other native state is
- * retained. Keeping the tar member at its original byte length lets this stay
- * a bounded, single-copy operation; JSON permits the trailing space padding.
+ * Remove machine-local runtime authority from the private archive copy. The
+ * live native tree is never modified, and all other native state is retained.
+ * Keeping each tar member at its original byte length makes this a bounded,
+ * single-copy operation. Replacement startup creates fresh local authority.
  */
-function sanitizeOpenClawMachineLocalArchiveConfig(archivePath: string): string | null {
-  const target = ".openclaw/openclaw.json";
+function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
+  const openClawTarget = ".openclaw/openclaw.json";
+  const hermesTarget = ".hermes/.env";
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
     const archiveSize = fstatSync(descriptor).size;
     let offset = 0;
     let nextPath: string | null = null;
-    let found = false;
+    const found = new Set<string>();
     while (offset < archiveSize) {
       const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
       if (!header) return "could not read the native archive";
@@ -1157,35 +1170,44 @@ function sanitizeOpenClawMachineLocalArchiveConfig(archivePath: string): string 
         const entry = nextPath ?? headerPath;
         nextPath = null;
         const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-        if (normalized === target) {
-          if (found) return "the native archive contains duplicate OpenClaw configuration";
-          found = true;
+        if (normalized === openClawTarget || normalized === hermesTarget) {
+          if (found.has(normalized)) {
+            return `the native archive contains duplicate machine-local configuration at '${normalized}'`;
+          }
+          found.add(normalized);
           if (type !== "0" && type !== "\0" && type !== "7") {
-            return "the OpenClaw configuration is not a regular archive member";
+            return `the machine-local configuration at '${normalized}' is not a regular archive member`;
           }
           if (size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
-            return "the OpenClaw configuration is too large to sanitize safely";
+            return `the machine-local configuration at '${normalized}' is too large to sanitize safely`;
           }
           const payload = readArchiveRange(descriptor, dataOffset, size);
-          if (!payload) return "could not read the OpenClaw configuration";
-          let config: unknown;
-          try {
-            config = JSON.parse(payload.toString("utf8"));
-          } catch {
-            return "the OpenClaw configuration is not valid JSON";
-          }
-          if (!isObjectRecord(config)) return "the OpenClaw configuration is not an object";
-          const gateway = config.gateway;
-          if (isObjectRecord(gateway) && Object.hasOwn(gateway, "auth")) {
-            delete gateway.auth;
-            const sanitized = Buffer.from(`${JSON.stringify(config)}\n`, "utf8");
-            if (sanitized.byteLength > size) {
-              return "the OpenClaw configuration cannot be sanitized in place";
+          if (!payload) return `could not read the machine-local configuration at '${normalized}'`;
+          let replacement = payload;
+          if (normalized === hermesTarget) {
+            replacement = withoutHermesMachineLocalApiKey(payload);
+          } else {
+            let config: unknown;
+            try {
+              config = JSON.parse(payload.toString("utf8"));
+            } catch {
+              return "the OpenClaw configuration is not valid JSON";
             }
-            const replacement = Buffer.alloc(size, 0x20);
-            sanitized.copy(replacement);
+            if (!isObjectRecord(config)) return "the OpenClaw configuration is not an object";
+            const gateway = config.gateway;
+            if (isObjectRecord(gateway) && Object.hasOwn(gateway, "auth")) {
+              delete gateway.auth;
+              const sanitized = Buffer.from(`${JSON.stringify(config)}\n`, "utf8");
+              if (sanitized.byteLength > size) {
+                return "the OpenClaw configuration cannot be sanitized in place";
+              }
+              replacement = Buffer.alloc(size, 0x20);
+              sanitized.copy(replacement);
+            }
+          }
+          if (replacement !== payload) {
             if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
-              return "could not sanitize the OpenClaw configuration";
+              return `could not sanitize the machine-local configuration at '${normalized}'`;
             }
           }
         }
@@ -1194,7 +1216,7 @@ function sanitizeOpenClawMachineLocalArchiveConfig(archivePath: string): string 
     }
     return offset === archiveSize ? null : "the native archive is malformed";
   } catch (error) {
-    return `could not sanitize the OpenClaw configuration: ${error instanceof Error ? error.message : String(error)}`;
+    return `could not sanitize machine-local configuration: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
@@ -1876,12 +1898,10 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
-    if (agentName === "openclaw") {
-      const sanitationFailure = sanitizeOpenClawMachineLocalArchiveConfig(archivePath);
-      if (sanitationFailure) {
-        rmSync(backupPath, { recursive: true, force: true });
-        return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
-      }
+    const sanitationFailure = sanitizeMachineLocalArchiveConfig(archivePath);
+    if (sanitationFailure) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
     const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
     if (credentialViolation) {

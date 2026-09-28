@@ -452,6 +452,78 @@ describe("complete native home persistence", () => {
     }
   });
 
+  it("removes only Hermes machine-local API authority from the archive copy", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const envPath = path.join(nativeRoot, ".hermes", ".env");
+      const source = [
+        `API_SERVER_KEY=${"a".repeat(64)}`,
+        "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE",
+        "LOG_LEVEL=info",
+        "",
+      ].join("\n");
+      fs.mkdirSync(path.dirname(envPath), { recursive: true });
+      fs.writeFileSync(envPath, source);
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: vi.fn(),
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => {
+          const archivedEnv = fs.readFileSync(path.join(root, ".hermes", ".env"), "utf8");
+          if (
+            archivedEnv.includes("API_SERVER_KEY=") ||
+            !archivedEnv.includes("OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE") ||
+            !archivedEnv.includes("LOG_LEVEL=info")
+          ) {
+            throw new Error("archived Hermes environment was not narrowly sanitized");
+          }
+        },
+        ".hermes/.env",
+      );
+      expect(fs.readFileSync(envPath, "utf8")).toBe(source);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("allows the canonical public JWT documentation vector in dependency tests", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-jwt-fixture-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const fixturePath = path.join(nativeRoot, "node_modules", "zod", "tests", "string.test.ts");
+      const publicJwt = [
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      ].join(".");
+      fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
+      fs.writeFileSync(fixturePath, `expect(parse(${JSON.stringify(publicJwt)})).toBe(true);\n`);
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: vi.fn(),
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("round-trips unknown home, workspace, package, plugin, hook, cron, and child-agent state", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-home-"));
     const oldPath = process.env.PATH;

@@ -219,6 +219,17 @@ describe("textContainsHighConfidenceCredential", () => {
     );
   });
 
+  it("allows only the canonical public JWT documentation vector", () => {
+    const publicJwt = [
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+      "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
+      "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    ].join(".");
+
+    expect(textContainsHighConfidenceCredential(publicJwt)).toBe(false);
+    expect(textContainsHighConfidenceCredential(makeJwtFixture())).toBe(true);
+  });
+
   it("continues to flag real Slack credentials", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
