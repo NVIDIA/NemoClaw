@@ -386,6 +386,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).not.toContain("${RUNNER_TEMP}/openshell-sdk");
     expect(source).toContain(`[[ "$(npm --version)" == "${REVIEWED_NPM_VERSION}" ]]`);
     expect(source).not.toContain("deb.nodesource.com");
+    const staleNpmRemoval = source.indexOf("sudo rm -rf /usr/local/lib/node_modules/npm");
+    const nodeArchiveExtraction = source.indexOf('sudo tar -xzf "$node_tmp"');
+    expect(staleNpmRemoval).toBeGreaterThan(-1);
+    expect(nodeArchiveExtraction).toBeGreaterThan(staleNpmRemoval);
   });
 
   it.each([

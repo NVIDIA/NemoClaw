@@ -309,6 +309,8 @@ else
     rm -f "$node_tmp"
     fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
+  # The archive does not delete files left by the bundled npm from an older Node release.
+  sudo rm -rf /usr/local/lib/node_modules/npm
   sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
   rm -f "$node_tmp"
   [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
