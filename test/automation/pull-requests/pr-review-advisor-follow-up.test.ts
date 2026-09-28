@@ -51,7 +51,7 @@ describe("PR Review Advisor follow-up contracts", () => {
           submitted_at: "2026-09-14T14:00:00Z",
           author_association: "MEMBER",
           user: { login: "maintainer-d", type: "User" },
-          body: "Blocker D was later cleared.",
+          body: "Blocker D only has a stale approval.",
         },
         {
           id: 25,
@@ -93,23 +93,21 @@ describe("PR Review Advisor follow-up contracts", () => {
     );
 
     expect(selected).toMatchObject({
-      reviewId: 23,
+      reviewId: 24,
       reviewedHeadSha: "a".repeat(40),
       state: "CHANGES_REQUESTED",
-      reviewer: "maintainer-a, maintainer-c",
+      reviewer: "maintainer-a, maintainer-c, maintainer-d",
       inlineComments: [
         { path: "src/a.ts", line: 10, body: "Recheck A." },
         { path: "src/b.ts", line: 20, body: "Recheck B." },
         { path: "src/c.ts", line: 30, body: "Recheck C." },
+        { path: "src/d.ts", line: 40, body: "Recheck D." },
       ],
     });
     expect(selected?.body).toContain("Blocker A remains unresolved.");
     expect(selected?.body).toContain("Blocker B was introduced later.");
     expect(selected?.body).toContain("Blocker C is independently unresolved.");
-    expect(selected?.body).not.toContain("Blocker D was later cleared.");
-    expect(selected?.inlineComments).not.toContainEqual(
-      expect.objectContaining({ path: "src/d.ts" }),
-    );
+    expect(selected?.body).toContain("Blocker D only has a stale approval.");
   });
 
   it("falls back to the latest trusted reviewer when the preferred reviewer has no review", () => {
