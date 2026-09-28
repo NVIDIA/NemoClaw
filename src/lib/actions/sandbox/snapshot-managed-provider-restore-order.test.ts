@@ -58,6 +58,18 @@ const providerRestore = vi.hoisted(() => {
     events.push("provider-restore-proof");
     return { phase: "validated" };
   });
+  const beginOpenClawBackupQuiesce = vi.fn(async () => {
+    events.push("begin-openclaw-backup-quiesce");
+    return { ok: true as const, window: { sandboxName: "alpha", kind: "backup" as const } };
+  });
+  const finishOpenClawPostRestoreDoctor = vi.fn(async () => {
+    events.push("finish-openclaw-native-start");
+    return { ok: true as const };
+  });
+  const abortOpenClawPostRestoreDoctor = vi.fn(async () => {
+    events.push("abort-openclaw-backup-quiesce");
+    return { ok: true as const };
+  });
   return {
     events,
     source,
@@ -66,14 +78,24 @@ const providerRestore = vi.hoisted(() => {
     requireCurrentSnapshotRuntimeProvider,
     prepareSandboxRuntimeRestore,
     confirmSandboxRuntimeRestore,
+    beginOpenClawBackupQuiesce,
+    finishOpenClawPostRestoreDoctor,
+    abortOpenClawPostRestoreDoctor,
   };
 });
 
 vi.mock("./snapshot/dependencies", () => ({
+  abortOpenClawPostRestoreDoctor: providerRestore.abortOpenClawPostRestoreDoctor,
   assertSandboxSnapshotCommandAvailable: vi.fn(),
   backupSandboxStateWithManagedAuthority: vi.fn(),
+  beginOpenClawBackupQuiesce: providerRestore.beginOpenClawBackupQuiesce,
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
+  finishOpenClawPostRestoreDoctor: providerRestore.finishOpenClawPostRestoreDoctor,
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+  })),
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
   prepareSandboxRuntimeRestore: providerRestore.prepareSandboxRuntimeRestore,
   readManagedSnapshotProfileAuthority: providerRestore.readManagedSnapshotProfileAuthority,
@@ -183,9 +205,12 @@ describe("managed snapshot provider restore ordering", () => {
       await runSandboxSnapshot("alpha", { kind: "restore" });
 
       expect(providerRestore.events).toEqual([
-        ...Array<string>(providerChecks).fill("provider-preflight"),
+        "provider-preflight",
+        ...(agent === "openclaw" ? ["begin-openclaw-backup-quiesce"] : []),
+        ...Array<string>(providerChecks - 1).fill("provider-preflight"),
         "filesystem-restore",
         "provider-restore-proof",
+        ...(agent === "openclaw" ? ["finish-openclaw-native-start"] : []),
       ]);
       expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(providerChecks);
       expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
@@ -218,7 +243,12 @@ describe("managed snapshot provider restore ordering", () => {
       exitCode: 1,
     });
 
-    expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
+    expect(providerRestore.events).toEqual([
+      "provider-preflight",
+      "begin-openclaw-backup-quiesce",
+      "provider-preflight-rejected",
+      "abort-openclaw-backup-quiesce",
+    ]);
     expect(fixture.restoreSandboxStateMock).toHaveBeenCalledWith(
       "alpha",
       "/tmp/backup-alpha",

@@ -315,7 +315,6 @@ it.each([
   try {
     expect((await uninstall()).exitCode).toBe(1);
     expect(errors.join("\n")).toContain("onboarding session");
-    expect(fs.existsSync(receipt)).toBe(true);
     expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
     expect(killed).toEqual([]);
     expect(

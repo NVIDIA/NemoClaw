@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { setDotpath, type OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
@@ -129,7 +130,7 @@ describe("runInferenceSet context window", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       };
-      let persistedConfig = ollamaConfig();
+      const persistedConfig = ollamaConfig();
       const deps = createDeps({
         config: structuredClone(persistedConfig),
         entry,
@@ -148,12 +149,20 @@ describe("runInferenceSet context window", () => {
         Object.assign(entry, updates);
         return true;
       });
-      deps.calls.writeSandboxConfig
+      deps.calls.setOpenClawConfigValues
         .mockImplementationOnce(() => {
           throw new Error("sandbox exec crashed");
         })
-        .mockImplementation((_name, _target, config) => {
-          persistedConfig = structuredClone(config);
+        .mockImplementation((_name: string, updates: readonly OpenClawConfigUpdate[]) => {
+          const provider = updates.find(
+            (update) => update.dotpath === "models.providers.inference",
+          )!;
+          const primary = updates.find(
+            (update) => update.dotpath === "agents.defaults.model.primary",
+          )!;
+          setDotpath(persistedConfig, provider.dotpath, structuredClone(provider.value));
+          setDotpath(persistedConfig, primary.dotpath, primary.value);
+          setDotpath(persistedConfig, "models.mode", "merge");
         });
       const options = {
         provider: "compatible-endpoint",
@@ -164,9 +173,7 @@ describe("runInferenceSet context window", () => {
         noVerify: true,
       };
 
-      await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
-        inSandboxConfigSynced: false,
-      });
+      await expect(runInferenceSet(options, deps)).rejects.toThrow("sandbox exec crashed");
       expect(entry.endpointUrl).toBe(options.endpointUrl);
       expect(entry.openClawConfigSyncPending).toBe(true);
       expect(inferenceModels(persistedConfig)[0].contextWindow).toBe(131072);
@@ -178,7 +185,7 @@ describe("runInferenceSet context window", () => {
     },
   );
 
-  it.each(["hash", "receipt"])(
+  it.each(["native response", "session", "receipt"])(
     "retains the pending route when %s completion fails",
     async (failure) => {
       const config = ollamaConfig();
@@ -189,7 +196,21 @@ describe("runInferenceSet context window", () => {
         model: "llama3.2:3b",
       };
       let rejectReceipt = failure === "receipt";
-      const deps = createDeps({ config, entry, session: baseSession(entry), contextWindow: 16384 });
+      const deps = createDeps({
+        config: structuredClone(config),
+        entry,
+        session: baseSession(entry),
+        contextWindow: 16384,
+      });
+      deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(config));
+      const updateSession = deps.calls.updateSession.getMockImplementation()!;
+      deps.calls.updateSession.mockImplementationOnce(
+        failure === "session"
+          ? () => {
+              throw new Error("session unavailable");
+            }
+          : updateSession,
+      );
       deps.calls.updateSandbox.mockImplementation((_name, updates) => {
         const rejected =
           rejectReceipt &&
@@ -198,23 +219,40 @@ describe("runInferenceSet context window", () => {
         Object.assign(entry, rejected ? {} : updates);
         return !rejected;
       });
-      deps.calls.recomputeSandboxConfigHash.mockImplementationOnce(
-        failure === "hash"
-          ? () => {
-              throw new Error("hash unavailable");
-            }
-          : () => undefined,
-      );
+      const persistNativeValues = (_name: string, updates: readonly OpenClawConfigUpdate[]) => {
+        const provider = updates.find((update) => update.dotpath === "models.providers.inference")!;
+        const primary = updates.find(
+          (update) => update.dotpath === "agents.defaults.model.primary",
+        )!;
+        setDotpath(config, provider.dotpath, structuredClone(provider.value));
+        setDotpath(config, primary.dotpath, primary.value);
+        setDotpath(config, "models.mode", "merge");
+      };
+      deps.calls.setOpenClawConfigValues
+        .mockImplementation(persistNativeValues)
+        .mockImplementationOnce(
+          failure === "native response"
+            ? (name: string, updates: readonly OpenClawConfigUpdate[]) => {
+                persistNativeValues(name, updates);
+                throw new Error("native response unavailable");
+              }
+            : persistNativeValues,
+        );
       const options = { provider: "ollama-local", model: "qwen2.5:7b", noVerify: true };
 
-      await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
-        inSandboxConfigSynced: false,
-      });
+      await expect(runInferenceSet(options, deps)).rejects.toThrow(
+        failure === "native response"
+          ? "native response unavailable"
+          : failure === "session"
+            ? "session unavailable"
+            : "pending synchronization record could not be cleared",
+      );
       expect(entry.openClawConfigSyncPending).toBe(true);
       expect(inferenceModels(config)[0].contextWindow).toBe(16384);
       expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
       rejectReceipt = false;
       await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
+        configChanged: false,
         inSandboxConfigSynced: true,
       });
       expect(entry.openClawConfigSyncPending).toBeUndefined();

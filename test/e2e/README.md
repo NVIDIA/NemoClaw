@@ -222,6 +222,10 @@ Cloud onboarding checks that migrated credentials are removed and unrelated lega
 remain, with redaction applied before assertion formatting. Credential-store tests cover
 equal-valued unrelated fields, complete-file deletion when no unrelated entries remain,
 and preservation after failed migration.
+Cloud onboarding also downloads a leading-hyphen file and directory through the installed CLI,
+checks their bytes, and verifies that a leading-hyphen symbolic-link source is refused without
+replacing the host destination. Source tests own path normalization and publication safety;
+this live check owns the real CLI, OpenShell transfer, and sandbox filesystem boundary.
 
 If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
 OpenShell supervisor logs and the runtime container's state and startup output
@@ -347,6 +351,13 @@ removed. Their production-image security coverage now belongs to
 `managed-image-openclaw-security` job in `.github/workflows/sandbox-images.yaml`. Keep real shell,
 installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
 boundaries are the behavior under test.
+
+The managed-image test retains final-image module loading, system shell environment loading,
+protected blueprint directories, and writable plugin state. Source tests own environment generation
+and blueprint apply/snapshot logic; the image test does not repeat the fake-OpenShell apply sequence
+or its progress messages. Configuration hash, seal, and normalizer checks ended with those retired
+implementations. `test/e2e-non-root-smoke.sh`, run by `pr-self-hosted.yaml`, retains the entrypoint
+check under `no-new-privileges`.
 
 ## Platform Evidence
 

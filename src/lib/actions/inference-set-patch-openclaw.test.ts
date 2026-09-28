@@ -13,6 +13,35 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it.each([undefined, null, 16384])(
+    "updates only the selected model's context when the resolved window is %s",
+    (contextWindow) => {
+      const otherModel = { id: "other", contextWindow: 65536, maxTokens: 4096 };
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/selected" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [otherModel, { id: "selected", contextWindow: 131072 }],
+            },
+          },
+        },
+      };
+
+      patchOpenClawInferenceConfig(config, "compatible-endpoint", "selected", null, contextWindow);
+
+      const models = providerModels(config, "inference");
+      expect(models).toHaveLength(2);
+      expect(models[0]).toEqual({ id: "other", contextWindow: 65536, maxTokens: 4096 });
+      expect(models[1].id).toBe("selected");
+      expect(Object.hasOwn(models[1], "contextWindow")).toBe(contextWindow !== null);
+      expect(models[1].contextWindow).toBe(
+        contextWindow === null ? undefined : (contextWindow ?? 131072),
+      );
+    },
+  );
+
   it("writes provider-qualified model refs without preserving route-specific context", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
@@ -61,6 +90,14 @@ describe("patchOpenClawInferenceConfig", () => {
               name: "inference/nvidia/nemotron-3-super-120b-a12b",
               maxTokens: 8192,
               reasoning: true,
+            },
+            {
+              id: "moonshotai/kimi-k2.6",
+              name: "inference/moonshotai/kimi-k2.6",
+              contextWindow: 131072,
+              maxTokens: 8192,
+              reasoning: true,
+              compat: { supportsStore: false },
             },
           ],
         },
@@ -117,7 +154,11 @@ describe("patchOpenClawInferenceConfig", () => {
         baseUrl: "https://inference.local/v1",
         apiKey: "unused",
         api: "openai-completions",
-        models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+        models: [
+          { id: "nvidia/new-model", name: "inference/nvidia/new-model" },
+          { id: "old-model", name: "inference/nvidia/old-model" },
+          { id: "secondary-model", name: "inference/nvidia/secondary-model" },
+        ],
       },
     });
   });
@@ -289,6 +330,7 @@ describe("patchOpenClawInferenceConfig", () => {
         name: "anthropic/claude-sonnet-4-6",
         maxTokens: 2048,
       },
+      { id: "old-model", name: "anthropic/old-model", maxTokens: 2048 },
     ]);
   });
 

@@ -100,8 +100,8 @@ Do not use `observedAt` as build identity.
 When `DOCKER_CONTEXT` is unset, the report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
 `host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
-`DOCKER_CONTEXT` overrides `DOCKER_HOST`, matching the Docker CLI, and NemoClaw never replaces a selected context with a discovered fallback socket.
-When `DOCKER_CONTEXT` names a context, NemoClaw resolves that context to its endpoint, so readiness, onboarding, and every later Docker command measure the daemon you selected.
+`DOCKER_HOST` overrides `DOCKER_CONTEXT`, matching Docker CLI behavior when both variables are set.
+When `DOCKER_HOST` is unset and `DOCKER_CONTEXT` names a context, NemoClaw resolves that context to its endpoint, so readiness, onboarding, and every later Docker command measure the daemon you selected.
 A context that resolves to an absolute local `unix://` socket becomes the selected `DOCKER_HOST`.
 A context that does not resolve, or that names any other endpoint, is reported through `host.docker.host_invalid` and the `invalid_docker_host` advisory instead of falling back to the default Docker socket.
 
@@ -176,7 +176,7 @@ It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown`
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
-The `host.platform.n1x_wsl` qualification applies when the bounded CUDA proof validates one GPU whose normalized NVIDIA identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
+The `host.platform.n1x_wsl` qualification applies when the bounded CUDA proof validates one GPU whose normalized NVIDIA identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 It is `qualified` only for Linux ARM64 WSL with an available NVIDIA GPU and a successful proof whose provider identity matches Docker Desktop or the selected provider-owned runtime.
 The capability is `present` only when that qualification passes.
 Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`, remains Docker Desktop-only, and cannot reuse an unproved GPU name.
