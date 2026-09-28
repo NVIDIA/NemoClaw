@@ -222,6 +222,10 @@ Cloud onboarding checks that migrated credentials are removed and unrelated lega
 remain, with redaction applied before assertion formatting. Credential-store tests cover
 equal-valued unrelated fields, complete-file deletion when no unrelated entries remain,
 and preservation after failed migration.
+Cloud onboarding also downloads a leading-hyphen file and directory through the installed CLI,
+checks their bytes, and verifies that a leading-hyphen symbolic-link source is refused without
+replacing the host destination. Source tests own path normalization and publication safety;
+this live check owns the real CLI, OpenShell transfer, and sandbox filesystem boundary.
 
 If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
 OpenShell supervisor logs and the runtime container's state and startup output
