@@ -66,10 +66,16 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
     );
   }
 
-  // Note: The --require-oauth flag is recorded in the entry for future enforcement
-  // but is NOT currently enforced at the credential boundary (provider attachment).
-  // OpenShell does not yet validate OAuth exchanges at the provider boundary.
-  // This function only validates transport compatibility (SSE required for OAuth).
+  // --require-oauth requires SSE transport; HTTPS is validated at the add action boundary.
+  // OAuth exchange verification is NOT yet implemented at the credential boundary.
+  // The --require-oauth flag is recorded for future enforcement at the provider boundary.
+  if (requireOAuth && transport !== "sse") {
+    throw new McpBridgeError(
+      "--require-oauth requires SSE transport (--transport sse) with an HTTPS endpoint.",
+      2,
+      "supply-chain",
+    );
+  }
 }
 
 /**

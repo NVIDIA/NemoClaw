@@ -735,9 +735,13 @@ async function updateMcpBridgeDenyToolsUnlocked(
   }
   // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
-  const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
+  const {
+    denyTools: _previousDenyTools,
+    allowTools: _previousAllowTools,
+    ...entryWithoutTools
+  } = storedEntry;
   const updatedEntry: McpSourceEntry = {
-    ...entryWithoutDenyTools,
+    ...entryWithoutTools,
     ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
     allowedIps: [...target.addresses],
   };
@@ -893,7 +897,7 @@ async function addMcpBridgeUnlocked(
     ...(providerName ? { providerName } : {}),
     policyName,
     ...(serverIdentity ? { serverIdentity } : {}),
-    transport,
+    transport: options.transport ?? transport,
     ...(options.requireOAuth ? { requireOAuth: true } : {}),
   };
 
