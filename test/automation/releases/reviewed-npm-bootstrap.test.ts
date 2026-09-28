@@ -81,6 +81,25 @@ describe("reviewed npm bootstrap", () => {
     }
   });
 
+  it("preserves a causal pack failure from npm's private debug log (#12192)", () => {
+    const fixture = runReviewedNpmBootstrap({ packFailureDebugLog: true });
+    try {
+      const output = `${fixture.result.stdout}\n${fixture.result.stderr}`;
+      expect(fixture.result.status).toBe(47);
+      expect(output).toContain("reviewed npm pack failed (exit 47)");
+      expect(output).toContain("npm error code E_FIXTURE_PACK");
+      expect(output).toContain("verbose diagnostic line 300");
+      expect(output).toContain("<REDACTED>");
+      expect(output).toContain("<REDACTED_URL>");
+      expect(output).not.toContain("fixture-secret-token");
+      expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(4_096);
+      expect(fixture.npmInvocations).toHaveLength(1);
+      expect(fixture.installCalled).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it.each([
     [
       "malformed version",
@@ -167,7 +186,7 @@ describe("reviewed npm bootstrap", () => {
       expect(result.status).toBe(0);
       expect(npmInvocations).toHaveLength(3);
       expect(npmInvocations[0]).toMatch(
-        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --ignore-scripts --no-audit --no-fund$/,
+        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --logs-dir .*\/npm-logs --logs-max 1 --ignore-scripts --no-audit --no-fund$/,
       );
       expect(npmInvocations[1]).toMatch(
         /^install --global .*\/npm-12\.0\.2\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
@@ -188,7 +207,7 @@ describe("reviewed npm bootstrap", () => {
     try {
       expect(fixture.result.status).toBe(0);
       expect(fixture.npmInvocations[0]).toMatch(
-        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --ignore-scripts --no-audit --no-fund$/,
+        /^pack npm@12\.0\.2 --pack-destination .* --userconfig \/dev\/null --registry https:\/\/registry\.npmjs\.org\/ --logs-dir .*\/npm-logs --logs-max 1 --ignore-scripts --no-audit --no-fund$/,
       );
     } finally {
       fixture.cleanup();
