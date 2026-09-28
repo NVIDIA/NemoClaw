@@ -1930,23 +1930,48 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending. If one is, it appends the review path to stderr after the command's own output:
+Record the `requestId` from this native failure.
+Open the prepared shell. During setup, `connect` makes a bounded, best-effort
+attempt to settle pending requests from the `cli`, `openclaw-cli`, and
+`openclaw-control-ui` clients when the requested scopes are limited to pairing,
+read, and write. This pass uses the client ID and scopes recorded in the pending
+request; it does not authenticate that client metadata. OpenClaw's gateway and
+canonical approval operation remain the authorization boundary. If the pass
+times out or an approval operation fails, an eligible request can remain
+pending:
 
-```text
-$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
-  The OpenClaw gateway refused the command until the requested scopes are approved.
-  Open a prepared shell:   $$nemoclaw my-assistant connect
-  In that shell, review:   openclaw devices list --json
-  Approve the one you recognize, after checking its device and requested scopes:
-                           openclaw devices approve <requestId>
-  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```bash
+$$nemoclaw <name> connect
 ```
 
-Enter the prepared `connect` shell, read `openclaw devices list --json`, confirm the requesting client, device, and requested scopes, approve that request by id in the same shell, then re-run the original command unchanged.
+Replace `<name>` with the sandbox name from the failed command.
 
-The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
+First rerun the original command unchanged. If it succeeds, no manual approval
+is required. If the command still reports a pending approval, such as a request
+for `operator.admin`, list the remaining requests in the prepared shell:
 
-The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. If the probe fails, or nothing is pending, no hint is added. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+```bash
+openclaw devices list --json
+```
+
+Find the pending entry whose `requestId` exactly matches the native failure.
+Confirm that entry's requesting client, device, and requested scopes, then
+approve only that same `requestId`:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Then rerun the original command again.
+The `exec` command streams the native command output and normally returns its
+native exit status. If required post-command OpenClaw permission cleanup fails,
+`exec` returns 1 and prints `OpenClaw permission cleanup failed (command exit
+<code>; cleanup exit 1)` with the cleanup detail. After `exec` fails, NemoClaw
+does not inspect pending requests automatically. The `connect` flow attempts
+automatic settlement only for allowlisted client IDs requesting pairing, read,
+and write scopes. Its helper does not authenticate client metadata; requests
+that remain pending are available for manual review of the client, device,
+scopes, and matching request ID.
 
 </AgentOnly>
 
@@ -3078,19 +3103,6 @@ except urllib.error.HTTPError as error: print(error.code)'
 ```
 
 Any HTTP status means the Python process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, inspect the gateway logs and blocked-request output with `openshell term`. Look for `gateway.discord.gg` connection or WebSocket upgrade failures instead of widening the preset.
-
-### Hermes dashboard config did not converge
-
-`nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile. If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/profiles/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`. The committed route and main Hermes config are not rolled back.
-
-Restart the sandbox so startup mirrors the committed model route into the dashboard profile:
-
-```bash
-nemohermes <name> stop
-nemohermes <name> start
-```
-
-Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model. If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
 ### Hermes restart reports a config integrity failure
 

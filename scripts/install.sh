@@ -2451,6 +2451,8 @@ record_managed_user_local_openshell_install() {
     || error "Could not publish the managed OpenShell install manifest."
 }
 
+# Keep verifier output visible before gateway setup so users can confirm that
+# downloaded OpenShell assets were checked; reusing a CLI does not verify it again.
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
