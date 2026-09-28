@@ -169,6 +169,10 @@ Legacy managed-image confirmation never overrides recorded custom-image evidence
 
 <AgentOnly variant="openclaw">
 OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
+Before native startup or post-upgrade doctor, NemoClaw removes the zero-byte `exec-approvals.json` placeholder that older images, including v0.0.123, created.
+It removes only an unchanged, regular file with a single link.
+Nonempty approval files remain unchanged for OpenClaw to process, including malformed files.
+An unsafe file type or a changed file stops startup instead of deleting unverified state.
 </AgentOnly>
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.

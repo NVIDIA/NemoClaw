@@ -31,13 +31,13 @@ describe("OpenClaw bridge health hook", () => {
             if (command.includes("openclaw.json")) {
               return {
                 status: 0,
-                stdout: JSON.stringify({
+                stdout: `// Native OpenClaw JSON5\n${JSON.stringify({
                   channels: {
                     slack: {
                       enabled: true,
                     },
                   },
-                }),
+                })}`,
               };
             }
             if (command.includes("gateway.log")) {

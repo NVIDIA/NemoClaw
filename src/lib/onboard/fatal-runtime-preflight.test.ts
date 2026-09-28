@@ -1091,6 +1091,7 @@ describe("readiness-gated runtime preflight", () => {
   });
 
   const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
+  const ACCEPTED_5120_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)";
   const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
   async function runRealProviderPreflight(
     gpuName: string,
@@ -1142,6 +1143,12 @@ describe("readiness-gated runtime preflight", () => {
   it.each([
     ["an accepted GPU identity and a qualifying chassis model", ACCEPTED_N1X_GPU_NAME, true, "n1x"],
     ["an accepted GPU identity and an OEM chassis model", ACCEPTED_N1X_GPU_NAME, false, "n1x"],
+    [
+      "the accepted 5120-core GPU identity and an OEM chassis model",
+      ACCEPTED_5120_N1X_GPU_NAME,
+      false,
+      "n1x",
+    ],
     [
       "an accepted GPU identity and an inconclusive chassis probe",
       ACCEPTED_N1X_GPU_NAME,
