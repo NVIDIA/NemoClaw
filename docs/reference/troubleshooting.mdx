@@ -1942,10 +1942,8 @@ openclaw devices approve <requestId>
 
 Then rerun the original command again.
 The `exec` command streams the native command output and normally returns its
-native exit status. If required post-command OpenClaw permission cleanup fails,
-`exec` returns 1 and prints `OpenClaw permission cleanup failed (command exit
-<code>; cleanup exit 1)` with the cleanup detail. After `exec` fails, NemoClaw
-does not inspect pending requests automatically. The `connect` flow attempts
+native exit status. After `exec` fails, NemoClaw does not inspect pending
+requests automatically. The `connect` flow attempts
 automatic settlement only for allowlisted client IDs requesting pairing, read,
 and write scopes. Its helper does not authenticate client metadata; requests
 that remain pending are available for manual review of the client, device,
