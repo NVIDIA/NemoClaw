@@ -324,10 +324,11 @@ function trimRequired(value: string | null | undefined, label: string): string {
 }
 
 /**
- * Reject an unsupported provider with suggestions from the selected gateway.
- * Falls back to supported provider names only when the read-only gateway query fails.
+ * Require either a built-in provider or an exact non-messaging provider already
+ * registered on the selected gateway. The latter keeps native-agent providers
+ * selectable without letting an unverified name create or borrow a route.
  */
-async function assertSupportedProvider(
+async function assertSelectableProvider(
   provider: string,
   model: string,
   gatewayName: string,
@@ -335,14 +336,12 @@ async function assertSupportedProvider(
 ): Promise<void> {
   if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
-  const selectableProviders = registeredProviders?.filter((name) =>
-    SUPPORTED_PROVIDER_NAMES.some((supportedName) => supportedName === name),
-  );
+  if (registeredProviders?.includes(provider)) return;
   const providerGuidance =
-    selectableProviders === undefined
+    registeredProviders === undefined
       ? `Supported provider names: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`
-      : selectableProviders.length > 0
-        ? `Selectable providers registered on gateway '${gatewayName}': ${selectableProviders.join(", ")}.`
+      : registeredProviders.length > 0
+        ? `Selectable providers registered on gateway '${gatewayName}': ${registeredProviders.join(", ")}.`
         : `No selectable providers are registered on gateway '${gatewayName}'.`;
   throw new InferenceSetError(`Unsupported provider '${provider}'. ${providerGuidance}`, 2);
 }
@@ -821,7 +820,7 @@ async function runInferenceSetWithoutHostLock(
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   const reasoningEffortRequest = resolveScopedReasoningEffortRequest(options.reasoningEffort);
-  await assertSupportedProvider(provider, model, expectedGatewayName, deps);
+  await assertSelectableProvider(provider, model, expectedGatewayName, deps);
   assertReasoningEffortProvider(reasoningEffortRequest, provider);
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
