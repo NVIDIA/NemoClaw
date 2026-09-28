@@ -285,6 +285,7 @@ describe("isSafeCredentialPlaceholder", () => {
     expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
+    expect(isSafeCredentialPlaceholder("nemoclaw-managed-inference")).toBe(true);
     expect(isSafeCredentialPlaceholder(HERMES_PROXY_REWRITE_SENTINEL)).toBe(true);
     expect(isSafeCredentialPlaceholder("[STRIPPED_BY_MIGRATION]")).toBe(true);
     expect(isSafeCredentialPlaceholder("Bearer openshell:resolve:env:REMOTE_MCP_TOKEN")).toBe(true);

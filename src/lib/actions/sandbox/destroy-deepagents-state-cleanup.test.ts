@@ -30,7 +30,7 @@ describe("Deep Agents destroy state cleanup", () => {
     fs.rmSync(testHome, { force: true, recursive: true });
   });
 
-  it("clears the complete native root before sandbox deletion", async () => {
+  it("clears sandbox-owned native state before sandbox deletion", async () => {
     const harness = createDestroyHarness({ agent: "langchain-deepagents-code" });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
@@ -53,7 +53,10 @@ describe("Deep Agents destroy state cleanup", () => {
     expect(wipeScript).toContain("root=/sandbox");
     expect(wipeScript).toContain('[ ! -d "$root" ] || [ -L "$root" ]');
     expect(wipeScript).toContain('for keep in "$@"');
-    expect(wipeScript).toContain('rm -rf -- "$entry"');
+    expect(wipeScript).toContain('find "$entry" -xdev -depth -user "$uid"');
+    expect(wipeScript).toContain("! -type d -exec rm -f -- {}");
+    expect(wipeScript).toContain("Deep Agents native root retains sandbox-owned state");
+    expect(wipeScript).not.toContain('rm -rf -- "$entry"');
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 
@@ -90,7 +93,11 @@ describe("Deep Agents destroy state cleanup", () => {
     const defaultRun = harness.runOpenshellSpy.getMockImplementation()!;
     harness.runOpenshellSpy.mockImplementation((args: string[], options?: object) =>
       args[0] === "sandbox" && args[1] === "exec"
-        ? { status: 21, stdout: "", stderr: "Deep Agents native root is not empty" }
+        ? {
+            status: 21,
+            stdout: "",
+            stderr: "Deep Agents native root retains sandbox-owned state",
+          }
         : defaultRun(args, options),
     );
 

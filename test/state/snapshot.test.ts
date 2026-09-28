@@ -330,6 +330,10 @@ describe("complete native home persistence", () => {
         recursive: true,
       });
       fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, ".nemoclaw", "blueprints", "0.1.0", "provider-profiles"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(nativeRoot, ".pi", "agent"), { recursive: true });
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
       fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), hermesManagedConfig);
       fs.mkdirSync(path.join(nativeRoot, ".hermes", "backups", "config"), {
@@ -351,6 +355,34 @@ describe("complete native home persistence", () => {
       fs.writeFileSync(
         path.join(nativeRoot, "schemas", "config.schema.json"),
         JSON.stringify({ apiKey: { type: "string" } }),
+      );
+      fs.copyFileSync(
+        path.join(
+          import.meta.dirname,
+          "../..",
+          "nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml",
+        ),
+        path.join(
+          nativeRoot,
+          ".nemoclaw",
+          "blueprints",
+          "0.1.0",
+          "provider-profiles",
+          "entra-runtime-v1.yaml",
+        ),
+      );
+      fs.writeFileSync(
+        path.join(nativeRoot, ".pi", "agent", "models.json"),
+        JSON.stringify({
+          defaultModel: "nvidia/nemotron-3-super-120b-a12b",
+          providers: {
+            openshell: {
+              api: "openai-completions",
+              apiKey: "nemoclaw-managed-inference",
+              baseUrl: "https://inference.local/v1",
+            },
+          },
+        }),
       );
       const bundledCredentialBoundary = path.join(
         import.meta.dirname,
@@ -764,6 +796,21 @@ describe("complete native home persistence", () => {
       JSON.stringify({ compilerOptions: { sessionToken: "opaqueCredentialPayloadZ1234567890" } }),
     ],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
+    [
+      "a concrete token in a bundled provider profile schema",
+      ".nemoclaw/blueprints/0.1.0/provider-profiles/injected.yaml",
+      `credentials:\n  - name: access_token\n    value: ghp_${"02468ace13579bdf"}\n`,
+    ],
+    [
+      "an opaque secret value in a bundled provider profile schema",
+      ".nemoclaw/blueprints/0.1.0/provider-profiles/injected.yaml",
+      "credentials:\n  - name: access_token\n    secret: actual-provider-password\n",
+    ],
+    [
+      "a concrete token in the Pi managed model registry",
+      ".pi/agent/models.json",
+      JSON.stringify({ apiKey: `ghp_${"97531bdf2468ace0"}` }),
+    ],
     [
       "an agent-owned package manifest",
       "workspace/project/package.json",

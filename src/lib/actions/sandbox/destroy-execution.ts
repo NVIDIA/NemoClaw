@@ -94,17 +94,20 @@ function wipeDeepAgentsNativeHome(
     "set -eu",
     `root=${DEEP_AGENTS_NATIVE_ROOT}`,
     'if [ ! -d "$root" ] || [ -L "$root" ]; then echo "unsafe Deep Agents native root" >&2; exit 20; fi',
+    'uid="$(id -u)"',
     'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
     '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
     "  protected=false",
     '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
-    '  if [ "$protected" = false ]; then rm -rf -- "$entry"; fi',
+    '  if [ "$protected" = true ]; then continue; fi',
+    '  find "$entry" -xdev -depth -user "$uid" \\( -type d -exec rmdir -- {} \\; -o ! -type d -exec rm -f -- {} \\; \\) 2>/dev/null || :',
     "done",
     'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
     '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
     "  protected=false",
     '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
-    '  if [ "$protected" = false ]; then echo "Deep Agents native root is not empty" >&2; exit 21; fi',
+    '  if [ "$protected" = true ]; then continue; fi',
+    '  if find "$entry" -xdev -user "$uid" -print -quit | grep -q .; then echo "Deep Agents native root retains sandbox-owned state" >&2; exit 21; fi',
     "done",
   ].join("\n");
   const result = runOpenshell(
@@ -138,7 +141,7 @@ function wipeDeepAgentsNativeHome(
       .trim()
       .slice(0, 500);
     throw new Error(
-      `Could not remove the complete Deep Agents native home before sandbox deletion${detail ? `: ${detail}` : "."}`,
+      `Could not remove the sandbox-owned Deep Agents native home before sandbox deletion${detail ? `: ${detail}` : "."}`,
     );
   }
 }

@@ -1227,12 +1227,20 @@ function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
   return isDependencyLockfile(fileName);
 }
 
+function isBundledProviderProfileSchema(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  return /^\.nemoclaw\/blueprints\/[^/]+\/provider-profiles\/[^/]+\.(?:json|ya?ml)$/u.test(
+    normalized,
+  );
+}
+
 function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
   opaqueAssignments: boolean,
   npmConfig: boolean,
+  providerProfileSchema: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1244,7 +1252,16 @@ function scanNativeTarFilePayload(
     if (count === 0) return null;
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
-    if (textContainsCredential(raw, { opaqueAssignments })) return true;
+    // Provider profiles describe whether injected material is secret with a
+    // boolean schema field. Mask only that declaration; an opaque string in
+    // the same field (or any other credential assignment) still fails closed.
+    const credentialScanInput = providerProfileSchema
+      ? raw.replace(
+          /^([ \t]*(?:"secret"|secret)[ \t]*:[ \t]*)(?:true|false)([ \t]*,?[ \t]*(?:#.*)?)$/gimu,
+          "$1unused$2",
+        )
+      : raw;
+    if (textContainsCredential(credentialScanInput, { opaqueAssignments })) return true;
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
@@ -1300,12 +1317,14 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
             // Package manifests carry descriptive credential-field schemas and
             // receive a separate structure-aware scan below. Raw recognizable
             // secrets and Authorization headers remain enabled here.
+            const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
               fileName !== "package.json",
               fileName === ".npmrc",
+              providerProfileSchema,
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
