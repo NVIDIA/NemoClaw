@@ -16,6 +16,14 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
     vi.unstubAllEnvs();
   });
 
+  function embeddedCustomRouteProgram(dockerfile: string): string {
+    const encoded = dockerfile.match(
+      /RUN printf '%s' '([A-Za-z0-9+/=]+)' \| \/usr\/bin\/base64 --decode \|/u,
+    )?.[1];
+    expect(encoded).toBeDefined();
+    return Buffer.from(encoded!, "base64").toString("utf8");
+  }
+
   function customRouteProgram(root: string): { configPath: string; program: string } {
     const dockerfilePath = path.join(root, "Dockerfile");
     fs.writeFileSync(
@@ -39,10 +47,7 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       [],
       { agentName: "openclaw", reconcileCustomOpenClawModel: true },
     );
-    const embedded = fs
-      .readFileSync(dockerfilePath, "utf8")
-      .match(/<<'PYNEMOCLAWCUSTOMROUTE'\n([\s\S]*?)\nPYNEMOCLAWCUSTOMROUTE/u)?.[1];
-    expect(embedded).toBeDefined();
+    const embedded = embeddedCustomRouteProgram(fs.readFileSync(dockerfilePath, "utf8"));
     const configPath = path.join(root, "openclaw.json");
     fs.writeFileSync(
       configPath,
@@ -59,7 +64,7 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
     );
     return {
       configPath,
-      program: embedded!.replace(
+      program: embedded.replace(
         'config_path = "/sandbox/.openclaw/openclaw.json"',
         `config_path = ${JSON.stringify(configPath)}`,
       ),
@@ -139,17 +144,16 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       expect(encodedModel).not.toBe("");
       expect(encodedLimits).not.toBe("");
       expect(patched).toContain("sha256sum openclaw.json > .config-hash");
-      expect(patched).toContain(".nemoclaw-custom-route-pending");
+      expect(patched).not.toContain("<<'PYNEMOCLAWCUSTOMROUTE'");
+      expect(patched).toContain("/usr/bin/base64 --decode | /usr/bin/env");
       expect(patched).toContain(
         "ENV NEMOCLAW_MODEL=provider/selected-model \\\n" +
           "    NEMOCLAW_PRIMARY_MODEL_REF=inference/provider/selected-model",
       );
       expect(patched.trimEnd().endsWith("USER 1001:1001")).toBe(true);
 
-      const embedded = patched.match(
-        /<<'PYNEMOCLAWCUSTOMROUTE'\n([\s\S]*?)\nPYNEMOCLAWCUSTOMROUTE/u,
-      )?.[1];
-      expect(embedded).toBeDefined();
+      const embedded = embeddedCustomRouteProgram(patched);
+      expect(embedded).toContain(".nemoclaw-custom-route-pending");
       const configPath = path.join(root, "openclaw.json");
       fs.writeFileSync(
         configPath,
@@ -172,7 +176,7 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
         }),
       );
       fs.chmodSync(configPath, 0o640);
-      const program = embedded!.replace(
+      const program = embedded.replace(
         'config_path = "/sandbox/.openclaw/openclaw.json"',
         `config_path = ${JSON.stringify(configPath)}`,
       );

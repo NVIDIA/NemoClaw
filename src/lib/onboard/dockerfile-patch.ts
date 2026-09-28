@@ -217,7 +217,7 @@ function appendCustomOpenClawModelReconcile(
   const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
   const primaryModelRef = model.startsWith("inference/") ? model : `inference/${model}`;
 
-  return `${dockerfile.trimEnd()}
+  const rendered = `${dockerfile.trimEnd()}
 
 # Reconcile inherited OpenClaw model metadata with this custom image's route.
 ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
@@ -335,6 +335,23 @@ RUN if [ -f /sandbox/.openclaw/openclaw.json ]; then \\
         chmod --reference=openclaw.json .config-hash; \\
     fi${restoreUser}
 `;
+  const heredoc =
+    /RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=.*?<<'PYNEMOCLAWCUSTOMROUTE'\n([\s\S]*?)\nPYNEMOCLAWCUSTOMROUTE/u.exec(
+      rendered,
+    );
+  if (heredoc === null) {
+    throw new Error("Custom OpenClaw route reconciliation program is missing.");
+  }
+  // The OpenShell gateway builds custom Dockerfiles through Docker's legacy
+  // builder, which accepts heredoc syntax as an empty RUN. Publish the readable
+  // program as encoded stdin so both legacy and BuildKit builders execute it.
+  const encodedProgram = Buffer.from(heredoc[1]!, "utf8").toString("base64");
+  const legacyCompatibleRun =
+    `RUN printf '%s' '${encodedProgram}' | /usr/bin/base64 --decode | ` +
+    `/usr/bin/env NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" ` +
+    `NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" ` +
+    `/usr/bin/python3 -`;
+  return rendered.replace(heredoc[0], legacyCompatibleRun);
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
