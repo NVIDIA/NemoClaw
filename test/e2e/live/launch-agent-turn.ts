@@ -1183,8 +1183,9 @@ function structuredContentText(message) {
 
 const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
 const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
+const providerConflictingError = /^(?:litellm\.)?(?:BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError)(?::|$)/;
 const providerNonRetryableError =
-  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|malformed|invalid (?:provider )?response|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
@@ -1200,7 +1201,8 @@ function isStructuredProviderUnavailable(message) {
     identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
     typeof message.errorCode === "string" &&
     providerUnavailableCodes.has(message.errorCode.trim()) &&
-    providerUnavailableError.test(errorMessage) &&
+    (message.errorCode.trim() === "503" || providerUnavailableError.test(errorMessage)) &&
+    !providerConflictingError.test(errorMessage) &&
     !providerNonRetryableError.test(errorMessage)
   );
 }

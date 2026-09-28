@@ -658,6 +658,48 @@ it.each<{ after: SessionRecords; status: number }>([
   },
 );
 
+const structured503Cases: Array<[Record<string, unknown>, number]> = [
+  [{ errorMessage: "503 upstream temporarily unavailable" }, 3],
+  [{ errorMessage: "" }, 3],
+  [{ errorMessage: "503 invalid API key" }, 2],
+  [{ errorMessage: "503 network policy denied" }, 2],
+  [{ errorMessage: "BadRequestError: invalid response" }, 2],
+  [{ errorMessage: "invalid provider response" }, 2],
+  [{ errorMessage: "malformed response" }, 2],
+  [{ errorMessage: "RateLimitError: retry later" }, 2],
+  [{ errorMessage: "APITimeoutError: request expired" }, 2],
+  [{ errorMessage: "unknown", errorCode: "500" }, 2],
+  [{ errorMessage: "unknown", errorCode: "401" }, 2],
+  [{ errorMessage: "unknown", errorCode: 503 }, 2],
+  [{ errorMessage: "unknown", provider: "other" }, 2],
+  [{ errorMessage: "unknown", api: "other" }, 2],
+  [{ errorMessage: "unknown", content: null }, 2],
+  [{ errorMessage: "unknown", stopReason: "stop" }, 2],
+];
+
+it.each(
+  structured503Cases.flatMap(([overrides, status]) =>
+    (["jsonl", "sqlite"] as const).map((format) => ({ format, overrides, status })),
+  ),
+)(
+  "classifies structured HTTP 503 in $format with $overrides as status $status",
+  ({ format, overrides, status }) => {
+    const records = [message("user"), providerUnavailableMessage(overrides)];
+    const { qualification } =
+      format === "jsonl"
+        ? runEvidenceFixture({ after: { "session-a": records }, expectedTurns: 1 })
+        : runSqliteEvidenceFixture({
+            after: records.map((eventJson, index) => ({
+              eventJson,
+              seq: index + 1,
+              sessionId: "session-a",
+            })),
+            expectedTurns: 1,
+          });
+    expect(qualification.status, JSON.stringify(overrides)).toBe(status);
+  },
+);
+
 it.each([
   ["jsonl", false],
   ["sqlite", false],

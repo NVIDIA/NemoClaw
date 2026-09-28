@@ -756,7 +756,12 @@ The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
 runs two logical `launch` sessions during the same fixed lease. Each logical
 session may retry once with a fresh run ID and input only when the OpenClaw
 session store contains a structured transient provider-unavailability record
-and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+and cleanup succeeds. A managed `openai-completions` assistant record with empty
+array content, `stopReason=error`, and string `errorCode=503` qualifies regardless
+of provider error wording. Conflicting error classes and authentication or policy
+diagnostics still prevent retry. Other eligible server codes require the known
+`InternalServerError` or `ServiceUnavailableError` class.
+Authentication, authorization, policy, malformed-response,
 cleanup, and unknown failures stop the acceptance test without retrying.
 Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must

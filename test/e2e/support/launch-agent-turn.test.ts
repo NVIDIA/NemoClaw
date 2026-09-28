@@ -1072,6 +1072,8 @@ it.runIf(process.platform === "linux").each([
   ["529", "ServiceUnavailableError", "valid"],
   ["500", "InternalServerError", "valid"],
   ["503", "ServiceUnavailableError", "provider-empty-message"],
+  ["503", "generic-http-error", "valid"],
+  ["503", "generic-http-error", "provider-empty-message"],
 ] as const)(
   "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
   async (providerCode, providerError, secondMode) => {
@@ -1102,7 +1104,10 @@ it.runIf(process.platform === "linux").each([
             env: {
               ...options?.env,
               NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
-              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE:
+                providerError === "generic-http-error"
+                  ? "503 upstream temporarily unavailable"
+                  : `litellm.${providerError}: ${providerError}: upstream unavailable`,
             },
           },
         );
