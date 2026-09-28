@@ -1641,6 +1641,21 @@ async function removeOpenShellResources(
     if (result.ok) runtime.log(`Deleted provider '${providerName}'`);
     else runtime.warn(providerDeleteSkipMessage(providerName));
   }
+  return true;
+}
+
+async function finishBulkOpenShellCleanup(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  externallySupervised: boolean,
+): Promise<boolean> {
+  const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
+  const runtimeSelection = selectedGatewayCleanupRuntimeSelection(
+    gatewayLabel,
+    paths.selectedGatewayLocalStateDir,
+  );
+  if (!runtimeSelection) return false;
   return removeGatewayRegistration(
     {
       ...runtime,
@@ -3164,6 +3179,13 @@ async function executeOpenShellResourceCleanup(
     !portableRuntimeCleanup &&
     !externallySupervised &&
     !removeManagedHermesStateVolumes(managedHermesStateVolumes, runtime)
+  ) {
+    return false;
+  }
+  if (
+    !portableRuntimeCleanup &&
+    !scopedToSelectedGateway &&
+    !(await finishBulkOpenShellCleanup(paths, options, runtime, externallySupervised))
   ) {
     return false;
   }
