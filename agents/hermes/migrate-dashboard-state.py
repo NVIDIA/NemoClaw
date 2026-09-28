@@ -17,6 +17,7 @@ import argparse
 import copy
 import errno
 import hashlib
+import json
 import os
 import secrets
 import signal
@@ -45,6 +46,11 @@ MANAGED_SHADOW_FILES = frozenset(
 )
 VERIFIABLE_SHADOW_FILES = frozenset({"config.yaml", ".env"})
 LEGACY_STATE_DATABASE = "state.db"
+STATE_DATABASE_MIGRATION_RECORD = ".nemoclaw-dashboard-state-migration.json"
+STATE_DATABASE_RECORD_VERSION = 1
+STATE_DATABASE_TEST_INTERRUPT_ENV = (
+    "NEMOCLAW_TEST_INTERRUPT_AFTER_DASHBOARD_STATE_PUBLICATION"
+)
 STALE_RUNTIME_FILES = frozenset({"gateway.lock", "gateway.pid", "state.db-shm", "state.db-wal"})
 STALE_RUNTIME_DIRECTORIES = frozenset({"logs"})
 MAX_VERIFICATION_BYTES = 4 * 1024 * 1024
@@ -505,6 +511,265 @@ def _validate_native_state_destination(target_fd: int, target_display: str) -> i
     return runtime_fd
 
 
+def _identity_document(identity: EntryIdentity) -> dict[str, int]:
+    return {
+        "device": identity.device,
+        "inode": identity.inode,
+        "mode": identity.mode,
+        "links": identity.links,
+        "size": identity.size,
+    }
+
+
+def _record_identity(value: object, field: str) -> EntryIdentity:
+    if not isinstance(value, dict) or set(value) != {
+        "device",
+        "inode",
+        "mode",
+        "links",
+        "size",
+    }:
+        raise MigrationError(f"legacy state migration record has an invalid {field}")
+    numbers = [value[key] for key in ("device", "inode", "mode", "links", "size")]
+    if any(not isinstance(number, int) or isinstance(number, bool) or number < 0 for number in numbers):
+        raise MigrationError(f"legacy state migration record has an invalid {field}")
+    return EntryIdentity(*numbers)
+
+
+def _sha256_file(parent_fd: int, name: str, display: str) -> tuple[int, str]:
+    file_fd = _open_file(parent_fd, name, display)
+    try:
+        size = os.fstat(file_fd).st_size
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(file_fd, 64 * 1024)
+            if not chunk:
+                return size, digest.hexdigest()
+            digest.update(chunk)
+    finally:
+        os.close(file_fd)
+
+
+def _write_all(file_fd: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        offset += os.write(file_fd, payload[offset:])
+
+
+def _write_state_database_migration_record(
+    runtime_fd: int,
+    source_parent: os.stat_result,
+    source: EntryIdentity,
+    temporary_name: str,
+    backup_size: int,
+    backup_sha256: str,
+) -> None:
+    document = {
+        "version": STATE_DATABASE_RECORD_VERSION,
+        "source_parent": {
+            "device": source_parent.st_dev,
+            "inode": source_parent.st_ino,
+        },
+        "source": _identity_document(source),
+        "temporary": temporary_name,
+        "destination": LEGACY_STATE_DATABASE,
+        "backup_size": backup_size,
+        "backup_sha256": backup_sha256,
+    }
+    payload = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    record_temporary = f"{STATE_DATABASE_MIGRATION_RECORD}.{secrets.token_hex(12)}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    record_fd = -1
+    try:
+        record_fd = os.open(record_temporary, flags, 0o600, dir_fd=runtime_fd)
+        _write_all(record_fd, payload)
+        os.fsync(record_fd)
+        os.close(record_fd)
+        record_fd = -1
+        _rename_no_replace(
+            runtime_fd,
+            record_temporary,
+            runtime_fd,
+            STATE_DATABASE_MIGRATION_RECORD,
+        )
+        record_temporary = ""
+        os.fsync(runtime_fd)
+    except OSError as exc:
+        raise MigrationError(
+            f"legacy state migration record could not be persisted safely: {exc.strerror}"
+        ) from exc
+    finally:
+        if record_fd >= 0:
+            os.close(record_fd)
+        if record_temporary and _lookup(runtime_fd, record_temporary) is not None:
+            os.unlink(record_temporary, dir_fd=runtime_fd)
+
+
+def _read_state_database_migration_record(
+    runtime_fd: int, runtime_display: str
+) -> dict[str, object]:
+    display = f"{runtime_display}/{STATE_DATABASE_MIGRATION_RECORD}"
+    record_fd = _open_file(runtime_fd, STATE_DATABASE_MIGRATION_RECORD, display)
+    try:
+        payload = bytearray()
+        while len(payload) <= 16 * 1024:
+            chunk = os.read(record_fd, 4096)
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if len(payload) > 16 * 1024:
+            raise MigrationError("legacy state migration record is unexpectedly large")
+        try:
+            document = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise MigrationError("legacy state migration record is invalid JSON") from exc
+    finally:
+        os.close(record_fd)
+    if not isinstance(document, dict) or set(document) != {
+        "version",
+        "source_parent",
+        "source",
+        "temporary",
+        "destination",
+        "backup_size",
+        "backup_sha256",
+    }:
+        raise MigrationError("legacy state migration record has an invalid schema")
+    source_parent = document["source_parent"]
+    if (
+        document["version"] != STATE_DATABASE_RECORD_VERSION
+        or document["destination"] != LEGACY_STATE_DATABASE
+        or not isinstance(source_parent, dict)
+        or set(source_parent) != {"device", "inode"}
+        or any(
+            not isinstance(source_parent[key], int)
+            or isinstance(source_parent[key], bool)
+            or source_parent[key] < 0
+            for key in ("device", "inode")
+        )
+        or not isinstance(document["temporary"], str)
+        or not document["temporary"].startswith(".nemoclaw-dashboard-state-")
+        or len(document["temporary"]) != len(".nemoclaw-dashboard-state-") + 24
+        or any(character not in "0123456789abcdef" for character in document["temporary"][-24:])
+        or not isinstance(document["backup_size"], int)
+        or isinstance(document["backup_size"], bool)
+        or document["backup_size"] < 0
+        or not isinstance(document["backup_sha256"], str)
+        or len(document["backup_sha256"]) != 64
+        or any(character not in "0123456789abcdef" for character in document["backup_sha256"])
+    ):
+        raise MigrationError("legacy state migration record has invalid values")
+    _record_identity(document["source"], "source identity")
+    return document
+
+
+def _resume_state_database_migration(
+    source_fd: int,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> bool:
+    if _lookup(target_fd, "runtime") is None:
+        return False
+    runtime_fd = _open_native_runtime_directory(target_fd, target_display)
+    runtime_display = f"{target_display}/runtime"
+    try:
+        if _lookup(runtime_fd, STATE_DATABASE_MIGRATION_RECORD) is None:
+            return False
+        record = _read_state_database_migration_record(runtime_fd, runtime_display)
+        parent = os.fstat(source_fd)
+        source_parent = record["source_parent"]
+        assert isinstance(source_parent, dict)
+        if (parent.st_dev, parent.st_ino) != (
+            source_parent["device"],
+            source_parent["inode"],
+        ):
+            return False
+        expected_source = _record_identity(record["source"], "source identity")
+        quarantine = ".nemoclaw-dashboard-migration-" + hashlib.sha256(
+            os.fsencode(LEGACY_STATE_DATABASE)
+        ).hexdigest()[:24]
+        source_entry = _lookup(source_fd, LEGACY_STATE_DATABASE)
+        quarantine_entry = _lookup(source_fd, quarantine)
+        if source_entry is not None and quarantine_entry is not None:
+            raise MigrationError("legacy state migration source and quarantine both exist")
+        source_name = (
+            LEGACY_STATE_DATABASE
+            if source_entry is not None
+            else quarantine if quarantine_entry is not None else None
+        )
+        if source_name is not None:
+            current_source = _identity(
+                source_fd,
+                source_name,
+                f"{source_display}/{LEGACY_STATE_DATABASE}",
+            )
+            if current_source != expected_source:
+                raise MigrationError("legacy state changed after migration publication")
+
+        temporary_name = record["temporary"]
+        assert isinstance(temporary_name, str)
+        destination = _lookup(runtime_fd, LEGACY_STATE_DATABASE)
+        temporary = _lookup(runtime_fd, temporary_name)
+        if destination is not None and temporary is not None:
+            raise MigrationError("published and temporary legacy state databases both exist")
+        if destination is None and temporary is None:
+            if source_name is None:
+                raise MigrationError("legacy state migration lost both source and destination")
+            _unlink_verified(
+                runtime_fd,
+                STATE_DATABASE_MIGRATION_RECORD,
+                f"{runtime_display}/{STATE_DATABASE_MIGRATION_RECORD}",
+            )
+            os.fsync(runtime_fd)
+            return False
+
+        database_name = LEGACY_STATE_DATABASE if destination is not None else temporary_name
+        database_display = f"{runtime_display}/{database_name}"
+        backup_size, backup_sha256 = _sha256_file(runtime_fd, database_name, database_display)
+        if (backup_size, backup_sha256) != (
+            record["backup_size"],
+            record["backup_sha256"],
+        ):
+            raise MigrationError("published legacy state database does not match its record")
+        if destination is None:
+            _rename_no_replace(
+                runtime_fd,
+                temporary_name,
+                runtime_fd,
+                LEGACY_STATE_DATABASE,
+            )
+            os.fsync(runtime_fd)
+        if source_name is not None:
+            _unlink_verified(
+                source_fd,
+                source_name,
+                f"{source_display}/{LEGACY_STATE_DATABASE}",
+                expected=expected_source,
+            )
+            os.fsync(source_fd)
+        _unlink_verified(
+            runtime_fd,
+            STATE_DATABASE_MIGRATION_RECORD,
+            f"{runtime_display}/{STATE_DATABASE_MIGRATION_RECORD}",
+        )
+        os.fsync(runtime_fd)
+        return True
+    finally:
+        os.close(runtime_fd)
+
+
+def _state_database_migration_record_exists(target_fd: int, target_display: str) -> bool:
+    if _lookup(target_fd, "runtime") is None:
+        return False
+    runtime_fd = _open_native_runtime_directory(target_fd, target_display)
+    try:
+        return _lookup(runtime_fd, STATE_DATABASE_MIGRATION_RECORD) is not None
+    finally:
+        os.close(runtime_fd)
+
+
 def _preflight_tree(
     source_fd: int,
     source_display: str,
@@ -777,6 +1042,19 @@ def _migrate_legacy_state_database(
             os.fchmod(temporary_fd, stat.S_IMODE(before.mode))
         finally:
             os.close(temporary_fd)
+        backup_size, backup_sha256 = _sha256_file(
+            runtime_fd,
+            temporary_name,
+            destination_path,
+        )
+        _write_state_database_migration_record(
+            runtime_fd,
+            os.fstat(source_fd),
+            before,
+            temporary_name,
+            backup_size,
+            backup_sha256,
+        )
         _rename_no_replace(
             runtime_fd,
             temporary_name,
@@ -785,7 +1063,17 @@ def _migrate_legacy_state_database(
         )
         published = True
         temporary_name = None
+        os.fsync(runtime_fd)
+        if os.environ.get(STATE_DATABASE_TEST_INTERRUPT_ENV) == "1":
+            os.kill(os.getpid(), signal.SIGTERM)
         _unlink_verified(source_fd, source_name, source_display, expected=before)
+        os.fsync(source_fd)
+        _unlink_verified(
+            runtime_fd,
+            STATE_DATABASE_MIGRATION_RECORD,
+            f"{target_display}/runtime/{STATE_DATABASE_MIGRATION_RECORD}",
+        )
+        os.fsync(runtime_fd)
     except OSError as exc:
         raise MigrationError(
             f"legacy state database could not be published safely: {exc.strerror}"
@@ -910,12 +1198,12 @@ def _merge_tree(
     budget: MigrationBudget,
     depth: int,
 ) -> None:
+    at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
-        at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
         if at_legacy_root and name == LEGACY_STATE_DATABASE:
             _migrate_legacy_state_database(
                 source_fd,
@@ -1084,6 +1372,17 @@ def migrate(
             if len(populated) > 1:
                 raise MigrationError(
                     "both legacy dashboard homes contain state; refusing an ambiguous merge"
+                )
+            for relative, source_fd in sources:
+                _resume_state_database_migration(
+                    source_fd,
+                    f"{hermes_dir}/{relative}",
+                    root_fd,
+                    hermes_dir,
+                )
+            if _state_database_migration_record_exists(root_fd, hermes_dir):
+                raise MigrationError(
+                    "legacy state migration record does not match an available source"
                 )
             preflight_budget = MigrationBudget(max_entries, max_depth, max_bytes)
             for relative, source_fd in sources:

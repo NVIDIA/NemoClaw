@@ -72,7 +72,11 @@ function writeDashboardMigrationFile(file: string, value: string): void {
   fs.writeFileSync(file, value, { mode: 0o600 });
 }
 
-function runDashboardMigration(hermes: string, extraArgs: string[] = []) {
+function runDashboardMigration(
+  hermes: string,
+  extraArgs: string[] = [],
+  extraEnv: NodeJS.ProcessEnv = {},
+) {
   return spawnSync(
     "python3",
     [
@@ -84,7 +88,7 @@ function runDashboardMigration(hermes: string, extraArgs: string[] = []) {
       path.join(path.dirname(hermes), "managed-policy.json"),
       ...extraArgs,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env, ...extraEnv } },
   );
 }
 
@@ -597,6 +601,35 @@ describe("Hermes legacy dashboard-state migration", () => {
       expect(fs.existsSync(legacy)).toBe(false);
       expect(fs.existsSync(path.join(hermes, "gateway.lock"))).toBe(false);
       expect(fs.existsSync(path.join(hermes, "gateway.pid"))).toBe(false);
+    },
+  );
+
+  it.skipIf(!canRunSqlite)(
+    "resumes legacy SQLite retirement after publication is interrupted",
+    () => {
+      const { hermes } = dashboardMigrationFixture();
+      const legacy = path.join(hermes, "profiles/dashboard-home");
+      const runtime = path.join(hermes, "runtime");
+      const record = path.join(runtime, ".nemoclaw-dashboard-state-migration.json");
+      fs.mkdirSync(runtime);
+      fs.symlinkSync("runtime/state.db", path.join(hermes, "state.db"));
+      createLedger(path.join(legacy, "state.db"), "interrupted-dashboard");
+
+      const interrupted = runDashboardMigration(hermes, [], {
+        NEMOCLAW_TEST_INTERRUPT_AFTER_DASHBOARD_STATE_PUBLICATION: "1",
+      });
+
+      expect(interrupted.status).toBe(1);
+      expect(readLedger(path.join(runtime, "state.db"))).toBe("interrupted-dashboard");
+      expect(fs.existsSync(path.join(legacy, "state.db"))).toBe(true);
+      expect(fs.existsSync(record)).toBe(true);
+
+      const resumed = runDashboardMigration(hermes);
+
+      expect(resumed.status, resumed.stderr).toBe(0);
+      expect(readLedger(path.join(runtime, "state.db"))).toBe("interrupted-dashboard");
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(fs.existsSync(record)).toBe(false);
     },
   );
 
