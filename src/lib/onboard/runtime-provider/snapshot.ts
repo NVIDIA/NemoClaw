@@ -839,16 +839,16 @@ export function createDockerRuntimeProviderSnapshotSurface(
     observe: (sandbox, id) => observeDockerRuntimeSnapshot(sandbox, id, resolved),
     prepareStoppedStateCapture: (sandbox, source, projection) =>
       providerId === "docker" &&
-      (sandbox.agent ?? "openclaw") === "openclaw" &&
+      ["openclaw", "langchain-deepagents-code"].includes(sandbox.agent ?? "openclaw") &&
       source.lifecycleState === "stopped"
         ? prepareStoppedDockerStateCapture(sandbox, source, projection)
         : null,
-    // A stopped OpenClaw filesystem snapshot can populate a running replacement.
+    // A stopped agent filesystem snapshot can populate a running replacement.
     // Its receipt continues to record the actual stopped capture state; this
     // transition does not claim to restore suspended process or kernel state.
     canRestoreLifecycle: (sandbox, source, target) =>
       providerId === "docker" &&
-      (sandbox.agent ?? "openclaw") === "openclaw" &&
+      ["openclaw", "langchain-deepagents-code"].includes(sandbox.agent ?? "openclaw") &&
       source === "stopped" &&
       target === "running",
     canRepresentAcceleration: dockerCanRepresentAcceleration,

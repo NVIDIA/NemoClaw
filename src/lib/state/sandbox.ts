@@ -63,8 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
-  copyCapturedOpenClawState,
-  type CapturedOpenClawState,
+  copyCapturedAgentState,
+  type CapturedAgentState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -191,7 +191,7 @@ export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
   /** Private, provider-verified source for OpenClaw recovery without container execution. */
-  capturedOpenClawState?: CapturedOpenClawState;
+  capturedAgentState?: CapturedAgentState;
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
@@ -1800,12 +1800,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   };
 
-  if (options.capturedOpenClawState) {
+  if (options.capturedAgentState) {
     try {
-      if (agentName !== "openclaw" || options.capturedOpenClawState.sandboxName !== sandboxName)
-        throw new Error("Stopped state capture only supports OpenClaw.");
-      const captured = copyCapturedOpenClawState(
-        options.capturedOpenClawState,
+      if (
+        agentName !== options.capturedAgentState.agentName ||
+        options.capturedAgentState.sandboxName !== sandboxName
+      )
+        throw new Error("Stopped state capture does not match the registered agent.");
+      const captured = copyCapturedAgentState(
+        options.capturedAgentState,
         backupPath,
         stateDirs,
         stateDirPrefixes,
@@ -1823,7 +1826,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: stateFiles.map((file) => file.path),
         error:
-          "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved.",
+          "Stopped agent state capture could not be published safely. The source sandbox was preserved.",
       };
     }
   }

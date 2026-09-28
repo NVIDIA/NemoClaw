@@ -6,12 +6,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parseVersionFromText } from "../../adapters/openshell/version-text";
+import { getGatewayHttpsEndpoint } from "../../core/gateway-address";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
   readOwnedDockerDriverGatewayRuntimeFile,
   resolveDockerDriverGatewayStateDir,
 } from "../docker-driver-gateway-runtime-marker";
+import {
+  getTrustedActiveOpenShellGatewayUserServiceIdentity,
+  type TrustedActiveOpenShellGatewayUserServiceIdentity,
+} from "../docker-driver-gateway-service";
+import {
+  processEnvironmentUsesSelectedGatewayState,
+  readGatewayProcessEnvironment,
+} from "../gateway/process-environment";
 import {
   canonicalGatewayTargetMatches,
   gatewayProcessCmdlineMatches,
@@ -34,6 +44,11 @@ export interface PodmanGatewayReadinessDeps {
   readonly readOwnedFile: (filePath: string, uid: number) => string | null;
   readonly readProcessArguments: (pid: number, environment: NodeJS.ProcessEnv) => string | null;
   readonly readProcessExecutable: (pid: number) => string | null;
+  readonly readProcessEnvironment: (pid: number) => Record<string, string> | null;
+  readonly readManagedService: (
+    environment: NodeJS.ProcessEnv,
+  ) => TrustedActiveOpenShellGatewayUserServiceIdentity | null;
+  readonly runtimeFileMissing: (filePath: string) => boolean;
   readonly runHost: (
     command: string,
     args: readonly string[],
@@ -82,6 +97,17 @@ const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {
   readOwnedFile: readOwnedDockerDriverGatewayRuntimeFile,
   readProcessArguments,
   readProcessExecutable,
+  readProcessEnvironment: readGatewayProcessEnvironment,
+  readManagedService: (environment) =>
+    getTrustedActiveOpenShellGatewayUserServiceIdentity({ env: environment, platform: "linux" }),
+  runtimeFileMissing: (filePath) => {
+    try {
+      fs.lstatSync(filePath);
+      return false;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT";
+    }
+  },
   runHost,
 };
 
@@ -147,6 +173,12 @@ function observeOwnedListener(
   const trustedGatewayBin = input.trustedGatewayBin
     ? normalizedExecutable(input.trustedGatewayBin)
     : null;
+  // Managed-service startup removes these standalone files. Its authority is
+  // the trusted service and its effective process configuration, not a marker.
+  // Unreadable, partial, or stale standalone records must still fail closed.
+  if (pidText === null && markerText === null && trustedGatewayBin) {
+    return observeManagedServiceListener(pid, uid, stateDir, trustedGatewayBin, input, deps);
+  }
   if (
     Number(pidText?.trim()) !== pid ||
     marker?.pid !== pid ||
@@ -182,6 +214,61 @@ function observeOwnedListener(
   return { runningVersion: marker.openshellVersion };
 }
 
+function observeManagedServiceListener(
+  pid: number,
+  uid: number,
+  stateDir: string,
+  trustedGatewayBin: string,
+  input: RuntimeProviderOwnedGatewayReadinessInput,
+  deps: PodmanGatewayReadinessDeps,
+): { readonly runningVersion: string | null } | null {
+  if (input.platform !== "linux" || !input.runtimeSocketPath) return null;
+  const matches = () => {
+    if (
+      !deps.runtimeFileMissing(path.join(stateDir, "openshell-gateway.pid")) ||
+      !deps.runtimeFileMissing(getDockerDriverGatewayRuntimeMarkerPath(stateDir))
+    )
+      return false;
+    const service = deps.readManagedService(input.environment);
+    if (
+      service?.pid !== pid ||
+      !service.executablePath ||
+      normalizedExecutable(service.executablePath) !== trustedGatewayBin ||
+      !isRunningProcess(pid, uid, input, deps)
+    )
+      return false;
+    const executable = deps.readProcessExecutable(pid);
+    const args = deps.readProcessArguments(pid, input.environment);
+    const env = deps.readProcessEnvironment(pid);
+    return Boolean(
+      executable &&
+      normalizedExecutable(executable) === trustedGatewayBin &&
+      // The installed service runs the binary without CLI overrides. Bind its
+      // target using the effective environment instead of standalone argv tags.
+      args &&
+      normalizedExecutable(args) === trustedGatewayBin &&
+      env &&
+      env.OPENSHELL_DRIVERS === "podman" &&
+      env.OPENSHELL_PODMAN_SOCKET === input.runtimeSocketPath &&
+      env.OPENSHELL_SERVER_PORT === String(input.gatewayPort) &&
+      env.OPENSHELL_GRPC_ENDPOINT === input.expectedEndpoint &&
+      env.OPENSHELL_DB_URL === `sqlite:${path.join(stateDir, "openshell.db")}` &&
+      processEnvironmentUsesSelectedGatewayState(env, stateDir),
+    );
+  };
+  if (!matches()) return null;
+  const version = deps.runHost(trustedGatewayBin, ["--version"], input.environment);
+  // Recheck after the subprocess: a restarted service or changed target cannot
+  // inherit the earlier process proof or the executable's version evidence.
+  if (!matches()) return null;
+  return {
+    runningVersion:
+      version.status === 0
+        ? parseVersionFromText(`${version.stdout}\n${version.stderr}`, trustedGatewayBin)
+        : null,
+  };
+}
+
 export function observeNativePodmanGatewayReadiness(
   input: RuntimeProviderOwnedGatewayReadinessInput,
   deps: PodmanGatewayReadinessDeps = DEFAULT_DEPS,
@@ -206,7 +293,11 @@ export function observeNativePodmanGatewayReadiness(
         ? "compatible"
         : "drift";
   return Object.freeze({
-    endpointBinding: classifyEndpointBinding(input.managedGatewayEndpoints, input.expectedEndpoint),
+    // Host CLI registration uses loopback; the runtime marker above records the sandbox-facing endpoint.
+    endpointBinding: classifyEndpointBinding(
+      input.managedGatewayEndpoints,
+      getGatewayHttpsEndpoint(input.gatewayPort),
+    ),
     listenerScan: Object.freeze({
       pids: Object.freeze(pids),
       unverifiedPids: Object.freeze(unverifiedPids),

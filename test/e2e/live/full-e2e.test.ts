@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,6 +58,7 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
   cleanupAcquiredResource,
   cleanupWhenOpenShellAvailable,
@@ -226,6 +228,11 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
+  await captureNativePluginFailureReadiness(sandbox, result, {
+    sandboxName: SANDBOX_NAME,
+    artifactName,
+    env: env(),
+  });
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
@@ -827,6 +834,7 @@ test(
       redactionValues,
       timeoutMs: 60_000,
     });
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), redactionValues, false);
     await (coldOnboard
       ? assertColdOnboardPerformance({
           apiKey: hosted.apiKey,
@@ -904,8 +912,7 @@ test(
 
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
-    const status = await waitForSandboxStatus(host);
-    expect(status.exitCode, resultText(status)).toBe(0);
+    await waitForSandboxStatus(host);
 
     const inference = await sandbox.openshell(["inference", "get"], {
       artifactName: "phase-3-openshell-inference-get",

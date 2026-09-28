@@ -33,7 +33,8 @@ vi.mock("../../agent/defs", () => ({
   loadAgent: vi.fn(),
 }));
 
-vi.mock("./process-recovery", () => ({
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
   executeSandboxExecCommand: vi.fn(),
 }));
 

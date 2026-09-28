@@ -318,6 +318,10 @@ ${serviceIdentityCheck}`,
     // Evaluate selection rather than requiring a particular spelling of the filters.
     const selects = (event: "pull_request" | "push", changedPath: string) =>
       workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
+    expect.soft(selects("pull_request", "src/lib/onboard/session-bootstrap.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/resume/locked-runtime.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/session-bootstrap.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/resume/locked-runtime.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/launch.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/connect.ts")).toBe(true);
     expect
