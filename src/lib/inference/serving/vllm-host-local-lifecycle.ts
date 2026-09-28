@@ -213,6 +213,13 @@ function parseRuntimeReceipt(value: unknown): HostLocalVllmRuntimeReceipt | null
   }
 }
 
+/** Read the existing runtime identity before deciding its private state is disposable. */
+export function readHostLocalVllmRuntimeReceipt(
+  stateDir = managedVllmStateDir(),
+): HostLocalVllmRuntimeReceipt | null {
+  return parseRuntimeReceipt(readRuntimeReceipt(stateDir));
+}
+
 export function validateHostLocalVllmRuntimeReceipt(
   input: {
     readonly containerId: string;
@@ -223,7 +230,7 @@ export function validateHostLocalVllmRuntimeReceipt(
 ): HostLocalVllmServingIdentity | null {
   const identity = servingIdentityFromLabels(input.labels);
   if (!identity) return null;
-  const receipt = parseRuntimeReceipt(readRuntimeReceipt(stateDir));
+  const receipt = readHostLocalVllmRuntimeReceipt(stateDir);
   if (
     !receipt ||
     receipt.container.id !== input.containerId ||

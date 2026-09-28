@@ -134,9 +134,36 @@ describe.each(operations)("$name managed vLLM absence", ({ cleanup, refusal, abs
     },
   );
 
+  it.each(["present", "unavailable"])(
+    "preserves private state when the receipt container ID is %s after its name disappears",
+    (observation) => {
+      const state = privateState();
+      const capture = vi.fn<Capture>().mockImplementation((args) => {
+        if (args.includes(`id=${"f".repeat(64)}`)) {
+          if (observation === "unavailable") throw new Error("Docker ID inventory unavailable");
+          return "f".repeat(64);
+        }
+        return "";
+      });
+      const forceRm = vi.fn(() => ({ status: 0 }) as never);
+      const result = cleanup({
+        homeDir: state.homeDir,
+        deps: {
+          capture,
+          forceRm,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      });
+      expect(result).toMatchObject({ ...refusal, removed: [] });
+      expect(forceRm).not.toHaveBeenCalled();
+      expect(fs.readFileSync(state.keyPath, "utf8")).toBe(state.keyContent);
+      expect(fs.readFileSync(state.receiptPath, "utf8")).toBe(state.receiptContent);
+    },
+  );
+
   it("removes private state only after an empty successful container inventory", () => {
     const state = privateState();
-    const capture = vi.fn<Capture>().mockReturnValueOnce("").mockReturnValueOnce("");
+    const capture = vi.fn<Capture>().mockReturnValue("");
     const forceRm = vi.fn(() => ({ status: 0 }) as never);
     const result = cleanup({
       homeDir: state.homeDir,
@@ -147,10 +174,15 @@ describe.each(operations)("$name managed vLLM absence", ({ cleanup, refusal, abs
       },
     });
     expect(result).toMatchObject(absent);
-    expect(capture).toHaveBeenLastCalledWith(inventoryArgs, {
-      ignoreError: false,
-      timeout: 10_000,
-    });
+    expect(capture).toHaveBeenLastCalledWith(
+      inventoryArgs.map((arg) =>
+        arg === `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$` ? `id=${"f".repeat(64)}` : arg,
+      ),
+      {
+        ignoreError: false,
+        timeout: 10_000,
+      },
+    );
     expect(forceRm).not.toHaveBeenCalled();
     expect(fs.existsSync(state.keyPath)).toBe(false);
     expect(fs.existsSync(state.receiptPath)).toBe(false);

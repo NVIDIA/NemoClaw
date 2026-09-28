@@ -64,6 +64,7 @@ import {
   HOST_LOCAL_VLLM_CONTAINER_NAME,
   HOST_LOCAL_VLLM_MANAGED_LABEL,
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+  readHostLocalVllmRuntimeReceipt,
   validateHostLocalVllmRuntimeReceipt,
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
@@ -247,8 +248,28 @@ function cleanupHostLocalVllm(
     deps.capture,
   );
   if (inspected.kind === "absent") {
-    // The key and receipt belong to this container alone; a key that outlives
-    // the container is a credential with no runtime.
+    if (statePathExists(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))) {
+      const receipt = readHostLocalVllmRuntimeReceipt(stateDir);
+      if (!receipt) throw new Error("host-local vLLM runtime receipt is invalid");
+      const recordedContainer = deps.capture(
+        [
+          "container",
+          "ls",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          `id=${receipt.container.id}`,
+          "--format",
+          "{{.ID}}",
+        ],
+        { ignoreError: false, timeout: 10_000 },
+      );
+      if (recordedContainer.trim()) {
+        throw new Error("host-local vLLM receipt still identifies an existing container");
+      }
+    }
+    // A renamed container still owns its credentials; discard state only when
+    // both the reserved name and any recorded container identity are absent.
     const cleanup = cleanupRetiredHostLocalVllmState(stateDir, deps);
     return cleanup.ok
       ? { status: "absent" }
