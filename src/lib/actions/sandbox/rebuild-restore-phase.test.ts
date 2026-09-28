@@ -171,7 +171,7 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
-  it("does not interpret or merge Hermes state after the whole-state transfer", async () => {
+  it("migrates retired Hermes dashboard state after the whole-home transfer", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restore = vi
       .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
@@ -182,6 +182,7 @@ describe("rebuild filesystem restore", () => {
         failedDirs: [],
         failedFiles: [],
       });
+    const migrate = vi.fn().mockResolvedValue({ status: 0, stdout: "", stderr: "" });
 
     await expect(
       runRebuildRestorePhase({
@@ -189,9 +190,73 @@ describe("rebuild filesystem restore", () => {
         targetAgentType: "hermes",
         backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
         log: vi.fn(),
+        migrateHermesLegacyDashboardState: migrate,
       }),
     ).resolves.toEqual({ restoreSucceeded: true });
     expect(restore).toHaveBeenCalledOnce();
+    expect(migrate).toHaveBeenCalledExactlyOnceWith("hermes", undefined);
+    expect(restore.mock.invocationCallOrder[0]).toBeLessThan(migrate.mock.invocationCallOrder[0]!);
+  });
+
+  it("fails closed when retired Hermes dashboard state cannot be migrated", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["."],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+
+    const result = await runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      log: vi.fn(),
+      migrateHermesLegacyDashboardState: vi.fn().mockResolvedValue({
+        status: 1,
+        stdout: "",
+        stderr: "conflicting legacy state",
+      }),
+    });
+
+    expect(result).toEqual({ restoreSucceeded: false });
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "may contain a partial legacy dashboard-state migration",
+    );
+  });
+
+  it("fails closed when the Hermes migration transport throws", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["."],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+    const log = vi.fn();
+
+    const result = await runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      log,
+      migrateHermesLegacyDashboardState: vi
+        .fn()
+        .mockRejectedValue(new Error("sandbox command transport failed")),
+    });
+
+    expect(result).toEqual({ restoreSucceeded: false });
+    expect(log).toHaveBeenCalledWith(
+      "Hermes legacy dashboard-state migration transport failed: sandbox command transport failed",
+    );
   });
 
   it("surfaces a filesystem restore failure without inventing policy recovery", async () => {

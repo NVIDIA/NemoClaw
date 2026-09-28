@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
 import { G, R, YW } from "../../cli/terminal-style";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
@@ -13,6 +14,10 @@ import {
   promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
+import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "./snapshot-hermes-gateway-hint";
 import * as snapshotRestore from "./snapshot/restore-authority";
 
 export interface RebuildRestorePhaseInput {
@@ -21,6 +26,10 @@ export interface RebuildRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   runtimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
+  migrateHermesLegacyDashboardState?: (
+    sandboxName: string,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) => Promise<SandboxCommandResult | null>;
 }
 
 export interface RebuildRestorePhaseResult {
@@ -76,7 +85,30 @@ export async function runRebuildRestorePhase(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
-    if (!restore.success) {
+    let hermesDashboardStateMigrationSucceeded = true;
+    if (targetAgentType === "hermes" && restore.success) {
+      const migrate = input.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+      let migration: SandboxCommandResult | null = null;
+      try {
+        migration = await migrate(sandboxName, runtimeSelection);
+      } catch (error) {
+        log(
+          `Hermes legacy dashboard-state migration transport failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      hermesDashboardStateMigrationSucceeded = migration?.status === 0;
+      log(
+        `Hermes legacy dashboard-state migration: ${hermesDashboardStateMigrationSucceeded ? "complete" : `failed${migration ? ` (exit ${migration.status})` : " (transport unavailable)"}`}`,
+      );
+      if (!hermesDashboardStateMigrationSucceeded) {
+        restoreSucceeded = false;
+        console.error(`  ${YW}Hermes legacy dashboard-state migration failed.${R}`);
+        const detail = migration?.stderr.trim();
+        if (detail) console.error(`  ${detail.slice(0, 500)}`);
+        console.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(sandboxName)}`);
+      }
+    }
+    if (!restore.success || !hermesDashboardStateMigrationSucceeded) {
       if (openClawDoctorWindow) {
         await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
         openClawDoctorWindow = undefined;

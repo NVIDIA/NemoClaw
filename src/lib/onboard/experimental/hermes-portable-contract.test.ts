@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,10 @@ const PRE_UPGRADE_MANIFEST_SHA256 =
   "9773457ced4ace14ee6418f02eff55ec77a7345775e1adc49fd21757910aeb3b";
 const PRE_SKILLS_MANIFEST_SHA256 =
   "632a183c7fbf796b0b37d255fa7f61d4a84f32df7b5a3d1a3914f82bae4c889b";
+const PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_MANIFEST_SHA256 =
+  "38f10b7dcb8074134b00144e361905ebb0fed80fb575b0ef5af0eb18f3f4cf43";
+const PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY =
+  "5ad73d7188e1ee38f981e7ec3387fe729b64c71759bb46adfb49ff872728d7fe";
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
@@ -36,6 +41,41 @@ function startupArgvFor(sandboxName: string, ...extra: string[]): string[] {
     ...extra,
     "/usr/local/bin/nemoclaw-start",
   ];
+}
+
+function canonical(value: unknown): unknown {
+  return Array.isArray(value)
+    ? value.map(canonical)
+    : !value || typeof value !== "object"
+      ? value
+      : Object.fromEntries(
+          Object.keys(value as Record<string, unknown>)
+            .sort()
+            .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+        );
+}
+
+function startupDescriptorForState(argv: readonly string[], stateIdentitySha256: string): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonical({
+          argv,
+          configDir: "/sandbox/.hermes",
+          devicePairing: false,
+          gatewayCommand: "hermes gateway run",
+          health: {
+            url: "http://localhost:8642/health",
+            port: 8642,
+            timeout_seconds: 90,
+          },
+          interactiveCommand: "hermes",
+          stateIdentitySha256,
+          webAuth: { method: "bearer_token", env: "API_SERVER_KEY" },
+        }),
+      ),
+    )
+    .digest("hex");
 }
 
 function copyAgent(): AgentDefinition {
@@ -335,6 +375,34 @@ describe("Hermes portable startup contract", () => {
         SANDBOX,
       ),
     ).toThrow("current startup authority disagrees");
+  });
+
+  it("accepts the reviewed dashboard-retirement receipt across complete-home adoption (#11767, #11768)", () => {
+    const current = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+    const installed = {
+      ...current,
+      manifestSha256: PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_MANIFEST_SHA256,
+      stateIdentitySha256: PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+      startupDescriptorSha256: startupDescriptorForState(
+        current.argv,
+        PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+      ),
+    };
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(installed, SANDBOX),
+    ).not.toThrow();
+    expect(
+      assertCurrentHermesPortableStartupContract(installed, {
+        agent: loadAgent("hermes"),
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      }),
+    ).toEqual(current);
   });
 
   it.each([

@@ -45,8 +45,9 @@ const ALLOWED_ENV = new Set([
 ]);
 const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
 // One-way compatibility bridges for the exact additive skills metadata change
-// in #11248, native restore ownership in #11766, and host-only deferred
-// onboarding metadata in #10341. None of these relax startup authority checks.
+// in #11248, native restore ownership in #11766, host-only deferred onboarding
+// metadata in #10341, and the legacy dashboard-state retirement in #11768.
+// None of these relax startup authority checks.
 // Support these reviewed manifest generations through the current and next
 // LKG upgrade window. Remove them under #11357 once release qualification and
 // the historical rootless lifecycle fixture have advanced past these hashes.
@@ -54,6 +55,8 @@ const REVIEWED_INSTALLED_STATE_IDENTITY =
   "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
 const PRE_NATIVE_INVENTORY_STATE_IDENTITY =
   "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY =
+  "5ad73d7188e1ee38f981e7ec3387fe729b64c71759bb46adfb49ff872728d7fe";
 const CURRENT_STATE_IDENTITY = "573a0bfbf320b397bcd1d159662bb7d8c849d926f789f1af5b0ebfbb70de4da1";
 const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   [
@@ -75,6 +78,14 @@ const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   ["32491879c546bac2dd5f92abecc3e25f05bc4fb25f924b2b114b90aa1ed501a3", CURRENT_STATE_IDENTITY],
   ["9773457ced4ace14ee6418f02eff55ec77a7345775e1adc49fd21757910aeb3b", CURRENT_STATE_IDENTITY],
   ["632a183c7fbf796b0b37d255fa7f61d4a84f32df7b5a3d1a3914f82bae4c889b", CURRENT_STATE_IDENTITY],
+  [
+    "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5",
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
+  ],
+  [
+    "38f10b7dcb8074134b00144e361905ebb0fed80fb575b0ef5af0eb18f3f4cf43",
+    PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+  ],
 ]);
 const CURRENT_MANIFEST = "11e7474a3c9a4ea1d9808bc05626bcc97fe7d34c1956600544abae9b88d93a8f";
 

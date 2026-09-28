@@ -33,6 +33,8 @@ OpenClaw's `gateway.auth` value and Hermes's `.hermes/.env` `API_SERVER_KEY` are
 
 For an eligible stopped container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture.
 
+For Hermes, the restored complete home may contain the retired `profiles/dashboard-home` layout from an older release. After restore, NemoClaw runs a one-time migration that moves safe legacy files, including a legacy WhatsApp session, into the shared native Hermes home and removes the retired directory. User-created named profiles remain unchanged. A collision, unsafe link, or other unsafe legacy path fails closed and leaves both copies available for trusted recovery instead of choosing one.
+
 ## Backup Before Upgrade
 
 `$$nemoclaw backup-all` remains an installer-facing safety operation. It normally captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. A standalone run with `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` can skip a running sandbox whose SSH endpoint is unreachable; changes in that skipped sandbox are absent from the new backup. The installer uses strict pre-upgrade mode, which rejects ordinary skipped or failed sandboxes instead of treating the batch as complete. Refer to [`$$nemoclaw backup-all`](../../reference/commands#$$nemoclaw-backup-all) for the exact skip and strict-mode behavior. It is not a general snapshot create/list/restore interface.

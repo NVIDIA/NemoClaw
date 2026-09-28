@@ -239,7 +239,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 | `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
 | `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
 | `/sandbox/.hermes/kanban.db` | Default Hermes kanban board database. It persists as part of the complete native home. |
-| `/sandbox/.hermes/profiles/dashboard-home/` | Hermes Web Dashboard profile, including `MEMORY.md` and `USER.md`. |
+| `/sandbox/.hermes/profiles/` | User-created named Hermes profiles. The Web Dashboard uses the shared native Hermes home instead of a separate profile. |
 | `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
 | `/sandbox/.hermes/logs/` | Hermes runtime logs. |
 | `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by OpenShell storage. |
@@ -248,8 +248,10 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 
 Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
-Rebuilds and upgrades transfer the complete OpenShell-provided native home, including `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Rebuilds and upgrades transfer the complete OpenShell-provided native home, including `SOUL.md`, user-created named profiles, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
 Named boards, attachments, worker logs, and scratch workspaces under `.hermes/kanban/` are included because they are under the native home. External directory or worktree targets are included only when they are also under the OpenShell-provided native home/workspace.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
+Startup consumes an older reserved `.hermes/profiles/dashboard-home/` as a one-time migration source, moves safe contents into the shared native home, and removes the retired profile.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
 Back up important state before destroying a Hermes sandbox.
