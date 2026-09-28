@@ -20,6 +20,8 @@ import {
   TOKEN_PREFIX_PATTERNS,
   isConfigObject,
   isConfigValue,
+  isCredentialField,
+  isSafeCredentialPlaceholder,
   sanitizeEnvFileContent,
   stripCredentials,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
@@ -57,16 +59,7 @@ export type {
 
 /** Detect standalone credential fingerprints without interpreting surrounding file structure. */
 export function textContainsHighConfidenceCredential(value: string): boolean {
-  const withoutPlaceholders = value
-    .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-    // Strip the reserved prefix, not only a complete placeholder. Generated
-    // bundles contain the placeholder matcher itself (for example the source
-    // text `xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+`); leaving that prefix in
-    // place makes the credential scanner flag its own trusted boundary code.
-    .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
-    .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
-    .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
-    .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
+  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,
     ...STRUCTURED_TOKEN_PATTERNS,
@@ -76,6 +69,45 @@ export function textContainsHighConfidenceCredential(value: string): boolean {
     if (pattern.test(withoutPlaceholders)) return true;
   }
   return /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(withoutPlaceholders);
+}
+
+function textWithoutSafeCredentialFixtures(value: string): string {
+  return (
+    value
+      .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
+      // Strip the reserved prefix, not only a complete placeholder. Generated
+      // bundles contain the placeholder matcher itself (for example the source
+      // text `xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+`); leaving that prefix in
+      // place makes the credential scanner flag its own trusted boundary code.
+      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
+      .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
+      .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
+      .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
+  );
+}
+
+/** Detect standalone and context-anchored credentials in opaque file content. */
+export function textContainsCredential(value: string): boolean {
+  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
+  if (textContainsHighConfidenceCredential(withoutPlaceholders)) return true;
+  const authorization =
+    /\b(?:Proxy-)?Authorization[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
+  if (authorization.test(withoutPlaceholders)) return true;
+  const assignment =
+    /^[ \t]*["']?([A-Za-z][A-Za-z0-9._-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;}]+))/gmu;
+  for (const match of value.matchAll(assignment)) {
+    const field = match[1]!;
+    const candidate = match[2] ?? match[3] ?? match[4] ?? "";
+    if (
+      !/^(?:module\.)?exports\./u.test(field) &&
+      isCredentialField(field) &&
+      !isSafeCredentialPlaceholder(candidate) &&
+      textWithoutSafeCredentialFixtures(candidate).length >= 10
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseJson<T>(text: string): T {

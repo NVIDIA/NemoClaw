@@ -726,6 +726,16 @@ describe("complete native home persistence", () => {
   it.each([
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
+    [
+      "an opaque bearer credential in a history file",
+      ".openclaw/agents/child/history.log",
+      "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
+    ],
+    [
+      "an opaque credential assignment in a session file",
+      ".openclaw/agents/child/session.log",
+      "sessionToken=opaqueCredentialPayloadZ1234567890",
+    ],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
     [
       "an agent-owned package manifest",

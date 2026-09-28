@@ -52,7 +52,7 @@ import {
   isSensitiveFile,
   sanitizeEnvFileContent,
   stripCredentials,
-  textContainsHighConfidenceCredential,
+  textContainsCredential,
   valueLooksLikeSecret,
 } from "../security/credential-filter.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
@@ -1230,21 +1230,10 @@ function shouldSkipNativeRawCredentialScan(_entry: string, fileName: string): bo
   );
 }
 
-function nativeRawChunkContainsCredential(raw: string, contextual: boolean): boolean {
-  const withoutPlaceholders = raw
-    .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-    .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
-    .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
-    .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
-  if (contextual) return valueLooksLikeSecret(withoutPlaceholders);
-  return textContainsHighConfidenceCredential(withoutPlaceholders);
-}
-
 function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  contextual: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1255,7 +1244,7 @@ function scanNativeTarFilePayload(
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
-    if (nativeRawChunkContainsCredential(raw, contextual)) return true;
+    if (textContainsCredential(raw)) return true;
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
@@ -1308,11 +1297,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
           if (!shouldSkipNativeRawCredentialScan(entry, fileName)) {
-            const contextual =
-              fileName === ".env" ||
-              fileName.endsWith(".env") ||
-              shouldScanNativeStructuredConfig(entry, fileName);
-            const violation = scanNativeTarFilePayload(descriptor, dataOffset, size, contextual);
+            const violation = scanNativeTarFilePayload(descriptor, dataOffset, size);
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
           }

@@ -24,6 +24,7 @@ import {
   sanitizeYamlConfigFile,
   shouldScanSnapshotFileForCredentials,
   stripCredentials,
+  textContainsCredential,
   textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
@@ -233,6 +234,24 @@ describe("textContainsHighConfidenceCredential", () => {
   it("continues to flag real Slack credentials", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
+  });
+});
+
+describe("textContainsCredential", () => {
+  it.each([
+    "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
+    "sessionToken=opaqueCredentialPayloadZ1234567890",
+    '  "client_secret": "opaqueCredentialPayloadZ1234567890"',
+  ])("flags opaque credential context in arbitrary text: %s", (value) => {
+    expect(textContainsCredential(value)).toBe(true);
+  });
+
+  it.each([
+    "exports.valueLooksLikeSecret = valueLooksLikeSecret;",
+    "Authorization: Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
+    "sessionToken=[STRIPPED_BY_MIGRATION]",
+  ])("preserves non-secret source or placeholder text: %s", (value) => {
+    expect(textContainsCredential(value)).toBe(false);
   });
 });
 

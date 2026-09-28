@@ -110,6 +110,48 @@ function inspectStorage(
   return responses[args[0]!]!;
 }
 
+function tarHeader(name: string, type: string, size = 0): Buffer {
+  const header = Buffer.alloc(512);
+  const writeOctal = (start: number, length: number, value: number) =>
+    header.write(`${value.toString(8).padStart(length - 1, "0")}\0`, start, length, "ascii");
+  header.write(name, 0, 100, "utf8");
+  writeOctal(100, 8, 0o700);
+  writeOctal(108, 8, 0);
+  writeOctal(116, 8, 0);
+  writeOctal(124, 12, size);
+  writeOctal(136, 12, 0);
+  header[156] = type.charCodeAt(0);
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+  header.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  return header;
+}
+
+function tarPayloadEntry(name: string, type: string, payload: Buffer): Buffer {
+  return Buffer.concat([
+    tarHeader(name, type, payload.byteLength),
+    payload,
+    Buffer.alloc(Math.ceil(payload.byteLength / 512) * 512 - payload.byteLength),
+  ]);
+}
+
+function dockerCopyStream(payload: Buffer) {
+  return spawn(
+    process.execPath,
+    [
+      "-e",
+      "process.stdout.write(Buffer.from(process.argv[1], 'base64'))",
+      payload.toString("base64"),
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+}
+
 describe("stopped Docker recovery capture", () => {
   it("rejects a non-canonical native root before runtime access", () => {
     const inspect = vi.fn();
@@ -302,6 +344,55 @@ describe("stopped Docker recovery capture", () => {
       await expect(capture.capture(descriptor, captureMaxBytes)).rejects.toThrow(
         "Could not read and filter the stopped source container.",
       );
+    } finally {
+      fs.closeSync(descriptor);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "path escape",
+      Buffer.concat([
+        tarHeader("sandbox", "5"),
+        tarHeader("sandbox/../outside", "0"),
+        Buffer.alloc(1024),
+      ]),
+    ],
+    [
+      "GNU sparse PAX metadata",
+      (() => {
+        const body = "GNU.sparse.map=0,1\n";
+        let length = Buffer.byteLength(body) + 2;
+        let record = Buffer.from(`${length} ${body}`);
+        while (record.byteLength !== length) {
+          length = record.byteLength;
+          record = Buffer.from(`${length} ${body}`);
+        }
+        return Buffer.concat([
+          tarHeader("sandbox", "5"),
+          tarPayloadEntry("sandbox/PaxHeaders/entry", "x", record),
+          tarHeader("sandbox/entry", "0"),
+          Buffer.alloc(1024),
+        ]);
+      })(),
+    ],
+  ])("rejects a forged Docker copy stream with %s", async (_name, forgedArchive) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-forged-test-"));
+    const archive = path.join(root, "archive");
+    const descriptor = fs.openSync(archive, "wx+", 0o600);
+    const read = vi.fn(() => dockerCopyStream(forgedArchive));
+    try {
+      const capture = prepareStoppedDockerStateCapture(sandbox, runtime, projection, {
+        inspect: () => inspectResult(observation()),
+        spawn: read,
+      });
+      await expect(capture.capture(descriptor, captureMaxBytes)).rejects.toThrow(
+        "Stopped state archive projection failed.",
+      );
+      expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox`, "-"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } finally {
       fs.closeSync(descriptor);
       fs.rmSync(root, { recursive: true, force: true });
