@@ -915,6 +915,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   it("uses the prepared stopped native-state copy without starting the container", async () => {
     const stoppedNativeState = {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       nativeDirectory: "/private/stopped-native",
       directory: "/private/stopped-native/.openclaw",
       cleanupDirectory: "/private",
@@ -990,8 +991,11 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
             ? {
                 sandboxName: "alpha",
                 agentName: "openclaw",
+                nativeDirectory: "/private/native",
                 directory: "/private/captured",
+                cleanupDirectory: "/private",
                 assertCurrent: vi.fn(),
+                dispose: vi.fn(),
               }
             : undefined,
         ),

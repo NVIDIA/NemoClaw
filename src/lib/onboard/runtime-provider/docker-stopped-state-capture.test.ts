@@ -110,22 +110,24 @@ function inspectStorage(
 }
 
 describe("stopped Docker recovery capture", () => {
-  it.each([
-    { directories: ["agent/../workspace"] },
-    { files: ["/etc/passwd"] },
-    { prefixes: ["workspace/child"] },
-  ])("rejects unsafe declared capture paths before runtime access: %j (#11165)", (unsafe) => {
+  it("rejects a non-canonical native root before runtime access", () => {
     const inspect = vi.fn();
     expect(() =>
-      prepareStoppedDockerStateCapture(sandbox, runtime, { ...projection, ...unsafe }, { inspect }),
-    ).toThrow("invalid declared path");
+      prepareStoppedDockerStateCapture(
+        sandbox,
+        runtime,
+        { ...projection, nativeRoot: "/sandbox/../etc" },
+        { inspect },
+      ),
+    ).toThrow("complete canonical native root");
     expect(inspect).not.toHaveBeenCalled();
   });
 
-  it("captures stopped Deep Agents state and native MCP without copying unrelated files (#11165)", async () => {
+  it("captures the complete stopped Deep Agents native root (#11165, #11767)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-dcode-test-"));
     const archive = path.join(root, "archive");
-    const source = path.join(root, ".deepagents");
+    const nativeRoot = path.join(root, "sandbox");
+    const source = path.join(nativeRoot, ".deepagents");
     fs.mkdirSync(path.join(source, ".state"), { recursive: true });
     fs.mkdirSync(path.join(source, "agent", "skills"), { recursive: true });
     fs.writeFileSync(path.join(source, ".state", "retained.txt"), "conversation state");
@@ -134,9 +136,11 @@ describe("stopped Docker recovery capture", () => {
     fs.writeFileSync(path.join(source, "config.toml"), "[ui]\nshow_scrollbar = true\n");
     fs.writeFileSync(path.join(source, ".mcp.json"), '{"mcpServers":{}}');
     fs.writeFileSync(path.join(source, ".env"), "PRIVATE-CREDENTIAL-CANARY");
+    fs.mkdirSync(path.join(nativeRoot, "custom-package"));
+    fs.writeFileSync(path.join(nativeRoot, "custom-package", "retained.txt"), "native state");
     const descriptor = fs.openSync(archive, "wx+", 0o600);
     const read = vi.fn(() =>
-      spawn("tar", ["-cf", "-", "-C", root, ".deepagents"], {
+      spawn("tar", ["-cf", "-", "-C", root, "sandbox"], {
         env: { ...process.env, COPYFILE_DISABLE: "1" },
         stdio: ["ignore", "pipe", "pipe"],
       }),
@@ -145,25 +149,24 @@ describe("stopped Docker recovery capture", () => {
       const capture = prepareStoppedDockerStateCapture(
         { ...sandbox, agent: "langchain-deepagents-code" },
         runtime,
-        {
-          directories: [".state", "agent/skills"],
-          prefixes: [],
-          files: ["config.toml", ".mcp.json"],
-        },
+        projection,
         { inspect: () => inspectResult(observation()), spawn: read },
       );
       await capture.capture(descriptor);
       const names = execFileSync("tar", ["-tf", archive], { encoding: "utf8" });
-      expect(names).toContain(".state/retained.txt");
-      expect(names).toContain("agent/skills/retained.md");
-      expect(names).toContain("config.toml");
-      expect(names).toContain(".mcp.json");
-      expect(names).not.toContain("private.txt");
-      expect(names).not.toContain(".env");
+      expect(names).toContain(".deepagents/.state/retained.txt");
+      expect(names).toContain(".deepagents/agent/skills/retained.md");
+      expect(names).toContain(".deepagents/agent/private.txt");
+      expect(names).toContain(".deepagents/config.toml");
+      expect(names).toContain(".deepagents/.mcp.json");
+      expect(names).toContain(".deepagents/.env");
+      expect(names).toContain("custom-package/retained.txt");
       expect(
-        execFileSync("tar", ["-xOf", archive, ".state/retained.txt"], { encoding: "utf8" }),
+        execFileSync("tar", ["-xOf", archive, ".deepagents/.state/retained.txt"], {
+          encoding: "utf8",
+        }),
       ).toBe("conversation state");
-      expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox/.deepagents`, "-"], {
+      expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox`, "-"], {
         stdio: ["ignore", "pipe", "pipe"],
       });
     } finally {

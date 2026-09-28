@@ -92,6 +92,23 @@ export async function prepareRebuildStoppedOpenClawState(
   return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox);
 }
 
+/** Select complete stopped native state for supported fresh terminal-state rebuilds. */
+export async function prepareRebuildStoppedAgentState(
+  entry: RebuildSandboxEntry,
+  liveState: RebuildLiveState,
+  hasRecoveryManifest: boolean,
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
+): Promise<PreparedStoppedNativeState | null> {
+  if (
+    !liveState.terminalPhase ||
+    liveState.staleRecovery ||
+    hasRecoveryManifest ||
+    !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
+  )
+    return null;
+  return snapshotBackup.prepareStoppedAgentState(entry.name, getSandbox);
+}
+
 export type RebuildLiveStateOptions = {
   /** A digest-verified policy handoff bound to the prepared recovery manifest. */
   authoritativeRecoveryPolicyAvailable?: boolean;

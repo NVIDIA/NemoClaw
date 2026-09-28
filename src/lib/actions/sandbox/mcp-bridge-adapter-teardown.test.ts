@@ -173,6 +173,7 @@ describe("MCP adapter teardown rollback", () => {
     });
     const source = {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       nativeDirectory: "/private/native",
       directory: "/private/captured",
       cleanupDirectory: "/private",

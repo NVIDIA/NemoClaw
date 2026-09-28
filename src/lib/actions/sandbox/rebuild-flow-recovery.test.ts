@@ -58,6 +58,7 @@ describe("rebuildSandbox flow: recovery", () => {
     fs.writeFileSync(path.join(directory, "openclaw.json"), "{}");
     const captured = {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       nativeDirectory,
       directory,
       cleanupDirectory: nativeDirectory,

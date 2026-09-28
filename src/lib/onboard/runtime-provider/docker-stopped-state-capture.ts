@@ -152,7 +152,7 @@ function observeManagedStateMounts(
 }
 
 /**
- * Read the OpenClaw state tree from one stopped Docker runtime. This operation
+ * Read the complete native root from one stopped Docker runtime. This operation
  * never starts or executes in the container and never mutates OpenShell state.
  * The provider owns interpretation of its opaque runtime handle.
  */
@@ -165,8 +165,9 @@ export function prepareStoppedDockerStateCapture(
     spawn?: typeof dockerSpawn;
   } = {},
 ): RuntimeProviderStoppedStateCapture {
+  const agentName = sandbox.agent ?? "openclaw";
   if (
-    (sandbox.agent ?? "openclaw") !== "openclaw" ||
+    !["openclaw", "langchain-deepagents-code"].includes(agentName) ||
     sandbox.openshellDriver !== "docker" ||
     !sandbox.lifecycleLiveIdentityFingerprint ||
     runtime.providerId !== "docker" ||
@@ -175,7 +176,9 @@ export function prepareStoppedDockerStateCapture(
     runtime.runtime.runtime.kind !== "docker-container" ||
     !/^[a-f0-9]{64}$/u.test(runtime.runtime.runtime.handle)
   ) {
-    rejectStoppedCapture("Stopped state capture requires an identified Docker OpenClaw sandbox.");
+    rejectStoppedCapture(
+      "Stopped state capture requires an identified Docker OpenClaw or Deep Agents sandbox.",
+    );
   }
   if (projection.nativeRoot !== "/sandbox") {
     rejectStoppedCapture("Stopped state projection requires the complete canonical native root.");

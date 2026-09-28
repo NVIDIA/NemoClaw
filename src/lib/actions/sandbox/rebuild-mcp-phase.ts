@@ -21,7 +21,7 @@ import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider"
 import {
   assertNoLegacyMcpSources,
   inspectAgentMcpSources,
-  inspectCapturedOpenClawMcpSources,
+  inspectCapturedAgentMcpSources,
   joinMcpEntriesToOpenShell,
 } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
@@ -39,12 +39,18 @@ export async function observeMcpStateForRebuild(
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }> {
   if (!inspectCurrentSource) return { entries: [] };
+  if (
+    stoppedNativeState &&
+    (stoppedNativeState.sandboxName !== sandbox.name ||
+      stoppedNativeState.agentName !== (sandbox.agent ?? "openclaw"))
+  )
+    throw new Error("Captured MCP source does not match the rebuild target.");
   const sourceRuntime = runtimeSelection ?? {
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
   const sources = stoppedNativeState
-    ? inspectCapturedOpenClawMcpSources(stoppedNativeState)
+    ? inspectCapturedAgentMcpSources(stoppedNativeState)
     : await inspectAgentMcpSources(sandbox, sourceRuntime);
   assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };

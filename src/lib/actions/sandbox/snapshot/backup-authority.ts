@@ -230,13 +230,15 @@ function rejectStoppedState(message: string): never {
 }
 
 /** Prepare a private complete native-state copy before inspecting a stopped source. */
-export async function prepareStoppedOpenClawState(
+export async function prepareStoppedAgentState(
   sandboxName: string,
   getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
 ): Promise<PreparedStoppedNativeState | null> {
   const dependencies = { ...defaultDependencies, getSandbox };
   const entry = getSandbox(sandboxName);
-  if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
+  const agentName = entry?.agent ?? "openclaw";
+  if (!entry || (agentName !== "openclaw" && agentName !== "langchain-deepagents-code"))
+    return null;
   const authority = captureSnapshotAuthority(entry, dependencies);
   const runtime = authority?.runtimeSnapshot;
   if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
@@ -248,7 +250,7 @@ export async function prepareStoppedOpenClawState(
       nativeRoot: "/sandbox",
       managedStateRoots:
         authority.workload.kind === "managed-image"
-          ? managedStartupStateRootOwnership({ agent: "openclaw", sandboxName })
+          ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
           : [],
     },
   );
@@ -320,25 +322,27 @@ export async function prepareStoppedOpenClawState(
     }
     const sourceRoot = fs.lstatSync(raw);
     if (!sourceRoot.isDirectory() || sourceRoot.isSymbolicLink())
-      rejectStoppedState("Stopped OpenClaw state root is not a directory.");
+      rejectStoppedState("Stopped agent native root is not a directory.");
     fs.chmodSync(raw, 0o700);
-    let directory = path.join(raw, ".openclaw");
+    const agentDirectory = agentName === "openclaw" ? ".openclaw" : ".deepagents";
+    let directory = path.join(raw, agentDirectory);
     try {
       const configRoot = fs.lstatSync(directory);
       if (!configRoot.isDirectory() || configRoot.isSymbolicLink()) {
-        rejectStoppedState("Stopped OpenClaw config root is not a directory.");
+        rejectStoppedState("Stopped agent config root is not a directory.");
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         rejectStoppedState(error instanceof Error ? error.message : String(error));
       }
-      directory = path.join(temporary, "empty-openclaw");
+      directory = path.join(temporary, "empty-agent-config");
       fs.mkdirSync(directory, { mode: 0o700 });
     }
     fs.unlinkSync(archivePath);
     assertCurrent();
     return {
       sandboxName,
+      agentName,
       nativeDirectory: raw,
       directory,
       cleanupDirectory: temporary,
@@ -349,4 +353,14 @@ export async function prepareStoppedOpenClawState(
     dispose();
     throw error;
   }
+}
+
+/** Retained for the OpenClaw rebuild pipeline while all-agent preflight adopts the generic owner. */
+export async function prepareStoppedOpenClawState(
+  sandboxName: string,
+  getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
+): Promise<PreparedStoppedNativeState | null> {
+  const entry = getSandbox(sandboxName);
+  if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
+  return prepareStoppedAgentState(sandboxName, getSandbox);
 }

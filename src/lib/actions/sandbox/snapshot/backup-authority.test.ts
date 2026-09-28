@@ -212,6 +212,7 @@ describe("managed snapshot backup authority", () => {
     const assertCurrent = vi.fn();
     const stoppedNativeState = {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       nativeDirectory: "/private/stopped-native",
       directory: "/private/stopped-native/.openclaw",
       cleanupDirectory: "/private",

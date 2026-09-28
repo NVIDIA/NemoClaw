@@ -134,6 +134,7 @@ describe("rebuild policy handoff", () => {
   it("passes a prepared stopped native-state source into the rebuild backup", async () => {
     const stoppedNativeState = {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       nativeDirectory: "/private/stopped-native",
       directory: "/private/stopped-native/.openclaw",
       cleanupDirectory: "/private",
