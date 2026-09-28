@@ -585,12 +585,15 @@ async function enrichFromPolicy(
 
   const deniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
   // Read allow rules from the new schema (rules[].allow.params.name)
+  // Only include rules whose allow.method is "tools/call" to avoid
+  // granting unintended tool-call permissions from non-tool methods.
   const allowRules = Array.isArray(endpoint.rules)
     ? endpoint.rules
         .filter(
           (rule): rule is { allow: { method: string; params: { name: string } } } =>
             "allow" in rule &&
             rule.allow &&
+            rule.allow.method === "tools/call" &&
             rule.allow.params &&
             typeof rule.allow.params.name === "string",
         )
