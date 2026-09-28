@@ -96,7 +96,9 @@ function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
   const metadata = paxRecord("GNU.sparse.size", "1048576");
   const file = Buffer.from("ordinary payload", "utf8");
   return Buffer.concat([
-    tarHeader("PaxHeaders/sparse.bin", metadata, { type: kind === "pax" ? "x" : "g" }),
+    tarHeader("PaxHeaders/sparse.bin", metadata, {
+      type: kind === "pax" ? "x" : "g",
+    }),
     paddedTarPayload(metadata),
     tarHeader("sparse.bin", file),
     paddedTarPayload(file),
@@ -109,7 +111,10 @@ function buildSymlinkTraversalTar(): Buffer {
   const paddedPayload = Buffer.alloc(Math.ceil(payload.length / 512) * 512, 0);
   payload.copy(paddedPayload);
   return Buffer.concat([
-    tarHeader("redirect", Buffer.alloc(0), { type: "2", linkTarget: "../outside" }),
+    tarHeader("redirect", Buffer.alloc(0), {
+      type: "2",
+      linkTarget: "../outside",
+    }),
     tarHeader("redirect/payload.txt", payload),
     paddedPayload,
     Buffer.alloc(1024, 0),
@@ -257,7 +262,9 @@ describe("complete native home persistence", () => {
       const inspectionMarker = "not-part-of-hermes-inspection";
       fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, ".openclaw"), { recursive: true });
-      fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), {
+        recursive: true,
+      });
       fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), "model: local\n");
       const payloadPath = path.join(nativeRoot, "payload.txt");
@@ -282,7 +289,9 @@ describe("complete native home persistence", () => {
         nativeRoot,
         ".openclaw/extensions/nemoclaw/dist/shared/credential-filter-boundary.cjs",
       );
-      fs.mkdirSync(path.dirname(bundledCredentialBoundaryCopy), { recursive: true });
+      fs.mkdirSync(path.dirname(bundledCredentialBoundaryCopy), {
+        recursive: true,
+      });
       fs.copyFileSync(bundledCredentialBoundary, bundledCredentialBoundaryCopy);
       fs.writeFileSync(path.join(nativeRoot, inspectionMarker), "unrelated");
       fs.writeFileSync(
@@ -302,8 +311,14 @@ describe("complete native home persistence", () => {
 
       expect(backup.success, backup.error).toBe(true);
       expect(assertCurrent).toHaveBeenCalledTimes(2);
-      expect(fs.statSync(payloadPath)).toMatchObject({ ino: sourceInode, nlink: 2 });
-      expect(fs.statSync(payloadCopyPath)).toMatchObject({ ino: sourceInode, nlink: 2 });
+      expect(fs.statSync(payloadPath)).toMatchObject({
+        ino: sourceInode,
+        nlink: 2,
+      });
+      expect(fs.statSync(payloadCopyPath)).toMatchObject({
+        ino: sourceInode,
+        nlink: 2,
+      });
       const inspected = sandboxState.inspectNativeSandboxState(
         backup.manifest!.backupPath,
         (root: string) => ({
@@ -534,6 +549,11 @@ describe("complete native home persistence", () => {
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
     [
+      "a dependency package manifest",
+      "node_modules/example/package.json",
+      JSON.stringify({ config: { apiKey: `ghp_${"0123fedcba987654"}` } }),
+    ],
+    [
       "a Python virtual-environment file",
       ".venv/lib/python3.13/site-packages/example/token.txt",
       `ghp_${"13579bdf2468ace0"}`,
@@ -560,7 +580,9 @@ describe("complete native home persistence", () => {
       const nativeRoot = path.join(fixture, "native-home");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
-      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), {
+        recursive: true,
+      });
       fs.writeFileSync(path.join(nativeRoot, relativePath), content);
       writeFakeOpenshell(binDir);
       writeFakeSsh(binDir);

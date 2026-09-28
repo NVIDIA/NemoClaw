@@ -868,6 +868,29 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
+function dependencyPackageManifestIsCredentialFree(raw: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!isConfigValue(value)) return false;
+  const inspect = (candidate: unknown): boolean => {
+    if (typeof candidate === "string") return !valueLooksLikeSecret(candidate);
+    if (Array.isArray(candidate)) return candidate.every(inspect);
+    if (candidate && typeof candidate === "object") {
+      return Object.entries(candidate).every(
+        ([key, child]) =>
+          inspect(child) &&
+          (!isCredentialField(key) || typeof child !== "string" || !valueLooksLikeSecret(child)),
+      );
+    }
+    return true;
+  };
+  return inspect(value);
+}
+
 const NATIVE_RUNTIME_NON_CONFIG_SEGMENTS = new Set([
   ".cache",
   ".venv",
@@ -1072,12 +1095,9 @@ function paxMetadata(
   return { path: archivePath, sparse };
 }
 
-function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const segments = normalized.split("/");
+function shouldSkipNativeRawCredentialScan(_entry: string, fileName: string): boolean {
   return (
     isDependencyLockfile(fileName) ||
-    (fileName === "package.json" && segments.includes("node_modules")) ||
     fileName === "tsconfig.json" ||
     fileName.endsWith(".schema.json")
   );
@@ -1189,6 +1209,7 @@ function nativeArchiveCredentialViolation(
   const candidates: Array<{
     entry: string;
     fileName: string;
+    isDependencyPackage: boolean;
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
@@ -1196,18 +1217,27 @@ function nativeArchiveCredentialViolation(
     if (entry.endsWith("/")) continue;
     const fileName = path.posix.basename(entry).toLowerCase();
     const isLockfile = isDependencyLockfile(fileName);
+    const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
+    const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     if (isSensitiveFile(fileName)) return entry;
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     const isStructured =
       fileName.endsWith(".json") || fileName.endsWith(".yaml") || fileName.endsWith(".yml");
     if (
       !isLockfile &&
+      !isDependencyPackage &&
       !isEnv &&
       (!isStructured || !shouldScanNativeStructuredConfig(entry, fileName))
     ) {
       continue;
     }
-    candidates.push({ entry, fileName, isEnv, isLockfile });
+    candidates.push({
+      entry,
+      fileName,
+      isDependencyPackage,
+      isEnv,
+      isLockfile,
+    });
   }
   if (candidates.length === 0) return null;
 
@@ -1241,14 +1271,16 @@ function nativeArchiveCredentialViolation(
         return candidate.entry;
       }
       if (extractedCandidate.kind === "oversize") {
-        if (candidate.isLockfile) return candidate.entry;
+        if (candidate.isLockfile || candidate.isDependencyPackage) return candidate.entry;
         continue;
       }
       const raw = extractedCandidate.content.toString("utf8");
       if (
         (candidate.isLockfile && dependencyLockfileContainsCredential(candidate.fileName, raw)) ||
+        (candidate.isDependencyPackage && !dependencyPackageManifestIsCredentialFree(raw)) ||
         (!candidate.isLockfile && candidate.isEnv && sanitizeEnvFileContent(raw) !== raw) ||
         (!candidate.isLockfile &&
+          !candidate.isDependencyPackage &&
           !candidate.isEnv &&
           !structuredContentIsCredentialFree(candidate.fileName, raw))
       ) {
@@ -1437,7 +1469,10 @@ export function inspectNativeSandboxState<T>(
         );
       });
       if (matchingEntries.length === 0) {
-        mkdirSync(path.join(extractionRoot, normalizedMember), { recursive: true, mode: 0o700 });
+        mkdirSync(path.join(extractionRoot, normalizedMember), {
+          recursive: true,
+          mode: 0o700,
+        });
         return inspect(extractionRoot);
       }
       const memberList = path.join(temporary, "members");

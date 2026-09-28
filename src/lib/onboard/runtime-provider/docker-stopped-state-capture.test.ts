@@ -193,6 +193,9 @@ describe("stopped Docker recovery capture", () => {
         path.join(root, "sandbox", "custom-package", "unregistered.txt"),
         "complete native state",
       );
+      const longRelativePath = `${"long-segment-".repeat(10)}/${"nested-segment-".repeat(10)}/retained.txt`;
+      fs.mkdirSync(path.dirname(path.join(root, "sandbox", longRelativePath)), { recursive: true });
+      fs.writeFileSync(path.join(root, "sandbox", longRelativePath), "long path state");
       fs.linkSync(
         path.join(root, "sandbox", "custom-package", "unregistered.txt"),
         path.join(root, "sandbox", "custom-package", "hardlinked.txt"),
@@ -228,6 +231,9 @@ describe("stopped Docker recovery capture", () => {
         expect(
           fs.readFileSync(path.join(extracted, "custom-package", "hardlinked.txt"), "utf8"),
         ).toBe("complete native state");
+        expect(fs.readFileSync(path.join(extracted, longRelativePath), "utf8")).toBe(
+          "long path state",
+        );
         expect(fs.statSync(path.join(extracted, "custom-package", "hardlinked.txt")).nlink).toBe(2);
         expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox`, "-"], {
           stdio: ["ignore", "pipe", "pipe"],
@@ -239,6 +245,42 @@ describe("stopped Docker recovery capture", () => {
       }
     },
   );
+
+  it("does not execute a substituted host interpreter from PATH", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-path-test-"));
+    const archive = path.join(root, "archive");
+    const marker = path.join(root, "substituted-interpreter-ran");
+    const bin = path.join(root, "bin");
+    const tar = execFileSync("which", ["tar"], { encoding: "utf8" }).trim();
+    const oldPath = process.env.PATH;
+    fs.mkdirSync(path.join(root, "sandbox", "workspace"), { recursive: true });
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(root, "sandbox", "workspace", "retained.txt"), "retained");
+    fs.writeFileSync(path.join(bin, "python3"), `#!/bin/sh\ntouch '${marker}'\n`);
+    fs.chmodSync(path.join(bin, "python3"), 0o755);
+    const descriptor = fs.openSync(archive, "wx+", 0o600);
+    process.env.PATH = bin;
+    try {
+      await prepareStoppedDockerStateCapture(sandbox, runtime, projection, {
+        inspect: () => inspectResult(observation()),
+        spawn: () =>
+          spawn(tar, ["-cf", "-", "-C", root, "sandbox"], {
+            env: { ...process.env, COPYFILE_DISABLE: "1" },
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+      }).capture(descriptor, captureMaxBytes);
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(
+        execFileSync(tar, ["-xOf", archive, "workspace/retained.txt"], {
+          encoding: "utf8",
+        }),
+      ).toBe("retained");
+    } finally {
+      process.env.PATH = oldPath;
+      fs.closeSync(descriptor);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("handles archive stream errors without exposing source diagnostics", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-stream-test-"));
