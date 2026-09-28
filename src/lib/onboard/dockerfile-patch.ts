@@ -219,7 +219,7 @@ function appendCustomOpenClawModelReconcile(
     /^USER\s+([A-Za-z_][A-Za-z0-9_-]*|[0-9]+)(?::(?:[A-Za-z_][A-Za-z0-9_-]*|[0-9]+))?$/i.exec(
       finalUser.text,
     );
-  if (!finalUserIdentity || /^(?:0|root)$/i.test(finalUserIdentity[1]!)) {
+  if (finalUser !== null && (!finalUserIdentity || /^(?:0|root)$/i.test(finalUserIdentity[1]!))) {
     throw new Error(
       "Custom OpenClaw Dockerfile must end with a non-root USER before NemoClaw can reconcile its model config.",
     );
@@ -227,13 +227,14 @@ function appendCustomOpenClawModelReconcile(
 
   const encodedModel = Buffer.from(model, "utf8").toString("base64");
   const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
+  const useRoot = finalUser === null ? "" : "USER root\n";
+  const restoreUser = finalUser === null ? "" : `${finalUser.text}\n`;
   return `${dockerfile.trimEnd()}
 
 # Reconcile inherited OpenClaw model metadata with this custom image's selected route.
 ARG NEMOCLAW_CUSTOM_MODEL_B64=${encodedModel}
 ARG NEMOCLAW_CUSTOM_MODEL_LIMITS_B64=${encodedLimits}
-USER root
-RUN NEMOCLAW_CUSTOM_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \\
+${useRoot}RUN NEMOCLAW_CUSTOM_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \\
     NEMOCLAW_CUSTOM_MODEL_B64="\${NEMOCLAW_CUSTOM_MODEL_B64}" \\
     NEMOCLAW_CUSTOM_MODEL_LIMITS_B64="\${NEMOCLAW_CUSTOM_MODEL_LIMITS_B64}" \\
     /usr/bin/python3 -I - <<'PYNEMOCLAWCUSTOMMODEL'
@@ -323,8 +324,7 @@ try:
 finally:
     os.close(config_fd)
 PYNEMOCLAWCUSTOMMODEL
-${finalUser.text}
-`;
+${restoreUser}`;
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {

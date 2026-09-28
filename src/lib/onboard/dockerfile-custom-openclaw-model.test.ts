@@ -151,6 +151,17 @@ describe("custom OpenClaw model reconciliation", () => {
     });
   });
 
+  it("keeps an inherited image user when the Dockerfile has no USER instruction (#12033)", () => {
+    const { configPath, dockerfilePath } = fixture("FROM example.invalid/openclaw\n");
+    const { dockerfile, result } = patchAndRun(dockerfilePath, configPath, "selected-model");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(dockerfile).not.toContain("\nUSER root\n");
+    expect(
+      JSON.parse(fs.readFileSync(configPath, "utf8")).models.providers.inference.models[0].id,
+    ).toBe("selected-model");
+  });
+
   it("rejects a Dockerfile that ends as root (#12033)", () => {
     const { dockerfilePath } = fixture("FROM example.invalid/openclaw\nUSER root\n");
 
