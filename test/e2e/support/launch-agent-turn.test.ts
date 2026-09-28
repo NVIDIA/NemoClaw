@@ -1061,6 +1061,11 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(result.stderr).toContain(
+      "nemoclaw.e2e.launch-cleanup=started evidence-status=3 provider-unavailable=1",
+    );
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-cleanup=child-reaped");
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=0");
   },
 );
 
@@ -1184,6 +1189,7 @@ it.runIf(process.platform === "linux").concurrent(
     };
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     expect(produced.stderr).toContain("structured session baseline cleanup failed");
+    expect(produced.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=1");
     await expect(
       runOpenClawLaunchSession({
         artifactName: "provider-cleanup-handoff",

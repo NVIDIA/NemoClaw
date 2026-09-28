@@ -1420,6 +1420,7 @@ pty_monitor_root="/tmp/nemoclaw-launch-turn-$NEMOCLAW_LAUNCH_RUN_ID"
 session_pid=""
 session_deadline=""
 provider_unavailable_candidate=0
+last_evidence_status=unset
 
 remove_session_baseline() {
   session_evidence cleanup-baseline
@@ -1441,6 +1442,7 @@ cleanup() {
   local cleanup_status=0
   trap - EXIT
   set +e
+  printf 'nemoclaw.e2e.launch-cleanup=started evidence-status=%s provider-unavailable=%s\n' "$last_evidence_status" "$provider_unavailable_candidate" >&2
   exec 3>&- || true
   if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
     kill -TERM "$session_pid" 2>/dev/null || true
@@ -1450,6 +1452,7 @@ cleanup() {
   if [[ -n "$session_pid" ]]; then
     wait "$session_pid" 2>/dev/null || true
   fi
+  echo "nemoclaw.e2e.launch-cleanup=child-reaped" >&2
   if ! remove_session_baseline >/dev/null 2>&1; then
     echo "structured session baseline cleanup failed" >&2
     cleanup_status=1
@@ -1463,6 +1466,7 @@ cleanup() {
     echo "launch PTY monitor cleanup failed" >&2
     cleanup_status=1
   fi
+  printf 'nemoclaw.e2e.launch-cleanup=completed status=%s\n' "$cleanup_status" >&2
   if [[ "$original_status" != 0 ]]; then
     case "$provider_unavailable_candidate:$cleanup_status" in
       1:0) printf '\n%s\n' "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
@@ -1537,10 +1541,12 @@ wait_for_turn_count() {
     session_active=1
     kill -0 "$session_pid" 2>/dev/null || session_active=0
     if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
+      last_evidence_status=0
       return 0
     else
       evidence_status=$?
     fi
+    last_evidence_status="$evidence_status"
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
         3) fail_provider_unavailable ;;
@@ -1693,9 +1699,10 @@ if [[ "$launch_status" != 0 ]]; then
   exit "$launch_status"
 fi
 if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
-  :
+  last_evidence_status=0
 else
   evidence_status=$?
+  last_evidence_status="$evidence_status"
   case "$evidence_status" in
     3) fail_provider_unavailable ;;
   esac

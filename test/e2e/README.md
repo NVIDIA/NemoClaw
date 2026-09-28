@@ -770,6 +770,9 @@ does not compare message content. Terminal output is a bounded failure diagnosti
 Empty-message failures include the message index, role, and allowlisted provider
 error metadata from JSONL or SQLite. Provider error text and unknown field values
 are omitted. These diagnostics do not change failure classification or retries.
+Failed launch attempts also retain the last turn-verifier exit status and fixed
+cleanup stages: started, child reaped, and completed with cleanup status. Only the
+existing final provider marker authorizes a retry after successful cleanup.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
