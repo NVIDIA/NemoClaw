@@ -9,6 +9,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
+const NPM_DIAGNOSTICS_HELPER = path.join(
+  import.meta.dirname,
+  "../../..",
+  "scripts",
+  "lib",
+  "npm-diagnostics.sh",
+);
 const REVIEWED_RUNTIME = JSON.parse(
   fs.readFileSync(
     path.join(import.meta.dirname, "../../..", "ci", "reviewed-npm-audit.json"),
@@ -145,7 +152,7 @@ stage=""
 if [ "$PWD" = ${JSON.stringify(cloneDir)} ]; then stage="root"; fi
 if [ "$PWD" = ${JSON.stringify(path.join(cloneDir, "nemoclaw"))} ]; then stage="plugin"; fi
 if [ "\${2:-}" = "--reviewed-npm-fixture" ]; then stage="reviewed-npm"; fi
-if [ "\${1:-}" = "install" ] && [ "$stage" = ${JSON.stringify(options.npmFailure ?? "")} ]; then
+if [ -n "$stage" ] && [ "$stage" = ${JSON.stringify(options.npmFailure ?? "")} ]; then
   secret="fixture-secret-token"
   if [ ${JSON.stringify(options.npmFailureOutput ?? "present")} = "present" ]; then
     printf 'npm error code E_FIXTURE_CAUSE\\n'
@@ -174,9 +181,10 @@ exit 0
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "clone" ]; then
   dest="\${@: -1}"
-  mkdir -p "$dest/.git" "$dest/nemoclaw" "$dest/bin" "$dest/scripts"
+  mkdir -p "$dest/.git" "$dest/nemoclaw" "$dest/bin" "$dest/scripts/lib"
   mkdir -p "$dest/.github/actions/setup-reviewed-npm"
-  printf '#!/usr/bin/env bash\\nnpm install --reviewed-npm-fixture\\n' > "$dest/.github/actions/setup-reviewed-npm/verify-and-install-npm.sh"
+  printf '#!/usr/bin/env bash\\nnpm pack --reviewed-npm-fixture\\n' > "$dest/.github/actions/setup-reviewed-npm/verify-and-install-npm.sh"
+  cp ${JSON.stringify(NPM_DIAGNOSTICS_HELPER)} "$dest/scripts/lib/npm-diagnostics.sh"
   printf '#!/usr/bin/env node\\n' > "$dest/bin/nemoclaw.js"
   exit 0
 fi
@@ -390,7 +398,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       const { fake, result } = runLaunchable({ checksum: "match", npmFailure });
       try {
         const out = combinedLaunchableOutput(result, fake.launchLog);
-        const marker = `npm install failed during ${npmFailure} dependency installation (exit ${expectedStatus}).`;
+        const marker =
+          npmFailure === "reviewed-npm"
+            ? `reviewed npm bootstrap failed (exit ${expectedStatus}).`
+            : `npm install failed during ${npmFailure} dependency installation (exit ${expectedStatus}).`;
         expect(result.status, out).toBe(expectedStatus);
         expect(out).toContain(marker);
         expect(out).toContain("verbose diagnostic line 300");
@@ -422,7 +433,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
               call.includes(`cwd=${failedStageDirectory}`) &&
               call.includes(
                 npmFailure === "reviewed-npm"
-                  ? "args=install --reviewed-npm-fixture"
+                  ? "args=pack --reviewed-npm-fixture"
                   : "args=install --ignore-scripts",
               ),
           ),
@@ -559,7 +570,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(out).toContain("CI-Ready CPU launchable setup complete");
       const npmCalls = fs.readFileSync(fake.npmInstallLog, "utf8").trim().split("\n");
       expect(npmCalls.map((call) => call.match(/args=(.*) node_auth=/u)?.[1])).toEqual([
-        "install --reviewed-npm-fixture",
+        "pack --reviewed-npm-fixture",
         "install --ignore-scripts",
         "run build:cli",
         "install --ignore-scripts",

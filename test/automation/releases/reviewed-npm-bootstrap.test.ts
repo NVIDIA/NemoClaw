@@ -1,13 +1,63 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { runReviewedNpmBootstrap } from "../../support/reviewed-npm-bootstrap";
 
 type BootstrapOptions = Parameters<typeof runReviewedNpmBootstrap>[0];
 
+const NPM_DIAGNOSTICS_HELPER = path.join(
+  import.meta.dirname,
+  "../../..",
+  "scripts",
+  "lib",
+  "npm-diagnostics.sh",
+);
+
 describe("reviewed npm bootstrap", () => {
+  it("shares one bounded credential-redaction policy across npm bootstrap callers (#12192)", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        'source "$1"; sanitize_npm_diagnostics | bounded_npm_diagnostic_excerpt 3900',
+        "reviewed-npm-diagnostics",
+        NPM_DIAGNOSTICS_HELPER,
+      ],
+      {
+        encoding: "utf8",
+        input: [
+          "npm error code E_SHARED_POLICY",
+          "npm error Authorization: Bearer fixture-secret-token",
+          "npm error registry=https://fixture:fixture-secret-token@registry.example.test/package",
+          "npm error token prefix ghp_1234567890abcdef",
+          "npm error jwt eyJfixture1.payload.fixturepayload12345",
+          "npm error opaque abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+          ["-----BEGIN PRIVATE", " KEY-----"].join(""),
+          "fixture-secret-token",
+          ["-----END PRIVATE", " KEY-----"].join(""),
+          "_authToken=fixture-secret-token",
+          "password=fixture-secret-token",
+        ].join("\n"),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("npm error code E_SHARED_POLICY");
+    expect(result.stdout).toContain("<REDACTED>");
+    expect(result.stdout).toContain("<REDACTED_URL>");
+    expect(result.stdout).not.toContain("fixture-secret-token");
+    expect(result.stdout).not.toContain("ghp_1234567890abcdef");
+    expect(result.stdout).not.toContain("eyJfixture1.payload.fixturepayload12345");
+    expect(result.stdout).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789ABCD");
+    expect(result.stdout).not.toContain(["BEGIN", "PRIVATE", "KEY"].join(" "));
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(3_900);
+  });
+
   it("preserves a pack failure reported on stdout and its original status (#12192)", () => {
     const fixture = runReviewedNpmBootstrap({ packFailure: true });
     try {

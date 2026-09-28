@@ -38,38 +38,6 @@ fail() {
   exit 1
 }
 
-sanitize_npm_diagnostics() {
-  awk '
-    BEGIN { private_key = 0 }
-    {
-      line = $0
-      lower = tolower(line)
-      if (line ~ /-----BEGIN ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) {
-        print "<REDACTED>"
-        private_key = 1
-        next
-      }
-      if (private_key) {
-        if (line ~ /-----END ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) private_key = 0
-        next
-      }
-      if (lower ~ /(authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=]/ ||
-          lower ~ /(bearer|basic)[ \t]+[^ \t]/ ||
-          lower ~ /(^|[^a-z0-9])[a-z0-9_.-]*(auth|credential|key|pass|passwd|password|secret|token)[a-z0-9_.-]*[ \t]*[:=]/) {
-        print "<REDACTED CREDENTIAL LINE>"
-        next
-      }
-      print line
-    }
-  ' \
-    | sed -E \
-      -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
-      -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
-      -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
-      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g' \
-    | LC_ALL=C tr -cd '\11\12\15\40-\176'
-}
-
 run_npm_install_with_diagnostics() (
   readonly stage="$1"
   readonly working_directory="$2"
@@ -97,19 +65,7 @@ run_npm_install_with_diagnostics() (
   set +e
   "${command[@]}" "${npm_command[@]}" 2>&1 \
     | sanitize_npm_diagnostics \
-    | LC_ALL=C awk -v limit="$MAX_EXCERPT_BYTES" '
-      {
-        tail = tail $0 ORS
-        if (length(tail) > limit) tail = substr(tail, length(tail) - limit + 1)
-        if ($0 ~ /^npm (error|ERR!|verbose stack)( |$)/ && length(errors) < 2000)
-          errors = substr(errors $0 ORS, 1, 2000)
-      }
-      END {
-        remaining = limit - length(errors)
-        if (length(tail) > remaining) tail = substr(tail, length(tail) - remaining + 1)
-        printf "%s%s", errors, tail
-      }
-    ' >"$command_log"
+    | bounded_npm_diagnostic_excerpt "$MAX_EXCERPT_BYTES" >"$command_log"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
   readonly status="${pipeline_status[0]}"
@@ -121,7 +77,11 @@ run_npm_install_with_diagnostics() (
     tail -3 "$command_log"
     exit 0
   fi
-  printf 'npm install failed during %s dependency installation (exit %s).\n' "$stage" "$status" >&2
+  if [[ "$stage" == "reviewed-npm" ]]; then
+    printf 'reviewed npm bootstrap failed (exit %s).\n' "$status" >&2
+  else
+    printf 'npm install failed during %s dependency installation (exit %s).\n' "$stage" "$status" >&2
+  fi
   printf '%s\n' '--- npm command output ---' >&2
   if [[ -s "$command_log" ]]; then
     cat "$command_log" >&2
@@ -383,6 +343,9 @@ else
   git clone --branch "$NEMOCLAW_REF" --depth 1 \
     "https://github.com/NVIDIA/NemoClaw.git" "$NEMOCLAW_CLONE_DIR"
 fi
+
+# shellcheck source=scripts/lib/npm-diagnostics.sh
+source "$NEMOCLAW_CLONE_DIR/scripts/lib/npm-diagnostics.sh"
 
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
