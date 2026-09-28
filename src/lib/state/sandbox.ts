@@ -8,9 +8,7 @@ import {
   closeSync,
   constants,
   existsSync,
-  fchmodSync,
   fstatSync,
-  futimesSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
@@ -953,7 +951,6 @@ const TAR_BLOCK_BYTES = 512;
 const NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES = 64 * 1024;
 const NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS = 4096;
 const NATIVE_TAR_METADATA_MAX_BYTES = 1024 * 1024;
-const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set(["schema", "schemas"]);
 
 const DEPENDENCY_NAME_MAP_FIELDS = new Set([
   "dependencies",
@@ -1071,15 +1068,12 @@ function paxPath(payload: Buffer): string | null | undefined {
   return result;
 }
 
-function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const segments = normalized.split("/");
+function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
   return (
     isDependencyLockfile(fileName) ||
     fileName === "package.json" ||
     fileName === "tsconfig.json" ||
-    fileName.endsWith(".schema.json") ||
-    segments.some((segment) => NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS.has(segment))
+    fileName.endsWith(".schema.json")
   );
 }
 
@@ -1155,7 +1149,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
-          if (!shouldSkipNativeRawCredentialScan(entry, fileName)) {
+          if (!shouldSkipNativeRawCredentialScan(fileName)) {
             const contextual =
               fileName === ".env" ||
               fileName.endsWith(".env") ||
@@ -1494,67 +1488,6 @@ function nativeStateCaptureMaxBytes(backupPath: string, override?: number): numb
   );
 }
 
-function breakPreparedNativeStateHardLinks(root: string): void {
-  let replacementCounter = 0;
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      const entryStat = lstatSync(entryPath);
-      if (entryStat.isDirectory()) {
-        visit(entryPath);
-        continue;
-      }
-      if (!entryStat.isFile() || entryStat.nlink <= 1) continue;
-
-      const source = openSync(
-        entryPath,
-        constants.O_RDONLY |
-          constants.O_NOFOLLOW |
-          (typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0),
-      );
-      const replacementPath = path.join(
-        directory,
-        `.nemoclaw-hardlink-${String(process.pid)}-${String(replacementCounter++)}`,
-      );
-      let replacement: number | null = null;
-      try {
-        replacement = openSync(
-          replacementPath,
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-          entryStat.mode & 0o7777,
-        );
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        let position = 0;
-        for (;;) {
-          const bytesRead = readSync(source, buffer, 0, buffer.byteLength, position);
-          if (bytesRead === 0) break;
-          let written = 0;
-          while (written < bytesRead) {
-            written += writeSync(
-              replacement,
-              buffer,
-              written,
-              bytesRead - written,
-              position + written,
-            );
-          }
-          position += bytesRead;
-        }
-        fchmodSync(replacement, entryStat.mode & 0o7777);
-        futimesSync(replacement, entryStat.atime, entryStat.mtime);
-        closeSync(replacement);
-        replacement = null;
-        renameSync(replacementPath, entryPath);
-      } finally {
-        closeSync(source);
-        if (replacement !== null) closeSync(replacement);
-        rmSync(replacementPath, { force: true });
-      }
-    }
-  };
-  visit(root);
-}
-
 function capturePreparedNativeState(
   source: NonNullable<BackupOptions["nativeStateSource"]>,
   archiveDescriptor: number,
@@ -1565,22 +1498,27 @@ function capturePreparedNativeState(
   if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
     throw new Error("Prepared stopped native state root is not a directory");
   }
-  breakPreparedNativeStateHardLinks(source.directory);
+  // GNU tar can emit each hard-linked file as independent archive content.
+  // BSD tar cannot, so stage a metadata-preserving private copy there; cp does
+  // not preserve hard-link identity unless explicitly requested to do so.
   return spawnSync(
     "bash",
     [
       "-o",
       "pipefail",
       "-c",
-      '"$@" | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
+      [
+        "source=$1",
+        "if tar --hard-dereference -cf - --files-from /dev/null >/dev/null 2>&1; then",
+        '  tar -C "$source" --hard-dereference -cf - -- .',
+        "else",
+        '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
+        "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
+        '  cp -RpP "$source/." "$stage/" && tar -C "$stage" -cf - -- .',
+        "fi",
+      ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
       "nemoclaw-stopped-native-capture",
-      "tar",
-      "-C",
       source.directory,
-      "-cf",
-      "-",
-      "--",
-      ".",
     ],
     {
       env: {

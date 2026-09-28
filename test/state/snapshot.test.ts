@@ -223,8 +223,11 @@ describe("complete native home persistence", () => {
       fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), "model: local\n");
-      fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
-      fs.linkSync(path.join(nativeRoot, "payload.txt"), path.join(nativeRoot, "payload-copy.txt"));
+      const payloadPath = path.join(nativeRoot, "payload.txt");
+      const payloadCopyPath = path.join(nativeRoot, "payload-copy.txt");
+      fs.writeFileSync(payloadPath, "payload");
+      fs.linkSync(payloadPath, payloadCopyPath);
+      const sourceInode = fs.statSync(payloadPath).ino;
       fs.writeFileSync(
         path.join(nativeRoot, "node_modules", "example", "package.json"),
         JSON.stringify({ apiKey: "dependency-metadata-is-not-runtime-config" }),
@@ -251,8 +254,8 @@ describe("complete native home persistence", () => {
 
       expect(backup.success, backup.error).toBe(true);
       expect(assertCurrent).toHaveBeenCalledTimes(2);
-      expect(fs.statSync(path.join(nativeRoot, "payload.txt")).nlink).toBe(1);
-      expect(fs.statSync(path.join(nativeRoot, "payload-copy.txt")).nlink).toBe(1);
+      expect(fs.statSync(payloadPath)).toMatchObject({ ino: sourceInode, nlink: 2 });
+      expect(fs.statSync(payloadCopyPath)).toMatchObject({ ino: sourceInode, nlink: 2 });
       const inspected = sandboxState.inspectNativeSandboxState(
         backup.manifest!.backupPath,
         (root: string) => ({
@@ -468,6 +471,7 @@ describe("complete native home persistence", () => {
   it.each([
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
+    ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
     [
       "a Python virtual-environment file",
