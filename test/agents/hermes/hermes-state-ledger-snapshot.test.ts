@@ -626,19 +626,24 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
   });
 
-  it("uses an owner-writable target while preserving a read-only legacy directory mode", () => {
+  it("uses owner-writable migration directories while preserving read-only modes", () => {
     const { hermes } = dashboardMigrationFixture();
+    const legacyParent = path.join(hermes, "profiles");
     const legacyDirectory = path.join(hermes, "profiles/dashboard-home/knowledge");
     const nativeDirectory = path.join(hermes, "knowledge");
     writeDashboardMigrationFile(path.join(legacyDirectory, "MEMORY.md"), "nested state\n");
     fs.chmodSync(legacyDirectory, 0o500);
+    fs.chmodSync(legacyParent, 0o500);
 
     const result = runDashboardMigration(hermes);
 
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(path.join(nativeDirectory, "MEMORY.md"), "utf8")).toBe("nested state\n");
     expect(fs.statSync(nativeDirectory).mode & 0o777).toBe(0o500);
+    expect(fs.statSync(legacyParent).mode & 0o777).toBe(0o500);
+    expect(fs.existsSync(path.join(legacyParent, "dashboard-home"))).toBe(false);
     fs.chmodSync(nativeDirectory, 0o700);
+    fs.chmodSync(legacyParent, 0o700);
   });
 
   it.skipIf(!canRunSqlite)(

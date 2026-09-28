@@ -1476,7 +1476,12 @@ def migrate(
                 if parent_fd is None:
                     raise MigrationError(f"legacy dashboard parent {parent_relative} disappeared")
                 try:
-                    os.rmdir(name, dir_fd=parent_fd)
+                    with _owner_writable_directory(parent_fd):
+                        os.rmdir(name, dir_fd=parent_fd)
+                except OSError as exc:
+                    raise MigrationError(
+                        f"legacy dashboard root {relative} could not be removed: {exc.strerror}"
+                    ) from exc
                 finally:
                     if parent_fd != root_fd:
                         os.close(parent_fd)
