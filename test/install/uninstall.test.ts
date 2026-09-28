@@ -466,7 +466,7 @@ esac
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(1);
-      expect(output).toContain("OpenShell sandbox cleanup was incomplete");
+      expect(output).toContain("OpenShell sandbox cleanup was not accepted");
       expect(output).not.toContain("Deleted all OpenShell sandboxes");
       expect(fs.existsSync(remoteSandboxState)).toBe(true);
       expect(fs.existsSync(stateDir)).toBe(true);
