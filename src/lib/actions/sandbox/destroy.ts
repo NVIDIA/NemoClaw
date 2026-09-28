@@ -83,6 +83,7 @@ import {
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
+  stopDestroyedSandboxProxy,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
@@ -938,8 +939,7 @@ async function destroySandboxUnlocked(
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
-      stopInferenceResources: () =>
-        stopSandboxInferenceResources(sandboxName, sandbox, listRegisteredSandboxes),
+      stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1065,6 +1065,9 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
+    abortPreparedCleanupOnError(() =>
+      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes),
+    );
     const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
       removeManagedAgentStateVolumes(
         {

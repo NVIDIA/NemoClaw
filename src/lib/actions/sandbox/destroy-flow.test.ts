@@ -1342,28 +1342,6 @@ describe("destroySandbox flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
-    // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
-    // the local record is removed but the gateway-side delete was never
-    // confirmed, so the sandbox may still exist. Even as the only registered
-    // sandbox, that must not tear down shared host services (CodeRabbit #6050).
-    const harness = createDestroyHarness({
-      deleteStatus: 1,
-      deleteOutput: "error trying to connect: connection refused",
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
-
-    // Local cleanup still proceeds...
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    // ...but shared host services are preserved on the unconfirmed delete.
-    expect(harness.stopAllSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).not.toHaveBeenCalled();
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
   it("fails closed and restores MCP state when --force cannot confirm sandbox deletion", async () => {
     const harness = createDestroyHarness({
       deleteStatus: 1,

@@ -112,10 +112,6 @@ export function resolveSandboxDestroyRuntimeSelection(
 export function stopSandboxInferenceResources(
   sandboxName: string,
   sandbox: SandboxEntry | null,
-  listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
-  deps: {
-    killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
-  } = {},
 ): void {
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
@@ -128,9 +124,19 @@ export function stopSandboxInferenceResources(
     // Older registry entries may not record the convention-named container.
     nim.stopNimContainer(sandboxName, { silent: true });
   }
+}
 
-  // The auth proxy is host-global. Keep it while any other durable route owns
-  // its credential; GPU model unload happens later, after confirmed deletion.
+/** Retire the shared proxy only after the caller confirms sandbox deletion. */
+export function stopDestroyedSandboxProxy(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
+  deps: {
+    killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
+  } = {},
+): void {
+  // Read remaining owners inside the proxy lifecycle lock. The destroyed
+  // sandbox's registry row still exists until post-delete cleanup completes.
   if (
     sandbox?.provider?.includes("ollama") ||
     sandbox?.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
