@@ -15,7 +15,6 @@ import type {
   RuntimeProviderStoppedStateProjection,
 } from "./contract";
 
-const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 120_000;
 const INSPECT_FORMAT =
   "[{{json .Id}},{{json .State}},{{json .Config.Labels}},{{json .RestartCount}},{{json .Image}},{{json .Mounts}}]";
@@ -277,7 +276,10 @@ export function prepareStoppedDockerStateCapture(
   };
   return {
     assertCurrent,
-    async capture(archiveFd) {
+    async capture(archiveFd, maxBytes) {
+      if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes >= Number.MAX_SAFE_INTEGER) {
+        rejectStoppedCapture("Stopped state capture requires a valid backup-space limit.");
+      }
       assertCurrent();
       await new Promise<void>((resolve, reject) => {
         // No -L or trailing '/.': an agent-replaced root symlink stays a link
@@ -310,16 +312,16 @@ export function prepareStoppedDockerStateCapture(
         );
         child.stdout?.on("data", (chunk: Buffer) => {
           inputBytes += chunk.length;
-          if (inputBytes > MAX_ARCHIVE_BYTES)
-            fail("Stopped state exceeds the one GiB recovery archive limit.");
+          if (inputBytes > maxBytes)
+            fail(`Stopped state exceeds the ${maxBytes}-byte backup-space limit.`);
         });
         child.stdout?.on("error", failRead).pipe(filter.stdin!);
         filter.stdin?.on("error", () => fail("Stopped state archive projection failed."));
         filter.stdout?.on("error", failRead).on("data", (chunk: Buffer) => {
           if (failure) return;
           outputBytes += chunk.length;
-          if (outputBytes > MAX_ARCHIVE_BYTES) {
-            fail("Stopped state exceeds the one GiB recovery archive limit.");
+          if (outputBytes > maxBytes) {
+            fail(`Stopped state exceeds the ${maxBytes}-byte backup-space limit.`);
             return;
           }
           try {

@@ -1465,7 +1465,7 @@ export function inspectNativeSandboxState<T>(
   }
 }
 
-function nativeStateCaptureMaxBytes(backupPath: string, override?: number): number {
+export function nativeStateCaptureMaxBytes(backupPath: string, override?: number): number {
   if (override !== undefined) {
     if (
       !Number.isSafeInteger(override) ||

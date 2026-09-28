@@ -29,7 +29,7 @@ Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
-After the archive passes credential inspection, the transfer does not sanitize, merge, or discard unknown agent paths. A credential-bearing file, an uninspectable recognized configuration file, or any capture or restore failure stops the workflow before replacement instead of publishing a partial migration. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
+After the archive passes credential inspection, the transfer does not sanitize, merge, or discard unknown agent paths. A credential-bearing file, an uninspectable recognized configuration file, or a capture failure stops the workflow before replacement. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 
 For an eligible stopped container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture.
 

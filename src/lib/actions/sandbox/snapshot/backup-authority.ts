@@ -286,7 +286,11 @@ export async function prepareStoppedAgentState(
   try {
     const descriptor = fs.openSync(archivePath, "wx", 0o600);
     try {
-      await capture.capture(descriptor);
+      const maxBytes = sandboxState.nativeStateCaptureMaxBytes(temporary);
+      if (maxBytes === 0) {
+        rejectStoppedState("Stopped state capture has no backup-disk space available.");
+      }
+      await capture.capture(descriptor, maxBytes);
     } finally {
       fs.closeSync(descriptor);
     }

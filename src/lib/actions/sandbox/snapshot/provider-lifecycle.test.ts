@@ -144,9 +144,9 @@ describe("snapshot provider lifecycle", () => {
       snapshot: { ...surface, prepareStoppedStateCapture: prepare },
     };
     const prepared = prepareSandboxStoppedStateCapture(owner, target, source, projection)!;
-    await prepared.capture(123);
+    await prepared.capture(123, 456);
     prepared.assertCurrent();
-    expect(capture).toHaveBeenCalledWith(123);
+    expect(capture).toHaveBeenCalledWith(123, 456);
     expect(assertCurrent).toHaveBeenCalledOnce();
     expect(() =>
       prepareSandboxStoppedStateCapture(

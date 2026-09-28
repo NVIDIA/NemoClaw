@@ -571,7 +571,7 @@ export interface RuntimeProviderStoppedStateProjection {
 
 export interface RuntimeProviderStoppedStateCapture {
   /** The caller owns the private destination fd and archive validation. */
-  capture(archiveFd: number): Promise<void>;
+  capture(archiveFd: number, maxBytes: number): Promise<void>;
   assertCurrent(): void;
 }
 

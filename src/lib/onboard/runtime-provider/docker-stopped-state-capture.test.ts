@@ -40,6 +40,7 @@ const projection = {
   managedStateRoots: managedRoots,
   nativeRoot: "/sandbox",
 };
+const captureMaxBytes = 16 * 1024 * 1024;
 const containerId = "a".repeat(64);
 const sandbox = {
   name: "alpha",
@@ -152,7 +153,7 @@ describe("stopped Docker recovery capture", () => {
         projection,
         { inspect: () => inspectResult(observation()), spawn: read },
       );
-      await capture.capture(descriptor);
+      await capture.capture(descriptor, 2 * 1024 * 1024 * 1024);
       const names = execFileSync("tar", ["-tf", archive], { encoding: "utf8" });
       expect(names).toContain(".deepagents/.state/retained.txt");
       expect(names).toContain(".deepagents/agent/skills/retained.md");
@@ -211,7 +212,7 @@ describe("stopped Docker recovery capture", () => {
         await prepareStoppedDockerStateCapture(sandbox, runtime, projection, {
           inspect,
           spawn: read,
-        }).capture(descriptor);
+        }).capture(descriptor, captureMaxBytes);
         expect(
           execFileSync("tar", ["-xOf", archive, ".openclaw/workspace/retained.txt"], {
             encoding: "utf8",
@@ -256,7 +257,7 @@ describe("stopped Docker recovery capture", () => {
           return child;
         },
       });
-      await expect(capture.capture(descriptor)).rejects.toThrow(
+      await expect(capture.capture(descriptor, captureMaxBytes)).rejects.toThrow(
         "Could not read and filter the stopped source container.",
       );
     } finally {
