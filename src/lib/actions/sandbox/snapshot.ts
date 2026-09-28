@@ -1663,6 +1663,15 @@ async function runSnapshotRestoreUnlocked(
     const retryRestore = isCrossSandboxRestore
       ? "retry with a new clone name. The incomplete clone still exists; inspect it before deletion or replacement."
       : "retry the same snapshot restore command.";
+    const printUnverifiedOpenClawAbortRecovery = (): void => {
+      console.error(
+        `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start'.`,
+      );
+      console.error(
+        `  If that start reports that it consumed the OpenClaw maintenance abort and leaves the sandbox stopped, run '${CLI_NAME} ${targetSandbox} start' again.`,
+      );
+      console.error(`  Verify that the sandbox is ready, then ${retryRestore}`);
+    };
     const abortOpenClawRestoreWindow = async (): Promise<void> => {
       if (!openClawRestoreWindow) return;
       const aborted = await abortOpenClawPostRestoreDoctor(openClawRestoreWindow);
@@ -1672,9 +1681,7 @@ async function runSnapshotRestoreUnlocked(
           `  OpenClaw snapshot restore could not retire its gateway-down maintenance window: ${aborted.detail}`,
         );
         console.error(`  The running state of sandbox '${targetSandbox}' could not be verified.`);
-        console.error(
-          `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start' before inspecting the sandbox and retrying the restore.`,
-        );
+        printUnverifiedOpenClawAbortRecovery();
         return;
       }
       console.error(`  OpenClaw sandbox '${targetSandbox}' remains stopped after restore failure.`);
@@ -1696,9 +1703,13 @@ async function runSnapshotRestoreUnlocked(
           console.error(
             `  Sandbox '${targetSandbox}' may remain stopped after the failed maintenance transition.`,
           );
-          console.error(
-            `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start', verify that it is ready, and ${retryRestore}`,
-          );
+          if (begun.stage === "abort") {
+            printUnverifiedOpenClawAbortRecovery();
+          } else {
+            console.error(
+              `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start', verify that it is ready, and ${retryRestore}`,
+            );
+          }
           snapshotExit(1);
         }
         openClawRestoreWindow = begun.window;

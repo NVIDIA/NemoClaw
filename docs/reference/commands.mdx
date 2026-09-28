@@ -3266,9 +3266,10 @@ State replacement runs under the per-sandbox mutation lock.
 For OpenClaw, an in-place restore stops the sandbox before it changes state, installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash, and runs `openclaw doctor --fix` while the gateway remains held down.
 This interrupts active agent work.
 It then releases the window for one native OpenClaw start.
-If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
-For a verified stopped sandbox, run `$$nemoclaw <name> start`.
-For an unverified running state, run `$$nemoclaw <name> stop`, then `$$nemoclaw <name> start`.
+If maintenance entry or restore fails, follow the printed lifecycle recovery.
+If NemoClaw reports a verified stopped sandbox, run `$$nemoclaw <name> start`.
+If NemoClaw directs you to stop and start the sandbox, run `$$nemoclaw <name> stop`, then `$$nemoclaw <name> start`.
+If that start reports that it consumed the OpenClaw maintenance abort and leaves the sandbox stopped, run `$$nemoclaw <name> start` again.
 Verify that the sandbox is ready, then retry the same snapshot restore command.
 </AgentOnly>
 
@@ -3301,7 +3302,10 @@ Recovery depends on the reported state. Follow [Recover a Failed Cross-Sandbox C
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it stops the sandbox and holds its OpenClaw gateway down while it restores state and runs `openclaw doctor --fix`.
 It then releases the maintenance window for one native OpenClaw start.
-If restoration or doctor fails, NemoClaw attempts to stop the destination and reports whether that stop was verified.
+If maintenance entry, restoration, or doctor fails, NemoClaw attempts to stop the destination and prints lifecycle recovery steps.
+If NemoClaw directs you to stop and start the destination, run `$$nemoclaw <destination> stop`, then `$$nemoclaw <destination> start`.
+If that start reports that it consumed the OpenClaw maintenance abort and leaves the destination stopped, run `$$nemoclaw <destination> start` again.
+Verify that the destination is ready.
 After correcting the reported failure, retry with a new clone name.
 The incomplete clone remains registered; inspect it before deletion or replacement with `--force`.
 </AgentOnly>

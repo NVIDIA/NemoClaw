@@ -147,6 +147,34 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
+  it("requires another start when restore abort cannot confirm the sandbox stopped", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: false,
+      restoredDirs: [],
+      restoredFiles: [],
+      failedDirs: ["workspace"],
+      failedFiles: [],
+    });
+    f.abortOpenClawPostRestoreDoctorMock.mockResolvedValue({
+      ok: false,
+      stage: "abort",
+      detail: "could not prove the sandbox stopped",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output.match(/nemoclaw alpha start/g)).toHaveLength(2);
+    expect(output).toContain("consumed the OpenClaw maintenance abort");
+    expect(output).toContain("Verify that the sandbox is ready, then retry");
+  });
+
   it("reports exact recovery when the OpenClaw gateway-down window cannot begin", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -168,6 +196,28 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Sandbox 'alpha' may remain stopped");
     expect(output).toContain("nemoclaw alpha stop', then 'nemoclaw alpha start'");
     expect(output).toContain("retry the same snapshot restore command");
+  });
+
+  it("requires another start when maintenance entry cannot retire its abort", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.beginOpenClawBackupQuiesceMock.mockResolvedValue({
+      ok: false,
+      stage: "abort",
+      detail: "could not prove the sandbox stopped",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output.match(/nemoclaw alpha start/g)).toHaveLength(2);
+    expect(output).toContain("consumed the OpenClaw maintenance abort");
+    expect(output).toContain("Verify that the sandbox is ready, then retry");
   });
 
   it.each([
