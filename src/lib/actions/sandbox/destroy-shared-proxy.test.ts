@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as nim from "../../inference/nim";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { SandboxEntry } from "../../state/registry";
 import { stopSandboxInferenceResources } from "./destroy-preflight";
 
@@ -35,5 +36,53 @@ describe("destroy shared Ollama proxy cleanup", () => {
 
     expect(killStaleProxyIfUnused).toHaveBeenCalledOnce();
     expect(killStaleProxyIfUnused.mock.calls[0]?.[0]()).toBe(true);
+  });
+
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "stops the shared proxy after its final %s owner is removed",
+    (provider) => {
+      const ollama = { name: "alpha", provider: "ollama-local" } as SandboxEntry;
+      const compatible = {
+        name: "beta",
+        provider,
+        credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      } as SandboxEntry;
+      let sandboxes = [ollama, compatible];
+      let proxyRunning = true;
+      const killStaleProxyIfUnused = vi.fn((hasRemainingOwner: () => boolean) => {
+        proxyRunning = hasRemainingOwner();
+        return !proxyRunning;
+      });
+      const listSandboxes = () => ({ sandboxes, defaultSandbox: "beta" });
+      vi.spyOn(nim, "stopNimContainer").mockReturnValue(true);
+
+      stopSandboxInferenceResources("beta", compatible, listSandboxes, { killStaleProxyIfUnused });
+      expect(proxyRunning).toBe(true);
+      stopSandboxInferenceResources("alpha", ollama, listSandboxes, { killStaleProxyIfUnused });
+      expect(proxyRunning).toBe(true);
+      sandboxes = [compatible];
+      stopSandboxInferenceResources("beta", compatible, listSandboxes, { killStaleProxyIfUnused });
+      expect(proxyRunning).toBe(false);
+      expect(killStaleProxyIfUnused).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("does not clean up the proxy for an authenticated compatible endpoint", () => {
+    const target = {
+      name: "authenticated",
+      provider: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    } as SandboxEntry;
+    const killStaleProxyIfUnused = vi.fn();
+    vi.spyOn(nim, "stopNimContainer").mockReturnValue(true);
+
+    stopSandboxInferenceResources(
+      target.name,
+      target,
+      () => ({ sandboxes: [target], defaultSandbox: target.name }),
+      { killStaleProxyIfUnused },
+    );
+
+    expect(killStaleProxyIfUnused).not.toHaveBeenCalled();
   });
 });

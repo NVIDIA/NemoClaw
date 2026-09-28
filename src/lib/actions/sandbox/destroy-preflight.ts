@@ -131,7 +131,10 @@ export function stopSandboxInferenceResources(
 
   // The auth proxy is host-global. Keep it while any other durable route owns
   // its credential; GPU model unload happens later, after confirmed deletion.
-  if (sandbox?.provider?.includes("ollama")) {
+  if (
+    sandbox?.provider?.includes("ollama") ||
+    sandbox?.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
+  ) {
     const killStaleProxyIfUnused =
       deps.killStaleProxyIfUnused ??
       (
