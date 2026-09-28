@@ -276,6 +276,12 @@ try:
         config = json.load(config_file)
         qualified_model = model if model.startswith("inference/") else f"inference/{model}"
         bare_model = model.removeprefix("inference/")
+        previous_primary = (
+            config.get("agents", {})
+            .get("defaults", {})
+            .get("model", {})
+            .get("primary")
+        )
         config.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})[
             "primary"
         ] = qualified_model
@@ -286,18 +292,37 @@ try:
         if not isinstance(models, list) or not models:
             models = [{}]
             inference["models"] = models
-        first = models[0]
-        if not isinstance(first, dict):
-            first = {}
-            models[0] = first
-        model_changed = first.get("id") not in (bare_model, qualified_model)
-        first["id"] = bare_model
-        first["name"] = qualified_model
+        selected = next(
+            (
+                entry
+                for entry in models
+                if isinstance(entry, dict)
+                and entry.get("id") in (bare_model, qualified_model)
+            ),
+            None,
+        )
+        if selected is None:
+            if len(models) == 1:
+                selected = models[0]
+                if not isinstance(selected, dict):
+                    selected = {}
+                    models[0] = selected
+            else:
+                selected = {}
+                models.append(selected)
+        previous_bare_model = (
+            previous_primary.removeprefix("inference/")
+            if isinstance(previous_primary, str)
+            else None
+        )
+        model_changed = previous_bare_model != bare_model
+        selected["id"] = bare_model
+        selected["name"] = qualified_model
         for field in ("contextWindow", "maxTokens"):
             if field in limits:
-                first[field] = int(limits[field])
+                selected[field] = int(limits[field])
             elif model_changed:
-                first.pop(field, None)
+                selected.pop(field, None)
         config_file.seek(0)
         json.dump(config, config_file, indent=2)
         config_file.write("\\n")

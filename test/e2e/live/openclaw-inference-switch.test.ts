@@ -1040,12 +1040,18 @@ test(
       (value): value is string => typeof value === "string",
     );
 
+    const managedImageCatalog =
+      liveE2eManagedImageCatalog(process.env) ??
+      skip("OpenClaw custom-image inference switch requires the live E2E managed-image catalog");
+    const managedOpenClawImage =
+      readLiveE2eManagedImageCatalogContracts(managedImageCatalog).get("openclaw") ??
+      skip(
+        "OpenClaw custom-image inference switch requires an OpenClaw managed-image catalog entry",
+      );
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
     const customImageDockerfile = stageNonRootCustomOpenClawImageDockerfile(
       home,
-      readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
-        "openclaw",
-      )!.reference,
+      managedOpenClawImage.reference,
     );
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(

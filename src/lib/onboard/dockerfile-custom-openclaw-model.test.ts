@@ -151,6 +151,57 @@ describe("custom OpenClaw model reconciliation", () => {
     });
   });
 
+  it("reconciles a selected model entry without changing its siblings (#12033)", () => {
+    const { configPath, dockerfilePath } = fixture();
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    config.models.providers.inference.models.push({
+      id: "selected-model",
+      name: "inference/selected-model",
+      contextWindow: 65_536,
+      maxTokens: 2048,
+    });
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const { result } = patchAndRun(dockerfilePath, configPath, "selected-model");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      JSON.parse(fs.readFileSync(configPath, "utf8")).models.providers.inference.models,
+    ).toEqual([
+      {
+        id: "baked-model",
+        name: "inference/baked-model",
+        contextWindow: 131_072,
+        maxTokens: 4096,
+      },
+      {
+        id: "selected-model",
+        name: "inference/selected-model",
+      },
+    ]);
+  });
+
+  it("appends a selected model when a multi-model config does not contain it (#12033)", () => {
+    const { configPath, dockerfilePath } = fixture();
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    config.models.providers.inference.models.push({
+      id: "other-model",
+      name: "inference/other-model",
+      contextWindow: 32_768,
+      maxTokens: 1024,
+    });
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const { result } = patchAndRun(dockerfilePath, configPath, "selected-model");
+
+    expect(result.status, result.stderr).toBe(0);
+    const models = JSON.parse(fs.readFileSync(configPath, "utf8")).models.providers.inference
+      .models;
+    expect(models.slice(0, 2)).toEqual(config.models.providers.inference.models);
+    expect(models[2]).toEqual({
+      id: "selected-model",
+      name: "inference/selected-model",
+    });
+  });
+
   it("keeps an inherited image user when the Dockerfile has no USER instruction (#12033)", () => {
     const { configPath, dockerfilePath } = fixture("FROM example.invalid/openclaw\n");
     const { dockerfile, result } = patchAndRun(dockerfilePath, configPath, "selected-model");
