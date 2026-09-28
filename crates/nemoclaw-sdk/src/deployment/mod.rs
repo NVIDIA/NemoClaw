@@ -170,7 +170,7 @@ impl Deployment {
             .is_some_and(|gateway| gateway.external_component_ref.is_some())
         {
             return Err(Error::Conflict(
-                "external component activation is not supported by v1 plan or apply",
+                "external component reference is export-only; deployment plan and apply do not support it",
             ));
         }
         if cancel.is_cancelled() {
