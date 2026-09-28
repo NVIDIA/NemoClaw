@@ -74,11 +74,14 @@ run_npm_install_with_diagnostics() (
   readonly stage="$1"
   readonly working_directory="$2"
   readonly MAX_EXCERPT_BYTES=3900
+  caller_umask="$(umask)"
+  readonly caller_umask
   umask 077
   diagnostic_directory="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-npm-install.XXXXXX")"
   readonly diagnostic_directory
   readonly command_log="$diagnostic_directory/npm-install.redacted.log"
   trap 'if ! rm -rf -- "$diagnostic_directory"; then printf "npm diagnostic cleanup failed\n" >&2; fi' EXIT
+  umask "$caller_umask"
 
   cd "$working_directory"
   command=(env
@@ -308,7 +311,7 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
-# Apply the new Docker group to this process; never relax socket permissions.
+# New Docker group membership takes effect in a new login session.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
 # 3. Node.js 24.18.1

@@ -14,6 +14,38 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 
+sanitize_npm_diagnostics() {
+  awk '
+    BEGIN { private_key = 0 }
+    {
+      line = $0
+      lower = tolower(line)
+      if (line ~ /-----BEGIN ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) {
+        print "<REDACTED>"
+        private_key = 1
+        next
+      }
+      if (private_key) {
+        if (line ~ /-----END ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) private_key = 0
+        next
+      }
+      if (lower ~ /(authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=]/ ||
+          lower ~ /(bearer|basic)[ \t]+[^ \t]/ ||
+          lower ~ /(^|[^a-z0-9])[a-z0-9_.-]*(auth|credential|key|pass|passwd|password|secret|token)[a-z0-9_.-]*[ \t]*[:=]/) {
+        print "<REDACTED CREDENTIAL LINE>"
+        next
+      }
+      print line
+    }
+  ' \
+    | sed -E \
+      -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
+      -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
+      -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g' \
+    | LC_ALL=C tr -cd '\11\12\15\40-\176'
+}
+
 IFS=$'\t' read -r version expected_integrity expected_sha256 < <(
   node --input-type=module - \
     "$config_file" \
@@ -31,11 +63,38 @@ NODE
 [ -n "$expected_integrity" ]
 [ -n "$expected_sha256" ]
 
+pack_log="$download_dir/npm-pack.log"
+set +e
 npm pack "npm@$version" \
   --pack-destination "$download_dir" \
   --userconfig /dev/null \
   --registry https://registry.npmjs.org/ \
-  --ignore-scripts --no-audit --no-fund
+  --ignore-scripts --no-audit --no-fund >"$pack_log" 2>&1
+pack_status=$?
+set -e
+if [ "$pack_status" -ne 0 ]; then
+  printf 'reviewed npm pack failed (exit %s)\n' "$pack_status" >&2
+  if [ -s "$pack_log" ]; then
+    if ! sanitize_npm_diagnostics <"$pack_log" | LC_ALL=C awk '
+      {
+        tail = tail $0 ORS
+        if (length(tail) > 3900) tail = substr(tail, length(tail) - 3899)
+        if ($0 ~ /^npm (error|ERR!|verbose stack)( |$)/ && length(errors) < 2000)
+          errors = substr(errors $0 ORS, 1, 2000)
+      }
+      END {
+        remaining = 3900 - length(errors)
+        if (length(tail) > remaining) tail = substr(tail, length(tail) - remaining + 1)
+        printf "%s%s", errors, tail
+      }
+    ' >&2; then
+      printf 'npm pack diagnostics unavailable\n' >&2
+    fi
+  else
+    printf 'npm pack diagnostics unavailable\n' >&2
+  fi
+  exit "$pack_status"
+fi
 
 archive="$download_dir/npm-$version.tgz"
 actual_hashes="$download_dir/actual-hashes"

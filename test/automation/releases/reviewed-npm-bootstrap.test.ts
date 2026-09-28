@@ -11,8 +11,19 @@ describe("reviewed npm bootstrap", () => {
   it("preserves a pack failure reported on stdout and its original status (#12192)", () => {
     const fixture = runReviewedNpmBootstrap({ packFailure: true });
     try {
+      const output = `${fixture.result.stdout}\n${fixture.result.stderr}`;
       expect(fixture.result.status).toBe(47);
-      expect(fixture.result.stdout).toContain("npm error code E_FIXTURE_PACK");
+      expect(output).toContain("reviewed npm pack failed (exit 47)");
+      expect(output).toContain("npm error code E_FIXTURE_PACK");
+      expect(output).toContain("verbose diagnostic line 300");
+      expect(output).toContain("<REDACTED>");
+      expect(output).toContain("<REDACTED_URL>");
+      expect(output).not.toContain("fixture-secret-token");
+      expect(output).not.toContain("ghp_1234567890abcdef");
+      expect(output).not.toContain("eyJfixture1.payload.fixturepayload12345");
+      expect(output).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789ABCD");
+      expect(output).not.toContain(["BEGIN", "PRIVATE", "KEY"].join(" "));
+      expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(4_096);
       expect(fixture.npmInvocations).toHaveLength(1);
       expect(fixture.installCalled).toBe(false);
     } finally {

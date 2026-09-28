@@ -78,7 +78,19 @@ printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
   pack)
     if [ "$NEMOCLAW_TEST_PACK_FAILURE" = "1" ]; then
+      secret="fixture-secret-token"
       printf 'npm error code E_FIXTURE_PACK\\n'
+      for index in {1..300}; do
+        printf 'verbose diagnostic line %03d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n' "$index"
+      done
+      printf 'npm error Authorization: Bearer %s\\n' "$secret"
+      printf 'npm error registry=https://fixture:%s@registry.example.test/package\\n' "$secret" >&2
+      printf 'npm error token prefix ghp_1234567890abcdef\\n'
+      printf 'npm error jwt eyJfixture1.payload.fixturepayload12345\\n'
+      printf 'npm error opaque abcdefghijklmnopqrstuvwxyz0123456789ABCD\\n'
+      printf '%s%s\\n%s\\n%s%s\\n' \\
+        '-----BEGIN PRIVATE' ' KEY-----' "$secret" '-----END PRIVATE' ' KEY-----'
+      printf '_authToken=%s\\npassword=%s\\n' "$secret" "$secret"
       exit 47
     fi
     pack_args="$*"

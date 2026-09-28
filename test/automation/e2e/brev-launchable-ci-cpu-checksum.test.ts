@@ -20,6 +20,7 @@ const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e";
+const CALLER_UMASK = process.umask().toString(8).padStart(4, "0");
 
 type FakeSystemOptions = {
   archiveShape?:
@@ -429,10 +430,11 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
         expect(
           npmCalls
             .filter((call) => call.includes("args=install --ignore-scripts"))
-            .every((call) =>
-              /node_auth=unset npm_token=unset github_token=unset inference_key=unset umask=0077/u.test(
-                call,
-              ),
+            .every(
+              (call) =>
+                /node_auth=unset npm_token=unset github_token=unset inference_key=unset/u.test(
+                  call,
+                ) && call.includes(`umask=${CALLER_UMASK}`),
             ),
         ).toBe(true);
         const blockedBuild =
@@ -566,10 +568,11 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(
         npmCalls
           .filter((call) => call.includes("args=install --ignore-scripts"))
-          .every((call) =>
-            /node_auth=unset npm_token=unset github_token=unset inference_key=unset umask=0077/u.test(
-              call,
-            ),
+          .every(
+            (call) =>
+              /node_auth=unset npm_token=unset github_token=unset inference_key=unset/u.test(
+                call,
+              ) && call.includes(`umask=${CALLER_UMASK}`),
           ),
       ).toBe(true);
     } finally {
