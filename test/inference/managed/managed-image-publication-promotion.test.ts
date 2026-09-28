@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -167,6 +168,48 @@ describe("managed-image publication promotion", () => {
         runId,
       }),
     ).toEqual(expectedReceipt("ghrun-7744-1", 1));
+  });
+
+  it("publishes the Deep Agents release alias with the exact cohort bytes after staging (#11341)", () => {
+    const workflow = managedPromoter(readWorkflow("managed-images.yaml"));
+    const promotion = required(
+      step(workflow, "Stage validated multi-platform managed image cohort and contracts").run,
+      "managed image promotion script is missing",
+    );
+    const pointer = required(
+      step(workflow, "Promote durable managed image cohort pointers").run,
+      "managed image pointer script is missing",
+    );
+    const releaseTag = "v0.1.0";
+    const released = runManagedImagePromotion(promotion, "", pointer, { releaseTag });
+    expect(released.status, released.stderr).toBe(0);
+
+    const image = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox";
+    const alias = `${image}:${releaseTag}`;
+    const agent = required(
+      (released.cohortContract?.agents as Record<string, { reference: string; digest: string }>)[
+        "langchain-deepagents-code"
+      ],
+      "Deep Agents cohort reference is missing",
+    );
+    const pointerCall = `buildx imagetools create --tag ${image}:${revision} --tag ${alias} ${agent.reference}`;
+    const lastCohortStage = Math.max(
+      ...publicationAgents.map((name) =>
+        released.calls.findIndex((call) =>
+          call.startsWith(
+            `buildx imagetools create --tag ghcr.io/nvidia/nemoclaw/${name}-sandbox:cohort-`,
+          ),
+        ),
+      ),
+    );
+    expect(lastCohortStage).toBeGreaterThanOrEqual(0);
+    expect(released.calls.indexOf(pointerCall)).toBeGreaterThan(lastCohortStage);
+    expect(released.calls).toContain(`buildx imagetools inspect ${alias} --raw`);
+    const aliasBytes = required(released.aliasBytes[alias], "Deep Agents release alias is missing");
+    expect(`sha256:${createHash("sha256").update(aliasBytes).digest("hex")}`).toBe(agent.digest);
+    expect(released.cohortContract?.source).toMatchObject({
+      release: releaseTag,
+    });
   });
 
   it("rejects promotion when a candidate names another workflow run", () => {
