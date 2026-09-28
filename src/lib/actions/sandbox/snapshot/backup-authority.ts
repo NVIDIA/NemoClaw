@@ -354,13 +354,3 @@ export async function prepareStoppedAgentState(
     throw error;
   }
 }
-
-/** Retained for the OpenClaw rebuild pipeline while all-agent preflight adopts the generic owner. */
-export async function prepareStoppedOpenClawState(
-  sandboxName: string,
-  getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
-): Promise<PreparedStoppedNativeState | null> {
-  const entry = getSandbox(sandboxName);
-  if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
-  return prepareStoppedAgentState(sandboxName, getSandbox);
-}

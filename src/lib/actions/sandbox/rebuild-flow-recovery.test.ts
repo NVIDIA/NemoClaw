@@ -24,6 +24,10 @@ import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "./rebuild-flow-test-fixtures";
+import {
+  configureDcodeSession,
+  makeDcodeSandboxEntry,
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
@@ -49,16 +53,24 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("rebuild completed");
   });
 
-  function stoppedRecoveryHarness() {
+  function stoppedRecoveryHarness(
+    agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
+  ) {
     const nativeDirectory = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"),
     );
-    const directory = path.join(nativeDirectory, ".openclaw");
+    const directory = path.join(
+      nativeDirectory,
+      agentName === "openclaw" ? ".openclaw" : ".deepagents",
+    );
     fs.mkdirSync(directory);
-    fs.writeFileSync(path.join(directory, "openclaw.json"), "{}");
+    fs.writeFileSync(
+      path.join(directory, agentName === "openclaw" ? "openclaw.json" : ".mcp.json"),
+      "{}",
+    );
     const captured = {
       sandboxName: "alpha",
-      agentName: "openclaw" as const,
+      agentName,
       nativeDirectory,
       directory,
       cleanupDirectory: nativeDirectory,
@@ -66,9 +78,19 @@ describe("rebuildSandbox flow: recovery", () => {
       dispose: vi.fn(() => fs.rmSync(nativeDirectory, { recursive: true, force: true })),
     };
     const harness = createRebuildFlowHarness({
+      ...(agentName === "langchain-deepagents-code"
+        ? {
+            agentName,
+            sandboxEntry: makeDcodeSandboxEntry(),
+            dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+          }
+        : {}),
       sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
     });
-    vi.spyOn(snapshotBackup, "prepareStoppedOpenClawState").mockResolvedValue(captured);
+    const configureSession: typeof configureDcodeSession =
+      agentName === "langchain-deepagents-code" ? configureDcodeSession : () => undefined;
+    configureSession(harness);
+    vi.spyOn(snapshotBackup, "prepareStoppedAgentState").mockResolvedValue(captured);
     return { captured, harness };
   }
 
@@ -91,6 +113,33 @@ describe("rebuildSandbox flow: recovery", () => {
       );
       expect(harness.onboardSpy).toHaveBeenCalled();
       expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+      expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds a terminal Deep Agents sandbox from one captured native source (#11767)", async () => {
+    const { captured, harness } = stoppedRecoveryHarness("langchain-deepagents-code");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: captured.nativeDirectory,
+            assertCurrent: captured.assertCurrent,
+          },
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(([args]) => (args as string[]).includes("start")),
+      ).toBe(false);
       expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
       expect(captured.dispose).toHaveBeenCalledOnce();
     } finally {

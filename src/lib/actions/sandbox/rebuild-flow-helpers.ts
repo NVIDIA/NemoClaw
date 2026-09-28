@@ -75,23 +75,6 @@ export type RebuildLiveState = {
   terminalPhase?: boolean;
 };
 
-/** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
-export async function prepareRebuildStoppedOpenClawState(
-  entry: RebuildSandboxEntry,
-  liveState: RebuildLiveState,
-  hasRecoveryManifest: boolean,
-  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
-): Promise<PreparedStoppedNativeState | null> {
-  if (
-    !liveState.terminalPhase ||
-    liveState.staleRecovery ||
-    hasRecoveryManifest ||
-    (entry.agent ?? "openclaw") !== "openclaw"
-  )
-    return null;
-  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox);
-}
-
 /** Select complete stopped native state for supported fresh terminal-state rebuilds. */
 export async function prepareRebuildStoppedAgentState(
   entry: RebuildSandboxEntry,

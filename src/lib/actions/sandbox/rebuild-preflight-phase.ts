@@ -304,14 +304,14 @@ export async function runRebuildPreflightPhase(
         },
       );
       if (!liveState) return null;
+      stoppedSource = await prepareRebuildStoppedAgentState(
+        expectedSandboxEntry,
+        liveState,
+        recoveryManifest !== null,
+        (name) => (name === sandboxName ? getRebuildSandboxEntryOrBail(name, bail) : null),
+      );
+      stoppedSource?.assertCurrent();
       if (isDcodeRebuildAgent(rebuildAgent)) {
-        stoppedSource = await prepareRebuildStoppedAgentState(
-          expectedSandboxEntry,
-          liveState,
-          recoveryManifest !== null,
-          (name) => (name === sandboxName ? getRebuildSandboxEntryOrBail(name, bail) : null),
-        );
-        stoppedSource?.assertCurrent();
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,

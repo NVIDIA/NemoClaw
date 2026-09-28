@@ -97,10 +97,8 @@ import {
 } from "./mcp-bridge-tool-discovery.ts";
 import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
-import {
-  buildMcpCredentialHandleAuthorizationPattern,
-  MCP_PROVIDER_REWRITE_PROBE_SOURCE,
-} from "./mcp-provider-rewrite-probe.ts";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import { assertDeepAgentsMcpConfig } from "./mcp-bridge-deepagents-config.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
 import { pausePortableHostLockOwner } from "../support/mcp-bridge-portable-lock-barrier.ts";
@@ -495,35 +493,6 @@ async function assertAdapterRequestDeniedAfterRemove(
   ).toBe(true);
   expect(fakeMcp.requests).toHaveLength(requestCount);
 }
-async function assertDeepAgentsConfig(
-  sandbox: SandboxClient,
-  sandboxName: string,
-  mcpUrl: string,
-): Promise<void> {
-  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
-  const script = [
-    "set -eu",
-    "python3 - <<'PY'",
-    "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
-    "text = path.read_text(encoding='utf-8')",
-    "data = json.loads(text)",
-    `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
-    "assert entry['type'] == 'http'",
-    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
-    `assert ${JSON.stringify(HOST_SECRET)} not in text`,
-    "PY",
-  ].join("\n");
-  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
-    artifactName: "deepagents-mcp-config-assertions",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [HOST_SECRET, Buffer.from(script, "utf8").toString("base64")],
-    timeoutMs: 60_000,
-  });
-  expectExitZero(result, "Deep Agents MCP config contains placeholder and no raw host secret");
-}
-
 async function assertRealAdapterToolCall(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -1402,7 +1371,12 @@ mcpBridgeShardTest("deepagents")(
       ...bridge,
       providerName,
     });
-    await assertDeepAgentsConfig(sandbox, sandboxName, mcpUrl);
+    await assertDeepAgentsMcpConfig(sandbox, {
+      sandboxName,
+      serverName: SERVER_NAME,
+      mcpUrl,
+      hostSecret: HOST_SECRET,
+    });
     await assertSecretAbsentFromSandbox(sandbox, sandboxName, ["/sandbox/.deepagents"]);
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
@@ -1457,10 +1431,30 @@ mcpBridgeShardTest("deepagents")(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "deepagents-assert-secrets-absent-after-rotation",
     );
+    const nativeStateMarkerPath = "/sandbox/.complete-native-state-marker";
+    const nativeStateMarker = `complete-native-state-${Date.now()}`;
+    await sandbox.exec(
+      sandboxName,
+      [
+        "sh",
+        "-c",
+        `umask 077; printf '%s' ${shellQuote(nativeStateMarker)} > ${shellQuote(nativeStateMarkerPath)} && sync`,
+      ],
+      { artifactName: "deepagents-write-complete-native-state-marker" },
+    );
     const rebuildAndProveDeepAgentsBridge = async (prefix: string) => {
       await rebuildWithoutMcpHostSecret(host, sandboxName, prefix, exactMainProof.envOverlay);
       await exactMainProof.afterRebuild();
-      await assertDeepAgentsConfig(sandbox, sandboxName, mcpUrl);
+      await assertDeepAgentsMcpConfig(sandbox, {
+        sandboxName,
+        serverName: SERVER_NAME,
+        mcpUrl,
+        hostSecret: HOST_SECRET,
+        completeNativeState: {
+          path: nativeStateMarkerPath,
+          value: nativeStateMarker,
+        },
+      });
       await assertSecretAbsentFromSandbox(
         sandbox,
         sandboxName,

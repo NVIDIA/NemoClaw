@@ -43,7 +43,6 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
-  prepareRebuildStoppedOpenClawState,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
@@ -220,6 +219,7 @@ async function rebuildSandboxUnlocked(
     dcodePreflight,
     preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
+    stoppedSource,
     releaseOnboardLock,
     log,
     bail,
@@ -243,16 +243,9 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedOpenClawState>> = null;
   try {
-    stoppedSource = await prepareRebuildStoppedOpenClawState(
-      sandboxEntry,
-      liveState,
-      recoveryManifest !== null,
-      registry.getSandbox,
-    );
     if (stoppedSource)
-      log("Captured the identified stopped OpenClaw source without starting its container.");
+      log("Captured the identified stopped agent source without starting its container.");
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
