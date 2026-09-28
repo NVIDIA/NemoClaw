@@ -18,11 +18,13 @@ describe("inference-switch catalogue boundary", () => {
       expect(openclaw).toMatchObject({
         profile: "standard",
         testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+        gatewayRuntimes: ["docker", "podman"],
         environment: {
           NEMOCLAW_AGENT: "openclaw",
           NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
         },
       });
+      expect(openclaw.environment).not.toHaveProperty("NEMOCLAW_CUSTOM_IMAGE_RUNTIME");
 
       const hermes = catalogueTarget("hermes-inference-switch");
       expect(hermes).toMatchObject({

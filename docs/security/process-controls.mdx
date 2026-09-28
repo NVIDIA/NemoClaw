@@ -60,7 +60,7 @@ That root-entrypoint topology runs the gateway as the separate `gateway` user an
 | Aspect | Detail |
 |---|---|
 | Default | A stock Dockerfile build declares `USER sandbox`. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the non-root entrypoint from changing users. |
-| What you can change | OpenClaw managed and custom images must keep `USER sandbox` as the default for OpenShell 0.0.116. A direct container runtime outside OpenShell can still override the image user to `root`. |
+| What you can change | A custom OpenClaw image must end with a non-root image user. A Dockerfile without a `USER` instruction inherits its base image user. When the Dockerfile declares a non-root final `USER`, NemoClaw temporarily selects `root` during the image build to reconcile inherited model metadata, then restores the declared user. Keep `USER sandbox` for stock and managed images on OpenShell 0.0.116. A direct container runtime outside OpenShell can still override the image user to `root`. |
 | Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. Native restart and host health checks prove service availability, not provenance against a malicious same-user process. |
 | Recommendation | Keep the OpenShell-managed image user as `sandbox`. Use a direct root-entrypoint deployment only outside OpenShell when separate gateway and agent UIDs are required. Treat native lifecycle and readiness checks as availability controls, not proof that the target process is trustworthy. |
 

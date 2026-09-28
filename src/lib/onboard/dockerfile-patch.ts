@@ -265,7 +265,9 @@ nofollow = getattr(os, "O_NOFOLLOW", 0)
 try:
     config_fd = os.open(config_path, os.O_RDWR | os.O_CLOEXEC | nofollow)
 except FileNotFoundError:
-    raise SystemExit(0)
+    raise SystemExit(
+        f"custom OpenClaw model reconciliation requires {config_path} in the inherited image"
+    )
 try:
     metadata = os.fstat(config_fd)
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:

@@ -162,6 +162,17 @@ describe("custom OpenClaw model reconciliation", () => {
     ).toBe("selected-model");
   });
 
+  it("rejects an inherited image without an OpenClaw config (#12033)", () => {
+    const { configPath, dockerfilePath } = fixture();
+    fs.unlinkSync(configPath);
+    const { result } = patchAndRun(dockerfilePath, configPath, "selected-model");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `custom OpenClaw model reconciliation requires ${configPath} in the inherited image`,
+    );
+  });
+
   it("rejects a Dockerfile that ends as root (#12033)", () => {
     const { dockerfilePath } = fixture("FROM example.invalid/openclaw\nUSER root\n");
 
