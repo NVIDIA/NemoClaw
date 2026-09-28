@@ -73,10 +73,10 @@ Pi stores runtime state under `/sandbox/.pi/agent`:
 | `themes/` | Read-only user resources | Preserved |
 | `tools/` | Executable resource state | Reconstructed, not restored |
 | `bin/` | Executable resource state | Reconstructed, not restored |
-| `settings.json` | User preferences | Restores only accepted keys |
+| `settings.json` | User preferences | Preserved completely |
 | `models.json` | Managed inference configuration | Reconstructed, not restored |
 
-The accepted `settings.json` restore keys are `theme`, `hideThinkingBlock`, `showCacheMissNotices`, `quietStartup`, `steeringMode`, `followUpMode`, and `defaultThinkingLevel`. Unknown keys, managed routing, authentication, project trust, and executable extension state are not restored.
+NemoClaw restores the complete native `settings.json` file without filtering individual keys. Snapshots still exclude credentials, generated `models.json`, project trust decisions, and executable tool and extension state.
 
 ## Create and Restore Snapshots
 

@@ -412,9 +412,18 @@ test(
     progress.phase("run interactive Pi and preserve its native state through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
     const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", true);
-    expect(stateBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
-      stateAfterOnboard.split("\n").filter(Boolean).length,
-    );
+    const sessionsBeforeRebuild = stateBeforeRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    const stateEntryGrowth =
+      stateBeforeRebuild.split("\n").filter(Boolean).length -
+      stateAfterOnboard.split("\n").filter(Boolean).length;
+    expect(
+      Math.min(sessionsBeforeRebuild.length, stateEntryGrowth),
+      "Pi must create a JSONL session and add persistent state before rebuild",
+    ).toBeGreaterThan(0);
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
@@ -424,7 +433,14 @@ test(
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
     const stateAfterRebuild = await persistentStateInventory(sandbox, env, "after-rebuild");
-    expect(stateAfterRebuild).toBe(stateBeforeRebuild);
+    const sessionsAfterRebuild = stateAfterRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    expect(JSON.stringify([sessionsAfterRebuild, stateAfterRebuild])).toBe(
+      JSON.stringify([sessionsBeforeRebuild, stateBeforeRebuild]),
+    );
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after sandbox and gateway restarts");
