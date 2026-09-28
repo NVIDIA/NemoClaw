@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
@@ -63,16 +64,62 @@ export function redactDestroyError(error: unknown): string {
 
 const DEEP_AGENTS_NATIVE_ROOT = "/sandbox";
 
-function wipeDeepAgentsNativeHome(sandboxName: string, runOpenshell: DestroyRunOpenshell): void {
+function deepAgentsProtectedNativeRootEntries(hostMounts: SandboxEntry["hostMounts"]): string[] {
+  const protectedEntries = new Set<string>();
+  for (const mount of hostMounts ?? []) {
+    if (typeof mount.target !== "string") {
+      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+    }
+    const normalized = path.posix.normalize(mount.target);
+    const prefix = `${DEEP_AGENTS_NATIVE_ROOT}/`;
+    if (normalized !== mount.target || !normalized.startsWith(prefix)) {
+      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+    }
+    const topLevel = normalized.slice(prefix.length).split("/")[0];
+    if (!topLevel) {
+      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+    }
+    protectedEntries.add(`${DEEP_AGENTS_NATIVE_ROOT}/${topLevel}`);
+  }
+  return [...protectedEntries].sort();
+}
+
+function wipeDeepAgentsNativeHome(
+  sandboxName: string,
+  runOpenshell: DestroyRunOpenshell,
+  hostMounts: SandboxEntry["hostMounts"],
+): void {
+  const protectedEntries = deepAgentsProtectedNativeRootEntries(hostMounts);
   const script = [
     "set -eu",
     `root=${DEEP_AGENTS_NATIVE_ROOT}`,
     'if [ ! -d "$root" ] || [ -L "$root" ]; then echo "unsafe Deep Agents native root" >&2; exit 20; fi',
-    'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
-    'if find "$root" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then echo "Deep Agents native root is not empty" >&2; exit 21; fi',
+    'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
+    '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
+    "  protected=false",
+    '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
+    '  if [ "$protected" = false ]; then rm -rf -- "$entry"; fi',
+    "done",
+    'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
+    '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
+    "  protected=false",
+    '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
+    '  if [ "$protected" = false ]; then echo "Deep Agents native root is not empty" >&2; exit 21; fi',
+    "done",
   ].join("\n");
   const result = runOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "sh",
+      "-c",
+      script,
+      "nemoclaw-deep-agents-native-cleanup",
+      ...protectedEntries,
+    ],
     {
       ignoreError: true,
       killSignal: "SIGKILL",
@@ -578,6 +625,7 @@ export async function executeSandboxDestroy({
         (deps.wipeDeepAgentsNativeHome ?? wipeDeepAgentsNativeHome)(
           sandboxName,
           selectedRunOpenshell,
+          sandbox.hostMounts,
         );
       } catch (error) {
         const mcpRecoveryFailure = await restoreMcpForAbort();

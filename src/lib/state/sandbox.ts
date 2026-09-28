@@ -904,12 +904,9 @@ const NATIVE_STRUCTURED_CONFIG_NAMES = new Set([
 function shouldScanNativeStructuredConfig(entry: string, fileName: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   const segments = normalized.split("/");
+  if (fileName === "package.json") return !segments.includes("node_modules");
   if (segments.some((segment) => NATIVE_RUNTIME_NON_CONFIG_SEGMENTS.has(segment))) return false;
-  if (
-    fileName === "package.json" ||
-    fileName === "tsconfig.json" ||
-    fileName.endsWith(".schema.json")
-  ) {
+  if (fileName === "tsconfig.json" || fileName.endsWith(".schema.json")) {
     return false;
   }
   if (NATIVE_STRUCTURED_CONFIG_NAMES.has(fileName)) return true;
@@ -1068,10 +1065,12 @@ function paxPath(payload: Buffer): string | null | undefined {
   return result;
 }
 
-function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
+function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const segments = normalized.split("/");
   return (
     isDependencyLockfile(fileName) ||
-    fileName === "package.json" ||
+    (fileName === "package.json" && segments.includes("node_modules")) ||
     fileName === "tsconfig.json" ||
     fileName.endsWith(".schema.json")
   );
@@ -1149,7 +1148,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
-          if (!shouldSkipNativeRawCredentialScan(fileName)) {
+          if (!shouldSkipNativeRawCredentialScan(entry, fileName)) {
             const contextual =
               fileName === ".env" ||
               fileName.endsWith(".env") ||

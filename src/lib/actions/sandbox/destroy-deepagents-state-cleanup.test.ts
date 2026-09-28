@@ -49,10 +49,39 @@ describe("Deep Agents destroy state cleanup", () => {
     expect(wipeCall).toBeGreaterThanOrEqual(0);
     expect(deleteCall).toBeGreaterThan(wipeCall);
     const wipeArgs = harness.runOpenshellSpy.mock.calls[wipeCall]![0] as string[];
-    const wipeScript = wipeArgs.at(-1)!;
+    const wipeScript = wipeArgs[wipeArgs.indexOf("-c") + 1]!;
     expect(wipeScript).toContain("root=/sandbox");
     expect(wipeScript).toContain('[ ! -d "$root" ] || [ -L "$root" ]');
-    expect(wipeScript).toContain('find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +');
+    expect(wipeScript).toContain('for keep in "$@"');
+    expect(wipeScript).toContain('rm -rf -- "$entry"');
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("preserves registered host-mount targets during native-root cleanup", async () => {
+    const harness = createDestroyHarness({
+      agent: "langchain-deepagents-code",
+      registryEntryOverrides: {
+        hostMounts: [
+          {
+            source: "/host/project",
+            target: "/sandbox/project/source",
+            readOnly: true,
+            sourceIdentity: { device: "1", inode: "2" },
+          },
+        ],
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    const wipeArgs = harness.runOpenshellSpy.mock.calls.find(
+      ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "exec",
+    )![0] as string[];
+    const commandIndex = wipeArgs.indexOf("-c");
+    const wipeScript = wipeArgs[commandIndex + 1]!;
+    expect(wipeArgs.slice(commandIndex + 3)).toEqual(["/sandbox/project"]);
+    expect(wipeScript).toContain('if [ "$entry" = "$keep" ]; then protected=true');
+    expect(wipeScript).not.toContain('find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf');
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 

@@ -472,6 +472,11 @@ describe("complete native home persistence", () => {
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
+    [
+      "an agent-owned package manifest",
+      "workspace/project/package.json",
+      JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
+    ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
     [
       "a Python virtual-environment file",
