@@ -16,7 +16,74 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
 }));
 
+async function prepareResumedGpuSandboxRecreate(resumedGpuMode: string) {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledRecreate(session);
+  const firstRun = createDeps(
+    {
+      createSandbox: vi.fn(async (...args: unknown[]) => {
+        Object.assign(args[10] as object, {
+          sandboxGpuProof: {
+            status: "verified",
+            cudaVerified: true,
+            at: "2026-09-28T00:00:00.000Z",
+          },
+        });
+        return "saved";
+      }),
+    },
+    session,
+  );
+  await handleSandboxState({
+    ...baseOptions(firstRun.deps, session),
+    sandboxName: "saved",
+    sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "auto" },
+  });
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+  return {
+    calls,
+    journal,
+    resume: () =>
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        sandboxGpuConfig: { sandboxGpuEnabled: true, mode: resumedGpuMode },
+      }),
+  };
+}
+
 describe("handleSandboxState resume recreation", () => {
+  it("recreates a not-ready GPU sandbox on resume after the first create recorded a GPU proof", async () => {
+    const { calls, journal, resume } = await prepareResumedGpuSandboxRecreate("auto");
+
+    await resume();
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Recorded sandbox 'saved' exists but is not ready; recreating it.",
+    );
+    expect(calls.exit).not.toHaveBeenCalled();
+    expect(journal.completeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects recreating a not-ready GPU sandbox on resume when the sandbox GPU mode changed", async () => {
+    const { calls, journal, resume } = await prepareResumedGpuSandboxRecreate("1");
+
+    await expect(resume()).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(
+      "  A previous onboarding attempt recorded sandbox 'saved' with different build or policy inputs than this run requests.",
+    );
+    expect(journal.completeCreate).not.toHaveBeenCalled();
+  });
+
   it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";

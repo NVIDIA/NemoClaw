@@ -530,6 +530,12 @@ export function apfCreateFingerprintFields(requested: boolean): readonly string[
   return requested ? ["apf-interceptor"] : [];
 }
 
+function sandboxGpuCreateInputs(config: unknown): unknown {
+  if (config === null || typeof config !== "object") return config ?? null;
+  const { sandboxGpuProof: _sandboxGpuProof, ...inputs } = config as { sandboxGpuProof?: unknown };
+  return inputs;
+}
+
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
   readonly sandboxName: string | null;
@@ -918,7 +924,7 @@ class SandboxStateFlow<
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       ),
       this.options.fromDockerfile ?? "",
-      JSON.stringify(this.options.sandboxGpuConfig ?? null),
+      JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
     if (!createIntent) return lightFingerprint;
