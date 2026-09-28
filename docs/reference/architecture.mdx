@@ -230,14 +230,14 @@ The context tells the agent to try allowed network and filesystem operations bef
 
 <AgentOnly variant="hermes">
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
-The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
+The manifest declares Hermes' binary, health probe, config directory, and OpenAI-compatible API endpoint.
 Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
 Managed startup materializes Hermes YAML and environment state from the recorded onboarding choices.
 The runtime configuration guard validates that state before the supervised Hermes gateway starts.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 The Deep Agents integration follows the generic agent-manifest path for terminal runtimes.
-The manifest declares the `dcode` binary, smoke checks, config directory, state directories, and OpenAI-compatible inference route.
+The manifest declares the `dcode` binary, smoke checks, config directory, and OpenAI-compatible inference route.
 The configuration generator turns NemoClaw onboarding choices into `config.toml`, and the managed launchers enforce the supported credential, MCP, tracing, and sandbox boundaries before `dcode` starts.
 </AgentOnly>
 

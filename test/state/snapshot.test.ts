@@ -744,6 +744,11 @@ describe("complete native home persistence", () => {
     ],
     ["a short opaque credential assignment", "workspace/notes.txt", "password=abc"],
     [
+      "a malformed Slack placeholder-shaped credential",
+      "workspace/slack.txt",
+      "botToken=xoxb-OPENSHELL-RESOLVE-ENV-SLACK-BOT-TOKEN",
+    ],
+    [
       "an opaque npm registry credential",
       ".npmrc",
       "//registry.example/:_authToken=opaqueCredentialPayloadZ1234567890",

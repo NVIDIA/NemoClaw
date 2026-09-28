@@ -205,6 +205,13 @@ describe("textContainsHighConfidenceCredential", () => {
     ).toBe(false);
   });
 
+  it.each([
+    "xoxb-OPENSHELL-RESOLVE-ENV-SLACK-BOT-TOKEN",
+    "xapp-OPENSHELL-RESOLVE-ENV-SLACK-APP-TOKEN",
+  ])("flags malformed Slack placeholder-shaped credentials: %s", (value) => {
+    expect(textContainsHighConfidenceCredential(value)).toBe(true);
+  });
+
   it("does not flag the reserved Hermes proxy rewrite sentinel as a credential", () => {
     expect(textContainsHighConfidenceCredential(HERMES_PROXY_REWRITE_SENTINEL)).toBe(false);
     expect(textContainsHighConfidenceCredential(`${HERMES_PROXY_REWRITE_SENTINEL}-secret`)).toBe(

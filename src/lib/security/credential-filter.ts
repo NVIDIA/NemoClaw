@@ -56,11 +56,13 @@ function textWithoutSafeCredentialFixtures(value: string): string {
   return (
     value
       .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-      // Strip the reserved prefix, not only a complete placeholder. Generated
-      // bundles contain the placeholder matcher itself (for example the source
-      // text `xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+`); leaving that prefix in
-      // place makes the credential scanner flag its own trusted boundary code.
-      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
+      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
+        isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
+      )
+      // Generated bundles contain the accepted-placeholder matcher itself.
+      // Normalize that exact source fragment without stripping the reserved
+      // prefix from malformed placeholder-shaped credential values.
+      .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-\[A-Za-z0-9_\]\+/gu, "unused")
       .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
       .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
       .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
