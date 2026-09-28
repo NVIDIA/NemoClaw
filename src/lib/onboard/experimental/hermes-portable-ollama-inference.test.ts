@@ -46,7 +46,10 @@ import {
   prepareHermesPortableOllamaPublishedInferenceAuthority,
   prepareHermesPortableOllamaPublishedReceiptAuthority,
 } from "./hermes-portable-ollama-gateway-transaction";
-import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
+import {
+  createHermesPortableOllamaInferenceResolver,
+  retireHermesPortableOllamaFreshState,
+} from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
 function exactTestFileIdentity(metadata: fs.BigIntStats): string {
@@ -163,6 +166,74 @@ async function publishPortableInference(fixture: ReturnType<typeof createRuntime
 afterEach(resetOnboardResumeHintForTests);
 
 describe("Hermes Portable Ollama inference activation", () => {
+  it("retires exact abandoned publication state before a same-name fresh retry (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    expect(() => fixture.resolve()).toThrow(
+      "Hermes Portable Ollama publication authority is inconsistent",
+    );
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput),
+    ).resolves.toBe(true);
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+    const rebound = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-retry",
+    })(freshPortableInput);
+    expect(rebound?.request).not.toHaveProperty("resumeReceipt");
+  });
+
+  it("preserves abandoned publication state when live provider ownership changed (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    fixture.gatewayProvider.bumpResourceVersion();
+    const directory = path.dirname(gatewayJournalPath(fixture));
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput),
+    ).rejects.toThrow("gateway provider authority changed before uninstall");
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(fs.existsSync(directory)).toBe(true);
+  });
+
+  it("resumes fresh retirement after the exact provider was already removed (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    fixture.gatewayProvider.setPresent(false);
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput),
+    ).resolves.toBe(true);
+
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  it("finishes fresh retirement after exact provider and runtime removal (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    const container = fixture.harness.container();
+    expect(container).not.toBeNull();
+    fixture.gatewayProvider.setPresent(false);
+    expect(fixture.harness.engine.capture(["rm", "--force", container!.id], 30_000).status).toBe(0);
+    expect(fixture.harness.container()).toBeNull();
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput),
+    ).resolves.toBe(true);
+
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
   it("binds committed receipt and journal without another live provider observation", async () => {
     const fixture = createRuntimeFixture();
     const journal = await publishPortableInference(fixture);
@@ -443,15 +514,21 @@ describe("Hermes Portable Ollama inference activation", () => {
       fixture.events.push(`complete:${stepName}`);
       return session;
     });
+    const retireHostLocalInferenceFreshState = vi.fn(async () => {
+      fixture.events.push("retire-fresh-state");
+      return false;
+    });
     const { deps, calls } = createDeps({
       setupNim: setupNim as never,
       setupInference: setupInference as never,
       resolveHostLocalInferenceStartupSelection: resolver,
+      retireHostLocalInferenceFreshState,
       recordStepComplete: recordStepComplete as never,
     });
 
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
+      fresh: true,
       agent: { name: "hermes" },
       gpu: { type: "nvidia" },
       gpuPassthrough: true,
@@ -459,6 +536,10 @@ describe("Hermes Portable Ollama inference activation", () => {
     });
 
     expect(fixture.events.some((event) => event.startsWith("host-probe:"))).toBe(false);
+    expect(retireHostLocalInferenceFreshState).toHaveBeenCalledWith(freshPortableInput);
+    expect(fixture.events.indexOf("retire-fresh-state")).toBeLessThan(
+      fixture.events.indexOf("setup-inference"),
+    );
     expect(fixture.events.indexOf("provider-operation")).toBeLessThan(
       fixture.events.indexOf("complete:provider_selection"),
     );

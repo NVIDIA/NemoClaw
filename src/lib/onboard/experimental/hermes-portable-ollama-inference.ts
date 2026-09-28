@@ -8,6 +8,10 @@ import { isDeepStrictEqual } from "node:util";
 import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  inspectHermesPortableUninstallDirectoryAuthority,
+  retireHermesPortableUninstallDirectory,
+} from "../../state/hermes-portable-uninstall/authority";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import {
@@ -25,6 +29,8 @@ import {
   assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent,
   assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent,
   prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
   type HostLocalInferenceLifecycleSandbox,
 } from "../runtime-provider/host-local-inference-lifecycle";
 import type {
@@ -33,7 +39,10 @@ import type {
   HostLocalInferenceStartupSelectionResolver,
   HostLocalInferenceStartupRequest,
 } from "../runtime-provider/host-local-inference-routing";
-import { prepareHermesPortablePublishedHostLocalInferenceStartup } from "../runtime-provider/host-local-inference-routing";
+import {
+  HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+  prepareHermesPortablePublishedHostLocalInferenceStartup,
+} from "../runtime-provider/host-local-inference-routing";
 import {
   createFilePersistedEngineAuthorityStore,
   openFilePersistedEngineAuthorityStore,
@@ -81,6 +90,7 @@ import {
 import {
   createHermesPortableOllamaGatewayTransaction,
   hasHermesPortableOllamaRecoveryContainer,
+  prepareHermesPortableOllamaProviderRetirement,
   prepareHermesPortableOllamaPublishedInferenceAuthority,
   prepareHermesPortableOllamaPublishedReceiptAuthority,
   type HermesPortableOllamaGatewayRunner,
@@ -108,6 +118,14 @@ export interface HermesPortableOllamaInferenceResolverOptions {
   readonly captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   readonly captureGpuDevices?: () => readonly string[];
   readonly captureCdiDevices?: () => readonly string[];
+}
+
+export interface HermesPortableOllamaFreshRetirementInput {
+  readonly application: string;
+  readonly sandboxName: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly acceleration: "cpu" | "nvidia-gpu";
 }
 
 function digest(value: object): string {
@@ -141,6 +159,159 @@ function requirePortableOllamaModel(model: string): string {
     throw new Error("Hermes Portable Ollama has an invalid selected model authority.");
   }
   return model;
+}
+
+/** Retire exact abandoned Portable Ollama publication state before a same-name fresh start. */
+export async function retireHermesPortableOllamaFreshState(
+  options: HermesPortableOllamaInferenceResolverOptions,
+  input: HermesPortableOllamaFreshRetirementInput,
+): Promise<boolean> {
+  if (input.application !== "hermes" || input.provider !== "ollama-local") return false;
+  if (input.acceleration !== "nvidia-gpu") return false;
+  if (!options.runtimeContext) return false;
+  if (!SAFE_CREDENTIAL_ENV.test(options.credentialEnv)) {
+    throw new Error("Hermes Portable Ollama gateway credential authority is invalid.");
+  }
+  requirePortableOllamaModel(input.model);
+
+  const runtimeContext = options.runtimeContext;
+  if (!runtimeContext.environmentScope) {
+    throw new Error("Hermes Portable inference has no active environment authority.");
+  }
+  const root = options.stateDir ?? defaultPortableDemoStateDir(process.env);
+  const inferenceStateDir = hermesPortableInferenceStateDir(root, input.sandboxName);
+  if (inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir) === null) return false;
+
+  const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+    directory: inferenceStateDir,
+    gatewayName: options.gatewayName,
+    sandboxName: input.sandboxName,
+    credentialEnv: options.credentialEnv,
+  });
+  const receipt = published.receipt;
+  if (
+    receipt.service !== "ollama" ||
+    receipt.runtime.kind !== "container" ||
+    receipt.inference?.model !== input.model ||
+    receipt.publication === undefined
+  ) {
+    throw new Error("Hermes Portable fresh start found different published inference authority.");
+  }
+
+  const sourceEnv = runtimeContext.environmentScope.createHermesPortablePodmanSourceEnvironment(
+    runtimeContext.authority,
+  );
+  const socketAuthority = (
+    options.captureSocketAuthority ??
+    ((socketPath, uid) => capturePodmanSocketAuthority(socketPath, { uid }))
+  )(runtimeContext.authority.socketPath, runtimeContext.authority.uid);
+  const executableAuthority = captureHermesPortablePodmanExecutableAuthority(
+    socketAuthority,
+    runtimeContext.authority,
+    sourceEnv,
+    options.podmanAuthorityDeps,
+  );
+  const engines = createHermesPortablePodmanOperationEngines(
+    executableAuthority,
+    socketAuthority,
+    runtimeContext.authority,
+    sourceEnv,
+    options.podmanAuthorityDeps,
+  );
+  const captureGpuDevices = () =>
+    captureQualifiedGpuDevices(
+      options.captureGpuDevices ?? captureCurrentGpuDevices,
+      options.captureCdiDevices ?? captureCurrentCdiDevices,
+    );
+  const authorityQualification = Object.freeze({
+    expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
+    captureCurrentCdiDevices: () => captureGpuDevices(),
+    assertCurrentAuthority: engines.assertTransactionCurrent,
+  });
+  const authority = qualifyPodmanInferenceAuthority(
+    engines.hostLocalInference,
+    authorityQualification,
+  );
+  const networkAuthority = capturePortableNetworkAuthority(engines.hostLocalInference);
+  const authorityStore = openFilePersistedEngineAuthorityStore(inferenceStateDir);
+  const routeAuthorityStore = createUnusedRouteAuthorityStore();
+  const bundle = createPodmanRuntimeProviderBundle({
+    engines: {
+      hostDoctor: engines.hostDoctor,
+      hostLocalInference: engines.hostLocalInference,
+      sandboxLifecycle: engines.sandboxLifecycle,
+    },
+    hostLocalInference: {
+      authority,
+      authorityQualification,
+      authorityStore,
+      routeAuthorityStore,
+      externalNetwork: networkAuthority,
+      onFailureEvidence: (evidence) => {
+        const message = redactOnboardDiagnosticText(evidence.message);
+        if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
+      },
+      redactSensitive: redactOnboardDiagnosticText,
+    },
+    preflight: { platform: "linux", architecture: "x64" },
+  });
+  const lifecycleRow: HostLocalInferenceLifecycleSandbox = Object.freeze({
+    name: input.sandboxName,
+    agent: "hermes",
+    provider: "ollama-local",
+    model: input.model,
+    endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+    endpointSource: "inference-set",
+    credentialEnv: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: options.gatewayName,
+    lifecycleGeneration: receipt.publication.transactionId,
+    openshellDriver: bundle.identity.id,
+    hostLocalInferenceReceipt: published.serializedReceipt,
+  });
+  const preparedRuntime = prepareSandboxHostLocalInferenceDestroyAuthority(bundle, lifecycleRow, {
+    environment: sourceEnv,
+  });
+  if (!preparedRuntime) {
+    throw new Error("Hermes Portable fresh start could not bind its published runtime authority.");
+  }
+  const provider = prepareHermesPortableOllamaProviderRetirement({
+    directory: inferenceStateDir,
+    transactionId: receipt.publication.transactionId,
+    targetSha256: receipt.publication.targetSha256,
+    gatewayName: options.gatewayName,
+    sandboxName: input.sandboxName,
+    model: input.model,
+    credentialEnv: options.credentialEnv,
+    runGatewayOpenshell: options.runGatewayOpenshell,
+    allowAbsent: true,
+  });
+
+  await provider.removeAndVerify();
+  provider.verifyAbsent();
+  const retired = retirePreparedHostLocalInferenceAuthority(bundle, lifecycleRow, preparedRuntime, [
+    lifecycleRow,
+  ]);
+  if (retired.status === "shared" || retired.status === "retained") {
+    throw new Error("Hermes Portable fresh start could not retire its exact managed runtime.");
+  }
+  const directoryAuthority = inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir);
+  if (directoryAuthority === null) {
+    throw new Error("Hermes Portable fresh-start state disappeared before retirement.");
+  }
+  retireHermesPortableUninstallDirectory(inferenceStateDir, directoryAuthority);
+  return true;
+}
+
+/** Bind fresh retirement and startup resolution to one operation-scoped authority source. */
+export function createHermesPortableOllamaInferenceBindings(
+  options: HermesPortableOllamaInferenceResolverOptions,
+) {
+  return Object.freeze({
+    resolveHostLocalInferenceStartupSelection: createHermesPortableOllamaInferenceResolver(options),
+    retireHostLocalInferenceFreshState: (input: HostLocalInferenceStartupSelectionInput) =>
+      retireHermesPortableOllamaFreshState(options, input),
+  });
 }
 
 function createUnusedRouteAuthorityStore(): HostLocalInferenceRouteAuthorityStore {

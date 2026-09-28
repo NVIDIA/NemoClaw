@@ -2995,14 +2995,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 revalidateSandboxIdentity,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection:
-              setupNimFlow.createHermesPortableOllamaInferenceResolver({
-                runtimeContext: lockedRuntime.portableRuntimeContext,
-                gatewayName: GATEWAY_NAME,
-                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
-                getReservationSessionId: () => session?.sessionId,
-                runGatewayOpenshell: runCoreGatewayOpenshell,
-              }),
+            ...setupNimFlow.createHermesPortableOllamaInferenceBindings({
+              runtimeContext: lockedRuntime.portableRuntimeContext,
+              gatewayName: GATEWAY_NAME,
+              credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+              getReservationSessionId: () => session?.sessionId,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+            }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
