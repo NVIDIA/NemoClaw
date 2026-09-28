@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(78);
+    expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -158,7 +158,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toHaveLength(46);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -327,7 +327,7 @@ describe("E2E workflow plan", () => {
 
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
@@ -344,10 +344,6 @@ describe("E2E workflow plan", () => {
           install_non_interactive: true,
           shard: "live-probes",
           timeout_minutes: 90,
-        }),
-        expect.objectContaining({
-          id: "openclaw-tui-chat-correlation",
-          host_packages: "expect",
         }),
         expect.objectContaining({
           id: "sandbox-operations",
@@ -407,8 +403,6 @@ describe("E2E workflow plan", () => {
       [
         ["gpu-double-onboard", "podman", packages],
         ["hermes-slack", "podman", packages],
-        ["openclaw-tui-chat-correlation", "docker", "expect"],
-        ["openclaw-tui-chat-correlation", "podman", "expect"],
       ].sort(),
     );
   });
