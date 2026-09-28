@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -181,6 +182,7 @@ export async function retireHermesPortableOllamaFreshState(
   const root = options.stateDir ?? defaultPortableDemoStateDir(process.env);
   const inferenceStateDir = hermesPortableInferenceStateDir(root, input.sandboxName);
   if (inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir) === null) return false;
+  if (!fs.existsSync(path.join(inferenceStateDir, "portable-inference.json"))) return false;
 
   const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
     directory: inferenceStateDir,

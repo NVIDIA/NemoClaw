@@ -167,11 +167,11 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     );
     const inference =
       require("./hermes-portable-ollama-inference") as typeof import("./hermes-portable-ollama-inference");
-    const createResolver = inference.createHermesPortableOllamaInferenceResolver;
-    vi.spyOn(inference, "createHermesPortableOllamaInferenceResolver").mockImplementation(
+    const createBindings = inference.createHermesPortableOllamaInferenceBindings;
+    vi.spyOn(inference, "createHermesPortableOllamaInferenceBindings").mockImplementation(
       (options) => {
         expect(options.gatewayName).toBe(gatewayName);
-        return createResolver({
+        return createBindings({
           ...options,
           stateDir: fixture.resolverOptions.stateDir,
           captureSocketAuthority: fixture.resolverOptions.captureSocketAuthority,
