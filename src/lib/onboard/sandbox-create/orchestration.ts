@@ -2128,6 +2128,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const recreateProtection = createSandboxRecreateProtection({
       sandboxName,
       sandboxEntry: existingEntry,
+      getSandbox: registry.getSandbox,
       note,
     });
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
