@@ -266,7 +266,15 @@ describe("complete native home persistence", () => {
         recursive: true,
       });
       fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
-      fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), "model: local\n");
+      const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
+      fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), hermesManagedConfig);
+      fs.mkdirSync(path.join(nativeRoot, ".hermes", "backups", "config"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(nativeRoot, ".hermes", "backups", "config", "config.yaml.good.20260928-091702"),
+        hermesManagedConfig,
+      );
       const payloadPath = path.join(nativeRoot, "payload.txt");
       const payloadCopyPath = path.join(nativeRoot, "payload-copy.txt");
       fs.writeFileSync(payloadPath, "payload");
@@ -334,6 +342,53 @@ describe("complete native home persistence", () => {
           .readdirSync(backup.manifest!.backupPath)
           .some((entry: string) => entry.startsWith(".native-inspect-")),
       ).toBe(false);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("removes only OpenClaw machine-local gateway authority from the archive copy", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-gateway-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const configPath = path.join(nativeRoot, ".openclaw", "openclaw.json");
+      const config = {
+        gateway: {
+          auth: { token: "gateway-token" },
+          port: 18789,
+        },
+        agents: { defaults: { model: "nvidia/test-model" } },
+      };
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: vi.fn(),
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => {
+          const archivedConfig = JSON.parse(
+            fs.readFileSync(path.join(root, ".openclaw", "openclaw.json"), "utf8"),
+          );
+          if (
+            archivedConfig.gateway?.port !== 18789 ||
+            Object.hasOwn(archivedConfig.gateway ?? {}, "auth") ||
+            archivedConfig.agents?.defaults?.model !== "nvidia/test-model"
+          ) {
+            throw new Error("archived OpenClaw configuration was not narrowly sanitized");
+          }
+        },
+        ".openclaw/openclaw.json",
+      );
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual(config);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
@@ -570,6 +625,16 @@ describe("complete native home persistence", () => {
         },
       }),
     ],
+    [
+      "an OpenClaw config credential outside machine-local gateway authority",
+      ".openclaw/openclaw.json",
+      JSON.stringify({
+        gateway: { auth: { token: "gateway-token" } },
+        models: {
+          providers: { private: { apiKey: `ghp_${"abcdef0123456789"}` } },
+        },
+      }),
+    ],
   ])("removes a native archive containing a credential in %s", (_case, relativePath, content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-credential-"));
     const oldPath = process.env.PATH;
@@ -677,6 +742,7 @@ describe("complete native home persistence", () => {
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
       expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
+      expect(commands).toContain('[ "$owner" = "$uid" ] && [ -w "$target_dir" ]');
       expect(commands).toContain('restore_dir "$source_item" "$target_item"');
       expect(commands).toContain('mv -- "$source_item" "$target_dir"/');
       expect(commands).not.toContain("native restore symlink escapes root");

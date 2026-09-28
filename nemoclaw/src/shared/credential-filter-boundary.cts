@@ -125,6 +125,9 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
 ];
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",
+  // Hermes requires an sk-prefixed value in its config, but OpenShell replaces
+  // this reserved non-secret sentinel at the proxy boundary before inference.
+  "sk-OPENSHELL-PROXY-REWRITE",
   CREDENTIAL_PLACEHOLDER,
 ]);
 

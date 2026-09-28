@@ -55,6 +55,7 @@ export function textContainsHighConfidenceCredential(value: string): boolean {
     // text `xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+`); leaving that prefix in
     // place makes the credential scanner flag its own trusted boundary code.
     .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
+    .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
     .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,

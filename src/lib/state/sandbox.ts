@@ -1095,6 +1095,111 @@ function paxMetadata(
   return { path: archivePath, sparse };
 }
 
+function writeArchiveRange(descriptor: number, position: number, content: Buffer): boolean {
+  let written = 0;
+  while (written < content.byteLength) {
+    const count = writeSync(
+      descriptor,
+      content,
+      written,
+      content.byteLength - written,
+      position + written,
+    );
+    if (count === 0) return false;
+    written += count;
+  }
+  return true;
+}
+
+/**
+ * Remove OpenClaw's machine-local gateway authority from the private archive
+ * copy. The live native tree is never modified, and all other native state is
+ * retained. Keeping the tar member at its original byte length lets this stay
+ * a bounded, single-copy operation; JSON permits the trailing space padding.
+ */
+function sanitizeOpenClawMachineLocalArchiveConfig(archivePath: string): string | null {
+  const target = ".openclaw/openclaw.json";
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
+    const archiveSize = fstatSync(descriptor).size;
+    let offset = 0;
+    let nextPath: string | null = null;
+    let found = false;
+    while (offset < archiveSize) {
+      const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
+      if (!header) return "could not read the native archive";
+      if (header.every((byte) => byte === 0)) return null;
+      const size = tarHeaderSize(header);
+      if (size === null) return "the native archive has an invalid member size";
+      const dataOffset = offset + TAR_BLOCK_BYTES;
+      const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      if (!Number.isSafeInteger(nextOffset) || nextOffset > archiveSize) {
+        return "the native archive is truncated";
+      }
+      const type = String.fromCharCode(header[156] ?? 0);
+      const name = tarHeaderString(header, 0, 100);
+      const prefix = tarHeaderString(header, 345, 155);
+      const headerPath = prefix ? `${prefix}/${name}` : name;
+      if (type === "x" || type === "g" || type === "L") {
+        if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "the native archive metadata is too large";
+        const metadata = readArchiveRange(descriptor, dataOffset, size);
+        if (!metadata) return "could not read the native archive metadata";
+        if (type === "x" || type === "g") {
+          const parsed = paxMetadata(metadata);
+          if (parsed === undefined) return "the native archive has invalid PAX metadata";
+          if (type === "x" && parsed.path !== null) nextPath = parsed.path;
+        } else {
+          nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
+          if (!nextPath) return "the native archive has an invalid GNU long path";
+        }
+      } else {
+        const entry = nextPath ?? headerPath;
+        nextPath = null;
+        const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+        if (normalized === target) {
+          if (found) return "the native archive contains duplicate OpenClaw configuration";
+          found = true;
+          if (type !== "0" && type !== "\0" && type !== "7") {
+            return "the OpenClaw configuration is not a regular archive member";
+          }
+          if (size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
+            return "the OpenClaw configuration is too large to sanitize safely";
+          }
+          const payload = readArchiveRange(descriptor, dataOffset, size);
+          if (!payload) return "could not read the OpenClaw configuration";
+          let config: unknown;
+          try {
+            config = JSON.parse(payload.toString("utf8"));
+          } catch {
+            return "the OpenClaw configuration is not valid JSON";
+          }
+          if (!isObjectRecord(config)) return "the OpenClaw configuration is not an object";
+          const gateway = config.gateway;
+          if (isObjectRecord(gateway) && Object.hasOwn(gateway, "auth")) {
+            delete gateway.auth;
+            const sanitized = Buffer.from(`${JSON.stringify(config)}\n`, "utf8");
+            if (sanitized.byteLength > size) {
+              return "the OpenClaw configuration cannot be sanitized in place";
+            }
+            const replacement = Buffer.alloc(size, 0x20);
+            sanitized.copy(replacement);
+            if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
+              return "could not sanitize the OpenClaw configuration";
+            }
+          }
+        }
+      }
+      offset = nextOffset;
+    }
+    return offset === archiveSize ? null : "the native archive is malformed";
+  } catch (error) {
+    return `could not sanitize the OpenClaw configuration: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
 function shouldSkipNativeRawCredentialScan(_entry: string, fileName: string): boolean {
   return (
     isDependencyLockfile(fileName) ||
@@ -1107,6 +1212,7 @@ function nativeRawChunkContainsCredential(raw: string, contextual: boolean): boo
   const withoutPlaceholders = raw
     .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
     .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
+    .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
     .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
   if (contextual) return valueLooksLikeSecret(withoutPlaceholders);
   return textContainsHighConfidenceCredential(withoutPlaceholders);
@@ -1770,6 +1876,13 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
+    if (agentName === "openclaw") {
+      const sanitationFailure = sanitizeOpenClawMachineLocalArchiveConfig(archivePath);
+      if (sanitationFailure) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
+      }
+    }
     const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2092,7 +2205,7 @@ async function restoreNativeSandboxState(
         '    name="${target_item##*/}"',
         '    source_item="$source_dir/$name"',
         '    owner="$(stat -c %u -- "$target_item")"',
-        '    if [ "$owner" = "$uid" ]; then',
+        '    if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
         '      rm -rf -- "$target_item"',
         '    elif [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
         '      restore_dir "$source_item" "$target_item"',
@@ -2114,8 +2227,8 @@ async function restoreNativeSandboxState(
       ].join("\n");
       // The target image's non-agent-owned entries remain authoritative. The
       // recursive ownership merge replaces every agent-owned path without a
-      // path allowlist, while retaining root-owned trust scaffolding that the
-      // SSH sandbox identity cannot and must not overwrite.
+      // path allowlist, while retaining trust scaffolding beneath root-owned,
+      // non-writable parents even when a leaf is intentionally agent-writable.
       const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),

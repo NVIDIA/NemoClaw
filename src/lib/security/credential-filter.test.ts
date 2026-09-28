@@ -27,6 +27,7 @@ import {
   textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
+import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route.js";
 
 function expectCredentialFieldClassification(fields: readonly string[], expected: boolean): void {
   for (const field of fields) {
@@ -211,6 +212,13 @@ describe("textContainsHighConfidenceCredential", () => {
     ).toBe(false);
   });
 
+  it("does not flag the reserved Hermes proxy rewrite sentinel as a credential", () => {
+    expect(textContainsHighConfidenceCredential(HERMES_PROXY_REWRITE_SENTINEL)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${HERMES_PROXY_REWRITE_SENTINEL}-secret`)).toBe(
+      true,
+    );
+  });
+
   it("continues to flag real Slack credentials", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
@@ -224,6 +232,7 @@ describe("isSafeCredentialPlaceholder", () => {
     expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
+    expect(isSafeCredentialPlaceholder(HERMES_PROXY_REWRITE_SENTINEL)).toBe(true);
     expect(isSafeCredentialPlaceholder("[STRIPPED_BY_MIGRATION]")).toBe(true);
     expect(isSafeCredentialPlaceholder("Bearer openshell:resolve:env:REMOTE_MCP_TOKEN")).toBe(true);
     // `Bearer <safe-literal>` proxy-auth sentinels are preserved too.
