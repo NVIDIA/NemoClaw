@@ -639,13 +639,17 @@ describe("PR managed-image contract reruns", () => {
   it.each([
     [
       "mixed attempts",
-      [`ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-2`],
+      [`ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-2`],
       "one publication cohort",
     ],
-    ["another run", ["ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1"], "producer run"],
+    [
+      "another run",
+      ["ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1"],
+      "producer run",
+    ],
     [
       "a future attempt",
-      [`ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`],
+      [`ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`],
       "producer attempt",
     ],
   ])("rejects contracts from %s", (_case, cohorts, message) => {

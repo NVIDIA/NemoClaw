@@ -6,96 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  CANDIDATE_MANAGED_IMAGE_AGENTS,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../../src/lib/onboard/managed-image/contract.ts";
-import { validateCandidateContract } from "../../../../tools/managed-images/validate-candidate-contract.mts";
-import {
-  readWorkflow,
-  required,
-  step,
-} from "../../../helpers/managed-image-publication-workflow.ts";
 
-const root = path.resolve(import.meta.dirname, "../../../..");
-
-const DIGEST = `sha256:${"a".repeat(64)}`;
-
-function candidateContract(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    contractVersion: 1,
-    agent: "pi",
-    platform: "linux/amd64",
-    image: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
-    digest: DIGEST,
-    reference: `ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`,
-    source: {
-      repository: "NVIDIA/NemoClaw",
-      revision: "b".repeat(40),
-      release: "v0.0.104",
-      cohort: "ghrun-12345-1",
-    },
-    startupProfileContractVersion: 1,
-    capabilityContractVersion: 1,
-    ...overrides,
-  };
-}
-
-describe("Pi release cohort separation", () => {
-  it("keeps pi a candidate agent and out of the shipped cohort", () => {
-    expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toContain("pi");
-    expect(SHIPPED_MANAGED_IMAGE_AGENTS).not.toContain("pi");
-  });
-});
-
-describe("Pi candidate contract validation", () => {
-  it.each([
-    "Validate the Pi candidate runtime contract",
-    "Validate the published Pi candidate digest",
-  ])("%s requires the direct startup runtime", (stepName) => {
-    const workflow = readWorkflow("managed-images.yaml");
-    const piCandidate = required(
-      workflow.jobs?.["pi-candidate"],
-      "managed-image workflow is missing its Pi candidate job",
-    );
-    const validation = step(piCandidate, stepName).run ?? "";
-
-    expect(validation).toContain("managed-startup-image-runtime.cjs");
-    expect(validation).toContain("nemoclaw-managed-startup-hold");
-    expect(validation).toContain("test ! -e /usr/local/bin/nemoclaw-managed-bootstrap");
-    expect(validation).toContain(
-      "test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
-    );
-    expect(validation).not.toContain("test -x /usr/local/bin/nemoclaw-managed-bootstrap");
-  });
-
-  it("accepts an exact candidate contract", () => {
-    const contract = validateCandidateContract(candidateContract(), "linux/amd64");
-    expect(contract.agent).toBe("pi");
-    expect(contract.platform).toBe("linux/amd64");
-    expect(contract.source.repository).toBe("NVIDIA/NemoClaw");
-    expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
-  });
-
-  it("rejects a contract whose agent is not a candidate managed-image agent", () => {
-    expect(() =>
-      validateCandidateContract(
-        candidateContract({
-          agent: "hermes",
-          image: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
-          reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@${DIGEST}`,
-        }),
-        "linux/amd64",
-      ),
-    ).toThrow(/not a candidate managed-image agent/u);
-  });
-
-  it("rejects a candidate contract published for another platform", () => {
-    expect(() => validateCandidateContract(candidateContract(), "linux/arm64")).toThrow(
-      /contract.platform must be/u,
-    );
-  });
-});
+const root = path.resolve(import.meta.dirname, "../../..");
 
 describe("Pi managed model catalog generation", () => {
   function generate(env: Record<string, string>): {
@@ -232,5 +144,68 @@ describe("Pi managed model catalog generation", () => {
     expect(status).not.toBe(0);
     expect(stderr).toContain(message);
     expect(fs.existsSync(path.join(home, ".pi", "agent", "models.json"))).toBe(false);
+  });
+});
+
+describe("Pi managed image validation", () => {
+  const script = path.join(root, "scripts/checks/validate-pi-managed-image.sh");
+
+  function validate(args: string[], labels: Record<string, string>) {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-image-validation-"));
+    const calls = path.join(fixture, "docker-calls");
+    fs.mkdirSync(path.join(fixture, "bin"));
+    fs.writeFileSync(
+      path.join(fixture, "bin", "docker"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${calls}"\n` +
+        `if [ "$1 $2" = "image inspect" ]; then printf '%s\\n' '${JSON.stringify([
+          { Config: { Labels: labels, Entrypoint: ["/usr/local/bin/nemoclaw-start"] } },
+        ])}'; exit 0; fi\nexit 97\n`,
+      { mode: 0o755 },
+    );
+    try {
+      const result = spawnSync("bash", [script, ...args], {
+        encoding: "utf8",
+        env: {
+          PATH: `${path.join(fixture, "bin")}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: fixture,
+        },
+      });
+      return {
+        calls: fs.existsSync(calls) ? fs.readFileSync(calls, "utf8").trim().split("\n") : [],
+        status: result.status,
+        stderr: result.stderr,
+      };
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    ["no arguments", []],
+    ["an unsupported platform", ["--reference", "image", "--platform", "linux/s390x"]],
+    ["an unknown option", ["--reference", "image", "--platform", "linux/amd64", "--push"]],
+  ])("refuses %s before inspecting an image", (_label, args) => {
+    const result = validate(args, {});
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("usage:");
+    expect(result.calls).toEqual([]);
+  });
+
+  it("refuses an image that is not the Pi managed image before starting it", () => {
+    const result = validate(
+      ["--reference", "nemoclaw-managed-pr/pi:head", "--platform", "linux/amd64"],
+      {
+        "io.nvidia.nemoclaw.agent": "hermes",
+        "io.nvidia.nemoclaw.managed-image.platform": "linux/amd64",
+        "io.nvidia.nemoclaw.managed-image.startup-profile": "1",
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "the Pi image does not carry the managed-image runtime contract",
+    );
+    expect(result.calls).toEqual(["image inspect nemoclaw-managed-pr/pi:head"]);
   });
 });

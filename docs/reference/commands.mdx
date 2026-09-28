@@ -355,6 +355,7 @@ Expected output:
 openclaw                   Gateway-based AI agent with plugin ecosystem (openclaw.ai)
 hermes                     Self-improving AI agent with learning loop (Nous Research)
 langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
+pi                         Terminal coding agent with read, bash, edit, and write tools, plus session management
 ```
 
 ### `$$nemoclaw profiles list`
@@ -936,7 +937,7 @@ When NemoClaw finds an existing gateway to reuse, it probes the host gateway HTT
 #### `--from <Dockerfile>`
 
 Without `--from`, onboarding through the default Docker provider or the explicitly selected native Podman provider for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
-NemoClaw validates the complete three-agent publication cohort before selecting any member.
+NemoClaw validates one complete publication cohort that covers every shipped agent, including Pi, before it selects any member.
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.
 

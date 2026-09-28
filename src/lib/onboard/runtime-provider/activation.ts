@@ -438,6 +438,11 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     RUNTIME_PROVIDER_ACTIVATION_PLATFORMS,
     `provider '${providerId}' managed-image platforms`,
   );
+  exactSequence(
+    managedImages.agents,
+    RUNTIME_PROVIDER_ACTIVATION_AGENTS,
+    `provider '${providerId}' managed-image agents`,
+  );
   if (
     !managedImages.startupProfileContractVersions.includes(
       MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,

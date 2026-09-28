@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import { PORTABLE_AGENT_RUNTIME_PLATFORMS } from "../workload/portable-agent-runtime";
 import {
+  isManagedImageAgent,
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
@@ -372,6 +373,16 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
   ) {
     throw new RuntimeProviderRegistrationError(
       `workload profile for '${providerId}' has invalid managed-image platforms`,
+    );
+  }
+  if (
+    !Array.isArray(support.agents) ||
+    support.agents.length === 0 ||
+    support.agents.some((agent) => typeof agent !== "string" || !isManagedImageAgent(agent)) ||
+    new Set(support.agents).size !== support.agents.length
+  ) {
+    throw new RuntimeProviderRegistrationError(
+      `workload profile for '${providerId}' has invalid managed-image agents`,
     );
   }
   for (const field of ["startupProfileContractVersions", "capabilityContractVersions"] as const) {

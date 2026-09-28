@@ -12,7 +12,6 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
-  CANDIDATE_MANAGED_IMAGE_AGENTS,
   type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "./managed-image/contract";
@@ -62,7 +61,10 @@ const CATALOG: ManagedImageContractCatalog = Object.fromEntries(
   SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, contractFor(agent)]),
 );
 
-function managedRuntime(driverName: string): SandboxWorkloadRuntimeCapabilities {
+function managedRuntime(
+  driverName: string,
+  agents: readonly ManagedImageAgent[] = SHIPPED_MANAGED_IMAGE_AGENTS,
+): SandboxWorkloadRuntimeCapabilities {
   return {
     driverName,
     managedImageSelectionPolicy: driverName === "docker" ? "prefer-managed" : "require-managed",
@@ -70,6 +72,7 @@ function managedRuntime(driverName: string): SandboxWorkloadRuntimeCapabilities 
     managedImages: {
       exactDigestReferences: true,
       platforms: [MANAGED_IMAGE_PLATFORM],
+      agents,
       startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
       capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
     },
@@ -327,6 +330,7 @@ describe("sandbox workload source resolution", () => {
           managedImages: {
             exactDigestReferences: true,
             platforms: [MANAGED_IMAGE_PLATFORM],
+            agents: SHIPPED_MANAGED_IMAGE_AGENTS,
             startupProfileContractVersions: [],
             capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
           },
@@ -356,60 +360,41 @@ describe("sandbox workload source resolution", () => {
     ).toThrow("failed closed validation");
   });
 
-  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
-    "refuses candidate %s while candidate selection is disabled (#7927)",
-    (agent) => {
-      expect(() =>
-        resolveSandboxWorkloadSource({
-          agentName: agent,
-          legacyDockerfilePath: `agents/${agent}/Dockerfile`,
-          runtime: managedRuntime("docker"),
-          catalog: { ...CATALOG, [agent]: contractFor(agent) },
-        }),
-      ).toThrow(
-        `Managed image workload is required for '${agent}', but the selected agent is a release candidate and candidate selection is disabled.`,
-      );
-    },
-  );
-
-  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
-    "selects the exact candidate digest for %s behind the gate (#7927)",
-    (agent) => {
-      const source = resolveSandboxWorkloadSource({
-        agentName: agent,
-        legacyDockerfilePath: `agents/${agent}/Dockerfile`,
-        runtime: managedRuntime("docker"),
-        catalog: { ...CATALOG, [agent]: contractFor(agent) },
-        candidateAgentsEnabled: true,
-      });
-
-      expect(source).toEqual({
-        kind: "managed-image",
-        reference: contractFor(agent).reference,
-        contract: contractFor(agent),
-      });
-    },
-  );
-
-  it("never builds a host Dockerfile for a gated candidate on a buildless runtime (#7927)", () => {
+  it("refuses a managed image for an agent outside the driver's qualification", () => {
     expect(() =>
       resolveSandboxWorkloadSource({
         agentName: "pi",
         legacyDockerfilePath: "agents/pi/Dockerfile",
-        runtime: managedRuntime("podman"),
+        runtime: managedRuntime("podman", ["openclaw", "hermes", "langchain-deepagents-code"]),
         catalog: CATALOG,
       }),
-    ).toThrow("release candidate and candidate selection is disabled");
+    ).toThrow(
+      "Managed image workload is required for 'pi', but driver 'podman' is not qualified for that agent.",
+    );
   });
 
-  it("keeps an unknown agent distinct from a gated candidate (#7927)", () => {
+  it("falls back to the legacy recipe when a Docker-compatible driver does not qualify a Dockerfile agent", () => {
+    const source = resolveSandboxWorkloadSource({
+      agentName: "hermes",
+      legacyDockerfilePath: "agents/hermes/Dockerfile",
+      runtime: managedRuntime("docker", ["openclaw"]),
+      catalog: CATALOG,
+    });
+
+    expect(source).toEqual({
+      kind: "legacy-dockerfile",
+      dockerfilePath: "agents/hermes/Dockerfile",
+      reason: "runtime-unsupported",
+    });
+  });
+
+  it("keeps an unknown agent distinct from an unqualified shipped agent", () => {
     expect(() =>
       resolveSandboxWorkloadSource({
         agentName: "not-an-agent",
         legacyDockerfilePath: "agents/not-an-agent/Dockerfile",
-        runtime: managedRuntime("podman"),
+        runtime: managedRuntime("podman", ["openclaw"]),
         catalog: CATALOG,
-        candidateAgentsEnabled: true,
       }),
     ).toThrow("the selected agent is not a shipped managed agent");
   });

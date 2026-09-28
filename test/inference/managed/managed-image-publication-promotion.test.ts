@@ -39,6 +39,10 @@ const expectedImages = {
     "linux/amd64": workloadReference("langchain-deepagents-code", "2c"),
     "linux/arm64": workloadReference("langchain-deepagents-code", "2d"),
   },
+  pi: {
+    "linux/amd64": workloadReference("pi", "2e"),
+    "linux/arm64": workloadReference("pi", "2f"),
+  },
 };
 
 function expectedReceipt(cohort: string, receiptAttempt: number): Record<string, unknown> {
@@ -96,10 +100,12 @@ describe("managed-image publication promotion", () => {
       acceptedCalls.lastIndexOf(`hermes-sandbox:cohort-${cohort}`),
       acceptedCalls.lastIndexOf(`langchain-deepagents-code-sandbox:cohort-${cohort}`),
       acceptedCalls.lastIndexOf(`openclaw-sandbox:cohort-${cohort}`),
+      acceptedCalls.lastIndexOf(`pi-sandbox:cohort-${cohort}`),
     );
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
     const hermesPointer = acceptedCalls.indexOf(`hermes-sandbox:${revision}`);
     const dcodePointer = acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:${revision}`);
+    const piPointer = acceptedCalls.indexOf(`pi-sandbox:${revision}`);
 
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
@@ -114,9 +120,10 @@ describe("managed-image publication promotion", () => {
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
     // Every shipped agent's root pointer moves only after all cohort aliases
-    // stage: Hermes per #11228, Deep Agents Code per #11341.
+    // stage: Hermes per #11228, Deep Agents Code per #11341, and Pi.
     expect(hermesPointer).toBeGreaterThan(lastCohortStage);
     expect(dcodePointer).toBeGreaterThan(lastCohortStage);
+    expect(piPointer).toBeGreaterThan(lastCohortStage);
     expect(Object.keys(accepted.platformContracts).sort()).toEqual(
       publicationAgents
         .flatMap((agent) => publicationPlatforms.map((platform) => `${agent}|${platform}`))
@@ -144,6 +151,7 @@ describe("managed-image publication promotion", () => {
         }),
         hermes: expect.any(Object),
         "langchain-deepagents-code": expect.any(Object),
+        pi: expect.any(Object),
       },
     });
     expect(

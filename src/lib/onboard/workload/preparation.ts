@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image-env";
@@ -16,9 +15,8 @@ import {
   resolveManagedImageCatalogFromGhcr,
 } from "../managed-image/catalog";
 import {
-  isCandidateManagedImageAgent,
   isManagedImageAgent,
-  isShippedManagedImageAgent,
+  isManagedImageOnlyAgent,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
@@ -27,9 +25,9 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../managed-image/contract";
 import {
+  managedImageAgentSupportError,
   type ManagedImageSelectionPolicy,
   managedImageRuntimePlatform,
-  managedImageRuntimeSupportError,
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
   type SandboxWorkloadSource,
@@ -55,8 +53,6 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly catalogPath?: string | null;
   readonly expectedCatalogRevision?: string | null;
   readonly catalogRevision?: string | null;
-  /** Contract from the repository-accepted candidate qualification receipt. */
-  readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
   /** Effective environment captured by the lifecycle authority. */
   readonly environment?: NodeJS.ProcessEnv;
 }
@@ -270,7 +266,10 @@ function unavailableResult(
   input: PrepareSandboxWorkloadSourceInput,
   message: string,
 ): PreparedSandboxWorkloadSource {
-  if ((input.policy ?? input.runtime.managedImageSelectionPolicy) === "require-managed") {
+  if (
+    isManagedImageOnlyAgent(input.agentName) ||
+    (input.policy ?? input.runtime.managedImageSelectionPolicy) === "require-managed"
+  ) {
     throw new SandboxWorkloadPreparationError(message);
   }
   const source = resolveSandboxWorkloadSource({
@@ -280,7 +279,6 @@ function unavailableResult(
     runtime: input.runtime,
     catalog: {},
     policy: input.policy ?? input.runtime.managedImageSelectionPolicy,
-    candidateAgentsEnabled: input.acceptedCandidateContract != null,
   });
   return {
     source,
@@ -374,65 +372,22 @@ export function readLiveE2eManagedImageCatalogContracts(
   return requireCompleteManagedImageCatalog(catalog, null, null, selected.revision).contracts;
 }
 
-function requireCandidateManagedImageCatalog(
-  catalog: ManagedImageContractCatalog,
-  agent: string,
-  expectedPlatform: ManagedImagePlatform,
-  acceptedContract: ManagedImageContractV1,
-): void {
-  const candidate = catalog[agent];
-  if (candidate === undefined) {
-    throw new SandboxWorkloadPreparationError(
-      `managed image catalog is incomplete; '${agent}' is missing`,
-    );
-  }
-  if (!isManagedImageAgent(agent)) {
-    throw new SandboxWorkloadPreparationError(`'${agent}' is not a managed-image agent`);
-  }
-  let contract: ReturnType<typeof parseManagedImageContractV1>;
-  let accepted: ReturnType<typeof parseManagedImageContractV1>;
-  try {
-    contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
-    accepted = parseManagedImageContractV1(acceptedContract, agent, expectedPlatform);
-  } catch (error) {
-    throw new SandboxWorkloadPreparationError(
-      `managed image catalog contract for '${agent}' failed closed validation`,
-      { cause: error },
-    );
-  }
-  if (isShippedManagedImageAgent(contract.agent)) {
-    throw new SandboxWorkloadPreparationError(
-      `'${contract.agent}' is already shipped and cannot resolve a candidate contract`,
-    );
-  }
-  if (!isDeepStrictEqual(contract, accepted)) {
-    throw new SandboxWorkloadPreparationError(
-      `managed image catalog contract for '${agent}' does not match the accepted qualification receipt`,
-    );
-  }
-}
-
 /**
  * Resolve a stock workload to an immutable managed image without fetching a
- * catalog for custom, unshipped, or incapable runtime paths.
+ * catalog for custom, unmanaged, or unqualified runtime paths.
  *
  * The public catalog is resolved as one all-agent unit. The resolver rejects a
- * release catalog that omits Hermes or LangChain Deep Agents Code.
+ * release catalog that omits any shipped agent.
  */
 export async function prepareSandboxWorkloadSource(
   input: PrepareSandboxWorkloadSourceInput,
   dependencies: PrepareSandboxWorkloadSourceDependencies = {},
 ): Promise<PreparedSandboxWorkloadSource> {
   const policy = input.policy ?? input.runtime.managedImageSelectionPolicy;
-  const acceptedCandidateContract = isCandidateManagedImageAgent(input.agentName)
-    ? (input.acceptedCandidateContract ?? null)
-    : null;
-  const candidateSelection = acceptedCandidateContract !== null;
   const cannotSelectManaged =
     input.customDockerfilePath != null ||
     !isManagedImageAgent(input.agentName) ||
-    (!isShippedManagedImageAgent(input.agentName) && !candidateSelection) ||
-    managedImageRuntimeSupportError(input.runtime) !== null;
+    managedImageAgentSupportError(input.runtime, input.agentName) !== null;
   if (cannotSelectManaged) {
     return {
       source: resolveSandboxWorkloadSource({
@@ -442,7 +397,6 @@ export async function prepareSandboxWorkloadSource(
         runtime: input.runtime,
         catalog: {},
         policy,
-        candidateAgentsEnabled: candidateSelection,
       }),
       release: null,
       fallbackDiagnostic: null,
@@ -460,12 +414,6 @@ export async function prepareSandboxWorkloadSource(
   if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
       "managed image catalog has conflicting content authorities",
-    );
-  }
-
-  if (candidateSelection && !input.catalog && !input.catalogPath) {
-    throw new SandboxWorkloadPreparationError(
-      `'${input.agentName}' is a release candidate and requires an exact managed image catalog`,
     );
   }
 
@@ -538,22 +486,13 @@ export async function prepareSandboxWorkloadSource(
       `managed image catalog '${release}' is unavailable: ${diagnostic(error)}`,
     );
   }
-  if (candidateSelection) {
-    requireCandidateManagedImageCatalog(
-      catalog,
-      input.agentName,
-      platform,
-      acceptedCandidateContract,
-    );
-  } else {
-    const catalogIdentity = requireCompleteManagedImageCatalog(
-      catalog,
-      release,
-      platform,
-      trustedCatalogRevision,
-    );
-    release = catalogIdentity.release;
-  }
+  const catalogIdentity = requireCompleteManagedImageCatalog(
+    catalog,
+    release,
+    platform,
+    trustedCatalogRevision,
+  );
+  release = catalogIdentity.release;
 
   return {
     source: resolveSandboxWorkloadSource({
@@ -563,7 +502,6 @@ export async function prepareSandboxWorkloadSource(
       runtime: input.runtime,
       catalog,
       policy,
-      candidateAgentsEnabled: candidateSelection,
     }),
     release,
     fallbackDiagnostic: null,

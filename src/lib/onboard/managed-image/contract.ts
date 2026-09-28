@@ -13,18 +13,23 @@ export const SHIPPED_MANAGED_IMAGE_AGENTS = [
   "openclaw",
   "hermes",
   "langchain-deepagents-code",
+  "pi",
 ] as const;
 
-export const CANDIDATE_MANAGED_IMAGE_AGENTS = ["pi"] as const;
-
-export const MANAGED_IMAGE_AGENTS = [
-  ...SHIPPED_MANAGED_IMAGE_AGENTS,
-  ...CANDIDATE_MANAGED_IMAGE_AGENTS,
-] as const;
+/** Every managed-image agent ships in the atomic all-agent publication cohort. */
+export const MANAGED_IMAGE_AGENTS = SHIPPED_MANAGED_IMAGE_AGENTS;
 
 export type ShippedManagedImageAgent = (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number];
-export type CandidateManagedImageAgent = (typeof CANDIDATE_MANAGED_IMAGE_AGENTS)[number];
 export type ManagedImageAgent = (typeof MANAGED_IMAGE_AGENTS)[number];
+
+/**
+ * Agents whose only supported workload is their published managed image.
+ * Onboarding never builds their repository Dockerfile or a custom Dockerfile
+ * on the host; the reviewed Dockerfile is a trusted CI build source only.
+ */
+export const MANAGED_IMAGE_ONLY_AGENTS = [
+  "pi",
+] as const satisfies readonly ShippedManagedImageAgent[];
 
 export interface ManagedImageRuntimeIdentity {
   readonly uid: number;
@@ -33,10 +38,9 @@ export interface ManagedImageRuntimeIdentity {
 }
 
 /**
- * Shipped images bake in these numeric sandbox identities. Candidate
- * qualification verifies the declared identity before activation. Runtime
- * providers consume this workload contract without adding agent switches to
- * central orchestration.
+ * Shipped images bake in these numeric sandbox identities. Runtime providers
+ * consume this workload contract without adding agent switches to central
+ * orchestration.
  */
 export const MANAGED_IMAGE_RUNTIME_IDENTITIES = Object.freeze({
   openclaw: Object.freeze({ uid: 998, gid: 998, workdir: "/sandbox" }),
@@ -70,7 +74,7 @@ export interface ManagedImageSourceIdentity {
 
 /**
  * Immutable identity consumed by stock buildless onboarding for shipped
- * agents and by protected qualification for candidates.
+ * agents.
  *
  * The validated cohort binds all shipped agent images to one publication.
  * Other publication evidence (mutable aliases and base-image provenance) stays
@@ -145,8 +149,8 @@ export function isShippedManagedImageAgent(value: string): value is ShippedManag
   return (SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
 }
 
-export function isCandidateManagedImageAgent(value: string): value is CandidateManagedImageAgent {
-  return (CANDIDATE_MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
+export function isManagedImageOnlyAgent(value: string): boolean {
+  return (MANAGED_IMAGE_ONLY_AGENTS as readonly string[]).includes(value);
 }
 
 export function isManagedImageAgent(value: string): value is ManagedImageAgent {

@@ -24,6 +24,7 @@ function cloneRuntimeSupport(
   return {
     exactDigestReferences: support.exactDigestReferences,
     platforms: [platform],
+    agents: [...support.agents],
     startupProfileContractVersions: [...support.startupProfileContractVersions],
     capabilityContractVersions: [...support.capabilityContractVersions],
   };

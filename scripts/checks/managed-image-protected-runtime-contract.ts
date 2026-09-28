@@ -29,6 +29,7 @@ const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, 
     openclaw: "oc",
     hermes: "he",
     "langchain-deepagents-code": "dc",
+    pi: "pi",
   });
 
 const PROTECTED_SANDBOX_ROUTE_TOKENS: Readonly<Record<ManagedImageProtectedRouteKind, string>> =

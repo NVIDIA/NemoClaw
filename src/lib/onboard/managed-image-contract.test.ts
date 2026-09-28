@@ -3,8 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  CANDIDATE_MANAGED_IMAGE_AGENTS,
-  isCandidateManagedImageAgent,
+  isManagedImageOnlyAgent,
   isShippedManagedImageAgent,
   MANAGED_IMAGE_AGENTS,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -59,6 +58,7 @@ describe("managed image contract v1", () => {
       "openclaw",
       "hermes",
       "langchain-deepagents-code",
+      "pi",
     ]);
   });
 
@@ -71,30 +71,24 @@ describe("managed image contract v1", () => {
     });
   });
 
-  it.each(Array.from(SHIPPED_MANAGED_IMAGE_AGENTS, (value) => [value]))(
-    "keeps the candidate cohort outside shipped agent %s (#7925)",
-    (agent) => {
-      expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toEqual(["pi"]);
-      expect(MANAGED_IMAGE_AGENTS).toEqual([
-        ...SHIPPED_MANAGED_IMAGE_AGENTS,
-        ...CANDIDATE_MANAGED_IMAGE_AGENTS,
-      ]);
-      CANDIDATE_MANAGED_IMAGE_AGENTS.forEach((agent) => {
-        expect(isShippedManagedImageAgent(agent)).toBe(false);
-        expect(isCandidateManagedImageAgent(agent)).toBe(true);
-      });
+  it("ships every managed-image agent in the atomic cohort", () => {
+    expect(MANAGED_IMAGE_AGENTS).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS);
+    MANAGED_IMAGE_AGENTS.forEach((agent) => {
+      expect(isShippedManagedImageAgent(agent)).toBe(true);
+    });
+  });
 
-      expect(isCandidateManagedImageAgent(agent)).toBe(false);
+  it.each([
+    ["pi", true],
+    ["openclaw", false],
+    ["hermes", false],
+    ["langchain-deepagents-code", false],
+  ] as const)(
+    "reports whether %s runs only from its published managed image",
+    (agent, expected) => {
+      expect(isManagedImageOnlyAgent(agent)).toBe(expected);
     },
   );
-
-  it("validates a candidate contract without making it selectable (#7925)", () => {
-    const contract = contractFor("pi");
-
-    expect(parseManagedImageContractV1(contract, "pi")).toEqual(contract);
-    expect(contract.image).toBe("ghcr.io/nvidia/nemoclaw/pi-sandbox");
-    expect(isShippedManagedImageAgent(contract.agent)).toBe(false);
-  });
 
   it.each(SHIPPED_MANAGED_IMAGE_AGENTS)(
     "maps %s to its immutable public GHCR identity (#7744)",

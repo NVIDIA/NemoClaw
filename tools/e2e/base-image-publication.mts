@@ -44,7 +44,6 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^[.]github\/actions\/publish-base-image-manifest\/.+$/u,
   ],
   ["agents/**", /^agents\/.+$/u],
-  ["ci/pi-agent-qualification-v1-*.json", /^ci\/pi-agent-qualification-v1-[^/]*[.]json$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],

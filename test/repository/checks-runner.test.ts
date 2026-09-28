@@ -3,7 +3,7 @@
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { copyFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,10 +16,6 @@ const sampleCheck = {
   args: ["scripts/checks/sample.mts"],
 };
 
-function successfulSpawn(): { status: number | null } {
-  return { status: 0 };
-}
-
 describe("checks runner", () => {
   it("runs every check when no changed-file selection is supplied", () => {
     expect(selectChecks(CHECKS)).toEqual(CHECKS);
@@ -28,7 +24,6 @@ describe("checks runner", () => {
   it("keeps dynamic checks when an unrelated document changes", () => {
     expect(selectChecks(CHECKS, ["docs/overview.mdx"]).map((check) => check.name)).toEqual([
       "optimized-build-context-copy-sources",
-      "pi-qualification-receipt-refresh",
     ]);
   });
 
@@ -41,7 +36,6 @@ describe("checks runner", () => {
       "no-test-dist-imports",
       "test-create-require-budget",
       "optimized-build-context-copy-sources",
-      "pi-qualification-receipt-refresh",
       "test-registration-boundary",
     ]);
   });
@@ -87,23 +81,6 @@ describe("checks runner", () => {
     ).toThrow("exit 2");
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(report).toHaveBeenLastCalledWith("sample: failed (25 ms)");
-  });
-
-  it("runs the Pi qualification receipt refresh check", () => {
-    const spawn = vi.fn((_command: string, _args: string[], _options: SpawnSyncOptions) =>
-      successfulSpawn(),
-    );
-
-    runChecks({ spawn });
-
-    expect(spawn).toHaveBeenCalledWith(
-      process.execPath,
-      [
-        fileURLToPath(import.meta.resolve("tsx/cli")),
-        "scripts/checks/pi-qualification-receipt-refresh.mts",
-      ],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
   });
 
   it("starts checks with literal paths and arguments without a command shell", () => {

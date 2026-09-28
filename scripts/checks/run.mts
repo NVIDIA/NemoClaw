@@ -106,10 +106,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
   },
   {
-    name: "pi-qualification-receipt-refresh",
-    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
-  },
-  {
     name: "test-registration-boundary",
     inputs: /^(?:bin|nemoclaw\/src|scripts|src|test|tools)\//,
     args: ["scripts/checks/test-registration-boundary.mts"],

@@ -1,21 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import path from "node:path";
 
 import {
-  type ManagedImageContractV1,
   type ManagedImagePlatform,
   managedImagePlatformForNodeArchitecture,
-  parseManagedImageContractV1,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { INFERENCE_ROUTE_URL } from "../../../src/lib/inference/config.ts";
 import { shellQuote } from "../fixtures/clients/command.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { readRegularArtifact } from "./managed-image-multiarch-startup-helpers.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -35,12 +30,6 @@ export interface PiReadTaskAttempt {
   readonly failure: unknown;
   readonly proof: PiReadTaskProof | undefined;
   readonly result: ShellProbeResult;
-}
-
-export interface PiQualificationReceipt {
-  readonly contract: ManagedImageContractV1;
-  readonly digest: string;
-  readonly path: string;
 }
 
 export interface PiInferenceEvidence {
@@ -176,23 +165,6 @@ export function qualificationPlatform(
     throw new Error(`Pi qualification expected ${expected}, running on ${platform}`);
   }
   return platform;
-}
-
-export function readPiQualificationReceipt(platform: ManagedImagePlatform): PiQualificationReceipt {
-  const file = path.join(
-    REPO_ROOT,
-    `ci/pi-agent-qualification-v1-${platform.replace("/", "-")}.json`,
-  );
-  const contents = readRegularArtifact(file, REPO_ROOT);
-  return {
-    contract: parseManagedImageContractV1(
-      JSON.parse(contents.toString("utf8")) as unknown,
-      "pi",
-      platform,
-    ),
-    digest: createHash("sha256").update(contents).digest("hex"),
-    path: file,
-  };
 }
 
 export function qualifyPiReadTask(

@@ -13,7 +13,7 @@ procedure and rules.
 Read that guide before you write or review documentation.
 This file owns agent-specific documentation routing and workflow.
 
-- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, and OpenShell sandboxes.
+- Write clear, accurate, task-oriented documentation for developers who run NemoClaw with OpenClaw, Hermes, LangChain Deep Agents Code, Pi, and OpenShell sandboxes.
 - Preserve the reader's workflow: explain what to do, when to do it, and how to verify it.
 - Prefer small, focused edits that match the structure of the current page.
 

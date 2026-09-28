@@ -70,7 +70,7 @@ export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
       if (choices.length > 1) {
         const selected = await promptForAgentChoice(deps, choices);
         // The default OpenClaw path is represented by a null agent downstream.
-        return selected.name === "openclaw" ? null : deps.loadAgent(selected.name);
+        return deps.resolveAgent({ agentFlag: selected.name });
       }
     }
 

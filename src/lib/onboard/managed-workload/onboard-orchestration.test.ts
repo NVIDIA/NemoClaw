@@ -220,7 +220,7 @@ describe("managed workload onboard orchestration", () => {
         hermesPortableLifecycle: false,
         agentName: "pi",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not activate stock managed images for Hermes Portable (#9634)", () => {
@@ -343,13 +343,13 @@ describe("managed workload onboard orchestration", () => {
   it("treats an explicit temporary catalog as strict managed-image selection", async () => {
     const { prepared, runtime } = createFreshOnboardingRuntime(
       {},
-      { tempManagedRuntimeCatalog: "/tmp/pi-candidate-catalog.json" },
+      { tempManagedRuntimeCatalog: "/tmp/managed-catalog.json" },
     );
 
     await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        catalogPath: "/tmp/pi-candidate-catalog.json",
+        catalogPath: "/tmp/managed-catalog.json",
         runtime: expect.objectContaining({
           driverName: "docker",
           managedImages: expect.objectContaining({

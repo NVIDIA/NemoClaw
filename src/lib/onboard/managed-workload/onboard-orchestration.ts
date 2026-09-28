@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent/candidate";
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -322,9 +321,6 @@ export function createManagedWorkloadOnboardRuntime(
           catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
           ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
-          acceptedCandidateContract: isCandidateAgent(input.agentName)
-            ? readCandidateQualificationReceipt(input.agentName)
-            : null,
         });
     const prepared = await preparedWorkloadPromise;
     if (prepared.fallbackDiagnostic && !fallbackReported) {

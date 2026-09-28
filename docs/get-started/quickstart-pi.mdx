@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Quickstart with Pi"
 sidebar-title: "Quickstart with Pi"
-description: "Prepare for the Pi release candidate, review its activation gate, and learn its accepted interactive and headless workflows."
-description-agent: "Explains candidate-gated Pi onboarding, managed inference, interactive use, and headless automation in a NemoClaw sandbox."
+description: "Onboard the Pi coding agent into a NemoClaw sandbox and learn its accepted interactive and headless workflows."
+description-agent: "Explains Pi onboarding, managed inference, interactive use, and headless automation in a NemoClaw sandbox."
 keywords: ["nemoclaw pi", "pi coding agent sandbox", "pi managed inference", "pi agent quickstart"]
 topics: ["get-started", "terminal-runtime", "pi"]
 tags: ["pi", "managed-inference", "docker"]
@@ -17,24 +17,22 @@ agent-variants: ["pi"]
 ---
 Run the pinned Pi coding agent inside a NemoClaw-managed OpenShell sandbox.
 
-<Warning>
-Pi remains a release candidate until the final activation change adds it to the supported agent inventory and managed-image release cohort. Normal installations reject `--agent pi` before that activation. The qualification controls are not a user setup path.
-</Warning>
-
 ## Requirements
 
 Pi v1 requires:
 
-- Linux on AMD64 or ARM64.
+- Native Linux on AMD64 or ARM64. The full lifecycle is tested on AMD64. ARM64 evidence covers image build, entrypoint startup, and publication only.
 - Docker as the OpenShell compute runtime.
 - Node.js 22.19 or later for NemoClaw.
 - A provider and model that support OpenAI Chat Completions, streaming, and structured tool calls.
 
 Native Podman, macOS, Windows, WSL, messaging channels, dashboards, host mounts, and managed MCP are outside the initial Pi support matrix.
+Onboarding refuses Pi on a macOS, Windows, or WSL host and on the Podman runtime before it creates a sandbox.
+On those hosts, the installer still installs NemoClaw before onboarding refuses Pi.
 
 ## Install and Onboard
 
-After Pi activation is available in the selected NemoClaw release, install NemoClaw and select Pi explicitly.
+Install NemoClaw and select Pi explicitly.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
