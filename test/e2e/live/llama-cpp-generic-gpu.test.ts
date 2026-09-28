@@ -16,17 +16,13 @@ import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adap
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import { resolveRegisteredRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/current.ts";
-import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  pendingAdminRequestId,
-  preApprovalAdminProbeEvidence,
-} from "../fixtures/issue-4462-admin-approval-evidence.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { assertAgentExecutionSucceeded, hasExactReadyPhase } from "./gpu-e2e-helpers.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
@@ -348,34 +344,13 @@ NODE`),
       env: env(),
       timeoutMs: 12 * 60_000,
     });
-    const preApprovalEvidence = preApprovalAdminProbeEvidence(preApprovalAgent);
-    await artifacts.writeJson("openclaw-agent-before-admin-approval.json", preApprovalEvidence);
-    const requestId = pendingAdminRequestId(preApprovalAgent);
-    expect(
-      requestId,
-      "The OpenClaw agent did not report one unambiguous pending operator.admin request",
-    ).not.toBeNull();
-    const approval = await host.command(
-      "bash",
-      [
-        "-lc",
-        adminApprovalConnectScript(
-          host.commandPath,
-          SANDBOX_NAME,
-          `${TARGET_ID}-admin-${Date.now()}`,
-          requestId as string,
-        ),
-      ],
-      {
-        artifactName: "openclaw-explicit-admin-approval",
-        captureLimitBytes: 64 * 1024,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 4 * 60_000,
-      },
+    expect(preApprovalAgent.exitCode, resultText(preApprovalAgent)).toBe(0);
+    assertAgentExecutionSucceeded(
+      preApprovalAgent.stdout,
+      "inference",
+      recipe.spec.model.servedName,
     );
-    expect(approval.exitCode, resultText(approval)).toBe(0);
-    expect(resultText(approval)).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), [apiKey]);
     const agent = await host.nemoclaw(agentArgs, {
       artifactName: "openclaw-agent-through-managed-llama-cpp",
       env: env(),

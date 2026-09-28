@@ -226,6 +226,7 @@ export function normalizeMcpServerUrl(
 export async function preflightMcpServerUrlResolvedTarget(
   parsed: URL,
   options: McpBridgeTargetPreflightOptions = {},
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
 ): Promise<McpBridgeTargetValidation> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
@@ -252,8 +253,10 @@ export async function preflightMcpServerUrlResolvedTarget(
   }
   const result = await assertEndpointResolvesPublic(
     parsed.toString(),
-    async (hostname) => resolveHostAddresses(hostname),
-    { trustedPrivateHosts: normalizedTrustedHosts },
+    async (hostname) => lookup(hostname),
+    {
+      trustedPrivateHosts: normalizedTrustedHosts,
+    },
   );
   if (!result.ok) {
     if (result.reasonCode === "private-answer" && result.offendingAddress) {
@@ -315,6 +318,33 @@ export async function preflightMcpServerUrlResolvedTarget(
     );
   }
   return { addresses };
+}
+
+export type McpBridgePublicPinStatus = Omit<McpBridgeRecordedPinStatus, "state"> & {
+  state: McpBridgeRecordedPinStatus["state"] | "rejected";
+};
+
+export async function inspectMcpRecordedPublicTargetPins(
+  parsed: URL,
+  recordedPins: readonly string[],
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
+): Promise<McpBridgePublicPinStatus> {
+  try {
+    const target = await preflightMcpServerUrlResolvedTarget(parsed, {}, lookup);
+    const policyPins = [...new Set(recordedPins.map((address) => address.toLowerCase()))].sort();
+    const matches =
+      policyPins.length === target.addresses.length &&
+      policyPins.every((address, index) => address === target.addresses[index]);
+    return {
+      state: matches ? "match" : "drift",
+      currentAddresses: target.addresses,
+      ...(!matches ? { detail: "Current public DNS answers differ from the recorded pins." } : {}),
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const unresolved = error instanceof McpBridgeError && error.reasonCode === "unresolved";
+    return { state: unresolved ? "unresolved" : "rejected", detail };
+  }
 }
 
 export async function inspectMcpRecordedTargetPins(

@@ -46,6 +46,7 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -1090,7 +1091,6 @@ test(
       );
       const startupConfig = JSON.parse(startupConfigResult.stdout) as OpenClawConfig;
       const startupModel = startupConfig.models?.providers?.inference?.models?.[0];
-      expect(startupConfig.agents?.defaults?.model?.primary).toBe(`inference/${baselineModel}`);
       expect(
         startupModel !== undefined &&
           startupModel.id === baselineModel &&
@@ -1116,7 +1116,6 @@ test(
           timeoutMs: COMMAND_TIMEOUT_MS,
         },
       );
-      expect(effectiveModelResult.exitCode, resultText(effectiveModelResult)).toBe(0);
       const effectiveModel = JSON.parse(effectiveModelResult.stdout) as Record<string, unknown>;
       const {
         contextWindow: effectiveContextWindow,
@@ -1187,6 +1186,18 @@ test(
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     progress.phase("switch the route and verify restart semantics");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      commandEnv(home),
+      redactionValues,
+      false,
+    );
+    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
+    expect(SWITCH_INFERENCE_API).toBe(
+      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
+    );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,

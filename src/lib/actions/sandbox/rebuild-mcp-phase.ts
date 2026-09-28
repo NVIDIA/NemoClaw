@@ -21,7 +21,7 @@ import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider"
 import {
   assertNoLegacyMcpSources,
   inspectAgentMcpSources,
-  inspectCapturedOpenClawMcpSources,
+  inspectCapturedAgentMcpSources,
   joinMcpEntriesToOpenShell,
 } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
@@ -32,18 +32,24 @@ export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState,
 ): Promise<{
   entries: McpSourceEntry[];
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }> {
   if (!inspectCurrentSource) return { entries: [] };
+  if (
+    capturedAgentState &&
+    (capturedAgentState.sandboxName !== sandbox.name ||
+      capturedAgentState.agentName !== (sandbox.agent ?? "openclaw"))
+  )
+    throw new Error("Captured MCP source does not match the rebuild target.");
   const sourceRuntime = runtimeSelection ?? {
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
-  const sources = capturedOpenClawState
-    ? inspectCapturedOpenClawMcpSources(capturedOpenClawState)
+  const sources = capturedAgentState
+    ? inspectCapturedAgentMcpSources(capturedAgentState)
     : await inspectAgentMcpSources(sandbox, sourceRuntime);
   assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };
@@ -63,17 +69,17 @@ export async function prepareMcpForRebuild(
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
   sourceEntries: readonly McpSourceEntry[] = [],
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState,
 ): Promise<McpRebuildPreparation | null> {
   // Source inspection resolves OpenShell authority lazily only after it finds
   // MCP intent. A retained recovery handoff is the sole eager authority input.
   const runtimeSelection = frozenRuntimeSelection;
   try {
-    if (capturedOpenClawState)
+    if (capturedAgentState)
       return await prepareMcpBridgesForStoppedSandboxRebuild(
         sandboxName,
         sourceEntries,
-        capturedOpenClawState,
+        capturedAgentState,
         runtimeSelection,
       );
     return await (staleRecovery
