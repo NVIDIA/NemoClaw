@@ -911,26 +911,33 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it("fails restore instead of dropping an archived child below an image-owned directory", async () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-image-owned-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
-    const oldNativeHome = process.env.NEMOCLAW_TEST_NATIVE_HOME;
-    const oldNativeWorkspace = process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE;
-    const oldExecuteRestore = process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const nativeRoot = path.join(fixture, "native-home");
-      const imageOwned = path.join(nativeRoot, "image-owned");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(imageOwned, { recursive: true });
-      fs.writeFileSync(path.join(imageOwned, "archived-child.txt"), "must not be dropped");
-      writeFakeOpenshell(binDir);
-      writeFakeSsh(binDir);
-      writeExecutable(
-        path.join(binDir, "stat"),
-        `#!/usr/bin/env node
+  it.each(["directory-child", "regular-file"] as const)(
+    "fails restore instead of dropping archived state at an image-owned %s",
+    async (collisionKind) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-image-owned-"));
+      const oldPath = process.env.PATH;
+      const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+      const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+      const oldNativeHome = process.env.NEMOCLAW_TEST_NATIVE_HOME;
+      const oldNativeWorkspace = process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE;
+      const oldExecuteRestore = process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT;
+      try {
+        const binDir = path.join(fixture, "bin");
+        const nativeRoot = path.join(fixture, "native-home");
+        const imageOwned = path.join(nativeRoot, "image-owned");
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.mkdirSync(nativeRoot, { recursive: true });
+        if (collisionKind === "directory-child") {
+          fs.mkdirSync(imageOwned);
+          fs.writeFileSync(path.join(imageOwned, "archived-child.txt"), "must not be dropped");
+        } else {
+          fs.writeFileSync(imageOwned, "archived file must not be dropped");
+        }
+        writeFakeOpenshell(binDir);
+        writeFakeSsh(binDir);
+        writeExecutable(
+          path.join(binDir, "stat"),
+          `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const target = process.argv.at(-1);
@@ -938,36 +945,48 @@ if (process.argv[2] !== "-c" || process.argv[3] !== "%u" || !target) process.exi
 const uid = path.basename(target) === "image-owned" ? (process.getuid?.() ?? 1000) + 1 : fs.lstatSync(target).uid;
 process.stdout.write(String(uid) + "\\n");
 `,
-      );
-      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
-      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
-      process.env.NEMOCLAW_TEST_NATIVE_HOME = nativeRoot;
-      process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE = nativeRoot;
-      process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT = "1";
-      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+        );
+        process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+        process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+        process.env.NEMOCLAW_TEST_NATIVE_HOME = nativeRoot;
+        process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE = nativeRoot;
+        process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT = "1";
+        process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+        writeOpenClawRegistry("alpha");
 
-      const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success, backup.error).toBe(true);
-      fs.rmSync(imageOwned, { recursive: true, force: true });
-      fs.mkdirSync(imageOwned, { mode: 0o555 });
+        const backup = sandboxState.backupSandboxState("alpha");
+        expect(backup.success, backup.error).toBe(true);
+        fs.rmSync(imageOwned, { recursive: true, force: true });
+        if (collisionKind === "directory-child") {
+          fs.mkdirSync(imageOwned, { mode: 0o555 });
+        } else {
+          fs.writeFileSync(imageOwned, "replacement image authority");
+        }
 
-      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+        const restore = await sandboxState.restoreSandboxState(
+          "alpha",
+          backup.manifest!.backupPath,
+        );
 
-      expect(restore.success).toBe(false);
-      expect(restore.error).toContain("native restore target directory is not writable");
-      expect(fs.existsSync(path.join(imageOwned, "archived-child.txt"))).toBe(false);
-      expect(fs.existsSync(backup.manifest!.backupPath)).toBe(true);
-    } finally {
-      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
-      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
-      restoreEnv("NEMOCLAW_TEST_NATIVE_HOME", oldNativeHome);
-      restoreEnv("NEMOCLAW_TEST_NATIVE_WORKSPACE", oldNativeWorkspace);
-      restoreEnv("NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT", oldExecuteRestore);
-      restoreEnv("PATH", oldPath);
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+        expect(restore.success).toBe(false);
+        expect(restore.error).toContain("native restore could not preserve archived state");
+        if (collisionKind === "directory-child") {
+          expect(fs.existsSync(path.join(imageOwned, "archived-child.txt"))).toBe(false);
+        } else {
+          expect(fs.readFileSync(imageOwned, "utf8")).toBe("replacement image authority");
+        }
+        expect(fs.existsSync(backup.manifest!.backupPath)).toBe(true);
+      } finally {
+        restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+        restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
+        restoreEnv("NEMOCLAW_TEST_NATIVE_HOME", oldNativeHome);
+        restoreEnv("NEMOCLAW_TEST_NATIVE_WORKSPACE", oldNativeWorkspace);
+        restoreEnv("NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT", oldExecuteRestore);
+        restoreEnv("PATH", oldPath);
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(["old-gnu", "pax", "global-pax"] as const)(
     "rejects a %s sparse archive before inspection or publication",

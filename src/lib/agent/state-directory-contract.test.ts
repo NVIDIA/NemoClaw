@@ -44,17 +44,17 @@ describe("agent state directory contract", () => {
   it("keeps OpenClaw machine-local authentication state out of snapshots", () => {
     const agent = loadAgent("openclaw");
 
-    expect(agent.nonBackupStateDirs).toEqual([
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: false })).toEqual([
       "plugins",
       "profiles",
       "identity",
       "devices",
       "state",
     ]);
-    expect(agent.backupStateDirs).not.toEqual(
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: true })).not.toEqual(
       expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );
-    expect(agent.backupStateDirs).not.toContain("state");
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: true })).not.toContain("state");
     expect(agent.stateDirs).toEqual(
       expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );
@@ -63,8 +63,8 @@ describe("agent state directory contract", () => {
   it("keeps Hermes machine-local hooks out of snapshots", () => {
     const agent = loadAgent("hermes");
 
-    expect(agent.nonBackupStateDirs).toContain("hooks");
-    expect(agent.backupStateDirs).not.toContain("hooks");
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: false })).toContain("hooks");
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: true })).not.toContain("hooks");
   });
 
   it.each([

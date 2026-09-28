@@ -43,46 +43,9 @@ export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryP
 
 export type AgentStateFileStrategy = "copy" | "sqlite_backup";
 
-export type StateFileRestoreMerge = "key-allowlist" | "openclaw-config";
-
-export type StateFileUserKeyType = "boolean" | "string" | "integer" | "number" | "enum";
-
-export interface StateFileUserKey {
-  key: string;
-  type: StateFileUserKeyType;
-  values?: readonly (string | number | boolean)[];
-  min?: number;
-  max?: number;
-  maxLength?: number;
-}
-
-export interface StateFileFreshHeader {
-  match: "exact" | "prefix";
-  value: string;
-}
-
-export interface StateFileKeyAllowlistRestoreOwnership {
-  merge: "key-allowlist";
-  userKeys: readonly StateFileUserKey[];
-  requireFreshTables?: readonly string[];
-  requireFreshHeaders?: readonly StateFileFreshHeader[];
-}
-
-export interface StateFileOpenClawRestoreOwnership {
-  merge: "openclaw-config";
-  userKeys?: never;
-  requireFreshTables?: never;
-  requireFreshHeaders?: never;
-}
-
-export type StateFileRestoreOwnership =
-  | StateFileKeyAllowlistRestoreOwnership
-  | StateFileOpenClawRestoreOwnership;
-
 export interface AgentStateFile {
   path: string;
   strategy: AgentStateFileStrategy;
-  restore?: StateFileRestoreOwnership;
 }
 
 export type AgentDashboardKind = "ui" | "api";
@@ -155,11 +118,6 @@ export interface AgentDefinition {
   readonly skillIntegration?: AgentSkillIntegration | null;
   readonly stateDirectories: AgentStateDirectory[];
   readonly stateDirs: string[];
-  readonly stateDirPrefixes: string[];
-  readonly backupStateDirs: string[];
-  readonly backupStateDirPrefixes: string[];
-  readonly nonBackupStateDirs: string[];
-  readonly nonBackupStateDirPrefixes: string[];
   readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;

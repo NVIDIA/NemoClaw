@@ -27,6 +27,7 @@ import {
 import { candidateQualificationEnvironment } from "./candidate-test-fixture";
 import { loadAgent } from "./defs";
 import { resolveAgent } from "./onboard";
+import { stateDirectoryPaths } from "./state-directory-contract";
 
 const QUALIFICATION = candidateQualificationEnvironment();
 const CANDIDATE_ENV = QUALIFICATION.env;
@@ -144,23 +145,19 @@ describe("Pi candidate lifecycle integration", () => {
     expect(MANAGED_IMAGE_REPOSITORIES.pi).toBe("ghcr.io/nvidia/nemoclaw/pi-sandbox");
   });
 
-  it("backs up only the state the Pi manifest declares persistent (#7927)", () => {
+  it("keeps Pi portable state classification in its agent definition (#7927)", () => {
     const agent = loadAgent("pi", CANDIDATE_ENV);
 
-    expect(agent.backupStateDirs).toEqual(["sessions", "prompts", "themes"]);
-    expect(agent.nonBackupStateDirs).toEqual(["tools", "bin"]);
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: true })).toEqual([
+      "sessions",
+      "prompts",
+      "themes",
+    ]);
+    expect(stateDirectoryPaths(agent.stateDirectories, { backup: false })).toEqual([
+      "tools",
+      "bin",
+    ]);
     expect(agent.stateFiles.map(({ path: statePath }) => statePath)).toEqual(["settings.json"]);
-  });
-
-  it("restores Pi user preferences only through the allowlisted key contract (#7927)", () => {
-    const agent = loadAgent("pi", CANDIDATE_ENV);
-    const settings = agent.stateFiles.find(({ path: statePath }) => statePath === "settings.json");
-
-    expect(settings?.restore?.merge).toBe("key-allowlist");
-    const userKeys =
-      settings?.restore?.merge === "key-allowlist" ? settings.restore.userKeys : undefined;
-    expect(userKeys?.map(({ key }) => key)).toContain("theme");
-    expect(userKeys?.map(({ key }) => key)).not.toContain("models");
   });
 
   it("refuses a public --agent pi selection without qualification authority (#7927)", () => {

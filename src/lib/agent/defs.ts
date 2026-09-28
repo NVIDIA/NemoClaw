@@ -52,11 +52,7 @@ import {
 } from "./manifest-readers";
 import { readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
-import {
-  readStateDirectories,
-  stateDirectoryPaths,
-  stateDirectoryPrefixes,
-} from "./state-directory-contract";
+import { readStateDirectories, stateDirectoryPaths } from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -77,13 +73,6 @@ export type {
   AgentStateFile,
   AgentStateFileStrategy,
   AgentVersionScheme,
-  StateFileFreshHeader,
-  StateFileKeyAllowlistRestoreOwnership,
-  StateFileOpenClawRestoreOwnership,
-  StateFileRestoreMerge,
-  StateFileRestoreOwnership,
-  StateFileUserKey,
-  StateFileUserKeyType,
 } from "./definition-types";
 export type { AgentSkillIntegration } from "./skill-integration";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
@@ -189,11 +178,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   }
   const stateDirectories = readStateDirectories(raw);
   const stateDirs = stateDirectoryPaths(stateDirectories);
-  const stateDirPrefixes = stateDirectoryPrefixes(stateDirectories);
-  const backupStateDirs = stateDirectoryPaths(stateDirectories, { backup: true });
-  const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
-  const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
-  const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -289,26 +273,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get stateDirs(): string[] {
       return stateDirs;
-    },
-
-    get stateDirPrefixes(): string[] {
-      return stateDirPrefixes;
-    },
-
-    get backupStateDirs(): string[] {
-      return backupStateDirs;
-    },
-
-    get backupStateDirPrefixes(): string[] {
-      return backupStateDirPrefixes;
-    },
-
-    get nonBackupStateDirs(): string[] {
-      return nonBackupStateDirs;
-    },
-
-    get nonBackupStateDirPrefixes(): string[] {
-      return nonBackupStateDirPrefixes;
     },
 
     get stateFiles(): AgentStateFile[] {

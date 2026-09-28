@@ -16,7 +16,6 @@ import type {
   ManifestValue,
   StringMap,
 } from "./definition-types";
-import { readStateFileRestore } from "./state-file-restore-reader";
 
 const yaml: { load(input: string): unknown } = require("js-yaml");
 
@@ -73,27 +72,6 @@ export function readStringArray(record: ManifestRecord, key: string): string[] |
 }
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
-const STATE_FILE_FIELDS = new Set(["path", "strategy", "restore"]);
-
-function assertStateFilePath(value: string, field: string): void {
-  if (value.length === 0) {
-    throw new Error(`Agent manifest field '${field}' must not be empty`);
-  }
-  if (CONTROL_CHAR_RE.test(value)) {
-    throw new Error(`Agent manifest field '${field}' must not contain control characters`);
-  }
-  if (value.startsWith("/")) {
-    throw new Error(`Agent manifest field '${field}' must be a relative path, not absolute`);
-  }
-  if (value.includes("\\")) {
-    throw new Error(`Agent manifest field '${field}' must use canonical forward slashes`);
-  }
-  if (value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(
-      `Agent manifest field '${field}' must be a canonical relative path without empty, '.', or '..' components`,
-    );
-  }
-}
 
 export function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
   const value = record.user_managed_files;
@@ -133,6 +111,28 @@ export function readUserManagedFiles(record: ManifestRecord): string[] | undefin
   });
 }
 
+const STATE_FILE_FIELDS = new Set(["path", "strategy"]);
+
+function assertStateFilePath(value: string, field: string): void {
+  if (value.length === 0) {
+    throw new Error(`Agent manifest field '${field}' must not be empty`);
+  }
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(`Agent manifest field '${field}' must not contain control characters`);
+  }
+  if (value.startsWith("/")) {
+    throw new Error(`Agent manifest field '${field}' must be a relative path, not absolute`);
+  }
+  if (value.includes("\\")) {
+    throw new Error(`Agent manifest field '${field}' must use canonical forward slashes`);
+  }
+  if (value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(
+      `Agent manifest field '${field}' must be a canonical relative path without empty, '.', or '..' components`,
+    );
+  }
+}
+
 export function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
   const value = record.state_files;
   if (value === undefined) return undefined;
@@ -162,14 +162,11 @@ export function readStateFiles(record: ManifestRecord): AgentStateFile[] | undef
     if (entry.strategy !== undefined && typeof entry.strategy !== "string") {
       throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
     }
-    const rawStrategy = readString(entry, "strategy") ?? "copy";
-    if (rawStrategy !== "copy" && rawStrategy !== "sqlite_backup") {
+    const strategy = readString(entry, "strategy") ?? "copy";
+    if (strategy !== "copy" && strategy !== "sqlite_backup") {
       throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
     }
-    const restore = readStateFileRestore(entry, index, rawStrategy);
-    return restore
-      ? { path: statePath, strategy: rawStrategy, restore }
-      : { path: statePath, strategy: rawStrategy };
+    return { path: statePath, strategy };
   });
 }
 

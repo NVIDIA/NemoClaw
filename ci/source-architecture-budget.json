@@ -13,7 +13,7 @@
       "src/lib/adapters/openshell/sandbox-observer-cli.ts": 21,
       "src/lib/adapters/openshell/sandbox-observer.ts": 35,
       "src/lib/adapters/openshell/timeouts.ts": 23,
-      "src/lib/agent/defs.ts": 31,
+      "src/lib/agent/defs.ts": 30,
       "src/lib/cli/branding.ts": 78,
       "src/lib/cli/nemoclaw-oclif-command.ts": 102,
       "src/lib/cli/terminal-style.ts": 38,
@@ -27,7 +27,7 @@
       "src/lib/messaging/channels/index.ts": 23,
       "src/lib/onboard/gateway-binding.ts": 50,
       "src/lib/platform.ts": 20,
-      "src/lib/runner.ts": 77,
+      "src/lib/runner.ts": 75,
       "src/lib/sandbox-name-contract.ts": 20,
       "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 35,
@@ -65,7 +65,7 @@
     "src/lib/onboard": 299,
     "src/lib/actions": 18,
     "src/lib/actions/sandbox": 168,
-    "src/lib/state": 32,
+    "src/lib/state": 30,
     "src/lib/inference": 63,
     "scripts": 41
   }
