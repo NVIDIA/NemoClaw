@@ -525,6 +525,7 @@ export async function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   capturedAgentState?: sandboxState.BackupOptions["capturedAgentState"],
+  removedImmutabilityStateRecord = false,
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -602,7 +603,19 @@ export async function backupSandboxStateForRebuild(
       const allAbsent =
         reasons.length === backup.failedDirs.length &&
         reasons.every((reason) => reason === BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
-      if (anyPermissionDenied) {
+      if (anyPermissionDenied && removedImmutabilityStateRecord) {
+        console.error(
+          `  Sandbox '${sandboxName}' has a state record from the removed Shields feature.`,
+        );
+        console.error(
+          "  Shields can leave state that only root can read, and this release cannot unlock it.",
+        );
+        console.error("  To keep the files that the sandbox user can read, replace the sandbox:");
+        console.error(`    1. ${CLI_NAME} ${sandboxName} download <sandbox-path> <host-dir>`);
+        console.error(`    2. ${CLI_NAME} ${sandboxName} destroy --yes`);
+        console.error(`    3. ${CLI_NAME} onboard --name ${sandboxName}`);
+        console.error(`    4. ${CLI_NAME} ${sandboxName} upload <host-path> <sandbox-dir>`);
+      } else if (anyPermissionDenied) {
         console.error(
           "  The sandbox user could not read this state — the mounted files likely have wrong ownership or permissions, for example after a host reboot remapped the mount's UIDs.",
         );

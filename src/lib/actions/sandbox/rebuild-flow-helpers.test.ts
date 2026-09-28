@@ -791,6 +791,42 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
 
+  it("names the replacement steps when a sandbox with a legacy Shields record denies backup reads", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["workspace"],
+      backedUpFiles: ["openclaw.json"],
+      failedDirs: ["credentials"],
+      failedDirReasons: { credentials: "permission denied" },
+      failedFiles: [],
+      manifest: makeBackupResult().manifest,
+    });
+
+    await expect(
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        makeBail(),
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(errorLines).toContain(
+      "  Sandbox 'alpha' has a state record from the removed Shields feature.",
+    );
+    expect(errorLines.some((line) => line.includes("alpha download <sandbox-path>"))).toBe(true);
+    expect(errorLines.some((line) => line.includes("alpha destroy --yes"))).toBe(true);
+    expect(errorLines.some((line) => line.includes("onboard --name alpha"))).toBe(true);
+    expect(errorLines.some((line) => line.includes("alpha upload <host-path>"))).toBe(true);
+    expect(errorLines.some((line) => line.includes("wrong ownership or permissions"))).toBe(false);
+    expect(errorLines.some((line) => line.includes("credentials (permission denied)"))).toBe(true);
+    expect(errorLines.some((line) => line.includes("Aborting rebuild"))).toBe(true);
+  });
+
   it("aborts with an unstable-mount hint when every dir was absent after extraction (#6972)", async () => {
     backupSpy.mockReturnValue({
       success: false,

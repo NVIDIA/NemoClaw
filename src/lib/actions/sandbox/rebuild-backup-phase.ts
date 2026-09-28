@@ -75,6 +75,7 @@ export interface RebuildBackupPhaseInput {
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
   capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState;
+  removedImmutabilityStateRecord?: boolean;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -183,7 +184,8 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
-        ...(input.capturedAgentState ? ([input.capturedAgentState] as const) : ([] as const)),
+        input.capturedAgentState,
+        input.removedImmutabilityStateRecord === true,
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
