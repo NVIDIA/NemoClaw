@@ -6,16 +6,24 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { withProvenManagedGatewayProcess } from "../../../../test/support/uninstall-managed-gateway-test-support";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   buildDockerDriverGatewayConfigToml,
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../../onboard/docker-driver-gateway-config";
 import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { getDockerDriverGatewayLocalTlsBundle } from "../../onboard/docker-driver-gateway-local-tls";
-import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
+import {
+  ensureManagedGatewayStateRoot,
+  MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  resolveGatewayStateDirName,
+} from "../../onboard/gateway-binding";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -27,7 +35,16 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function writeFullCleanupState(home: string): string {
+function writeFullCleanupState(
+  home: string,
+  gatewayStateDir = path.join(
+    home,
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(8080),
+  ),
+): string {
   const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
   fs.mkdirSync(path.dirname(registryFile), { recursive: true });
   fs.writeFileSync(
@@ -40,13 +57,6 @@ function writeFullCleanupState(home: string): string {
     }),
   );
 
-  const gatewayStateDir = path.join(
-    home,
-    ".local",
-    "state",
-    "nemoclaw",
-    resolveGatewayStateDirName(8080),
-  );
   writeCompleteDockerDriverGatewayLocalTlsBundle(gatewayStateDir);
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(gatewayStateDir);
   const configPath = path.join(gatewayStateDir, "openshell-gateway.toml");
@@ -230,6 +240,106 @@ describe("full-uninstall bulk sandbox cleanup", () => {
       expect(calls.some((args) => args[0] === "gateway" && args[1] === "remove")).toBe(false);
       expect(deps.error).toHaveBeenCalledWith(
         "Refusing bulk sandbox cleanup for an externally supervised gateway; preserving its state for retry.",
+      );
+      expect(fs.existsSync(registryFile)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("revalidates custom gateway state ownership before bulk cleanup (#11831)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-ownership-"));
+    try {
+      const gatewayStateDir = path.join(home, "custom-gateway-state");
+      ensureManagedGatewayStateRoot({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        stateDir: gatewayStateDir,
+      });
+      const registryFile = writeFullCleanupState(home, gatewayStateDir);
+      writeManagedGatewayRuntimeProof(gatewayStateDir, 8080);
+      const calls: string[][] = [];
+      const deps = fullCleanupDeps(home, calls, "No sandboxes found.\n");
+      const processEnvironment = {
+        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(gatewayStateDir),
+      };
+      const readProcessEnvironment = vi
+        .fn()
+        .mockReturnValueOnce(processEnvironment)
+        .mockImplementationOnce(() => {
+          fs.writeFileSync(path.join(gatewayStateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER), "{}\n", {
+            mode: 0o600,
+          });
+          return processEnvironment;
+        });
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          ...deps,
+          env: {
+            ...deps.env,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
+          },
+          readProcessEnvironment,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(readProcessEnvironment).toHaveBeenCalledTimes(2);
+      expect(calls.some((args) => args.join(" ") === "sandbox delete --all")).toBe(false);
+      expect(deps.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "configured state directory is not proven to be the selected gateway's dedicated managed root",
+        ),
+      );
+      expect(fs.existsSync(registryFile)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("revalidates the custom gateway process before bulk cleanup (#11831)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-process-"));
+    try {
+      const gatewayStateDir = path.join(home, "custom-gateway-state");
+      ensureManagedGatewayStateRoot({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        stateDir: gatewayStateDir,
+      });
+      const registryFile = writeFullCleanupState(home, gatewayStateDir);
+      writeManagedGatewayRuntimeProof(gatewayStateDir, 8080);
+      const calls: string[][] = [];
+      const deps = fullCleanupDeps(home, calls, "No sandboxes found.\n");
+      const processEnvironment = {
+        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(gatewayStateDir),
+      };
+      const readProcessEnvironment = vi
+        .fn()
+        .mockReturnValueOnce(processEnvironment)
+        .mockReturnValueOnce(processEnvironment)
+        .mockReturnValue({
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "replacement-gateway",
+        });
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          ...deps,
+          env: {
+            ...deps.env,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
+          },
+          readProcessEnvironment,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(readProcessEnvironment).toHaveBeenCalledTimes(3);
+      expect(calls.some((args) => args.join(" ") === "sandbox delete --all")).toBe(false);
+      expect(deps.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "package-managed OpenShell gateway service identity cannot be proven",
+        ),
       );
       expect(fs.existsSync(registryFile)).toBe(true);
     } finally {

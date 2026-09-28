@@ -1599,6 +1599,18 @@ async function removeOpenShellResources(
       );
       return false;
     }
+    if (
+      !canRemoveScopedOpenShellResources(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        teardownAuthority,
+        Boolean(runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()),
+      )
+    ) {
+      return false;
+    }
     runtimeSelection = selectedGatewayCleanupRuntimeSelection(
       gatewayLabel,
       paths.selectedGatewayLocalStateDir,
