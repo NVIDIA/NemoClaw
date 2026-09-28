@@ -43,7 +43,16 @@ export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 export const E2E_INSTALL_MODES = ["none", "authenticated", "credential-free"] as const;
 export type E2eInstallMode = (typeof E2E_INSTALL_MODES)[number];
 
-export const E2E_HOST_PACKAGES = ["expect", "iptables"] as const;
+const NATIVE_PODMAN_HOST_PACKAGES = [
+  "conmon",
+  "fuse-overlayfs",
+  "golang-github-containers-common",
+  "iptables",
+  "nftables",
+  "slirp4netns",
+  "uidmap",
+] as const;
+export const E2E_HOST_PACKAGES = ["expect", ...NATIVE_PODMAN_HOST_PACKAGES] as const;
 export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
 
 export const E2E_CATALOGUE_RUNNER_KEYS = [
@@ -83,6 +92,7 @@ export interface E2eCatalogueTarget {
   exposeCliBin: boolean;
   cloudflared: boolean;
   hostPackages: readonly E2eHostPackage[];
+  podmanHostPackages: readonly E2eHostPackage[];
   hostPreparation: E2eHostPreparation;
   runnerComparison: boolean;
   runnerPressure: boolean;
@@ -135,6 +145,7 @@ type TargetOptions = Omit<
   | "unresolvedReason"
   | "environment"
   | "hostPackages"
+  | "podmanHostPackages"
   | "cloudflared"
   | "installNonInteractive"
   | "runner"
@@ -156,6 +167,7 @@ type TargetOptions = Omit<
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
   hostPackages?: readonly E2eHostPackage[];
+  podmanHostPackages?: readonly E2eHostPackage[];
   cloudflared?: boolean;
   installNonInteractive?: boolean;
   runner?: string;
@@ -183,6 +195,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     owningPaths = [],
     environment = {},
     hostPackages = [],
+    podmanHostPackages = [],
     cloudflared = false,
     installNonInteractive = false,
     runner = "ubuntu-latest",
@@ -215,6 +228,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     targetId,
     environment,
     hostPackages,
+    podmanHostPackages,
     cloudflared,
     hostPreparation,
     runnerComparison,
@@ -449,6 +463,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
+    owningPaths: ["scripts/patch-openclaw-device-self-approval.mts"],
     timeoutMinutes: 110,
     installMode: "authenticated",
     installNonInteractive: true,
@@ -836,6 +851,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    podmanHostPackages: NATIVE_PODMAN_HOST_PACKAGES,
     timeoutMinutes: 100,
     installMode: "authenticated",
     restoreCli: true,
@@ -892,6 +908,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "scripts/patch-openclaw-device-self-approval.mts",
       "scripts/lib/patch-openclaw-container-restart.mts",
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
@@ -961,6 +978,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Slack",
     profile: "nvidia-inference",
     runner: "linux-amd64-cpu4",
+    podmanHostPackages: NATIVE_PODMAN_HOST_PACKAGES,
     testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
     timeoutMinutes: 75,
     installMode: "none",
@@ -1011,6 +1029,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local llama.cpp",
     profile: "standard",
+    owningPaths: ["scripts/patch-openclaw-device-self-approval.mts"],
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 120,
     installMode: "authenticated",
@@ -1029,6 +1048,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; compatible inference and Telegram fixtures",
     profile: "standard",
+    owningPaths: ["scripts/patch-openclaw-device-self-approval.mts"],
     timeoutMinutes: 45,
     installMode: "none",
     restoreCli: true,
@@ -1173,7 +1193,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [...SKILL_LIFECYCLE_OWNING_PATHS, "agents/openclaw/manifest.yaml"],
+    owningPaths: [
+      ...SKILL_LIFECYCLE_OWNING_PATHS,
+      "agents/openclaw/manifest.yaml",
+      "scripts/patch-openclaw-device-self-approval.mts",
+    ],
     environment: {
       ...hostedInference,
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli",
@@ -1189,7 +1213,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+    owningPaths: [
+      "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "scripts/patch-openclaw-device-self-approval.mts",
+      "test/e2e/live/openclaw-admin-scope.ts",
+      "test/e2e/fixtures/admin-approval-connect.ts",
+      "test/e2e/fixtures/admin-approval-connect.sh",
+      "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
@@ -1695,8 +1726,11 @@ export function validateE2eTargetCatalogue(
       throw new Error(`E2E target ${entry.id} has an invalid install mode`);
     }
     if (
-      new Set(entry.hostPackages).size !== entry.hostPackages.length ||
-      entry.hostPackages.some((packageName) => !E2E_HOST_PACKAGES.includes(packageName))
+      new Set([...entry.hostPackages, ...entry.podmanHostPackages]).size !==
+        entry.hostPackages.length + entry.podmanHostPackages.length ||
+      [...entry.hostPackages, ...entry.podmanHostPackages].some(
+        (packageName) => !E2E_HOST_PACKAGES.includes(packageName),
+      )
     ) {
       throw new Error(`E2E target ${entry.id} has invalid or duplicate host packages`);
     }
@@ -1809,6 +1843,16 @@ export function catalogueTargetsForChangedFiles(
   );
 }
 
+export function catalogueHostPackages(
+  entry: E2eCatalogueTarget,
+  runtimeProvider: E2eRuntimeProvider,
+): string {
+  return [
+    ...entry.hostPackages,
+    ...(runtimeProvider === "podman" ? entry.podmanHostPackages : []),
+  ].join(" ");
+}
+
 export function catalogueMatrix(
   profile: E2eExecutionProfile,
   targets: readonly E2eCatalogueTarget[],
@@ -1836,7 +1880,7 @@ export function catalogueMatrix(
         install_non_interactive: entry.installNonInteractive,
         restore_cli: entry.restoreCli,
         cloudflared: entry.cloudflared,
-        host_packages: entry.hostPackages.join(" "),
+        host_packages: catalogueHostPackages(entry, runtimeProvider),
         host_preparation: entry.hostPreparation,
         runner_comparison: entry.runnerComparison,
         runner_pressure: entry.runnerPressure,

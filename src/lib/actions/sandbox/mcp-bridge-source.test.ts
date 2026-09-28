@@ -51,6 +51,7 @@ vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
 
 import {
   inspectAgentMcpSources,
+  inspectCapturedAgentMcpSources,
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
@@ -65,6 +66,44 @@ const sandbox = {
 const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 
 describe("source-backed MCP inventory", () => {
+  it.each(["native", "legacy"] as const)(
+    "reads captured Deep Agents %s MCP from the native file without sandbox execution (#11165)",
+    (kind) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-captured-dcode-mcp-"));
+      const assertCurrent = vi.fn();
+      try {
+        fs.writeFileSync(
+          path.join(directory, kind === "native" ? ".mcp.json" : ".nemoclaw-mcp.json"),
+          JSON.stringify({
+            mcpServers: {
+              github: {
+                url: "https://api.githubcopilot.com/mcp/",
+                headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+              },
+            },
+          }),
+        );
+        const observed = inspectCapturedAgentMcpSources({
+          sandboxName: "alpha",
+          agentName: "langchain-deepagents-code",
+          directory,
+          assertCurrent,
+        });
+        expect(observed[kind].github).toMatchObject({
+          agent: "langchain-deepagents-code",
+          adapter: "deepagents-config",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: ["GITHUB_TOKEN"],
+        });
+        expect(Object.keys(observed[kind === "native" ? "legacy" : "native"])).toEqual([]);
+        expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
+        expect(assertCurrent).toHaveBeenCalledTimes(2);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.capturePolicy.mockResolvedValue(`version: 1
