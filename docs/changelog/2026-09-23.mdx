@@ -23,6 +23,11 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   When a command reports a pending scope approval, use the native request ID to review and approve the matching request in a prepared `connect` shell.
   Related change: [PR #12332](https://github.com/NVIDIA/NemoClaw/pull/12332).
   Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval).
+- Hermes now uses one native configuration for its gateway, CLI, TUI, and Web Dashboard.
+  Startup migrates safe state from retired dashboard homes, including WhatsApp session state.
+  It removes generated shadow configuration only after verification; unsafe paths or conflicting files stop migration without deleting either copy.
+  Related change: [PR #12333](https://github.com/NVIDIA/NemoClaw/pull/12333).
+  Refer to [Create and Restore Snapshots](/user-guide/hermes/manage-sandboxes/state-and-backups/create-and-restore-snapshots) for migration and recovery limits.
 - Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
   Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.
   These templates contain `image: null`; replace that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
