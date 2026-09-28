@@ -150,7 +150,7 @@ the owned effects instead of relying only on workflow conclusions:
 
 - `latest` and release-label carry-forward;
 - the public documentation `publish` job; and
-- the production managed-image promotion job, with Pi candidate results reported separately.
+- the production managed-image promotion job, which covers every shipped agent including Pi.
 
 Read `lkg` after production image classification. Never move `lkg` automatically. When production
 promotion succeeds, ask for separate maintainer authorization. After an authorized move, monitor

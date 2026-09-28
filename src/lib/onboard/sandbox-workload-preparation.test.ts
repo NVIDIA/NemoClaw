@@ -65,7 +65,10 @@ const CATALOG: ManagedImageContractCatalog = Object.fromEntries(
   SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
 );
 
-function runtime(driverName = "docker"): SandboxWorkloadRuntimeCapabilities {
+function runtime(
+  driverName = "docker",
+  agents: readonly ManagedImageAgent[] = SHIPPED_MANAGED_IMAGE_AGENTS,
+): SandboxWorkloadRuntimeCapabilities {
   return {
     driverName,
     managedImageSelectionPolicy: "require-managed",
@@ -73,6 +76,7 @@ function runtime(driverName = "docker"): SandboxWorkloadRuntimeCapabilities {
     managedImages: {
       exactDigestReferences: true,
       platforms: [MANAGED_IMAGE_PLATFORM],
+      agents,
       startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
       capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
     },
@@ -888,101 +892,64 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("never fetches the all-agent cohort catalog for a gated candidate (#7927)", async () => {
+  it("prepares the Pi managed image from the complete release catalog", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 
-    await expect(
-      prepareSandboxWorkloadSource(
-        { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
-        { resolveCatalog },
-      ),
-    ).rejects.toThrow("requires an exact managed image catalog");
-    expect(resolveCatalog).not.toHaveBeenCalled();
-  });
+    const prepared = await prepareSandboxWorkloadSource(input("pi"), { resolveCatalog });
 
-  it("prepares the exact candidate digest from a supplied catalog file (#7927)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
-    const catalogPath = path.join(fixtureRoot, "catalog.json");
-    const piContract = contract("pi", 3);
-    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
-
-    const prepared = await prepareSandboxWorkloadSource(
-      { ...input("pi"), acceptedCandidateContract: piContract, catalogPath },
-      { resolveCatalog: async () => CATALOG },
-    );
-
-    expect(prepared.source).toMatchObject({
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: RELEASE,
+      platform: MANAGED_IMAGE_PLATFORM,
+    });
+    expect(prepared.source).toEqual({
       kind: "managed-image",
-      reference: piContract.reference,
+      reference: contract("pi", 3).reference,
+      contract: contract("pi", 3),
     });
   });
 
-  it("fails closed for a candidate agent's base-image override too, not just shipped agents (#11138)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-override-"));
-    const catalogPath = path.join(fixtureRoot, "catalog.json");
-    const piContract = contract("pi", 3);
-    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
+  it("refuses a release catalog without Pi for every shipped agent", async () => {
+    const { pi: _pi, ...withoutPi } = CATALOG;
 
     await expect(
+      prepareSandboxWorkloadSource(input("hermes"), { resolveCatalog: async () => withoutPi }),
+    ).rejects.toThrow("'pi' is missing");
+  });
+
+  it("fails closed for the Pi base-image override (#11138)", async () => {
+    await expect(
       prepareSandboxWorkloadSource(
-        {
-          ...input("pi"),
-          acceptedCandidateContract: piContract,
-          catalogPath,
-          environment: { NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
-        },
+        { ...input("pi"), environment: { NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF: "evil:tag" } },
         { resolveCatalog: async () => CATALOG },
       ),
     ).rejects.toThrow(/NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF/);
   });
 
-  it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
-    const catalogPath = path.join(fixtureRoot, "catalog.json");
-    const acceptedContract = contract("pi", 3);
-    const differentDigest = `sha256:${"5".repeat(64)}` as const;
-    const differentContract = {
-      ...acceptedContract,
-      digest: differentDigest,
-      reference: `${acceptedContract.image}@${differentDigest}` as const,
-    };
-    fs.writeFileSync(catalogPath, JSON.stringify({ pi: differentContract }), { mode: 0o600 });
-
-    try {
-      await expect(
-        prepareSandboxWorkloadSource({
-          ...input("pi"),
-          acceptedCandidateContract: acceptedContract,
-          catalogPath,
-        }),
-      ).rejects.toThrow("does not match the accepted qualification receipt");
-    } finally {
-      fs.rmSync(fixtureRoot, { force: true, recursive: true });
-    }
-  });
-
-  it("refuses a candidate catalog entry that claims a shipped agent (#7927)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
-    const catalogPath = path.join(fixtureRoot, "catalog.json");
-    fs.writeFileSync(catalogPath, JSON.stringify({ pi: contract("hermes", 1) }), { mode: 0o600 });
-
+  it("refuses the Dockerfile fallback for Pi when the release catalog is unavailable", async () => {
     await expect(
-      prepareSandboxWorkloadSource({
-        ...input("pi"),
-        acceptedCandidateContract: contract("pi", 3),
-        catalogPath,
-      }),
+      prepareSandboxWorkloadSource(
+        { ...input("pi"), policy: "prefer-managed" },
+        {
+          resolveCatalog: async () => {
+            throw new ManagedImageCatalogUnavailableError("registry offline");
+          },
+        },
+      ),
     ).rejects.toThrow(SandboxWorkloadPreparationError);
   });
 
-  it("refuses a candidate while the gate is off (#7927)", async () => {
+  it("refuses Pi before catalog resolution on a runtime that does not qualify it", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
     await expect(
       prepareSandboxWorkloadSource(
-        { ...input("pi"), runtime: runtime("docker") },
-        { resolveCatalog: async () => CATALOG },
+        {
+          ...input("pi"),
+          runtime: runtime("podman", ["openclaw", "hermes", "langchain-deepagents-code"]),
+        },
+        { resolveCatalog },
       ),
-    ).rejects.toThrow(
-      "the selected agent is a release candidate and candidate selection is disabled",
-    );
+    ).rejects.toThrow("driver 'podman' is not qualified for that agent");
+    expect(resolveCatalog).not.toHaveBeenCalled();
   });
 });

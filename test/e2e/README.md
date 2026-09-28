@@ -241,17 +241,15 @@ not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
-The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
-local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
-`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
-`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
-qualification receipts may consume these candidate contracts only when the recorded image-source
-paths are unchanged through the receipt commit.
+The managed-image workflow builds and publishes Pi and adds it to the `managed-pr-contract-*`
+all-agent catalog with the other shipped agents. Its Pi image lanes also start the image through its
+declared entrypoint and prove the dropped PID 1 identity, hardened limits, and persisted proxy and
+corporate CA environment. The Docker activation run exercises every shipped agent. The rootless
+Podman run exercises the agents that the Podman activation qualifies, which excludes Pi.
 
-Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
-managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
-the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
-cohort.
+Pi full lifecycle qualification runs on Linux AMD64 against the exact-commit catalog. Linux ARM64
+remains release-gated by its native managed-image build, startup, and publication in the all-agent
+cohort. The protected multi-architecture and GPU local-inference lanes do not yet build Pi.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
@@ -1728,7 +1726,7 @@ When a PR catalog is selected, explicit targets with no `jobs` selector and no `
 Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.
 Runs without a PR catalog require a trusted main base and managed-image publication; PR runs select the nearest fully successful publication on the PR base first-parent history.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
-It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+It validates the complete all-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
 

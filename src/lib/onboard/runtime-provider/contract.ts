@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { ManagedImageAgent } from "../managed-image/contract";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
@@ -13,10 +14,12 @@ import type {
 } from "./host-local-inference";
 
 export {
+  isManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../managed-image/contract";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
@@ -314,6 +317,8 @@ export type RuntimeProviderNativeArtifactBootstrapResult = Readonly<{
 export type RuntimeProviderManagedImageSupport = {
   readonly exactDigestReferences: boolean;
   readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  /** Agents whose managed images this provider's qualification covers. */
+  readonly agents: readonly ManagedImageAgent[];
   readonly startupProfileContractVersions: readonly number[];
   readonly capabilityContractVersions: readonly number[];
 };

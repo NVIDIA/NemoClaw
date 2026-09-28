@@ -18,12 +18,6 @@ agent-variants: ["pi"]
 
 Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, snapshot, recovery, or cleanup behaviour.
 
-<Warning>
-  The Pi runtime remains a release candidate until final activation adds it to the supported
-  inventory and complete managed-image cohort. Published candidate images and qualification evidence
-  do not make Pi selectable in an ordinary installation.
-</Warning>
-
 ## Initial Support Matrix
 
 | Dimension           | Accepted value                           |
@@ -31,7 +25,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Agent ID            | `pi`                                     |
 | Pi package          | `@earendil-works/pi-coding-agent` 0.84.1 |
 | Node.js             | 22.19 or later                           |
-| Host platform       | Linux AMD64 or Linux ARM64               |
+| Host platform       | Native Linux on AMD64 or ARM64           |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
 | Sandbox route       | `https://inference.local/v1`             |
@@ -40,12 +34,14 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Headless command    | `pi --no-approve --print`                |
 
 Podman, macOS, Windows, WSL, messaging, dashboards, device pairing, managed MCP, host mounts, and automatic third-party package installation are outside the initial matrix.
+Onboarding refuses Pi on a macOS, Windows, or WSL host. Onboarding and rebuild refuse Pi on the Podman runtime. Both refusals happen before NemoClaw creates or replaces a sandbox.
 
 ## Package and Image Identity
 
 NemoClaw pins one Pi package version and npm integrity value. Installation disables package lifecycle scripts. Runtime self-update, package auto-update, mutable image tags, and host-side stock Dockerfile builds are unsupported. The reviewed Dockerfile is used only by trusted CI to create the managed image.
+When the release's managed-image catalog is unavailable, Pi onboarding stops instead of building the Dockerfile on the host.
 
-Candidate image receipts bind each accepted platform to:
+Each published Pi image binds its platform to:
 
 - the canonical `ghcr.io/nvidia/nemoclaw/pi-sandbox` repository;
 - one immutable image digest;
@@ -53,9 +49,7 @@ Candidate image receipts bind each accepted platform to:
 - one release and publication cohort;
 - managed-image, startup-profile, and capability contract version 1.
 
-Final activation must publish both platform digests in the same complete cohort. A partial platform set cannot advertise Pi support.
-When protected Pi image inputs change, repository validation requires refreshed receipts for both platforms.
-Each receipt must match the protected inputs and an image digest in the candidate authority.
+The release workflow publishes both Pi platform digests in the same cohort as OpenClaw, Hermes, and Deep Agents Code. If any agent or platform image is missing, the workflow does not promote the cohort, so a release never advertises a partial Pi image set.
 
 ## Managed Inference and Credentials
 
@@ -104,7 +98,7 @@ Pi starts with `umask 077`, so generated configuration and session files are pri
 The full lifecycle release gate runs one repository-owned target on a native Linux AMD64 runner.
 The target records:
 
-- CLI, workflow, receipt, package, image, platform, and OpenShell identities;
+- CLI, workflow, package, image, platform, and OpenShell identities;
 - Docker as the compute runtime;
 - provider, model, API, route, and policy digest;
 - buildless onboarding through `nemoclaw onboard --agent pi`;
@@ -115,6 +109,6 @@ The target records:
 - absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
 - cleanup after destroy.
 
-Linux ARM64 remains release-gated by its native managed-image build, startup, publication, and receipt evidence. The checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) image receipts must identify one source revision, release, and publication cohort. These receipts prove exact image publication; they are not live agent-runtime results.
+Linux ARM64 remains release-gated by its native managed-image build, entrypoint startup, and publication in the complete cohort. That evidence shows that the published image starts. It is not a live agent-runtime result.
 
-The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the AMD64 receipt. Each trusted lifecycle run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to the passing AMD64 lifecycle result and both platform managed-image results, and must not require manual sandbox repair.
+The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and onboards Pi from the managed-image catalog built for the commit under test. Each trusted lifecycle run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Any failed lifecycle step fails the run; the run has no manual repair step.

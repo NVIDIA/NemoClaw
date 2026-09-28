@@ -3,17 +3,12 @@
 
 # Publish complete managed images from exact base-image contracts. Every
 # agent/platform lane pushes and validates only an immutable digest. The
-# aggregate publisher then proves that all three agents have both supported
+# aggregate publisher then proves that all four agents have both supported
 # Linux architectures before it stages any cohort alias. Only after all staged
 # aliases resolve to the exact validated manifests does the single OpenClaw
 # cohort pointer move. Consumers use that pointer to discover the matching
-# Hermes and Deep Agents Code cohort aliases, so a failed run cannot expose a
-# mixed-agent or mixed-architecture cohort.
-#
-# The Pi candidate lane builds and validates its own per-architecture images and
-# publishes exact candidate digests under a separate contract artifact name. It
-# never contributes to the all-agent cohort, so Pi cannot reach onboarding agent
-# selection before the activation change merges.
+# Hermes, Deep Agents Code, and Pi cohort aliases, so a failed run cannot expose
+# a mixed-agent or mixed-architecture cohort.
 
 name: Images / Build, Test, and Publish Managed Images
 
@@ -29,6 +24,9 @@ on:
       openclaw-base-contract-base64:
         required: true
         type: string
+      pi-base-contract-base64:
+        required: true
+        type: string
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
@@ -40,14 +38,12 @@ on:
       - "Dockerfile"
       - "agents/**"
       - "ci/npm-audit-exceptions.json"
-      - "ci/pi-agent-qualification-v1-*.json"
       - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
       - "src/lib/actions/sandbox/**"
       - "src/lib/adapters/openshell/**"
-      - "src/lib/agent/candidate-authority.ts"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
@@ -495,6 +491,14 @@ jobs:
             base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
             image: nemoclaw-managed-pr/langchain-deepagents-code
             repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
+          - agent: pi
+            display_name: Pi
+            dockerfile: agents/pi/Dockerfile
+            base_dockerfile: agents/pi/Dockerfile.base
+            base_alias: ghcr.io/nvidia/nemoclaw/pi-sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/pi-sandbox-base
+            image: nemoclaw-managed-pr/pi
+            repository: ghcr.io/nvidia/nemoclaw/pi-sandbox
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -807,6 +811,18 @@ jobs:
           fi
 
           discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
+          # Pi disables MCP, so its image must not ship the discovery runtime.
+          if [ "$AGENT" = "pi" ]; then
+            if ! docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" \
+              -c 'test ! -e "$1" && test ! -L "$1"' -- "$discovery_runtime"; then
+              echo "ERROR: Pi managed image unexpectedly ships the MCP discovery runtime." >&2
+              exit 1
+            fi
+            printf 'reference=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+            printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if ! actual_discovery_contract="$(
             docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" -c '
               set -eu
@@ -911,6 +927,17 @@ jobs:
             scripts/checks/run-managed-image-direct-e2e.ts \
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
+            --platform linux/amd64
+
+      - name: Exercise the Pi runtime through its declared entrypoint
+        if: matrix.agent == 'pi'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          scripts/checks/validate-pi-managed-image.sh \
+            --reference "$IMAGE_REFERENCE" \
             --platform linux/amd64
 
       - name: Log in to GHCR for exact same-repository PR digest
@@ -1477,433 +1504,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  pi-candidate:
-    name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
-    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
-    strategy: &pi_candidate_strategy
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    env: &pi_candidate_env
-      BASE_DOCKERFILE: agents/pi/Dockerfile.base
-      CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
-      DOCKERFILE: agents/pi/Dockerfile
-      LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      PLATFORM: ${{ matrix.platform }}
-      PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-      REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
-      # Qualification receipts compare image sources with the PR head, never GitHub's synthetic merge.
-      SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-    steps: &pi_candidate_steps
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.18.1
-      # Pi has no published base alias yet, so the candidate lane builds its own
-      # base on the target architecture. The activation change adds the shared
-      # published-base contract with the rest of the release cohort.
-      - name: Install reviewed npm
-        if: github.event_name == 'pull_request'
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
-
-      - name: Install trusted-event reviewed npm
-        if: github.event_name != 'pull_request'
-        uses: ./.github/actions/setup-reviewed-npm
-
-      - name: Build the exact Pi candidate base
-        id: base
-        shell: bash
-        run: |
-          set -euo pipefail
-          local_base_archive="$RUNNER_TEMP/pi-${{ matrix.arch }}-candidate-base.docker.tar"
-          local_base_oci_archive="$RUNNER_TEMP/pi-${{ matrix.arch }}-candidate-base.oci.tar"
-          local_base_oci="$RUNNER_TEMP/pi-${{ matrix.arch }}-candidate-base.oci"
-          docker buildx build \
-            --platform "$PLATFORM" \
-            --provenance=false \
-            --sbom=false \
-            --file "$BASE_DOCKERFILE" \
-            --tag "$LOCAL_BASE_REFERENCE" \
-            --output "type=docker,dest=${local_base_archive}" \
-            --output "type=oci,dest=${local_base_oci_archive}" \
-            .
-          docker load --input "$local_base_archive"
-          mkdir -p "$local_base_oci"
-          tar -C "$local_base_oci" -xf "$local_base_oci_archive"
-          local_base_oci_digest="$(
-            jq -er '
-              .manifests
-              | if length == 1 then .[0].digest else error("not one image") end
-            ' "$local_base_oci/index.json"
-          )"
-          if [[ ! "$local_base_oci_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: Pi candidate base OCI layout returned an invalid digest." >&2
-            exit 1
-          fi
-          printf 'oci=%s@%s\n' "$local_base_oci" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
-      - name: Validate candidate build args
-        shell: bash
-        run: |
-          set -euo pipefail
-          scripts/check-production-build-args.sh \
-            -f "$DOCKERFILE" \
-            --build-arg "BASE_IMAGE=nemoclaw-pi-base" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
-      - name: Build the Pi candidate managed image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          file: agents/pi/Dockerfile
-          platforms: ${{ matrix.platform }}
-          build-contexts: nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}
-          load: true
-          push: false
-          tags: nemoclaw-managed-candidate/pi:${{ env.SOURCE_REVISION }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ env.SOURCE_REVISION }}
-            io.nvidia.nemoclaw.agent=pi
-            io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
-            io.nvidia.nemoclaw.managed-image.startup-profile=1
-            io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: |
-            BASE_IMAGE=nemoclaw-pi-base
-            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
-          provenance: false
-          sbom: false
-      - name: Validate the Pi candidate runtime contract
-        shell: bash
-        env:
-          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ env.SOURCE_REVISION }}
-        run: |
-          set -euo pipefail
-          image_json="$(docker image inspect "$IMAGE_REFERENCE")"
-          if ! jq -e \
-            --arg platform "$PLATFORM" \
-            '
-              length == 1 and (
-                .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == "pi" and
-                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
-                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
-                .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]
-              )
-            ' <<< "$image_json" >/dev/null
-          then
-            echo "ERROR: the Pi candidate image does not carry the managed-image runtime contract." >&2
-            exit 1
-          fi
-          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$IMAGE_REFERENCE" --version)"
-          expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
-          grep -Fq "$expected_version" <<< "$version"
-          docker run --rm --entrypoint /bin/bash "$IMAGE_REFERENCE" -c '
-            set -eu
-            test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
-            test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
-            node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-            test -f "$runtime"
-            test ! -L "$runtime"
-            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
-            test -x /usr/local/bin/nemoclaw-managed-startup-hold
-            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
-            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
-          '
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # Publish only the canonical digest. The candidate repository has no
-      # consumer alias, so a published candidate stays reachable by digest alone.
-      - name: Publish and validate the Pi candidate image by digest
-        id: publish
-        uses: ./.github/actions/publish-managed-image-digest
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          file: agents/pi/Dockerfile
-          platform: ${{ matrix.platform }}
-          image: ghcr.io/nvidia/nemoclaw/pi-sandbox
-          build-contexts: nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ env.SOURCE_REVISION }}
-            io.nvidia.nemoclaw.agent=pi
-            io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
-            io.nvidia.nemoclaw.managed-image.startup-profile=1
-            io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: |
-            BASE_IMAGE=nemoclaw-pi-base
-            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
-          provenance: false
-          sbom: false
-      - name: Remove Pi publication credentials
-        if: always()
-        shell: bash
-        run: docker logout ghcr.io
-      # The publication above rebuilds the image rather than reusing the
-      # already-validated local one, so revalidate the exact published digest
-      # before the contract records it as the qualified candidate.
-      - name: Validate the published Pi candidate digest
-        shell: bash
-        env:
-          REFERENCE: ${{ steps.publish.outputs.reference }}
-        run: |
-          set -euo pipefail
-          image_json="$(docker image inspect "$REFERENCE")"
-          if ! jq -e \
-            --arg platform "$PLATFORM" \
-            '
-              length == 1 and (
-                .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == "pi" and
-                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
-                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
-                .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]
-              )
-            ' <<< "$image_json" >/dev/null
-          then
-            echo "ERROR: the published Pi candidate digest does not carry the managed-image runtime contract." >&2
-            exit 1
-          fi
-          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$REFERENCE" --version)"
-          expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
-          grep -Fq "$expected_version" <<< "$version"
-          docker run --rm --entrypoint /bin/bash "$REFERENCE" -c '
-            set -eu
-            test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
-            test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
-            node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-            test -f "$runtime"
-            test ! -L "$runtime"
-            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
-            test -x /usr/local/bin/nemoclaw-managed-startup-hold
-            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
-            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
-          '
-      # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
-      # --entrypoint override, so they never prove the entrypoint itself runs
-      # correctly. Start the published digest through its declared entrypoint
-      # with no command, matching a real launch,
-      # and prove PID 1 drops to the sandbox user, hardens its resource limits,
-      # and persists the trusted proxy environment before it holds the sandbox
-      # open.
-      - name: Exercise the Pi candidate through its declared entrypoint
-        shell: bash
-        env:
-          DIGEST: ${{ steps.publish.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
-            exit 1
-          fi
-          reference="${REPOSITORY}@${DIGEST}"
-          corporate_ca_dir="$(mktemp -d "$RUNNER_TEMP/pi-candidate-ca.XXXXXX")"
-          corporate_ca="$corporate_ca_dir/corporate-ca.pem"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -subj '/CN=NemoClaw Pi candidate CA handoff' \
-            -addext 'basicConstraints=critical,CA:TRUE' \
-            -keyout "$corporate_ca_dir/corporate-ca.key" \
-            -out "$corporate_ca" >/dev/null 2>&1
-          chmod 0444 "$corporate_ca"
-          entrypoint_container="$(
-            docker run -d \
-              --network none \
-              --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-              --mount "type=bind,src=$corporate_ca,dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly" \
-              "$reference"
-          )"
-          cleanup_entrypoint_container() {
-            docker rm -f "$entrypoint_container" >/dev/null 2>&1 || true
-            rm -r -- "$corporate_ca_dir"
-          }
-          trap cleanup_entrypoint_container EXIT
-          entrypoint_deadline=$(($(date +%s) + 30))
-          while ! docker logs "$entrypoint_container" 2>&1 | grep -q 'Setting up NemoClaw Pi runtime'; do
-            if [ "$(docker inspect --format '{{.State.Running}}' "$entrypoint_container" 2>/dev/null)" != "true" ]; then
-              echo "ERROR: the Pi candidate entrypoint exited before reaching its held state." >&2
-              docker logs "$entrypoint_container" >&2 || true
-              exit 1
-            fi
-            if [ "$(date +%s)" -ge "$entrypoint_deadline" ]; then
-              echo "ERROR: the Pi candidate entrypoint did not reach its held state in time." >&2
-              docker logs "$entrypoint_container" >&2 || true
-              exit 1
-            fi
-            sleep 1
-          done
-          pid1_status="$(docker exec "$entrypoint_container" cat /proc/1/status)"
-          pid1_uid="$(printf '%s\n' "$pid1_status" | awk '/^Uid:/ {print $2}')"
-          if [ "$pid1_uid" != "999" ]; then
-            echo "ERROR: the Pi candidate entrypoint did not drop PID 1 to the sandbox uid: $pid1_uid" >&2
-            exit 1
-          fi
-          pid1_limits="$(docker exec "$entrypoint_container" cat /proc/1/limits)"
-          if ! grep -qE '^Max processes +512 +512 ' <<< "$pid1_limits"; then
-            echo "ERROR: the Pi candidate entrypoint did not harden PID 1 nproc to exactly 512." >&2
-            exit 1
-          fi
-          if ! grep -qE '^Max open files +65536 +65536 ' <<< "$pid1_limits"; then
-            echo "ERROR: the Pi candidate entrypoint did not harden PID 1 nofile to exactly 65536." >&2
-            exit 1
-          fi
-          runtime_env="$(docker exec "$entrypoint_container" cat /tmp/nemoclaw-proxy-env.sh)"
-          merged_ca=/tmp/nemoclaw-ca-bundle.pem
-          merged_ca_status="$(docker exec "$entrypoint_container" stat -c '%u:%g:%a' "$merged_ca")"
-          if [ "$merged_ca_status" != "999:999:444" ]; then
-            echo "ERROR: the Pi candidate merged CA bundle is not protected: $merged_ca_status" >&2
-            exit 1
-          fi
-          for ca_variable in \
-            SSL_CERT_FILE \
-            CURL_CA_BUNDLE \
-            REQUESTS_CA_BUNDLE \
-            GIT_SSL_CAINFO \
-            NODE_EXTRA_CA_CERTS
-          do
-            expected_export="export ${ca_variable}=${merged_ca}"
-            if ! grep -qF "$expected_export" <<< "$runtime_env"; then
-              echo "ERROR: the Pi candidate entrypoint did not persist the merged CA variable ($expected_export)." >&2
-              exit 1
-            fi
-          done
-          docker exec --user 999:999 "$entrypoint_container" node -e '
-            const fs = require("node:fs");
-            const { X509Certificate } = require("node:crypto");
-            const mounted = new X509Certificate(
-              fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem"),
-            );
-            const bundle = fs.readFileSync(process.argv[1], "utf8");
-            const blocks = bundle.match(
-              /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g,
-            );
-            if (!blocks?.some((block) =>
-              new X509Certificate(block).fingerprint256 === mounted.fingerprint256
-            )) process.exit(1);
-          ' "$merged_ca"
-          docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
-            unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
-            unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
-            source /tmp/nemoclaw-proxy-env.sh
-            proxy_url=http://10.200.0.1:3128
-            for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
-              if [ "${!proxy_variable}" != "$proxy_url" ]; then
-                echo "ERROR: an independent Pi shell did not load $proxy_variable from the runtime environment." >&2
-                exit 1
-              fi
-            done
-            no_proxy_value=localhost,127.0.0.1,::1,10.200.0.1
-            for no_proxy_variable in NO_PROXY no_proxy; do
-              if [ "${!no_proxy_variable}" != "$no_proxy_value" ]; then
-                echo "ERROR: an independent Pi shell did not load $no_proxy_variable from the runtime environment." >&2
-                exit 1
-              fi
-            done
-            merged_ca=/tmp/nemoclaw-ca-bundle.pem
-            for ca_variable in \
-              SSL_CERT_FILE \
-              CURL_CA_BUNDLE \
-              REQUESTS_CA_BUNDLE \
-              GIT_SSL_CAINFO \
-              NODE_EXTRA_CA_CERTS
-            do
-              if [ "${!ca_variable}" != "$merged_ca" ]; then
-                echo "ERROR: an independent Pi shell did not load $ca_variable from the runtime environment." >&2
-                exit 1
-              fi
-            done
-          '
-      - name: Record the exact Pi candidate contract
-        shell: bash
-        env:
-          DIGEST: ${{ steps.publish.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
-            exit 1
-          fi
-          release="v$(node -p 'require("./package.json").version')"
-          contract_dir="$RUNNER_TEMP/managed-candidate-contract"
-          mkdir -p "$contract_dir"
-          jq -n \
-            --arg cohort "$PUBLICATION_COHORT" \
-            --arg digest "$DIGEST" \
-            --arg image "$REPOSITORY" \
-            --arg platform "$PLATFORM" \
-            --arg release "$release" \
-            --arg revision "$SOURCE_REVISION" \
-            --arg reference "${REPOSITORY}@${DIGEST}" \
-            '{
-              contractVersion: 1,
-              agent: "pi",
-              platform: $platform,
-              image: $image,
-              digest: $digest,
-              reference: $reference,
-              source: {
-                repository: "NVIDIA/NemoClaw",
-                revision: $revision,
-                release: $release,
-                cohort: $cohort
-              },
-              startupProfileContractVersion: 1,
-              capabilityContractVersion: 1
-            }' > "$contract_dir/contract.json"
-          node tools/managed-images/validate-candidate-contract.mts \
-            --contract "$contract_dir/contract.json" \
-            --platform "$PLATFORM"
-      # The all-agent activation job downloads managed-pr-contract-* artifacts.
-      # This candidate name is deliberately outside that pattern so a published
-      # Pi digest cannot enter the atomic release cohort.
-      - name: Upload the exact Pi candidate contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-candidate-contract-${{ github.run_id }}-${{ github.run_attempt }}-pi-${{ matrix.arch }}
-          path: ${{ runner.temp }}/managed-candidate-contract/contract.json
-          if-no-files-found: error
-          retention-days: 7
-
-  pi-candidate-publish:
-    name: Publish and validate the Pi candidate managed image (${{ matrix.arch }})
-    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name != 'pull_request'
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
-    strategy: *pi_candidate_strategy
-    env: *pi_candidate_env
-    steps: *pi_candidate_steps
-
   publication-identity:
     name: Record managed image publication identity
     # Failed-job reruns reuse this successful job and its cohort output. A
@@ -2016,6 +1616,26 @@ jobs:
             artifact_platform: linux-arm64
             required_binary: /usr/local/bin/dcode
             runner: ubuntu-24.04-arm
+          - agent: pi
+            arch: amd64
+            display_name: Pi
+            dockerfile: agents/pi/Dockerfile
+            base_image: nvidia/nemoclaw/pi-sandbox-base
+            image: nvidia/nemoclaw/pi-sandbox
+            platform: linux/amd64
+            artifact_platform: linux-amd64
+            required_binary: /usr/local/bin/pi
+            runner: ubuntu-24.04
+          - agent: pi
+            arch: arm64
+            display_name: Pi
+            dockerfile: agents/pi/Dockerfile
+            base_image: nvidia/nemoclaw/pi-sandbox-base
+            image: nvidia/nemoclaw/pi-sandbox
+            platform: linux/arm64
+            artifact_platform: linux-arm64
+            required_binary: /usr/local/bin/pi
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2076,12 +1696,14 @@ jobs:
           DCODE_CONTRACT_BASE64: ${{ inputs.dcode-base-contract-base64 }}
           HERMES_CONTRACT_BASE64: ${{ inputs.hermes-base-contract-base64 }}
           OPENCLAW_CONTRACT_BASE64: ${{ inputs.openclaw-base-contract-base64 }}
+          PI_CONTRACT_BASE64: ${{ inputs.pi-base-contract-base64 }}
         run: |
           set -euo pipefail
           case "$AGENT" in
             openclaw) contract_base64="$OPENCLAW_CONTRACT_BASE64" ;;
             hermes) contract_base64="$HERMES_CONTRACT_BASE64" ;;
             langchain-deepagents-code) contract_base64="$DCODE_CONTRACT_BASE64" ;;
+            pi) contract_base64="$PI_CONTRACT_BASE64" ;;
             *) echo "ERROR: unsupported managed agent: $AGENT" >&2; exit 1 ;;
           esac
           if [ -z "$contract_base64" ] || [ "${#contract_base64}" -gt 131072 ]; then
@@ -2468,7 +2090,7 @@ jobs:
           VALIDATE_HERMES_UNION
               /usr/local/bin/hermes acp --check
               ;;
-            langchain-deepagents-code) ;;
+            langchain-deepagents-code | pi) ;;
             *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
           esac
           VALIDATE_FILESYSTEM
@@ -2498,6 +2120,12 @@ jobs:
               --agent "$AGENT" \
               --image "$reference" \
               --platform "$PLATFORM"
+          if [ "$AGENT" = "pi" ]; then
+            DOCKER_CONFIG="$anonymous_config" \
+              scripts/checks/validate-pi-managed-image.sh \
+                --reference "$reference" \
+                --platform "$PLATFORM"
+          fi
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
 
@@ -2747,6 +2375,8 @@ jobs:
             "managed-image-candidate-${GITHUB_RUN_ID}-hermes-linux-arm64"
             "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-amd64"
             "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-pi-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-pi-linux-arm64"
           )
           expected_agents=(
             openclaw
@@ -2755,8 +2385,12 @@ jobs:
             hermes
             langchain-deepagents-code
             langchain-deepagents-code
+            pi
+            pi
           )
           expected_platforms=(
+            linux/amd64
+            linux/arm64
             linux/amd64
             linux/arm64
             linux/amd64
@@ -2773,7 +2407,7 @@ jobs:
               wc -l | tr -d '[:space:]'
           )"
           if [ "$actual_entry_count" != "${#expected_artifacts[@]}" ]; then
-            echo "ERROR: expected exactly six managed image candidate artifacts." >&2
+            echo "ERROR: expected exactly eight managed image candidate artifacts." >&2
             exit 1
           fi
 
@@ -2831,13 +2465,17 @@ jobs:
               --argjson hermesArm64 "${expected_attempts[3]}" \
               --argjson dcodeAmd64 "${expected_attempts[4]}" \
               --argjson dcodeArm64 "${expected_attempts[5]}" \
+              --argjson piAmd64 "${expected_attempts[6]}" \
+              --argjson piArm64 "${expected_attempts[7]}" \
               '{
                 "openclaw|linux/amd64": $openclawAmd64,
                 "openclaw|linux/arm64": $openclawArm64,
                 "hermes|linux/amd64": $hermesAmd64,
                 "hermes|linux/arm64": $hermesArm64,
                 "langchain-deepagents-code|linux/amd64": $dcodeAmd64,
-                "langchain-deepagents-code|linux/arm64": $dcodeArm64
+                "langchain-deepagents-code|linux/arm64": $dcodeArm64,
+                "pi|linux/amd64": $piAmd64,
+                "pi|linux/arm64": $piArm64
               }'
           )"
           if ! jq -e \
@@ -2879,11 +2517,12 @@ jobs:
                 and (.digest | sha256)
                 and (.size | positive_size)
                 and .annotations == {"in-toto.io/predicate-type": $predicateType};
-              length == 6
+              length == 8
               and ([.[].agent] | group_by(.) | map({key: .[0], value: length}) | from_entries) == {
                 "hermes": 2,
                 "langchain-deepagents-code": 2,
-                "openclaw": 2
+                "openclaw": 2,
+                "pi": 2
               }
               and (group_by(.agent) | all(.[];
                 ([.[].platform] | sort) == ["linux/amd64", "linux/arm64"]
@@ -3022,15 +2661,15 @@ jobs:
                 and .release == (if $release == "" then null else $release end)
                 and (has("aliases") | not)
               )
-              and ([.[].reference] | unique | length) == 6
-              and ([.[].baseReference] | unique | length) == 6
-              and ([.[].publicationEvidence.workloadDescriptor.digest] | unique | length) == 6
+              and ([.[].reference] | unique | length) == 8
+              and ([.[].baseReference] | unique | length) == 8
+              and ([.[].publicationEvidence.workloadDescriptor.digest] | unique | length) == 8
               and ([.[].publicationEvidence.attestations.manifestDescriptor.digest]
-                | unique | length) == 6
+                | unique | length) == 8
               and ([.[].publicationEvidence.attestations.slsa.descriptor.digest]
-                | unique | length) == 6
+                | unique | length) == 8
               and ([.[].publicationEvidence.attestations.spdx.descriptor.digest]
-                | unique | length) == 6
+                | unique | length) == 8
               and (
                 map({key: (.agent + "|" + .platform), value: .image}) | from_entries
               ) == {
@@ -3041,7 +2680,9 @@ jobs:
                 "langchain-deepagents-code|linux/amd64":
                   "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
                 "langchain-deepagents-code|linux/arm64":
-                  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox"
+                  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
+                "pi|linux/amd64": "ghcr.io/nvidia/nemoclaw/pi-sandbox",
+                "pi|linux/arm64": "ghcr.io/nvidia/nemoclaw/pi-sandbox"
               }
             ' "$candidate_set" >/dev/null
           then
@@ -3150,8 +2791,8 @@ jobs:
               exit 1
             fi
           done < <(jq -c '.[]' "$CANDIDATE_SET")
-          if [ "$index" -ne 6 ]; then
-            echo "ERROR: registry evidence revalidation did not cover all six candidates." >&2
+          if [ "$index" -ne 8 ]; then
+            echo "ERROR: registry evidence revalidation did not cover all eight candidates." >&2
             exit 1
           fi
 
@@ -3172,7 +2813,7 @@ jobs:
 
           manifests="$RUNNER_TEMP/managed-image-cohort-manifests.jsonl"
           : > "$manifests"
-          for agent in openclaw hermes langchain-deepagents-code; do
+          for agent in openclaw hermes langchain-deepagents-code pi; do
             agent_candidates="$RUNNER_TEMP/managed-image-${agent}-candidates.json"
             jq -ce --arg agent "$agent" \
               '[.[] | select(.agent == $agent)] | sort_by(.platform)' \
@@ -3302,11 +2943,12 @@ jobs:
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
             '
-            length == 3
+            length == 4
             and ([.[].agent] | sort) == [
               "hermes",
               "langchain-deepagents-code",
-              "openclaw"
+              "openclaw",
+              "pi"
             ]
             and all(.[];
               (.digest | test("^sha256:[0-9a-f]{64}$"))
@@ -3363,9 +3005,9 @@ jobs:
           # Record the intended root pointers for every shipped agent in its
           # exact contract. They are not moved until all v2 evidence artifacts
           # are durable. Hermes ships alongside OpenClaw (#11228), and Deep
-          # Agents Code alongside both (#11341), matching
-          # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
-          shipped_agents=(openclaw hermes langchain-deepagents-code)
+          # Agents Code alongside both (#11341), and Pi alongside all three,
+          # matching SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
+          shipped_agents=(openclaw hermes langchain-deepagents-code pi)
           release_tag="$(jq -r '.[0].release // empty' "$CANDIDATE_SET")"
 
           while IFS= read -r candidate; do
@@ -3508,7 +3150,8 @@ jobs:
              and (.agents | keys | sort) == [
                "hermes",
                "langchain-deepagents-code",
-               "openclaw"
+               "openclaw",
+               "pi"
              ]
              and all(.agents[];
                (.digest | test("^sha256:[0-9a-f]{64}$"))
@@ -3595,6 +3238,22 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload Pi amd64 managed image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-pi-linux-amd64
+          path: ${{ runner.temp }}/managed-image-contracts/pi/linux-amd64/contract.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Pi arm64 managed image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-pi-linux-arm64
+          path: ${{ runner.temp }}/managed-image-contracts/pi/linux-arm64/contract.json
+          if-no-files-found: error
+          retention-days: 90
+
       # Keep this final: an evidence-artifact upload failure must never leave a
       # consumer root pointing at a cohort without its durable v2 contracts.
       - name: Promote durable managed image cohort pointers
@@ -3610,13 +3269,13 @@ jobs:
           fi
           cohort="$PUBLICATION_COHORT"
           # Root pointers move for every shipped agent: OpenClaw, Hermes
-          # (#11228), and Deep Agents Code (#11341), matching
+          # (#11228), Deep Agents Code (#11341), and Pi, matching
           # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
           # Every shipped agent's contract and exact cohort bytes are validated
           # before any pointer moves. A registry failure can leave an earlier
           # agent's pointers moved; rerunning this job reconciles them to this
           # cohort.
-          shipped_agents=(openclaw hermes langchain-deepagents-code)
+          shipped_agents=(openclaw hermes langchain-deepagents-code pi)
           release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
           if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: durable managed image pointer identity is invalid." >&2
@@ -3661,7 +3320,7 @@ jobs:
             expected_digest="$(jq -er --arg agent "$agent" '.agents[$agent].digest' "$cohort_contract")"
             expected_size="$(jq -er --arg agent "$agent" '.agents[$agent].descriptor.size | tostring' "$cohort_contract")"
             if [ "$image" != "ghcr.io/nvidia/nemoclaw/${agent}-sandbox" ] ||
-               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes|langchain-deepagents-code)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
+               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes|langchain-deepagents-code|pi)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
                [ "${exact_reference%@*}" != "$image" ]; then
               echo "ERROR: durable managed image pointer identity is invalid for ${agent}." >&2
               exit 1

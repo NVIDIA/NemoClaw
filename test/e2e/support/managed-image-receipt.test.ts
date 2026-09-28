@@ -39,6 +39,7 @@ const CATALOG_REFERENCES = {
   openclaw: REFERENCE,
   hermes: `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`,
   "langchain-deepagents-code": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"e".repeat(64)}`,
+  pi: `${MANAGED_IMAGE_REPOSITORIES.pi}@sha256:${"0".repeat(64)}`,
 } as const;
 const temporaryHomes: string[] = [];
 
@@ -91,6 +92,10 @@ function selectedEnvironment(home: string): NodeJS.ProcessEnv {
         "langchain-deepagents-code": {
           "linux/amd64": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"e".repeat(64)}`,
           "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@sha256:${"f".repeat(64)}`,
+        },
+        pi: {
+          "linux/amd64": `${MANAGED_IMAGE_REPOSITORIES.pi}@sha256:${"0".repeat(64)}`,
+          "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES.pi}@sha256:${"9".repeat(64)}`,
         },
       },
     }),
@@ -543,6 +548,12 @@ describe("stock E2E managed-image receipt assertion", () => {
       shouldAssertStockManagedImageReceipt("/workspace/bin/nemoclaw.js", ["onboard"], {
         E2E_MANAGED_IMAGE_REVISION: REVISION,
         NEMOCLAW_AGENT: "pi",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAssertStockManagedImageReceipt("/workspace/bin/nemoclaw.js", ["onboard"], {
+        E2E_MANAGED_IMAGE_REVISION: REVISION,
+        NEMOCLAW_AGENT: "nemocua",
       }),
     ).toBe(false);
   });

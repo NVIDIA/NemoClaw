@@ -90,6 +90,7 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
       support: {
         exactDigestReferences: true,
         platforms: [...RUNTIME_PROVIDER_ACTIVATION_PLATFORMS],
+        agents: [...RUNTIME_PROVIDER_ACTIVATION_AGENTS],
         startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
         capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
       },
@@ -344,6 +345,28 @@ describe("runtime provider activation catalog", () => {
     expect(() =>
       createRuntimeProviderActivationCatalog([registration(candidate, incomplete)]),
     ).toThrow("incomplete hostLocalInference authority");
+  });
+
+  it("rejects managed-image agents beyond the qualified activation agents", () => {
+    const candidate = CANDIDATE_TOPOLOGIES[1];
+    const bundle = completeBundle(candidate.providerId);
+    const support = bundle.workload.profile.support!;
+    const unqualified = {
+      ...bundle,
+      workload: {
+        ...bundle.workload,
+        profile: {
+          ...bundle.workload.profile,
+          support: { ...support, agents: [...RUNTIME_PROVIDER_ACTIVATION_AGENTS, "pi"] },
+        },
+      },
+    } as RuntimeProviderBundle;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([registration(candidate, unqualified)]),
+    ).toThrow(
+      `provider '${candidate.providerId}' managed-image agents must be exactly '${RUNTIME_PROVIDER_ACTIVATION_AGENTS.join(",")}' in canonical order`,
+    );
   });
 
   it("rejects declaration and bundle identity mismatch", () => {

@@ -3,6 +3,7 @@
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
+import { RUNTIME_PROVIDER_ACTIVATION_AGENTS } from "./activation";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -89,6 +90,7 @@ const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
   support: {
     exactDigestReferences: true,
     platforms: MANAGED_IMAGE_PLATFORMS,
+    agents: RUNTIME_PROVIDER_ACTIVATION_AGENTS,
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },

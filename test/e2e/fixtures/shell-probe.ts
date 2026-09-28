@@ -3,10 +3,6 @@
 
 import type { ArtifactSink } from "./artifacts.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
-import {
-  CANDIDATE_AGENT_FEATURE_ENV,
-  CANDIDATE_QUALIFICATION_RECEIPT_ENV,
-} from "../../../src/lib/agent/candidate.ts";
 import { CUA_FEATURE_ENV } from "../../../src/lib/cua/feature.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
@@ -83,11 +79,6 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
     input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw",
   );
   const agent = loadAgent(agentName, {
-    [CANDIDATE_AGENT_FEATURE_ENV]:
-      input[CANDIDATE_AGENT_FEATURE_ENV] ?? process.env[CANDIDATE_AGENT_FEATURE_ENV],
-    [CANDIDATE_QUALIFICATION_RECEIPT_ENV]:
-      input[CANDIDATE_QUALIFICATION_RECEIPT_ENV] ??
-      process.env[CANDIDATE_QUALIFICATION_RECEIPT_ENV],
     [CUA_FEATURE_ENV]: input[CUA_FEATURE_ENV] ?? process.env[CUA_FEATURE_ENV],
   });
   const dockerfilePath = agent.dockerfilePath ?? agent.legacyPaths?.dockerfile;

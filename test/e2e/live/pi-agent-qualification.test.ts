@@ -6,11 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
-import {
-  CANDIDATE_AGENT_FEATURE_ENV,
-  CANDIDATE_QUALIFICATION_RECEIPT_ENV,
-} from "../../../src/lib/agent/candidate.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
@@ -23,7 +18,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { shouldAssertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
@@ -34,7 +29,6 @@ import {
   parsePiInferenceEvidence,
   qualificationPlatform,
   qualifyPiReadTask,
-  readPiQualificationReceipt,
 } from "./pi-agent-qualification-events.ts";
 
 const GATEWAY = "nemoclaw";
@@ -275,12 +269,12 @@ function registryDocument(): Record<string, unknown> {
 }
 
 test(
-  "qualifies the protected Pi candidate through Docker and managed inference",
+  "qualifies Pi through Docker and managed inference",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "validate the exact Pi candidate receipt",
+        "select the exact-commit Pi image",
         "onboard Pi without a Dockerfile build",
         "run interactive Pi and preserve its session through rebuild",
         "recover Pi after sandbox and gateway restarts",
@@ -294,21 +288,13 @@ test(
       process.arch,
       process.env.NEMOCLAW_PI_QUALIFICATION_PLATFORM,
     );
-    const receipt = readPiQualificationReceipt(platform);
     expect(inference.mode).toBe("public-nvidia");
     expect(inference.model).toBe(MODEL);
-    const catalogPath = await artifacts.writeJson("pi-candidate-catalog.json", {
-      pi: receipt.contract,
-    });
     const guard = createDockerBuildGuard();
     const env = inference.env({
       ...guard.env,
-      [CANDIDATE_AGENT_FEATURE_ENV]: "1",
-      [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receipt.path,
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_AGENT: "pi",
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       OPENSHELL_DRIVERS: "docker",
@@ -327,76 +313,45 @@ test(
       platform,
       taskVersion: TASK_VERSION,
       contract:
-        "exact candidate onboarding, tool execution, lifecycle recovery, policy denial, and credential isolation",
+        "exact-commit onboarding, tool execution, lifecycle recovery, policy denial, and credential isolation",
     });
 
-    progress.phase("validate the exact Pi candidate receipt");
-    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
-    const copiedSources = piDockerfiles.flatMap((dockerfile) =>
-      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
-        ({ source }) => source,
-      ),
-    );
-    const imageSourcePaths = [
-      ...new Set([".dockerignore", ...piDockerfiles, ...copiedSources]),
-    ].sort();
-    await host.command(
-      "git",
-      [
-        "fetch",
-        "--no-tags",
-        "--depth=1",
-        "https://github.com/NVIDIA/NemoClaw.git",
-        receipt.contract.source.revision,
-      ],
-      { artifactName: "pi-image-source-fetch", timeoutMs: 60_000 },
-    );
-    const sourceParity = await host.command(
-      "git",
-      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
-      { artifactName: "pi-image-source-parity", timeoutMs: 30_000 },
-    );
-    expect(sourceParity.exitCode, resultText(sourceParity)).toBe(0);
+    progress.phase("select the exact-commit Pi image");
+    const onboardArgs = [
+      "onboard",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+      "--no-gpu",
+      "--agent",
+      "pi",
+      "--name",
+      SANDBOX_NAME,
+    ];
+    expect(
+      shouldAssertStockManagedImageReceipt(host.commandPath, onboardArgs, env),
+      "Pi qualification requires the selected exact-commit managed-image cohort",
+    ).toBe(true);
     await preclean(host, lifecycle, sandbox, env);
 
     progress.phase("onboard Pi without a Dockerfile build");
-    const onboard = await host.nemoclaw(
-      [
-        "onboard",
-        "--temp-managed-runtime",
-        "--temp-managed-runtime-catalog",
-        catalogPath,
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-        "--no-gpu",
-        "--agent",
-        "pi",
-        "--name",
-        SANDBOX_NAME,
-      ],
-      {
-        artifactName: "pi-candidate-onboard",
-        env,
-        redactionValues: inference.redactionValues(),
-        timeoutMs: 20 * 60_000,
-      },
-    );
+    const onboard = await host.nemoclaw(onboardArgs, {
+      artifactName: "pi-onboard",
+      env,
+      redactionValues: inference.redactionValues(),
+      timeoutMs: 20 * 60_000,
+    });
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     await host.expectListed(SANDBOX_NAME, { env });
     await sandbox.expectListed(SANDBOX_NAME, { env });
-    const registry = registryDocument() as {
-      sandboxes?: Record<string, { agent?: string; workload?: Record<string, unknown> }>;
-    };
-    expect(registry.sandboxes?.[SANDBOX_NAME]).toMatchObject({
-      agent: "pi",
-      workload: {
-        kind: "managed-image",
-        reference: receipt.contract.reference,
-        sourceRevision: receipt.contract.source.revision,
-        sourceCohort: receipt.contract.source.cohort,
-      },
-    });
+    const image = (
+      registryDocument() as {
+        sandboxes?: Record<
+          string,
+          { workload?: { reference?: string; sourceCohort?: string; sourceRevision?: string } }
+        >;
+      }
+    ).sandboxes?.[SANDBOX_NAME]?.workload;
 
     const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
     const sessionsAfterOnboard = await sessionInventory(sandbox, env, "after-onboard");
@@ -409,7 +364,7 @@ test(
     );
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
-      artifactName: "pi-candidate-rebuild",
+      artifactName: "pi-rebuild",
       env,
       redactionValues: inference.redactionValues(),
       timeoutMs: 20 * 60_000,
@@ -512,7 +467,7 @@ test(
     const destroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
       {
-        artifactName: "pi-candidate-destroy",
+        artifactName: "pi-destroy",
         env,
         redactionValues: inference.redactionValues(),
         timeoutMs: 5 * 60_000,
@@ -538,11 +493,9 @@ test(
       kind: "nemoclaw-pi-agent-qualification-v1",
       candidate: {
         cliRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA || process.env.GITHUB_SHA || null,
-        imageRevision: receipt.contract.source.revision,
-        imageReference: receipt.contract.reference,
-        receiptSha256: receipt.digest,
-        publicationCohort: receipt.contract.source.cohort,
-        imageSourceParity: true,
+        imageRevision: image?.sourceRevision ?? null,
+        imageReference: image?.reference ?? null,
+        publicationCohort: image?.sourceCohort ?? null,
       },
       runtime: {
         platform,
@@ -577,7 +530,7 @@ test(
       platform,
       model: inference.model,
       taskVersion: TASK_VERSION,
-      imageReference: receipt.contract.reference,
+      imageReference: image?.reference ?? null,
       buildCommands: 0,
     });
   },

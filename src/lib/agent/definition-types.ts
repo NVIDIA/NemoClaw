@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDashboardUi } from "./dashboard-ui";
+import type { AgentHostOs } from "./host-os";
 import type { AgentRuntime } from "./runtime-manifest";
 import type { AgentSkillIntegration } from "./skill-integration";
 import type { AgentWebAuth } from "./web-auth";
@@ -167,6 +168,8 @@ export interface AgentDefinition {
   readonly versionScheme?: AgentVersionScheme | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
+  /** Host operating systems the agent is qualified on; null means every host. */
+  readonly hostOs?: readonly AgentHostOs[] | null;
   readonly dockerfileBasePath: string | null;
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;

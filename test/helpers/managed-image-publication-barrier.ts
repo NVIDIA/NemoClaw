@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const publicationAgents = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+export const publicationAgents = ["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const;
 export const publicationPlatforms = ["linux/amd64", "linux/arm64"] as const;
 
 const revision = "a".repeat(40);
@@ -206,6 +206,7 @@ export function runManagedImageBaseRestore(
         DCODE_CONTRACT_BASE64: contract,
         HERMES_CONTRACT_BASE64: contract,
         OPENCLAW_CONTRACT_BASE64: contract,
+        PI_CONTRACT_BASE64: contract,
         RUNNER_TEMP: root,
       },
     });
@@ -307,6 +308,7 @@ agent_for_reference() {
     *'/langchain-deepagents-code-sandbox:'* | *'/langchain-deepagents-code-sandbox@'*)
       printf 'langchain-deepagents-code\\n'
       ;;
+    *'/pi-sandbox:'* | *'/pi-sandbox@'*) printf 'pi\\n' ;;
     *) return 1 ;;
   esac
 }

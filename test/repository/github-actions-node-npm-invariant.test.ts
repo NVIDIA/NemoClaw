@@ -320,7 +320,6 @@ describe("controlled setup-node environments", () => {
     ".github/workflows/managed-images.yaml:pr-build-and-entrypoint",
     ".github/workflows/managed-images.yaml:pr-managed-activation",
     ".github/workflows/managed-images.yaml:pr-managed-podman-activation",
-    ".github/workflows/managed-images.yaml:pi-candidate",
     ".github/workflows/pr.yaml:build-typecheck",
     ".github/workflows/docs-preview-pr.yaml:preview",
   ])("uses immutable npm setup in protected pull request job %s", (owner) => {

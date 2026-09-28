@@ -17,6 +17,7 @@ It provides guided onboarding, managed inference, network policy, managed integr
 - [OpenClaw](https://openclaw.ai) (default)
 - [Hermes](https://get-hermes.ai/)
 - [LangChain Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview)
+- [Pi](https://pi.dev) (native Linux with Docker only)
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
@@ -36,7 +37,7 @@ Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prere
 On a supported DGX or Windows Subsystem for Linux (WSL) host, press Enter at the `Run express install with these settings? [Y/n]:` prompt to use the recommended preset settings for that platform.
 Express install mode installs OpenClaw by default.
 If you accept, refer to [NemoClaw Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html).
-Enter `n` if you want to choose Hermes or LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
+Enter `n` if you want to choose Hermes, LangChain Deep Agents Code, or Pi, a sandbox name, an inference provider, and a model interactively.
 When connecting to a Hermes sandbox from a light terminal, NemoClaw may install a managed `nemoclaw-light` Hermes skin for readable assistant text; it removes that managed skin state again when the terminal no longer needs it and preserves any user-selected Hermes skin.
 
 | Agent | Guide |
@@ -44,6 +45,7 @@ When connecting to a Hermes sandbox from a light terminal, NemoClaw may install 
 | OpenClaw (default) | [Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html) |
 | Hermes | [Quickstart with Hermes](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-hermes.html) |
 | LangChain Deep Agents Code | [Quickstart with LangChain Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.html) |
+| Pi | [Quickstart with Pi](https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/get-started/quickstart.html) |
 
 ## Documentation
 

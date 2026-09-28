@@ -289,7 +289,7 @@ const OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS = [
 
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
-// real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
+// real Dockerfiles so a new COPY instruction still selects the Pi lifecycle target.
 const PI_IMAGE_SOURCE_OWNING_PATHS = [
   ".dockerignore",
   "agents/pi/",
@@ -1226,17 +1226,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     shard: "linux-amd64",
     owningPaths: [
       ...PI_IMAGE_SOURCE_OWNING_PATHS,
-      "ci/pi-agent-qualification-v1-linux-amd64.json",
-      "src/lib/agent/candidate-authority.ts",
-      "src/lib/agent/candidate.ts",
+      "src/lib/agent/host-os.ts",
       "src/lib/onboard/managed-workload/",
       "src/lib/onboard/workload/",
       "test/e2e/live/pi-agent-qualification-events.ts",
     ],
     environment: {
       ...nonInteractive,
-      NEMOCLAW_CANDIDATE_AGENTS: "1",
-      NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT: "ci/pi-agent-qualification-v1-linux-amd64.json",
       NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
       NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
       NEMOCLAW_PI_QUALIFICATION_PLATFORM: "linux/amd64",

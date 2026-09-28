@@ -71,6 +71,7 @@ const MANAGED_AGENT_BASE_POLICIES: Record<ShippedManagedImageAgent, readonly str
   openclaw: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
   hermes: ["agents", "hermes", "policy-additions.yaml"],
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+  pi: ["agents", "pi", "policy-additions.yaml"],
 };
 
 export function protectedManagedStateRootDriverConfig(
@@ -432,6 +433,8 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
       return "/sandbox/.hermes/config.yaml";
     case "langchain-deepagents-code":
       return "/sandbox/.deepagents/config.toml";
+    case "pi":
+      return "/sandbox/.pi/agent/models.json";
   }
 }
 
@@ -553,44 +556,52 @@ export function managedOpenClawHeartbeatProbe(
   ].join(" && ");
 }
 
+const MANAGED_AGENT_READINESS: Readonly<
+  Record<
+    ShippedManagedImageAgent,
+    { readonly executable: string; readonly label: string; readonly probe: string }
+  >
+> = {
+  openclaw: {
+    executable: "/usr/local/bin/openclaw",
+    label: "OpenClaw health endpoint",
+    probe: [
+      "openclaw_health_code=\"$(/usr/bin/curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health || true)\"",
+      'case "$openclaw_health_code" in',
+      "  200 | 401) ;;",
+      "  *) printf 'OpenClaw /health returned HTTP %s\\n' \"${openclaw_health_code:-000}\" >&2; exit 1 ;;",
+      "esac",
+    ].join("\n"),
+  },
+  hermes: {
+    executable: "/usr/local/bin/hermes",
+    label: "Hermes health endpoint",
+    probe: "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8642/health >/dev/null",
+  },
+  "langchain-deepagents-code": {
+    executable: "/usr/local/bin/dcode",
+    label: "LangChain Deep Agents Code version command",
+    probe: "/usr/local/bin/dcode --version >/dev/null",
+  },
+  pi: {
+    executable: "/usr/local/bin/pi",
+    label: "Pi version command",
+    probe: "/usr/local/bin/pi --version >/dev/null",
+  },
+};
+
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
 ): string {
-  const healthProbe =
-    agent === "openclaw"
-      ? [
-          "openclaw_health_code=\"$(/usr/bin/curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health || true)\"",
-          'case "$openclaw_health_code" in',
-          "  200 | 401) ;;",
-          "  *) printf 'OpenClaw /health returned HTTP %s\\n' \"${openclaw_health_code:-000}\" >&2; exit 1 ;;",
-          "esac",
-        ].join("\n")
-      : agent === "hermes"
-        ? "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8642/health >/dev/null"
-        : "/usr/local/bin/dcode --version >/dev/null";
-  const readinessLabel =
-    agent === "openclaw"
-      ? "OpenClaw health endpoint"
-      : agent === "hermes"
-        ? "Hermes health endpoint"
-        : "LangChain Deep Agents Code version command";
+  const readiness = MANAGED_AGENT_READINESS[agent];
   const probeStep = (label: string, command: string) =>
     `if ! {\n${command}\n}; then\n  printf '%s\\n' ${JSON.stringify(
       `managed-image startup probe failed: ${label}`,
     )} >&2\n  exit 1\nfi`;
   return [
     "set -u",
-    probeStep(
-      `${agent} executable`,
-      `test -x ${
-        agent === "openclaw"
-          ? "/usr/local/bin/openclaw"
-          : agent === "hermes"
-            ? "/usr/local/bin/hermes"
-            : "/usr/local/bin/dcode"
-      }`,
-    ),
+    probeStep(`${agent} executable`, `test -x ${readiness.executable}`),
     probeStep(
       `${agent} managed model configuration`,
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
@@ -647,7 +658,7 @@ export function managedImageOpenShellProbe(
       "managed startup CA bundle owner, group, and mode must equal 0:0:444",
       'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-ca-bundle.pem)" = "0:0:444"',
     ),
-    probeStep(readinessLabel, healthProbe),
+    probeStep(readiness.label, readiness.probe),
   ].join("\n");
 }
 
@@ -1118,8 +1129,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ...(managedStateDriverConfig ? ["--driver-config-json", managedStateDriverConfig] : []),
       ...(input.gpu ? ["--gpu"] : []),
     ];
+    const resolvedAgent = resolveAgent({ agentFlag: input.agent });
     const launch = prepareSandboxCreateLaunch({
-      agent: resolveAgent({ agentFlag: input.agent }),
+      agent: resolvedAgent,
       sandboxName: input.sandbox,
       chatUiUrl: "",
       createArgs,
@@ -1226,7 +1238,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           sandboxStartupCommand: launch.sandboxStartupCommand,
           prebuild,
           restoreBackupPath: null,
-          terminalAgent: input.agent === "langchain-deepagents-code",
+          terminalAgent: resolvedAgent?.runtime?.kind === "terminal",
           managedImage: true,
           ...startupPlan,
           ...(failureInjection?.flowInput ?? {}),

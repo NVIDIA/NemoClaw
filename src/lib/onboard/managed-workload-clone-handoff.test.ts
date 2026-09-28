@@ -9,6 +9,7 @@ import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runti
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import {
@@ -27,6 +28,7 @@ const PORTABLE_PROFILE = {
   support: {
     exactDigestReferences: true,
     platforms: ["linux/amd64", "linux/arm64"],
+    agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     startupProfileContractVersions: [1],
     capabilityContractVersions: [1],
   },

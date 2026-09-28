@@ -66,9 +66,10 @@ decision. Do not put the provider behavior in generic gateway code.
 
 ### Workload and host-local inference
 
-The workload profile declares the accepted immutable workload identity. `acceptsReceipt()` must
-validate the receipt kind, platform, and contract versions. Do not accept a tag when the active
-contract requires a digest.
+The workload profile declares the accepted immutable workload identity. Managed-image support lists
+the agents that the provider's qualification covers; onboarding and rebuild refuse the managed image
+of any other agent before mutation. `acceptsReceipt()` must validate the receipt kind, platform, and
+contract versions. Do not accept a tag when the active contract requires a digest.
 
 A supported host-local inference surface lists unique accepted services. `createOperation()`
 returns a provider-owned `HostLocalInferenceOperation`. Keep credentials out of runtime receipts

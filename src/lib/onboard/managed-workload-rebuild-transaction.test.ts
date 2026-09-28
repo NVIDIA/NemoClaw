@@ -19,6 +19,7 @@ import {
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import type { BuiltManagedStartupOnboardProfile } from "./managed-startup/onboard-profile";
@@ -250,6 +251,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
         support: {
           exactDigestReferences: true,
           platforms: ["linux/amd64", "linux/arm64"],
+          agents: SHIPPED_MANAGED_IMAGE_AGENTS,
           startupProfileContractVersions: [1],
           capabilityContractVersions: [1],
         },

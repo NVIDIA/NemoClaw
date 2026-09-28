@@ -26,7 +26,10 @@ import { loadAgent } from "../../agent/defs";
 import * as registry from "../../state/registry";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
-import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../managed-image/contract";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupProfile,
@@ -54,6 +57,7 @@ const PORTABLE_PROFILE = {
   support: {
     exactDigestReferences: true,
     platforms: ["linux/amd64", "linux/arm64"],
+    agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     startupProfileContractVersions: [1],
     capabilityContractVersions: [1],
   },
@@ -438,6 +442,27 @@ describe("RuntimeProviderBundle registry contract", () => {
       ).toThrow(RuntimeProviderRegistrationError);
     },
   );
+
+  it.each([
+    ["no agents", []],
+    ["an unknown agent", ["openclaw", "not-an-agent"]],
+    ["a duplicate agent", ["pi", "pi"]],
+  ])("rejects managed-image support that lists %s", (_label, agents) => {
+    const bundle = mxcBundle();
+    const workload = {
+      ...bundle.workload,
+      profile: {
+        ...bundle.workload.profile,
+        support: { ...PORTABLE_PROFILE.support, agents },
+      },
+    };
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "workload", workload as never)],
+      ]),
+    ).toThrow("workload profile for 'mxc' has invalid managed-image agents");
+  });
 
   it.each([
     [undefined, /missing readOnlyHostMounts surface/u],

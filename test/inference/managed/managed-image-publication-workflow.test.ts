@@ -223,6 +223,7 @@ describe("complete managed-image publication workflow", () => {
         "build-and-push-hermes",
         "build-and-push-dcode",
         "build-and-push-openclaw",
+        "build-and-push-pi",
         "reviewed-npm-audit",
       ],
       permissions: {
@@ -238,6 +239,7 @@ describe("complete managed-image publication workflow", () => {
       "dcode-base-contract-base64": needsOutput("build-and-push-dcode", "contract-base64"),
       "hermes-base-contract-base64": needsOutput("build-and-push-hermes", "contract-base64"),
       "openclaw-base-contract-base64": needsOutput("build-and-push-openclaw", "contract-base64"),
+      "pi-base-contract-base64": needsOutput("build-and-push-pi", "contract-base64"),
     });
     const reviewedAudit = required(
       baseWorkflow.jobs?.["reviewed-npm-audit"],
@@ -545,6 +547,7 @@ describe("complete managed-image publication workflow", () => {
       "hermes",
       "langchain-deepagents-code",
       "openclaw",
+      "pi",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
     expect(matrixByAgent.get("openclaw")?.base_dockerfile).toBe("Dockerfile.base");
@@ -552,6 +555,7 @@ describe("complete managed-image publication workflow", () => {
     expect(matrixByAgent.get("langchain-deepagents-code")?.base_dockerfile).toBe(
       "agents/langchain-deepagents-code/Dockerfile.base",
     );
+    expect(matrixByAgent.get("pi")?.base_dockerfile).toBe("agents/pi/Dockerfile.base");
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
@@ -965,80 +969,34 @@ fi
     expect(builder["runs-on"]).toBe("${{ matrix.runner }}");
     expect(builder["timeout-minutes"]).toBe(120);
     expect(builder.strategy?.["fail-fast"]).toBe(false);
-    expect(builder.strategy?.matrix?.include).toEqual([
-      {
-        agent: "openclaw",
-        arch: "amd64",
-        display_name: "OpenClaw",
-        dockerfile: "Dockerfile",
-        base_image: "nvidia/nemoclaw/sandbox-base",
-        image: "nvidia/nemoclaw/openclaw-sandbox",
-        platform: "linux/amd64",
-        artifact_platform: "linux-amd64",
-        required_binary: "/usr/local/bin/openclaw",
-        runner: "ubuntu-24.04",
-      },
-      {
-        agent: "openclaw",
-        arch: "arm64",
-        display_name: "OpenClaw",
-        dockerfile: "Dockerfile",
-        base_image: "nvidia/nemoclaw/sandbox-base",
-        image: "nvidia/nemoclaw/openclaw-sandbox",
-        platform: "linux/arm64",
-        artifact_platform: "linux-arm64",
-        required_binary: "/usr/local/bin/openclaw",
-        runner: "ubuntu-24.04-arm",
-      },
-      {
-        agent: "hermes",
-        arch: "amd64",
-        display_name: "Hermes",
-        dockerfile: "agents/hermes/Dockerfile",
-        base_image: "nvidia/nemoclaw/hermes-sandbox-base",
-        image: "nvidia/nemoclaw/hermes-sandbox",
-        platform: "linux/amd64",
-        artifact_platform: "linux-amd64",
-        required_binary: "/usr/local/bin/hermes",
-        runner: "ubuntu-24.04",
-      },
-      {
-        agent: "hermes",
-        arch: "arm64",
-        display_name: "Hermes",
-        dockerfile: "agents/hermes/Dockerfile",
-        base_image: "nvidia/nemoclaw/hermes-sandbox-base",
-        image: "nvidia/nemoclaw/hermes-sandbox",
-        platform: "linux/arm64",
-        artifact_platform: "linux-arm64",
-        required_binary: "/usr/local/bin/hermes",
-        runner: "ubuntu-24.04-arm",
-      },
-      {
-        agent: "langchain-deepagents-code",
-        arch: "amd64",
-        display_name: "Deep Agents Code",
-        dockerfile: "agents/langchain-deepagents-code/Dockerfile",
-        base_image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox",
-        platform: "linux/amd64",
-        artifact_platform: "linux-amd64",
-        required_binary: "/usr/local/bin/dcode",
-        runner: "ubuntu-24.04",
-      },
-      {
-        agent: "langchain-deepagents-code",
-        arch: "arm64",
-        display_name: "Deep Agents Code",
-        dockerfile: "agents/langchain-deepagents-code/Dockerfile",
-        base_image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox",
-        platform: "linux/arm64",
-        artifact_platform: "linux-arm64",
-        required_binary: "/usr/local/bin/dcode",
-        runner: "ubuntu-24.04-arm",
-      },
-    ]);
+    const lanes = [
+      ["openclaw", "OpenClaw", "Dockerfile", "sandbox-base", "openclaw"],
+      ["hermes", "Hermes", "agents/hermes/Dockerfile", "hermes-sandbox-base", "hermes"],
+      [
+        "langchain-deepagents-code",
+        "Deep Agents Code",
+        "agents/langchain-deepagents-code/Dockerfile",
+        "langchain-deepagents-code-sandbox-base",
+        "dcode",
+      ],
+      ["pi", "Pi", "agents/pi/Dockerfile", "pi-sandbox-base", "pi"],
+    ] as const;
+    expect(builder.strategy?.matrix?.include).toEqual(
+      lanes.flatMap(([agent, displayName, dockerfile, baseImage, binary]) =>
+        (["amd64", "arm64"] as const).map((arch) => ({
+          agent,
+          arch,
+          display_name: displayName,
+          dockerfile,
+          base_image: `nvidia/nemoclaw/${baseImage}`,
+          image: `nvidia/nemoclaw/${agent}-sandbox`,
+          platform: `linux/${arch}`,
+          artifact_platform: `linux-${arch}`,
+          required_binary: `/usr/local/bin/${binary}`,
+          runner: arch === "amd64" ? "ubuntu-24.04" : "ubuntu-24.04-arm",
+        })),
+      ),
+    );
     expect(
       builder.strategy?.matrix?.include?.map(({ agent, platform }) => `${agent}|${platform}`),
     ).toEqual(
@@ -1155,6 +1113,24 @@ fi
     expect(steps.indexOf(evidence)).toBeLessThan(steps.indexOf(contract));
   });
 
+  it("starts the Pi image through its declared entrypoint in the PR and publication lanes", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const prBuilder = managedPrBuilder(workflow);
+    const prValidation = step(prBuilder, "Exercise the Pi runtime through its declared entrypoint");
+    const publication = step(
+      managedPublisher(workflow),
+      "Validate exact managed image before promotion",
+    );
+
+    expect(prValidation.if).toBe("matrix.agent == 'pi'");
+    expect(prValidation.run).toContain("scripts/checks/validate-pi-managed-image.sh");
+    expect(publication.run).toContain('if [ "$AGENT" = "pi" ]; then');
+    expect(publication.run).toContain("scripts/checks/validate-pi-managed-image.sh");
+    expect(step(prBuilder, "Validate exact PR managed image contract").run).toContain(
+      "Pi managed image unexpectedly ships the MCP discovery runtime.",
+    );
+  });
+
   it("cannot publish a public mutable alias from an individual agent lane (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const publisher = managedPublisher(workflow);
@@ -1162,7 +1138,7 @@ fi
     const source = steps.map((candidate) => candidate.run ?? "").join("\n");
     const contract = step(publisher, "Export validated managed image candidate");
 
-    expect(publisher.strategy?.matrix?.include).toHaveLength(6);
+    expect(publisher.strategy?.matrix?.include).toHaveLength(8);
     expect(steps.map((candidate) => candidate.name)).not.toContain(
       "Promote validated managed image aliases",
     );
@@ -1204,7 +1180,7 @@ fi
       actionSource.includes('"secret-files":"${{ inputs.secret-files }}"'),
     ]).toEqual([true, true]);
   });
-  it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
+  it("holds every alias behind the exact eight-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const identity = workflow.jobs?.["publication-identity"];
     const publisher = managedPublisher(workflow);
@@ -1242,13 +1218,13 @@ fi
     expect(barrier.env?.PUBLICATION_COHORT).toBe(
       "${{ needs.publication-identity.outputs.cohort }}",
     );
-    expect(barrier.run).toContain("expected exactly six managed image candidate artifacts");
+    expect(barrier.run).toContain("expected exactly eight managed image candidate artifacts");
     expect(barrier.run).toContain("managed image candidate producer attempt is invalid");
     expect(barrier.run).toContain('expected_attempts+=("$expected_attempt")');
-    expect(barrier.run).toContain("length == 6");
+    expect(barrier.run).toContain("length == 8");
     expect(barrier.run).toContain('([.[].platform] | sort) == ["linux/amd64", "linux/arm64"]');
-    expect(barrier.run).toContain("([.[].reference] | unique | length) == 6");
-    expect(barrier.run).toContain("([.[].baseReference] | unique | length) == 6");
+    expect(barrier.run).toContain("([.[].reference] | unique | length) == 8");
+    expect(barrier.run).toContain("([.[].baseReference] | unique | length) == 8");
     expect(barrier.run).toContain("publicationEvidence.workloadDescriptor.digest");
     expect(barrier.run).toContain("publicationEvidence.attestations.manifestDescriptor.digest");
     expect(barrier.run).toContain("https://slsa.dev/provenance/v1");
@@ -1286,17 +1262,19 @@ fi
       expect(steps.indexOf(upload)).toBeLessThan(steps.indexOf(pointer));
     });
 
-    expect(promotion.run).toContain("for agent in openclaw hermes langchain-deepagents-code");
+    expect(promotion.run).toContain("for agent in openclaw hermes langchain-deepagents-code pi");
     expect(promotion.run).toContain('--metadata-file "$cohort_metadata"');
     expect(promotion.run).toContain('"${descriptor_args[@]}"');
     expect(promotion.run).toContain('cmp -s "$expected_descriptors" "$actual_descriptors"');
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
+    expect(promotion.run).toContain(
+      "shipped_agents=(openclaw hermes langchain-deepagents-code pi)",
+    );
     expect(promotion.run).toContain(
       'aliases+=("$(jq -r \'.image\' <<<"$cohort_manifest"):${GITHUB_SHA}")',
     );
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
-    expect(pointer.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
+    expect(pointer.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code pi)");
     expect(pointer.run).toContain(
       'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );
@@ -1320,7 +1298,7 @@ fi
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("expected exactly six managed image candidate artifacts");
+    expect(result.stderr).toContain("expected exactly eight managed image candidate artifacts");
     expect(result.dockerCalls).toEqual([]);
     expect(barrier.run).not.toContain("imagetools create");
   });

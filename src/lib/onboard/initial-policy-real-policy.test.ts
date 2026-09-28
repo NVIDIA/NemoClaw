@@ -90,6 +90,7 @@ describe("initial sandbox policy real preset merge", () => {
     openclaw: [["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"]],
     hermes: [["agents", "hermes", "policy-additions.yaml"]],
     "langchain-deepagents-code": [["agents", "langchain-deepagents-code", "policy-additions.yaml"]],
+    pi: [["agents", "pi", "policy-additions.yaml"]],
   } as const satisfies Record<
     (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
     readonly (readonly string[])[]
@@ -99,7 +100,7 @@ describe("initial sandbox policy real preset merge", () => {
     managedImagePolicyPathsByAgent[agent].map((policyPath) => ({ path: policyPath, agent })),
   );
   const shippingPolicyCases = managedImagePolicyCases.filter(
-    ({ agent }) => agent !== "langchain-deepagents-code",
+    ({ agent }) => agent !== "langchain-deepagents-code" && agent !== "pi",
   );
   const managedStartupExchangePaths = [
     MANAGED_STARTUP_MERGED_CA_FILE,
@@ -118,7 +119,7 @@ describe("initial sandbox policy real preset merge", () => {
     );
 
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
-    expect(policyIdentities).toHaveLength(3);
+    expect(policyIdentities).toHaveLength(4);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
     expect(managedStartupExchangePaths.map((exchangePath) => path.dirname(exchangePath))).toEqual([
       "/tmp",
