@@ -32,9 +32,9 @@ export function handleOnboardCommandError(
   const sanitizedError = sanitizeOnboardFailure(error);
   if (cancellationCode === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
-    // Let the onboard signal handler print resumable-step guidance and
-    // preserve status 130 without leaking this rejected prompt error through
-    // oclif as a raw stack trace (#7439).
+    // Preserve interruption if the event loop drains before signal delivery,
+    // without sending the rejected prompt through Oclif's error renderer.
+    process.exitCode = 130;
     return null;
   }
   // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,

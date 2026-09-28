@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
+  createManagedImageSandboxWithDiagnostics,
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
   MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   managedImageProtectedSandboxName,
@@ -34,7 +35,11 @@ import {
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
-import { validateManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import {
+  encodeManagedStartupProfile,
+  validateManagedStartupProfile,
+} from "../../../src/lib/onboard/managed-startup/profile.ts";
+import { createManagedStartupRootApplyRequest } from "../../../src/lib/onboard/managed-startup/root-apply.ts";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
@@ -69,7 +74,142 @@ function runManagedOpenClawHeartbeatProbe(
   }
 }
 
+function managedProfileApplyFixture(failure: Error | null = null) {
+  const input = {
+    runtimeProvider: {} as RuntimeProviderBundle,
+    sandboxName: VALID_SANDBOX,
+    sandboxId: "fixture-sandbox-id",
+    bootstrapIdentity: "b".repeat(64),
+    expectedContainerId: "c".repeat(64),
+    request: createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(
+        withManagedImageLocalInferenceProfile(
+          managedStartupE2eProfile("openclaw"),
+          resolveManagedImageLocalInferenceRoute("ollama"),
+          "qwen3.5:9b",
+        ),
+      ),
+    }),
+  };
+  const transaction = {
+    agent: "openclaw" as const,
+    bootstrapIdentity: input.bootstrapIdentity,
+    containerId: input.expectedContainerId,
+    image: `sha256:${"a".repeat(64)}`,
+    protocol: "identity-bound" as const,
+    providerId: "docker" as const,
+  };
+  const events: string[] = [];
+  const operations = {
+    applyProviderManagedStartupRootRequest: vi.fn(() => {
+      events.push("apply");
+      return transaction;
+    }),
+    finalizeProviderManagedStartupSharedState: vi.fn(() => {
+      events.push("commit");
+      return { supervisorReady: !failure, failure };
+    }),
+    releaseProviderManagedStartupHold: vi.fn(() => {
+      events.push("release");
+    }),
+  };
+  const owner = {
+    runtimeProvider: input.runtimeProvider,
+    sandboxName: input.sandboxName,
+    sandboxId: input.sandboxId,
+    transaction,
+  };
+  return { input, operations, owner, events };
+}
+
 describe("protected managed-image runtime contract", () => {
+  it("applies the selected profile and commits before releasing the exact workload", () => {
+    const { input, operations, owner, events } = managedProfileApplyFixture();
+    const onPhase = vi.fn();
+    const transaction = MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+      input,
+      { onPhase },
+      operations,
+    );
+    expect(transaction).toBe(owner.transaction);
+    expect(onPhase.mock.calls).toEqual([["apply"], ["commit"], ["release"]]);
+    expect(operations.applyProviderManagedStartupRootRequest).toHaveBeenCalledWith(input);
+    expect(operations.finalizeProviderManagedStartupSharedState).toHaveBeenCalledWith({
+      ...owner,
+      supervisorReady: true,
+    });
+    expect(operations.releaseProviderManagedStartupHold).toHaveBeenCalledWith({
+      ...owner,
+      profileFingerprint: input.request.profileFingerprint,
+    });
+    expect(events).toEqual(["apply", "commit", "release"]);
+  });
+
+  it("keeps the workload held when profile commit fails", () => {
+    const failure = new Error("shared-state commit failed");
+    const { input, operations, owner, events } = managedProfileApplyFixture(failure);
+    const onApplied = vi.fn();
+    expect(() =>
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+        input,
+        { onApplied },
+        operations,
+      ),
+    ).toThrow(failure);
+    expect(onApplied).toHaveBeenCalledWith(owner.transaction);
+    expect(operations.releaseProviderManagedStartupHold).not.toHaveBeenCalled();
+    expect(events).toEqual(["apply", "commit"]);
+  });
+
+  it("reuses production release retry without repeating profile application or commit", () => {
+    const { input, operations, owner, events } = managedProfileApplyFixture();
+    operations.releaseProviderManagedStartupHold.mockImplementationOnce(() => {
+      events.push("release");
+      throw new Error("release unavailable");
+    });
+    MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+      input,
+      {},
+      operations,
+    );
+    const release = { ...owner, profileFingerprint: input.request.profileFingerprint };
+    expect(operations.releaseProviderManagedStartupHold.mock.calls).toEqual([[release], [release]]);
+    expect(events).toEqual(["apply", "commit", "release", "release"]);
+  });
+
+  it("retains redacted create-client failure evidence without authorizing a retry", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "managed-create-diagnostic-"));
+    const executable = path.join(directory, "openshell-fixture");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    fs.writeFileSync(
+      executable,
+      "#!/bin/sh\necho 'create failed: https://user:password@example.test' >&2\nexit 2\n",
+      { mode: 0o700 },
+    );
+    try {
+      const createSandbox = createManagedImageSandboxWithDiagnostics(
+        () => {
+          throw new Error("unexpected buffered command");
+        },
+        () => executable,
+      );
+      const result = await createSandbox({
+        sandboxName: VALID_SANDBOX,
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        source: { reference: IMAGE },
+        startupCommand: ["true"],
+        environment: {},
+      });
+      expect(result).toMatchObject({ status: 2, ambiguous: true, sawProgress: false });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("create failed:"));
+      expect(error.mock.calls.flat().join(" ")).not.toContain("user:password");
+    } finally {
+      error.mockRestore();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("projects declared managed state roots through the selected provider driver", () => {
     const mount = {
       type: "volume" as const,
@@ -253,11 +393,15 @@ describe("protected managed-image runtime contract", () => {
     expect(diagnostic).toHaveLength(8_000);
   });
 
-  it("loads managed state-volume operations through the existing onboard boundary", () => {
+  it("loads managed workload operations through the existing onboard boundary", () => {
+    expect(MANAGED_IMAGE_ONBOARD.createForwardPortObserver).toBeTypeOf("function");
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
       "function",
     );
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.removeManagedStateVolumes).toBeTypeOf(
+      "function",
+    );
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup).toBeTypeOf(
       "function",
     );
   });
@@ -270,6 +414,7 @@ describe("protected managed-image runtime contract", () => {
           runCaptureOpenshell: () => "",
           sleepSeconds: () => undefined,
           startGatewayForRecovery: async () => undefined,
+          createForwardPortObserver: () => async () => [],
         },
       }),
     ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");

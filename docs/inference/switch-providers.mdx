@@ -64,11 +64,8 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 <AgentOnly variant="hermes">
 
-For Hermes, NemoClaw updates `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
-When the dashboard profile exists, NemoClaw also mirrors the route into `/sandbox/.hermes/profiles/dashboard-home/config.yaml`; a normal runtime route change does not rebuild or restart Hermes.
-If that dashboard mirror cannot be confirmed, the route and main config remain committed but the command exits nonzero.
-Follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
-A missing dashboard profile is treated as disabled and does not fail the switch.
+For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
+The gateway, CLI, TUI, and Web Dashboard all read that shared configuration; a normal runtime route change does not rebuild or restart Hermes.
 
 </AgentOnly>
 

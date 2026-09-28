@@ -95,14 +95,15 @@ export function buildRestoreCleanupCommand(
 }
 
 /** Internal capture capability; never populated from command arguments or a persisted manifest. */
-export interface CapturedOpenClawState {
+export interface CapturedAgentState {
   readonly sandboxName: string;
+  readonly agentName: "openclaw" | "langchain-deepagents-code";
   readonly directory: string;
   assertCurrent(): void;
 }
 
-export function copyCapturedOpenClawState(
-  source: CapturedOpenClawState,
+export function copyCapturedAgentState(
+  source: CapturedAgentState,
   destination: string,
   directories: readonly string[],
   prefixes: readonly string[],
@@ -122,7 +123,10 @@ export function copyCapturedOpenClawState(
     const location = path.join(source.directory, relative);
     const entry = fs.lstatSync(location);
     if (entry.isSymbolicLink()) {
-      if (!isAllowedStateSymlink(relative.split(path.sep).join("/"), fs.readlinkSync(location))) {
+      if (
+        source.agentName !== "openclaw" ||
+        !isAllowedStateSymlink(relative.split(path.sep).join("/"), fs.readlinkSync(location))
+      ) {
         throw new Error("Stopped state contains an unsupported symbolic link.");
       }
       return;
@@ -135,29 +139,52 @@ export function copyCapturedOpenClawState(
   };
   const copiedDirectories: string[] = [];
   const copiedFiles: string[] = [];
-  for (const entry of fs.readdirSync(source.directory, { withFileTypes: true })) {
-    const selectedDirectory =
-      directories.includes(entry.name) || prefixes.some((prefix) => entry.name.startsWith(prefix));
-    const selectedFile = files.find((file) => file.path === entry.name);
-    if (!selectedDirectory && !selectedFile) continue;
-    if (!/^[A-Za-z0-9._-]+$/u.test(entry.name) || entry.name === "." || entry.name === "..") {
+  const selectedDirectories = new Set([
+    ...directories,
+    ...fs
+      .readdirSync(source.directory)
+      .filter((name) => prefixes.some((prefix) => name.startsWith(prefix))),
+  ]);
+  const selectedPaths = new Set([...selectedDirectories, ...files.map((file) => file.path)]);
+  for (const relative of selectedPaths) {
+    const parts = relative.split("/");
+    if (parts.some((part) => !/^[A-Za-z0-9._-]+$/u.test(part) || part === "." || part === "..")) {
       throw new Error("Stopped state contains an invalid declared state path.");
     }
+    let absent = false;
+    for (let index = 1; index <= parts.length; index += 1) {
+      const current = path.join(source.directory, ...parts.slice(0, index));
+      let entry: fs.Stats;
+      try {
+        entry = fs.lstatSync(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        absent = true;
+        break;
+      }
+      if (index < parts.length && (!entry.isDirectory() || entry.isSymbolicLink()))
+        throw new Error("Stopped state contains an unsafe declared path parent.");
+    }
+    if (absent) continue;
+    const entry = fs.lstatSync(path.join(source.directory, relative));
+    const selectedDirectory = selectedDirectories.has(relative);
+    const selectedFile = files.find((file) => file.path === relative);
     if (
       (selectedDirectory && !entry.isDirectory()) ||
       (selectedFile && (!entry.isFile() || selectedFile.strategy !== "copy"))
     ) {
-      throw new Error("Stopped state does not match the declared OpenClaw backup contract.");
+      throw new Error("Stopped state does not match the declared agent backup contract.");
     }
-    inspectTree(entry.name);
-    fs.cpSync(path.join(source.directory, entry.name), path.join(destination, entry.name), {
+    inspectTree(relative);
+    fs.mkdirSync(path.dirname(path.join(destination, relative)), { recursive: true, mode: 0o700 });
+    fs.cpSync(path.join(source.directory, relative), path.join(destination, relative), {
       recursive: true,
       dereference: false,
       verbatimSymlinks: true,
       force: false,
       errorOnExist: true,
     });
-    (selectedDirectory ? copiedDirectories : copiedFiles).push(entry.name);
+    (selectedDirectory ? copiedDirectories : copiedFiles).push(relative);
   }
   source.assertCurrent();
   return { directories: copiedDirectories, files: copiedFiles };
