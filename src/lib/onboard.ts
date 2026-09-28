@@ -3027,6 +3027,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               hydrateCredentialEnv,
             }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+            hasSandboxLifecycleAuthority: (name) => registry.getSandbox(name) !== null,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
             promptValidatedSandboxName,

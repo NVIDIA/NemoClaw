@@ -10,6 +10,7 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { createSession } from "../../state/onboard-session";
 import { withPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
@@ -17,8 +18,13 @@ import { runOnboardCommand } from "../command";
 import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "../resume-hint";
 import { handleProviderInferenceState } from "../machine/handlers/provider-inference";
-import { baseOptions, createDeps } from "../machine/handlers/provider-inference.test-support";
 import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "../machine/handlers/provider-inference.test-support";
+import {
+  HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   type HostLocalInferenceGatewayMutation,
   type HostLocalInferenceStartupSelection,
   prepareHostLocalInferenceStartup,
@@ -704,6 +710,44 @@ describe("Hermes Portable Ollama inference activation", () => {
     await expect(published.prepareGatewayMutation(gatewayMutationInput)).rejects.toThrow(
       "gateway mutation authority changed",
     );
+  });
+
+  it("preserves an active same-name Portable sandbox during a fresh flow (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    const session = createSession();
+    const resolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => session.sessionId,
+    });
+    const retireHostLocalInferenceFreshState = vi.fn(async () => true);
+    const hasSandboxLifecycleAuthority = vi.fn(
+      (sandboxName: string) => sandboxName === "portable-hermes",
+    );
+    const { deps } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+        credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      })) as never,
+      setupInference: vi.fn(async () => ({ ok: true as const })) as never,
+      resolveHostLocalInferenceStartupSelection: resolver,
+      retireHostLocalInferenceFreshState,
+      hasSandboxLifecycleAuthority,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      agent: { name: "hermes" },
+      gpu: { type: "nvidia" },
+      gpuPassthrough: true,
+      sandboxName: "portable-hermes",
+    });
+
+    expect(hasSandboxLifecycleAuthority).toHaveBeenCalledWith("portable-hermes");
+    expect(retireHostLocalInferenceFreshState).not.toHaveBeenCalled();
   });
 
   it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {

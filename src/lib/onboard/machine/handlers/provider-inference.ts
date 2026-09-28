@@ -282,6 +282,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       },
       options?: { requireAbsent?: boolean },
     ): boolean;
+    hasSandboxLifecycleAuthority(sandboxName: string): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
     prepareLocalProviderForInference(provider: string): Promise<string | null>;
@@ -376,12 +377,14 @@ async function retireFreshHostLocalInferenceState(input: {
   model: string;
   acceleration: HostLocalOllamaAccelerationAuthority;
   requireToolCalling: boolean;
+  hasSandboxLifecycleAuthority: (sandboxName: string) => boolean;
   retire?: (selection: HostLocalInferenceStartupSelectionInput) => Promise<boolean>;
   onRetired: () => void;
 }): Promise<void> {
   if (!input.fresh || !input.sandboxName || !isHostLocalInferenceProvider(input.provider)) {
     return;
   }
+  if (input.hasSandboxLifecycleAuthority(input.sandboxName)) return;
   if (!input.retire) return;
   const retired = await input.retire({
     application: input.application,
@@ -1641,6 +1644,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       model: selectedModel,
       acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
       requireToolCalling: !allowToolsIncompatible,
+      hasSandboxLifecycleAuthority: deps.hasSandboxLifecycleAuthority,
       retire: deps.retireHostLocalInferenceFreshState,
       onRetired: () => {
         hostLocalInferenceResolutionCache.clear();
