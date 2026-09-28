@@ -1167,7 +1167,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     });
   });
 
-  it("starts stopped-sandbox recovery with a fresh deadline after the initial backup expires", async () => {
+  it("does not start stopped-sandbox recovery after the initial work deadline expires", async () => {
     vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(331_001);
     backupSpy.mockReturnValue({
       success: false,
@@ -1184,12 +1184,13 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
-    expect(startSpy).toHaveBeenCalledWith("alpha", { deadlineMs: 661_001 });
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(backupStartedSpy).not.toHaveBeenCalled();
   });
 
   it("restores stopped state before removing a deadline-expired retry snapshot (#11936)", async () => {
     const order: string[] = [];
-    vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(331_001);
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
     const failedBackup = {
       success: false,
       error: "Snapshot sanitization skipped: backup deadline expired",
@@ -1227,8 +1228,8 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
       deferSanitizationDeadlineCleanup: true,
     });
     expect(order).toEqual(["backup", "stop", "cleanup"]);
-    expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete", 361_001);
-    expect(vi.mocked(backupStartedSpy).mock.calls[0]?.[1]?.deadlineMs).toBe(661_001);
+    expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete", 31_000);
+    expect(vi.mocked(backupStartedSpy).mock.calls[0]?.[1]?.deadlineMs).toBe(331_000);
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("loose file");
   });
 

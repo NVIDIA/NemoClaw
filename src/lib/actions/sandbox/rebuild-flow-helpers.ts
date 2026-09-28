@@ -554,22 +554,24 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!capturedAgentState && !backup.success && backup.unreachable) {
-    // The initial backup may report an unreachable transport only after
-    // consuming its transaction budget. Start recovery with a fresh bounded
-    // deadline; the post-start backup/cleanup transaction gets another one
-    // after OpenShell accepts the start below.
-    const recoveryStartDeadlineMs = startedSandboxBackupTransactionDeadline();
-    const started = await startStoppedSandboxContainerForBackup(sandboxName, {
-      deadlineMs: recoveryStartDeadlineMs,
-    });
+    // Recovery, retry, and stopped-state restoration remain part of the
+    // original backup transaction. Do not start a stopped container after the
+    // work budget is exhausted: there would be no bounded time left to prove
+    // readiness and preserve state before the cleanup reserve begins.
+    const workDeadlineMs = startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs);
+    const started =
+      Date.now() < workDeadlineMs
+        ? await startStoppedSandboxContainerForBackup(sandboxName, {
+            deadlineMs: initialTransactionDeadlineMs,
+          })
+        : null;
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
-      const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
       let returnedToStopped = false;
       try {
         backup = await backupStartedSandboxState(sandboxName, {
-          deadlineMs: transactionDeadlineMs,
+          deadlineMs: initialTransactionDeadlineMs,
           deferSanitizationDeadlineCleanup: true,
         });
         log(
@@ -577,7 +579,7 @@ export async function backupSandboxStateForRebuild(
         );
       } finally {
         returnedToStopped = await returnSandboxContainerToStopped(started, {
-          deadlineMs: transactionDeadlineMs,
+          deadlineMs: initialTransactionDeadlineMs,
         });
         if (!returnedToStopped) {
           log(
