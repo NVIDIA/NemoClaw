@@ -115,7 +115,11 @@ import {
   allocateSnapshotCloneForwardPorts,
   snapshotCloneHermesApiEnvArgs,
 } from "./snapshot/forward-port-allocation";
-import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
+import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+  printHermesGatewayRestoreHint,
+} from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -1767,6 +1771,27 @@ async function runSnapshotRestoreUnlocked(
             }.`,
           );
           console.error("  Retry this exact snapshot after the runtime provider stabilizes.");
+          snapshotExit(1);
+        }
+      }
+      if (registry.getSandbox(targetSandbox)?.agent === "hermes") {
+        let migration: Awaited<ReturnType<typeof migrateHermesLegacyDashboardState>> = null;
+        try {
+          migration = await migrateHermesLegacyDashboardState(targetSandbox);
+        } catch (error) {
+          console.error(
+            `  Hermes legacy dashboard-state migration transport failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        if (migration?.status !== 0) {
+          console.error(
+            "  Restore failed: Hermes legacy dashboard-state migration did not complete.",
+          );
+          const detail = migration?.stderr.trim();
+          if (detail) console.error(`  ${detail.slice(0, 500)}`);
+          console.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(targetSandbox)}`);
           snapshotExit(1);
         }
       }

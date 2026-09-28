@@ -905,6 +905,112 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(publishedTarget);
   });
 
+  it("migrates restored legacy Hermes dashboard state before registration", async () => {
+    const order: string[] = [];
+    const register = vi.fn((target) => {
+      order.push("register");
+      return target;
+    });
+
+    await finalizeCreatedSandbox(
+      {
+        sandboxName: "hermes",
+        restoreBackupPath: "/tmp/hermes-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "hermes",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        ...preparedRestoreAuthority("hermes"),
+        restoreRecreatedSandboxState: async (_name, _backupPath, options) => {
+          order.push("restore");
+          expect(options.restoreLegacyMigrationStateDirs).toEqual(["dashboard-home"]);
+          return {
+            success: true,
+            restoredDirs: ["dashboard-home"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        migrateHermesLegacyDashboardState: async (name) => {
+          order.push("migrate");
+          expect(name).toBe("hermes");
+          return { status: 0, stdout: "", stderr: "" };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(register).toHaveBeenCalledWith({ name: "hermes" });
+    expect(order).toEqual(["restore", "migrate", "register"]);
+  });
+
+  it.each([
+    {
+      failure: "remote exit",
+      migrate: async () => ({ status: 1, stdout: "", stderr: "migration collision" }),
+    },
+    {
+      failure: "transport failure",
+      migrate: async () => {
+        throw new Error("gateway unavailable");
+      },
+    },
+  ])("does not register Hermes after dashboard migration $failure", async ({ migrate }) => {
+    const register = vi.fn();
+    const error = vi.fn();
+
+    await expect(
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "hermes",
+          restoreBackupPath: "/tmp/hermes-backup",
+          preUpgradeBackup: true,
+          targetAgentType: "hermes",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+        },
+        {
+          ...preparedRestoreAuthority("hermes"),
+          restoreRecreatedSandboxState: async () => ({
+            success: true,
+            restoredDirs: ["dashboard-home"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          }),
+          migrateHermesLegacyDashboardState: migrate,
+          getDcodeSelectionDrift: vi.fn(),
+          register,
+          note: vi.fn(),
+          error,
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(register).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join("\n")).toContain("Hermes legacy dashboard-state migration");
+    expect(error.mock.calls.flat().join("\n")).toContain("Registry metadata was not updated");
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "Keep the snapshot for manual recovery: /tmp/hermes-backup",
+    );
+  });
+
   it.each([
     { failure: "state copy", copySuccess: false, doctorCalls: 0 },
     { failure: "post-restore doctor", copySuccess: true, doctorCalls: 1 },
