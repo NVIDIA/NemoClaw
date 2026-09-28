@@ -172,6 +172,14 @@ const HERMES_STARTUP_RUNTIME_FILES = new Set([
   "agents/hermes/start.sh",
 ]);
 const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
+// The selective snapshot command was retired with complete native-state
+// persistence. Its surviving runtime owner must continue through the real
+// OpenClaw rebuild proof instead of resolving to the removed snapshot target.
+const RETIRED_SNAPSHOT_COMMAND_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
@@ -436,6 +444,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const retiredSnapshotCommandRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => RETIRED_SNAPSHOT_COMMAND_RUNTIME_FILES.has(file)),
+  );
   return [
     { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
@@ -478,6 +489,10 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: openClawMessagingRuntimeFiles,
     })),
+    {
+      id: "rebuild-openclaw",
+      matchedFiles: retiredSnapshotCommandRuntimeFiles,
+    },
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
 

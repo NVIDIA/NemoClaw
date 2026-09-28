@@ -992,6 +992,23 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/actions/sandbox/auto-pair-approval.ts",
+    "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+    "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+  ])("replaces the retired snapshot command proof for %s", (changedFile) => {
+    const changedFiles = [changedFile];
+    const riskPlan = buildRiskPlan({ headSha: "0".repeat(40), changedFiles });
+    const plan = buildE2eWorkflowPlan({}, { changedFiles });
+    const selectedCatalogueIds = Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id);
+
+    expect(riskPlan.requiredJobs.map((job) => job.id)).not.toContain("snapshot-commands");
+    expect(riskPlan.requiredJobs.map((job) => job.id)).toContain("rebuild-openclaw");
+    expect(selectedCatalogueIds).toContain("rebuild-openclaw");
+  });
+
   it("selects the full messaging proof set for messaging runtime changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
