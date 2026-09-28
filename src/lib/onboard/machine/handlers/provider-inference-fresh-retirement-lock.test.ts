@@ -72,3 +72,38 @@ it("serializes fresh retirement with same-name lifecycle registration (#12291)",
 
   expect(events).toEqual(["authority", "retire:start", "retire:end", "register"]);
 });
+
+it("retires fresh state for the sandbox name confirmed by configuration review (#12291)", async () => {
+  const retiredSandboxNames: string[] = [];
+  const events: string[] = [];
+  const { deps } = createDeps({
+    setupNim: vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+    })),
+    isNonInteractive: () => false,
+    prompt: vi.fn().mockResolvedValueOnce("3").mockResolvedValueOnce("1"),
+    promptValidatedSandboxName: vi.fn(async () => "confirmed-hermes"),
+    resolveHostLocalInferenceStartupSelection: vi.fn(() => {
+      events.push("resolve");
+      return null;
+    }),
+    retireHostLocalInferenceFreshState: vi.fn(async (selection) => {
+      events.push("retire");
+      retiredSandboxNames.push(selection.sandboxName);
+      return true;
+    }),
+  });
+
+  const result = await handleProviderInferenceState({
+    ...baseOptions(deps),
+    fresh: true,
+    sandboxName: "draft-hermes",
+    agent: { name: "hermes" },
+  });
+
+  expect(result.sandboxName).toBe("confirmed-hermes");
+  expect(retiredSandboxNames).toEqual(["confirmed-hermes"]);
+  expect(events).toEqual(["retire", "resolve"]);
+});

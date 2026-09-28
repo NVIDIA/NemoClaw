@@ -1646,27 +1646,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     const acceptedHostLocalResume =
       effectiveResume && resumeProviderSelection && isHostLocalInferenceProvider(selectedProvider);
-    await retireFreshHostLocalInferenceState({
-      fresh,
-      sandboxName,
-      application: agentName(agent) as HostLocalInferenceApplication,
-      provider: selectedProvider,
-      model: selectedModel,
-      acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
-      requireToolCalling: !allowToolsIncompatible,
-      withSandboxMutationLock: deps.withSandboxMutationLock,
-      hasSandboxLifecycleAuthority: deps.hasSandboxLifecycleAuthority,
-      retire: deps.retireHostLocalInferenceFreshState,
-      onRetired: () => {
-        hostLocalInferenceResolutionCache.clear();
-        hostLocalInferenceRouteOnly = false;
-        hostLocalInferenceProofAuthority = null;
-        prospectiveHostLocalPolicyRoute = null;
-      },
-    });
-    const cachedProspectiveHostLocalPolicyRoute = readProspectiveHostLocalPolicyRoute();
-    const resolveCachedHostLocalInferenceSetupOptions = createCachedHostLocalInferenceSetupResolver(
-      {
+    const createHostLocalInferenceSetupResolver = () => {
+      const cachedProspectiveHostLocalPolicyRoute = readProspectiveHostLocalPolicyRoute();
+      return createCachedHostLocalInferenceSetupResolver({
         resolver: resolveHostLocalInferenceStartupSelection,
         application: agentName(agent),
         provider: selectedProvider,
@@ -1691,8 +1673,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 setupOptions: cachedProspectiveHostLocalPolicyRoute.setupOptions,
               }
             : undefined),
-      },
-    );
+      });
+    };
+    let resolveCachedHostLocalInferenceSetupOptions = createHostLocalInferenceSetupResolver();
     const hostLocalResume = await resolveHostLocalResumeSetup({
       sandboxName,
       effectiveResume,
@@ -1949,6 +1932,25 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         continue;
       }
       const confirmedSandboxName = review.sandboxName;
+      await retireFreshHostLocalInferenceState({
+        fresh,
+        sandboxName: confirmedSandboxName,
+        application: agentName(agent) as HostLocalInferenceApplication,
+        provider: selectedProvider,
+        model: selectedModel,
+        acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
+        requireToolCalling: !allowToolsIncompatible,
+        withSandboxMutationLock: deps.withSandboxMutationLock,
+        hasSandboxLifecycleAuthority: deps.hasSandboxLifecycleAuthority,
+        retire: deps.retireHostLocalInferenceFreshState,
+        onRetired: () => {
+          hostLocalInferenceResolutionCache.clear();
+          hostLocalInferenceRouteOnly = false;
+          hostLocalInferenceProofAuthority = null;
+          prospectiveHostLocalPolicyRoute = null;
+        },
+      });
+      resolveCachedHostLocalInferenceSetupOptions = createHostLocalInferenceSetupResolver();
       activeHostLocalInferenceSetupOptions =
         resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName);
       const prospectiveHostLocalRoute = resolvedHostLocalInferenceRoute(
