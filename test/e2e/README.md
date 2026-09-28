@@ -75,8 +75,9 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and builds only the candidate shared policy boundary.
+The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -912,6 +913,15 @@ dashboard process's internal port and TUI flag, then probes that internal listen
 contains only the numeric port and TUI boolean. The fixture retains identity-drift rejection,
 registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
 disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
+
+The `hermes-inference-switch` lane also verifies native Hermes configuration
+ownership. The gateway, dashboard, CLI, and TUI share `/sandbox/.hermes`; the
+switch test proves the dashboard reports the new model without creating the
+retired `profiles/dashboard-home/config.yaml` shadow copy. The OpenShell route
+registry remains the durable routing and credential-custody record, while the
+completed onboarding session remains unchanged as historical onboarding
+evidence. Deterministic startup and action tests own the corresponding launch
+environment and session non-rewrite checks.
 
 ## Native plugin and package lifecycle
 
