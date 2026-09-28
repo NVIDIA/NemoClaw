@@ -15,11 +15,11 @@ import {
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const RUNTIME_DIRECTORY = path.join(REPO_ROOT, "agents", "openclaw", "openclaw-runtime");
 const LOCKFILE = path.join(RUNTIME_DIRECTORY, "package-lock.json");
-const PACKAGE_SPEC = "openclaw@2026.9.1";
+const PACKAGE_SPEC = "openclaw@2026.9.5";
 const INTEGRITY =
-  "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==";
-const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz";
-const LOCK_SHA256 = "9f99aa4f5d10280b4d809e0d54f20bcbe786d4140d30fc10ed502b1305ff9a8d";
+  "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==";
+const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz";
+const LOCK_SHA256 = "5fd0d5f29a40216dda4670a225385c5e4bf93025754e3b72d2550420fde4cdeb";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -202,21 +202,21 @@ describe("locked OpenClaw production installation (#5896)", () => {
   // source-shape-contract: security -- Mutating the shipped lock proves every reviewed transitive identity remains bound to committed production bytes
   it.each([
     {
-      expected: "root must depend only on openclaw@2026.9.1",
+      expected: "root must depend only on openclaw@2026.9.5",
       mutate: (lock: any) => {
         lock.packages[""].dependencies.openclaw = "2026.7.2";
       },
       name: "root version drift",
     },
     {
-      expected: "root must depend only on openclaw@2026.9.1",
+      expected: "root must depend only on openclaw@2026.9.5",
       mutate: (lock: any) => {
         lock.packages[""].optionalDependencies = { "left-pad": "1.3.0" };
       },
       name: "root optional dependency injection",
     },
     {
-      expected: "lock integrity mismatch for openclaw@2026.9.1",
+      expected: "lock integrity mismatch for openclaw@2026.9.5",
       mutate: (lock: any) => {
         lock.packages["node_modules/openclaw"].integrity = `sha512-${"B".repeat(88)}`;
       },
