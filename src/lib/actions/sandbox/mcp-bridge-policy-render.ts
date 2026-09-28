@@ -97,26 +97,28 @@ function renderMcpBridgePolicyYaml(
   // - denials from endpoint.deny_rules (in denylist mode)
   const denyRules = normalizedDenyTools.map((tool) => ({
     method: "tools/call",
-    tool,
+    params: { name: tool },
   }));
 
-  // In allowlist mode, also emit explicit allow rules in the rules array
+  const allowedMethods = isAllowlistMode
+    ? MCP_BRIDGE_ALLOWED_METHODS.filter((m) => m !== "tools/call")
+    : MCP_BRIDGE_ALLOWED_METHODS;
+
+  // In allowlist mode, emit explicit allow rules using params.name
   const allowRules = normalizedAllowTools.map((tool) => ({
-    allow: { method: "tools/call", tool },
+    allow: { method: "tools/call", params: { name: tool } },
   }));
 
-  // In denylist mode, emit explicit deny rules in the rules array
-  const denyRulesForRules = normalizedDenyTools.map((tool) => ({
-    deny: { method: "tools/call", tool },
-  }));
-
+  // In denylist mode, emit deny rules at endpoint level (deny_rules)
+  // Do NOT emit deny entries in the rules array — not part of schema
   const mcpConfig = isAllowlistMode
     ? {
         allow: normalizedAllowTools.map((tool) => ({ params: { name: tool } })),
       }
-    : {
-        deny_rules: denyRules,
-      };
+    : {};
+
+  // In denylist mode, emit deny rules at endpoint level
+  const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
 
   return YAML.stringify({
     preset: {
@@ -141,11 +143,8 @@ function renderMcpBridgePolicyYaml(
               allow_all_known_mcp_methods: false,
               ...mcpConfig,
             },
-            rules: [
-              ...MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
-              ...allowRules,
-              ...denyRulesForRules,
-            ],
+            ...(endpointDenyRules ? { deny_rules: endpointDenyRules } : {}),
+            rules: [...allowedMethods.map((method) => ({ allow: { method } })), ...allowRules],
           },
         ],
         binaries: binariesForAdapter(adapter),

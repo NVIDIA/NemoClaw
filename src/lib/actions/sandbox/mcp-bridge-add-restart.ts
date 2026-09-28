@@ -126,6 +126,35 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
   );
 }
 
+/**
+ * Assert that the live public address pins for an MCP server have not drifted.
+ * If they have, throw an error instructing the caller to use --refresh-public-pins.
+ * Trusted-private registrations are excluded from this check.
+ */
+function assertNoPublicPinDrift(
+  sandboxName: string,
+  server: string,
+  storedEntry: McpSourceEntry,
+  target: McpBridgeTargetValidation,
+): void {
+  if (
+    !storedEntry.trustedPrivateHost &&
+    storedEntry.allowedIps &&
+    storedEntry.allowedIps.length > 0
+  ) {
+    const recordedPins = [
+      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
+    ].sort();
+    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
+    if (!isDeepStrictEqual(recordedPins, freshPins)) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
+        2,
+      );
+    }
+  }
+}
+
 function replayMcpAddTarget(
   entry: McpSourceEntry,
   normalizedUrl: string,
@@ -704,27 +733,8 @@ async function updateMcpBridgeDenyToolsUnlocked(
       `MCP server '${server}' has no validated address pins. No policy was changed.`,
     );
   }
-  // Public-pin drift check: if the live DNS answer for a public endpoint no longer
-  // matches the originally admitted address pins, refuse the update unless the
-  // caller explicitly requests a pin refresh. This preserves the guaranteed
-  // address set across credential rotations and policy updates. Trusted-private
-  // pins are intentionally excluded; they are managed by explicit remove-and-add.
-  if (
-    !storedEntry.trustedPrivateHost &&
-    storedEntry.allowedIps &&
-    storedEntry.allowedIps.length > 0
-  ) {
-    const recordedPins = [
-      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
-    ].sort();
-    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
-    if (!isDeepStrictEqual(recordedPins, freshPins)) {
-      throw new McpBridgeError(
-        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
-        2,
-      );
-    }
-  }
+  // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
+  assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
   const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutDenyTools,
@@ -1269,23 +1279,8 @@ async function updateMcpBridgeAllowToolsUnlocked(
     );
   }
 
-  // Drift check for public pins
-  if (
-    !storedEntry.trustedPrivateHost &&
-    storedEntry.allowedIps &&
-    storedEntry.allowedIps.length > 0
-  ) {
-    const recordedPins = [
-      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
-    ].sort();
-    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
-    if (!isDeepStrictEqual(recordedPins, freshPins)) {
-      throw new McpBridgeError(
-        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
-        2,
-      );
-    }
-  }
+  // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
+  assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
 
   const {
     allowTools: _previousAllowTools,
@@ -1349,23 +1344,8 @@ async function clearMcpBridgeAllowToolsUnlocked(
     );
   }
 
-  // Drift check for public pins
-  if (
-    !storedEntry.trustedPrivateHost &&
-    storedEntry.allowedIps &&
-    storedEntry.allowedIps.length > 0
-  ) {
-    const recordedPins = [
-      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
-    ].sort();
-    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
-    if (!isDeepStrictEqual(recordedPins, freshPins)) {
-      throw new McpBridgeError(
-        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
-        2,
-      );
-    }
-  }
+  // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
+  assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
 
   const {
     allowTools: _previousAllowTools,

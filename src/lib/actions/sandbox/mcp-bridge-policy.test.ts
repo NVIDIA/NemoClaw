@@ -192,19 +192,25 @@ describe("generated MCP policy", () => {
         string,
         {
           endpoints: Array<{
-            rules?: Array<{ allow?: { method: string }; deny?: { method: string; tool: string } }>;
+            rules?: Array<{ deny?: { method: string; params: { name: string } } }>;
+            deny_rules?: Array<{ method: string; params: { name: string } }>;
           }>;
         }
       >;
     };
 
-    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const endpoint = parsed.network_policies.mcp_bridge_github.endpoints[0];
+    const rules = endpoint.rules ?? [];
     const denyRules = rules.filter(
-      (r): r is { deny: { method: string; tool: string } } => "deny" in r,
+      (r): r is { deny: { method: string; params: { name: string } } } => "deny" in r,
     );
-    expect(denyRules).toEqual([
-      { deny: { method: "tools/call", tool: "delete_*" } },
-      { deny: { method: "tools/call", tool: "doordash_submit_order" } },
+    // In denylist mode, deny rules should NOT be in the rules array (not part of schema)
+    expect(denyRules).toEqual([]);
+    // Verify deny_rules at endpoint level
+    const endpointDenyRules = endpoint.deny_rules ?? [];
+    expect(endpointDenyRules).toEqual([
+      { method: "tools/call", params: { name: "delete_*" } },
+      { method: "tools/call", params: { name: "doordash_submit_order" } },
     ]);
   });
 
@@ -236,17 +242,22 @@ describe("generated MCP policy", () => {
     ) as {
       network_policies: Record<
         string,
-        { endpoints: Array<{ rules?: Array<{ allow?: { method: string; tool: string } }> }> }
+        {
+          endpoints: Array<{
+            rules?: Array<{ allow?: { method: string; params: { name: string } } }>;
+          }>;
+        }
       >;
     };
 
     const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
     const allowRules = rules.filter(
-      (r): r is { allow: { method: string; tool: string } } => "allow" in r && r.allow.tool,
+      (r): r is { allow: { method: string; params: { name: string } } } =>
+        "allow" in r && r.allow.params !== undefined,
     );
     expect(allowRules).toEqual([
-      { allow: { method: "tools/call", tool: "list_issues" } },
-      { allow: { method: "tools/call", tool: "read_repo" } },
+      { allow: { method: "tools/call", params: { name: "list_issues" } } },
+      { allow: { method: "tools/call", params: { name: "read_repo" } } },
     ]);
   });
 
@@ -264,12 +275,18 @@ describe("generated MCP policy", () => {
     ) as {
       network_policies: Record<
         string,
-        { endpoints: Array<{ rules?: Array<{ allow?: { method: string; tool: string } }> }> }
+        {
+          endpoints: Array<{
+            rules?: Array<{ allow?: { method: string; params?: { name: string } } }>;
+          }>;
+        }
       >;
     };
 
     const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
-    const standardMethods = rules.filter((r) => "allow" in r && !r.allow.tool);
+    const standardMethods = rules.filter(
+      (r): r is { allow: { method: string } } => "allow" in r && r.allow.params === undefined,
+    );
     expect(standardMethods.length).toBeGreaterThan(20);
     // Standard MCP methods like initialize, ping, tools/list should be allowed
     expect(standardMethods.some((r) => r.allow.method === "initialize")).toBe(true);

@@ -66,9 +66,10 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
     );
   }
 
-  // Note: OAuth enforcement happens at the credential boundary (provider attachment),
-  // not at transport validation. This function only validates transport compatibility.
-  // The --require-oauth flag is recorded and enforced at credential attachment time.
+  // Note: The --require-oauth flag is recorded in the entry for future enforcement
+  // but is NOT currently enforced at the credential boundary (provider attachment).
+  // OpenShell does not yet validate OAuth exchanges at the provider boundary.
+  // This function only validates transport compatibility (SSE required for OAuth).
 }
 
 /**
