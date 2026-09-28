@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { adminApprovalConnectScript } from "../e2e/fixtures/admin-approval-connect.ts";
 import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selector.ts";
 import {
+  ISSUE_4462_SCOPE_UPGRADE_PHASES,
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
@@ -234,6 +235,21 @@ esac
 }
 
 describe("prepared connect-shell administrative approval", () => {
+  it("keeps the first agent request outside the explicit admin approval phase", () => {
+    expect(ISSUE_4462_SCOPE_UPGRADE_PHASES).toContain(
+      "prove the first agent request needs no admin approval",
+    );
+    expect(
+      ISSUE_4462_SCOPE_UPGRADE_PHASES.indexOf(
+        "prove the first agent request needs no admin approval",
+      ),
+    ).toBeLessThan(
+      ISSUE_4462_SCOPE_UPGRADE_PHASES.indexOf(
+        "trigger and approve an operator.admin request through connect",
+      ),
+    );
+  });
+
   it.each([
     [
       "approval boundary",
