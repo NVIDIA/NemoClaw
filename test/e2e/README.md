@@ -11,6 +11,9 @@ Changes to the OpenClaw scope patch select the compatible-endpoint, latency, ski
 The full OpenClaw cases verify readiness after explicit admin approval and an ordinary agent turn. When the approved device matches the calling CLI's existing identity, the CLI confirms the already-granted admin scope through a read-only gateway request before exiting, so later ordinary calls retain the rotated token's approved metadata. This confirmation uses the existing transport with normal token-cache writes; other device commands keep their read-only shared-state behavior. Approvals for confirmed other devices retain their existing behavior. If reading the local identity fails, the CLI reports that approval completed but the handoff failed, and exits unsuccessfully with recovery guidance.
 The llama.cpp GPU case proves ordinary inference before approval, then uses the existing admin-only cron operation and exact-request helper for denial, approval, and privileged-consumer evidence. Its former requirement for an ordinary greeting to request admin is replaced by successful inference; GPU, model, authentication, and cleanup assertions remain live.
 
+OpenClaw owns TUI turn ordering and `chat.send` correlation.
+Fixes and regression coverage for those behaviors belong upstream.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
@@ -597,7 +600,6 @@ An optional `selector` limits execution to matching tests in the target's declar
 A host package or selector alone does not require a dedicated workflow job.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
 The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
-TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
 On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 When `shard` is not `default`, the standard layout adds the shard directory.
