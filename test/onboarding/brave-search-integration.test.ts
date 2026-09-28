@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createWebSearchFlowHelpers } from "../../src/lib/onboard/web-search-flow";
-import { BRAVE_TEST_KEY, startBraveBackend } from "../helpers/brave-backend";
+import { BRAVE_TEST_KEY, startBraveBackend } from "../e2e/fixtures/brave-backend";
 
 describe("Brave Search with a local backend", () => {
   it.each([200, 401, 403, 429, 503])(

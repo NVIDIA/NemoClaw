@@ -646,6 +646,7 @@ Both observations must show an absent key or an OpenShell placeholder; missing o
 The test uses the `nvidia-inference` profile and never reads a real Brave secret.
 Its host curl wrapper routes validation to the loopback backend and delegates unrelated requests.
 A test-only OpenShell wrapper refuses only onboarding's optional Brave egress curl request.
+The wrapper explicitly binds the installed gateway and supervisor binaries and must pass the production component-integrity check before onboarding.
 Sandbox creation, provider attachment, the production isolation guard, and the two runtime observations still execute through real OpenShell.
 The fixture verifies that validation ran and the configured Brave probe was intercepted, so disabled search cannot pass as isolation evidence.
 Cleanup destroys the sandbox and removes the mock backend and wrappers.

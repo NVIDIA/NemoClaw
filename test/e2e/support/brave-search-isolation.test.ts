@@ -8,7 +8,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BRAVE_PROCESS_BOUNDARY, BRAVE_SHELL_BOUNDARY } from "../live/brave-search-helpers.ts";
 
-import { writeBraveEgressStub } from "../../helpers/brave-backend.ts";
+import { writeBraveEgressStub } from "../fixtures/brave-backend.ts";
+
+import {
+  hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_MCP_FEATURES,
+} from "../../../src/lib/onboard/openshell-feature-gate.ts";
 
 const directories: string[] = [];
 function temporaryDirectory() {
@@ -114,4 +119,29 @@ describe("Brave runtime credential boundary probes", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(args);
   });
+  it.each([false, true])(
+    "preserves the component integrity preflight with explicit bindings: %s",
+    (explicit) => {
+      const realDirectory = temporaryDirectory();
+      const mockDirectory = temporaryDirectory();
+      const real = path.join(realDirectory, "openshell");
+      const gateway = path.join(realDirectory, "openshell-gateway");
+      const sandbox = path.join(realDirectory, "openshell-sandbox");
+      const version = "#!/bin/sh\nprintf 'openshell 0.0.116\\n'\n";
+      const component = `${version}# ${REQUIRED_OPENSHELL_MCP_FEATURES.join(" ")}\n`;
+      fs.writeFileSync(real, version, { mode: 0o700 });
+      fs.writeFileSync(gateway, component, { mode: 0o700 });
+      fs.writeFileSync(sandbox, component, { mode: 0o700 });
+      const wrapper = writeBraveEgressStub(mockDirectory, real);
+      expect(
+        hasRequiredOpenshellMessagingFeatures({
+          openshellBin: wrapper,
+          gatewayBin: gateway,
+          sandboxBin: sandbox,
+          allowExternalGatewayBin: explicit,
+          allowExternalSandboxBin: explicit,
+        }),
+      ).toBe(explicit);
+    },
+  );
 });

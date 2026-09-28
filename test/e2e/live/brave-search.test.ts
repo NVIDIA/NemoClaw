@@ -9,7 +9,8 @@ import {
   BRAVE_TEST_KEY,
   startBraveBackend,
   writeBraveEgressStub,
-} from "../../helpers/brave-backend.ts";
+} from "../fixtures/brave-backend.ts";
+import { hasRequiredOpenshellMessagingFeatures } from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -68,6 +69,27 @@ test(
     cleanup.trackDisposable("remove Brave mock transport", backend.close);
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, SANDBOX_NAME);
     const wrapper = writeBraveEgressStub(backend.directory, openshell);
+    // The CLI wrapper is outside the installed component root. Bind the real
+    // gateway and supervisor explicitly so installation integrity checks do not
+    // replace it and accidentally restore the external Brave probe.
+    const gatewayBin = fs.realpathSync(
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN ||
+        path.join(path.dirname(openshell), "openshell-gateway"),
+    );
+    const sandboxBin = fs.realpathSync(
+      process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN ||
+        path.join(path.dirname(openshell), "openshell-sandbox"),
+    );
+    assert(
+      hasRequiredOpenshellMessagingFeatures({
+        openshellBin: wrapper,
+        gatewayBin,
+        sandboxBin,
+        allowExternalGatewayBin: true,
+        allowExternalSandboxBin: true,
+      }),
+      "Brave mock transport must preserve the installed OpenShell component capabilities",
+    );
     const redactionValues = [BRAVE_TEST_KEY, inference.apiKey];
 
     progress.phase("onboard Brave-enabled OpenClaw sandbox with synthetic credentials");
@@ -75,7 +97,13 @@ test(
       ["onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
       {
         artifactName: "onboard-synthetic-brave",
-        env: { ...env, ...backend.env, NEMOCLAW_OPENSHELL_BIN: wrapper },
+        env: {
+          ...env,
+          ...backend.env,
+          NEMOCLAW_OPENSHELL_BIN: wrapper,
+          NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayBin,
+          NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxBin,
+        },
         redactionValues,
         timeoutMs: 25 * 60_000,
       },
