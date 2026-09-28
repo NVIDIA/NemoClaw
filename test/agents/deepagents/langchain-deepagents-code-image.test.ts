@@ -215,11 +215,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
   ])("hardens copied NemoClaw blueprints against sandbox-user mutation [%s]", (probe) => {
     const dockerfile = readAgentFile("Dockerfile");
     const finalRuntimeRoot = [
-      "FROM ${BASE_IMAGE}",
+      "FROM ${BASE_IMAGE} AS langchain-deepagents-code-system",
       "",
       "# The supplied base may end as a non-root runtime user. Reset the build user",
       "# explicitly before installing the root-owned managed-startup handoff.",
-      "# hadolint ignore=DL3066",
+      "# The dependency stage needs root; the final stage selects the runtime user.",
+      "# hadolint ignore=DL3066,DL3002",
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
