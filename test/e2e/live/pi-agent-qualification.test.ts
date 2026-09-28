@@ -45,6 +45,7 @@ const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_PROVIDER_MAX_ATTEMPTS = 2;
 const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
+const PI_TRUST_EXCLUSION_MARKER = "NEMOCLAW_PI_TRUST_MUST_NOT_SURVIVE";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -225,15 +226,15 @@ async function persistentStateInventory(
   sandbox: SandboxClient,
   env: NodeJS.ProcessEnv,
   phase: string,
-  seedNativeSettings = false,
+  options: { seedNativeState?: boolean } = {},
 ) {
-  const settingsFixture = seedNativeSettings
-    ? `printf '%s\\n' '{"futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; chmod 600 /sandbox/.pi/agent/settings.json; `
+  const stateFixture = options.seedNativeState
+    ? `printf '%s\\n' '{"defaultProjectTrust":"always","futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_EXCLUSION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
     : "";
   const result = await execPiShell(
     sandbox,
     trustedSandboxShellScript(
-      `${settingsFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; } | sort`,
+      `${stateFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; find /sandbox/.pi/agent -maxdepth 1 -type f -name trust.json -exec grep -F '${PI_TRUST_EXCLUSION_MARKER}' {} +; } | sort`,
     ),
     { artifactName: `pi-${phase}-persistent-state-inventory`, env, timeoutMs: 30_000 },
   );
@@ -411,14 +412,23 @@ test(
 
     progress.phase("run interactive Pi and preserve its native state through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
-    const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", true);
+    const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", {
+      seedNativeState: true,
+    });
+    const stateBeforeRebuildEntries = stateBeforeRebuild.split("\n").filter(Boolean);
+    const trustMarkersBeforeRebuild = stateBeforeRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
+    );
+    const persistentStateBeforeRebuild = stateBeforeRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
     const sessionsBeforeRebuild = stateBeforeRebuild
       .split("\n")
       .filter(
         (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
       );
     const stateEntryGrowth =
-      stateBeforeRebuild.split("\n").filter(Boolean).length -
+      persistentStateBeforeRebuild.split("\n").filter(Boolean).length -
       stateAfterOnboard.split("\n").filter(Boolean).length;
     expect(
       Math.min(sessionsBeforeRebuild.length, stateEntryGrowth),
@@ -433,14 +443,26 @@ test(
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
     const stateAfterRebuild = await persistentStateInventory(sandbox, env, "after-rebuild");
+    const stateAfterRebuildEntries = stateAfterRebuild.split("\n").filter(Boolean);
+    const trustMarkersAfterRebuild = stateAfterRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
+    );
+    const persistentStateAfterRebuild = stateAfterRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
     const sessionsAfterRebuild = stateAfterRebuild
       .split("\n")
       .filter(
         (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
       );
-    expect(JSON.stringify([sessionsAfterRebuild, stateAfterRebuild])).toBe(
-      JSON.stringify([sessionsBeforeRebuild, stateBeforeRebuild]),
-    );
+    expect(
+      JSON.stringify([
+        sessionsAfterRebuild,
+        persistentStateAfterRebuild,
+        trustMarkersBeforeRebuild.length,
+        trustMarkersAfterRebuild.length,
+      ]),
+    ).toBe(JSON.stringify([sessionsBeforeRebuild, persistentStateBeforeRebuild, 1, 0]));
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after sandbox and gateway restarts");
@@ -590,7 +612,9 @@ test(
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,
+        nativeDefaultProjectTrustPreservedAcrossRebuild: true,
         nativeSettingsPreservedAcrossRebuild: true,
+        perPathTrustExcludedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],
