@@ -43,6 +43,19 @@ Private state, generated authentication material, and raw logs remain outside Gi
 The repository and PR receive only this non-secret result summary.
 The image smoke tests used stdin because the host test file was not readable through a bind mount by UID `10001`; container isolation and test assertions were unchanged.
 
+## Retest After the Fabric Build-Cache Fix
+
+On 2026-09-28, the same complete runner passed on Linux AMD64 at revision `d211c6f6fbb6ff83f50b1c7d57928372e8cf8507`, after the fix that isolates compiled Fabric artifacts between source revisions.
+The runner rebuilt bundle `0.1.0-dev.e35e60192cf4b72e` and selected local agent image index `sha256:830045931c1a788e37b554b6b352bd875b7757b20bbb7175a973d68b8d9a1287`.
+This run used a fresh kind cluster, the same hosted model, and the same three-agent manifest template; it did not reuse deployment state.
+The lifecycle passed in **216.68 seconds**, with one test passed and zero failed; the complete runner took **354.29 seconds** including builds and cluster setup and cleanup.
+All three agents returned `FOUR`; network-policy checks, unchanged plan, CLI export, SDK reapply with stable identities, and CLI destroy passed.
+Four image smoke tests passed against this run's image.
+The cluster receipt reached `deleted`, its private kubeconfig was removed, and deployment intent was marked destroyed.
+All 20 preexisting kind node identities and the default kubeconfig were unchanged.
+A scan found no NVIDIA API key pattern in 3,607 retained text evidence and state files; credentials and raw evidence remain outside Git.
+This retest does not establish native ARM64 behavior.
+
 ## Limits
 
 This result covers the named Linux AMD64 kind environment, managed development authentication, three OpenClaw agents, and hosted model.
