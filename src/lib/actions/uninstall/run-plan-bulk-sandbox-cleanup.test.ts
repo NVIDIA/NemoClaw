@@ -100,7 +100,7 @@ function fullCleanupDeps(
     ["sandbox list", ok(sandboxInventory)],
   ]);
   return {
-    commandExists: (command: string) => command === "openshell",
+    commandExists: (command: string) => command === "docker" || command === "openshell",
     env: {
       HOME: home,
       NEMOCLAW_NON_INTERACTIVE: "1",

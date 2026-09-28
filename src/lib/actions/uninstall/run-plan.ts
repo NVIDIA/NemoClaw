@@ -1568,6 +1568,7 @@ async function removeOpenShellResources(
   }
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   const externallySupervised = isExternallySupervised(teardownAuthority);
+  let runtimeSelection: ReturnType<typeof selectedGatewayCleanupRuntimeSelection> = null;
   if (scopedToSelectedGateway) {
     let removedSelectedResources = true;
     for (const sandboxName of sandboxNames) {
@@ -1592,14 +1593,11 @@ async function removeOpenShellResources(
       return false;
     }
   } else {
-    // #6520: a no-op delete must not print `Deleted … skipped`.
-    runOptional(
-      runtime,
-      "Deleted all OpenShell sandboxes",
-      "openshell",
-      ["sandbox", "delete", "--all"],
-      { onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE },
+    runtimeSelection = selectedGatewayCleanupRuntimeSelection(
+      gatewayLabel,
+      paths.selectedGatewayLocalStateDir,
     );
+    if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) return false;
   }
   // Retain connection and provider state until runtime cleanup is confirmed.
   if (
@@ -1611,7 +1609,12 @@ async function removeOpenShellResources(
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
+  if (!runtimeSelection) return false;
+  const providerAdapter = createUninstallProviderAdapter(
+    runtime.run,
+    runtime.env,
+    runtimeSelection,
+  );
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
       target: { kind: "selected" },
