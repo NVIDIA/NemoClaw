@@ -104,6 +104,11 @@ export async function rotateSandboxToken(
     providerName = session.provider || "inference";
     providerType = session.providerType || "generic";
     providerEndpointUrl = nonEmptyString(session.endpointUrl);
+    if (providerEndpointUrl && providerType === "generic") {
+      deps.fail(
+        `  Cannot recreate provider '${providerName}' with incomplete provider metadata. Re-run onboarding.`,
+      );
+    }
   }
 
   const target = deps.resolveAgentConfig(sandboxName);

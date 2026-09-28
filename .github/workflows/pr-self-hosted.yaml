@@ -62,6 +62,12 @@ jobs:
             and all(.[]; type == "array")
             and all(.[][]; type == "object" and (.filename | type == "string"))
           ' <<<"$changed_files" >/dev/null
+          expected_file_count="$(jq -er '.changed_files | select(type == "number" and floor == . and . >= 0)' <<<"$pr_json")"
+          actual_file_count="$(jq -er 'flatten | length' <<<"$changed_files")"
+          [[ "$actual_file_count" -eq "$expected_file_count" ]] || {
+            echo "::error::Changed-file response is incomplete ($actual_file_count of $expected_file_count files)" >&2
+            exit 1
+          }
           if jq -e '
               flatten
               | any(
@@ -71,16 +77,22 @@ jobs:
                   or .filename == "package-lock.json"
                   or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json"
                   or .filename == "src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"
+                  or .filename == "src/lib/hermes-managed-route.ts"
+                  or .filename == "src/lib/providerless-inference.ts"
+                  or .filename == "src/lib/tool-disclosure.ts"
                   or .filename == "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
                   or .filename == "test/e2e/live/hermes-sandbox-secret-boundary.test.ts"
                   or .filename == "test/e2e/mock-parity.json"
+                  or .filename == "ci/reviewed-npm-audit.json"
                   or (.filename | startswith(".github/actions/"))
                   or (.filename | startswith("agents/hermes/"))
                   or (.filename | startswith("agents/common/"))
-                  or (.filename | startswith("nemoclaw-blueprint/scripts/"))
+                  or (.filename | startswith("nemoclaw-blueprint/"))
                   or (.filename | startswith("scripts/"))
+                  or (.filename | startswith("src/lib/messaging/"))
                   or (.filename | startswith("test/e2e/fixtures/"))
                   or (.filename | startswith("test/e2e/support/"))
+                  or (.filename | startswith("tools/mcp-tool-discovery-runtime/"))
                   or (.filename | startswith("tools/e2e/"))
                   or (.filename | startswith("tsconfig"))
                   or (.filename | startswith("vitest."))

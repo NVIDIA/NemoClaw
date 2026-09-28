@@ -153,7 +153,17 @@
     },
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a copied Hermes runtime source",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "fails Hermes qualification when changed files cannot be fetched",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed-file discovery is incomplete",
       "category": "security"
     },
     {

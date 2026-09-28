@@ -24,6 +24,7 @@ import signal
 import sqlite3
 import stat
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,12 +47,13 @@ MANAGED_SHADOW_FILES = frozenset(
 )
 VERIFIABLE_SHADOW_FILES = frozenset({"config.yaml", ".env"})
 LEGACY_STATE_DATABASE = "state.db"
+LEGACY_STATE_DATABASE_SIDECARS = frozenset({"state.db-shm", "state.db-wal"})
 STATE_DATABASE_MIGRATION_RECORD = ".nemoclaw-dashboard-state-migration.json"
 STATE_DATABASE_RECORD_VERSION = 1
 STATE_DATABASE_TEST_INTERRUPT_ENV = (
     "NEMOCLAW_TEST_INTERRUPT_AFTER_DASHBOARD_STATE_PUBLICATION"
 )
-STALE_RUNTIME_FILES = frozenset({"gateway.lock", "gateway.pid", "state.db-shm", "state.db-wal"})
+STALE_RUNTIME_FILES = frozenset({"gateway.lock", "gateway.pid"})
 STALE_RUNTIME_DIRECTORIES = frozenset({"logs"})
 MAX_VERIFICATION_BYTES = 4 * 1024 * 1024
 LEGACY_PATHS = ("dashboard-home", "profiles/dashboard-home")
@@ -140,6 +142,18 @@ def _identity(parent_fd: int, name: str, display: str) -> EntryIdentity:
         current.st_nlink,
         current.st_size,
     )
+
+
+def _validate_legacy_state_database_sidecar(
+    name: str, entry: EntryIdentity, display: str
+) -> None:
+    if not stat.S_ISREG(entry.mode):
+        raise MigrationError(f"legacy state database sidecar {display} is not a regular file")
+    if name == "state.db-wal" and entry.size > 0:
+        raise MigrationError(
+            f"legacy state database has a non-empty {display}; "
+            "checkpoint the database before retrying migration"
+        )
 
 
 def _open_dir(parent_fd: int, name: str, display: str) -> int:
@@ -444,6 +458,9 @@ def _source_has_user_state(
         if name in STALE_RUNTIME_FILES:
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"stale runtime path {source_path} is not a regular file")
+            continue
+        if name in LEGACY_STATE_DATABASE_SIDECARS:
+            _validate_legacy_state_database_sidecar(name, source, source_path)
             continue
         if name in STALE_RUNTIME_DIRECTORIES:
             if not stat.S_ISDIR(source.mode):
@@ -790,6 +807,9 @@ def _preflight_tree(
                 raise MigrationError(f"legacy state database {source_path} is not a regular file")
             runtime_fd = _validate_native_state_destination(target_fd, target_display)
             os.close(runtime_fd)
+            continue
+        if at_legacy_root and name in LEGACY_STATE_DATABASE_SIDECARS:
+            _validate_legacy_state_database_sidecar(name, source, source_path)
             continue
         if at_legacy_root and name in STALE_RUNTIME_FILES:
             if not stat.S_ISREG(source.mode):
@@ -1189,7 +1209,42 @@ def _remove_verified_generated_shadow(
         raise
 
 
+@contextmanager
+def _owner_writable_directory(directory_fd: int):
+    original_mode = stat.S_IMODE(os.fstat(directory_fd).st_mode)
+    merge_mode = original_mode | stat.S_IRWXU
+    changed = merge_mode != original_mode
+    if changed:
+        os.fchmod(directory_fd, merge_mode)
+    try:
+        yield
+    finally:
+        if changed:
+            os.fchmod(directory_fd, original_mode)
+
+
 def _merge_tree(
+    source_fd: int,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+    policy: ShadowMigrationPolicy,
+    budget: MigrationBudget,
+    depth: int,
+) -> None:
+    with _owner_writable_directory(source_fd), _owner_writable_directory(target_fd):
+        _merge_tree_entries(
+            source_fd,
+            source_display,
+            target_fd,
+            target_display,
+            policy,
+            budget,
+            depth,
+        )
+
+
+def _merge_tree_entries(
     source_fd: int,
     source_display: str,
     target_fd: int,
@@ -1212,6 +1267,10 @@ def _merge_tree(
                 target_fd,
                 target_display,
             )
+            continue
+        if at_legacy_root and name in LEGACY_STATE_DATABASE_SIDECARS:
+            _validate_legacy_state_database_sidecar(name, source, source_path)
+            _unlink_verified(source_fd, name, source_path, expected=source)
             continue
         if at_legacy_root and name in STALE_RUNTIME_FILES:
             _unlink_verified(source_fd, name, source_path, expected=source)
@@ -1255,7 +1314,7 @@ def _merge_tree(
             continue
         if target is None:
             if stat.S_ISDIR(source.mode):
-                os.mkdir(name, stat.S_IMODE(source.mode), dir_fd=target_fd)
+                os.mkdir(name, 0o700, dir_fd=target_fd)
                 created = _identity(target_fd, name, target_path)
                 source_child = _open_dir(source_fd, name, source_path)
                 try:

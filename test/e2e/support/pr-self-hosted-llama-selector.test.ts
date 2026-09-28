@@ -133,6 +133,8 @@ async function executeSelector(
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
   filesRequestStatus = 0,
+  reportedChangedFileCount = changedFiles.length,
+  expectedStatus = filesRequestStatus,
 ) {
   const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
@@ -171,12 +173,13 @@ fi
         PR_JSON: JSON.stringify({
           number: 8748,
           base: { sha: baseSha },
+          changed_files: reportedChangedFileCount,
           head: { sha: CANDIDATE_SHA },
         }),
       },
     );
-    assert.equal(result.status, filesRequestStatus, result.stderr);
-    return filesRequestStatus === 0
+    assert.equal(result.status, expectedStatus, result.stderr);
+    return expectedStatus === 0
       ? readFileSync(outputPath, "utf8").trim()
       : `status=${result.status}`;
   } finally {
@@ -197,6 +200,8 @@ function selectHermesRootEntrypoint(
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
   filesRequestStatus = 0,
+  reportedChangedFileCount = changedFiles.length,
+  expectedStatus = filesRequestStatus,
 ) {
   return executeSelector(
     hermesSelectorScript(),
@@ -205,6 +210,8 @@ function selectHermesRootEntrypoint(
     copiedSha,
     baseSha,
     filesRequestStatus,
+    reportedChangedFileCount,
+    expectedStatus,
   );
 }
 
@@ -283,11 +290,32 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     ).resolves.toBe("selected=true");
   });
 
+  // source-shape-contract: security -- Every source copied into the Hermes image must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a copied Hermes runtime source", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["src/lib/hermes-managed-route.ts"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
   // source-shape-contract: security -- Changed-file discovery failures must stop trusted copied-PR qualification instead of silently skipping it
   it("fails Hermes qualification when changed files cannot be fetched", async ({ expect }) => {
     await expect(
       selectHermesRootEntrypoint(["agents/hermes/start.sh"], CANDIDATE_SHA, BASE_SHA, 17),
     ).resolves.toBe("status=17");
+  });
+
+  // source-shape-contract: security -- A truncated PR-file response must fail closed instead of skipping trusted qualification
+  it("fails Hermes qualification when changed-file discovery is incomplete", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(
+        ["docs/get-started/quickstart.mdx"],
+        CANDIDATE_SHA,
+        BASE_SHA,
+        0,
+        2,
+        1,
+      ),
+    ).resolves.toBe("status=1");
   });
 
   // source-shape-contract: security -- Executes the copied-PR selector to prove unrelated documentation cannot consume trusted Hermes image runners

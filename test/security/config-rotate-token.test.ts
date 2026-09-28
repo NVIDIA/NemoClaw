@@ -163,6 +163,43 @@ describe("config rotate-token", () => {
     },
   );
 
+  it("rejects endpoint-backed fallback session metadata before credential side effects", async () => {
+    const promptSecret = vi.fn();
+    const saveCredential = vi.fn();
+    const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>();
+    const captureOpenshellCommand = vi.fn<RotateTokenDeps["captureOpenshellCommand"]>();
+    const resolveAgentConfig = vi.fn(() => DEFAULT_AGENT_CONFIG);
+    const deps = {
+      appendAuditEntry: vi.fn(),
+      captureOpenshellCommand,
+      fail: (lines: string | readonly string[]): never => {
+        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+      },
+      loadSandbox: () => null,
+      loadSession: () => ({
+        sandboxName: "rotate-profile-test",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        endpointUrl: "https://compatible.example.test/v1",
+        provider: "compatible-endpoint",
+      }),
+      promptSecret,
+      resolveAgentConfig,
+      runOpenshellCommand,
+      saveCredential,
+      validateName: vi.fn((name: string) => name),
+    } satisfies RotateTokenDeps;
+
+    await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
+      "incomplete provider metadata",
+    );
+
+    expect(resolveAgentConfig).not.toHaveBeenCalled();
+    expect(promptSecret).not.toHaveBeenCalled();
+    expect(captureOpenshellCommand).not.toHaveBeenCalled();
+    expect(saveCredential).not.toHaveBeenCalled();
+    expect(runOpenshellCommand).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       message: "is not bound to sandbox 'rotate-profile-test'",

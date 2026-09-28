@@ -587,7 +587,7 @@ describe("Hermes legacy dashboard-state migration", () => {
       createLedger(path.join(legacy, "state.db"), "legacy-dashboard");
       writeDashboardMigrationFile(path.join(legacy, "gateway.lock"), "stale lock\n");
       writeDashboardMigrationFile(path.join(legacy, "gateway.pid"), "123\n");
-      writeDashboardMigrationFile(path.join(legacy, "state.db-wal"), "stale wal\n");
+      writeDashboardMigrationFile(path.join(legacy, "state.db-wal"), "");
       writeDashboardMigrationFile(path.join(legacy, "state.db-shm"), "stale shm\n");
       writeDashboardMigrationFile(path.join(legacy, "logs/dashboard.log"), "stale log\n");
       writeDashboardMigrationFile(path.join(nativeLogs, "gateway.log"), "native log\n");
@@ -603,6 +603,43 @@ describe("Hermes legacy dashboard-state migration", () => {
       expect(fs.existsSync(path.join(hermes, "gateway.pid"))).toBe(false);
     },
   );
+
+  it.skipIf(!canRunSqlite)("refuses a non-empty legacy SQLite WAL before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const runtime = path.join(hermes, "runtime");
+    fs.mkdirSync(runtime);
+    fs.symlinkSync("runtime/state.db", path.join(hermes, "state.db"));
+    createLedger(path.join(legacy, "state.db"), "uncheckpointed-dashboard");
+    writeDashboardMigrationFile(path.join(legacy, "state.db-wal"), "committed WAL data\n");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "must remain legacy\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("non-empty");
+    expect(result.stderr).toContain("checkpoint the database");
+    expect(fs.existsSync(path.join(runtime, "state.db"))).toBe(false);
+    expect(fs.existsSync(path.join(legacy, "state.db"))).toBe(true);
+    expect(fs.existsSync(path.join(legacy, "state.db-wal"))).toBe(true);
+    expect(fs.readFileSync(path.join(legacy, "MEMORY.md"), "utf8")).toBe("must remain legacy\n");
+    expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
+  });
+
+  it("uses an owner-writable target while preserving a read-only legacy directory mode", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyDirectory = path.join(hermes, "profiles/dashboard-home/knowledge");
+    const nativeDirectory = path.join(hermes, "knowledge");
+    writeDashboardMigrationFile(path.join(legacyDirectory, "MEMORY.md"), "nested state\n");
+    fs.chmodSync(legacyDirectory, 0o500);
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(nativeDirectory, "MEMORY.md"), "utf8")).toBe("nested state\n");
+    expect(fs.statSync(nativeDirectory).mode & 0o777).toBe(0o500);
+    fs.chmodSync(nativeDirectory, 0o700);
+  });
 
   it.skipIf(!canRunSqlite)(
     "resumes legacy SQLite retirement after publication is interrupted",
