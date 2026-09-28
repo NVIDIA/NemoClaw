@@ -21,6 +21,7 @@ cache_to=""
 cache_from=""
 audit_evidence_from=""
 runtime_user="sandbox"
+prepared_stages=(npm12 openclaw-system)
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)
@@ -94,6 +95,7 @@ done
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
 [[ "$runtime_user" == "root" || "$runtime_user" == "sandbox" ]] || usage
+[[ -z "$cache_to" || -z "$cache_from" ]] || usage
 case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
@@ -104,6 +106,7 @@ npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+prepared_identity="$revision $platform $openclaw_base"
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
 controller_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -147,7 +150,7 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
-  for agent in openclaw hermes langchain-deepagents-code; do
+  for agent in openclaw hermes langchain-deepagents-code "${prepared_stages[@]}"; do
     cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
       echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
@@ -176,6 +179,10 @@ if [[ -n "$cache_from" ]]; then
   }
   [[ -f "$cache_from/messaging-npm-cache-seed/manifest.json" && ! -L "$cache_from/messaging-npm-cache-seed/manifest.json" ]] || {
     echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
+    exit 1
+  }
+  [[ -f "$cache_from/openclaw-inputs" && "$(cat "$cache_from/openclaw-inputs")" == "$prepared_identity" ]] || {
+    echo "ERROR: prepared OpenClaw inputs do not match the revision, platform, and base" >&2
     exit 1
   }
 fi
@@ -440,6 +447,17 @@ build_agent() {
       # Do not import its layer graph: some BuildKit versions still reuse
       # empty-seed COPY results when --no-cache and --cache-from are combined.
       cache_args+=(--no-cache)
+      # Prepared stages contain APT and reviewed npm fixes, but no npm seeds.
+      # Consume their filesystem by digest without importing the layer graph.
+      local stage stage_digest
+      for stage in "${prepared_stages[@]}"; do
+        stage_digest="$(jq -er '.manifests | if length == 1 then .[0].digest else error("expected one prepared image") end' "$cache_from/$stage/index.json")"
+        [[ "$stage_digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+          echo "ERROR: protected managed-image prepared stage has no immutable digest: ${stage}" >&2
+          exit 1
+        }
+        cache_args+=(--build-context "$stage=oci-layout://${cache_from}/${stage}@${stage_digest}")
+      done
     else
       cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
@@ -579,6 +597,15 @@ build_agent \
   "$dcode_base"
 
 if [[ -n "$cache_to" ]]; then
+  # Export dependency stages before overlaying seeds. OCI inputs remain usable
+  # when the protected consumer disables both RUN networking and layer reuse.
+  for stage in "${prepared_stages[@]}"; do
+    docker buildx build --file "$source_root/Dockerfile" --platform "$platform" \
+      --target "$stage" --provenance=false --sbom=false \
+      --build-arg "BASE_IMAGE=${openclaw_base}" --build-arg "TARGETARCH=${target_arch}" \
+      --output "type=oci,dest=${cache_to}/${stage},tar=false" "$source_root"
+  done
+  printf '%s\n' "$prepared_identity" >"$cache_to/openclaw-inputs"
   node --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \
