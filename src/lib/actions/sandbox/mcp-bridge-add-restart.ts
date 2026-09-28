@@ -1251,6 +1251,12 @@ export async function updateMcpBridgeAllowTools(
   server: string,
   allowTools: readonly string[],
 ): Promise<void> {
+  if (allowTools.length === 0) {
+    throw new McpBridgeError(
+      "Empty allowTools array is not allowed. Use clearMcpBridgeAllowTools to remove an allowlist.",
+      2,
+    );
+  }
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
     return updateMcpBridgeAllowToolsUnlocked(sandboxName, server, allowTools);

@@ -27,7 +27,11 @@ import {
 import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
-import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
+import {
+  buildMcpBridgeProviderName,
+  normalizeMcpDenyTools,
+  VALID_ALLOW_TOOL_RE,
+} from "./mcp-bridge-validation";
 
 export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
@@ -610,11 +614,19 @@ async function enrichFromPolicy(
         ? legacyDenyTools
         : [];
   const rawAllowTools = allowRules;
-  const allowTools = rawAllowTools.length > 0 ? rawAllowTools : undefined;
 
-  const policyConflict = !deniedToolInspection.ok
-    ? "Live policy contains invalid denied-tool selectors."
-    : endpointConflict;
+  const policyConflict =
+    !deniedToolInspection.ok ||
+    (rawAllowTools.length > 0
+      ? rawAllowTools.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool))
+      : false)
+      ? "Live policy contains invalid tool selectors."
+      : endpointConflict;
+
+  const allowTools =
+    rawAllowTools.length > 0
+      ? rawAllowTools.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool))
+      : undefined;
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&
     host === new URL(entry.url).hostname.toLowerCase()
