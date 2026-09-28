@@ -1022,6 +1022,60 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   return findings;
 }
 
+function externalComponentMatchesActivation(snapshot: QualifiedExportSnapshot): boolean {
+  const selection = snapshot.registry.externalComponentSelection;
+  const live = snapshot.gateway.externalComponent;
+  return (
+    !!selection &&
+    !!live &&
+    live.registrationMatches &&
+    live.componentId === selection.componentId &&
+    selection.gatewayName === snapshot.gateway.name &&
+    selection.lifecycleGeneration === snapshot.registry.lifecycleGeneration &&
+    selection.sandboxIdentityFingerprint === snapshot.sandbox.fingerprint &&
+    selection.sandboxIdentityFingerprint === snapshot.registry.lifecycleLiveIdentityFingerprint
+  );
+}
+
+function validateExternalComponent(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const selection = snapshot.registry.externalComponentSelection;
+  const live = snapshot.gateway.externalComponent;
+  if (!selection && !live) return [];
+  const field = "spec.gateway.externalComponentRef";
+  if (!selection)
+    return [
+      finding(
+        field,
+        "missing-provenance",
+        "The live gateway has a component without completed sandbox activation evidence.",
+      ),
+    ];
+  if (!externalComponentMatchesActivation(snapshot)) {
+    return [
+      finding(
+        field,
+        "drifted",
+        "The component registration, gateway, or sandbox identity differs from completed activation evidence.",
+      ),
+    ];
+  }
+  if (
+    !live ||
+    live.schemaVersion !== 1 ||
+    snapshot.registry.agent !== "openclaw" ||
+    snapshot.inference.topology !== "hosted"
+  ) {
+    return [
+      finding(
+        field,
+        "unsupported",
+        "Only v1 components on hosted OpenClaw sandboxes are exportable.",
+      ),
+    ];
+  }
+  return [];
+}
+
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
@@ -1339,6 +1393,7 @@ function validateAgreement(
     ...validateSandboxConfiguration(snapshot),
     ...validateWebSearchProvider(snapshot),
     ...validateGateway(snapshot),
+    ...validateExternalComponent(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
     ...validateEndpointEvidence(snapshot),
@@ -1474,7 +1529,15 @@ function completeVerifiedSource(
     ...projectVerifiedWebSearch(entry),
     ...verifiedHermesAuth(entry),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
-    gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    gateway: {
+      name: snapshot.gateway.name,
+      port: snapshot.gateway.port,
+      ...(entry.externalComponentSelection
+        ? {
+            externalComponentRef: entry.externalComponentSelection.componentId,
+          }
+        : {}),
+    },
     ...projectVerifiedTools(entry, authority),
     ...projectHostSettings(entry, authority),
     inference: projectVerifiedInference(snapshot, selected, settings),

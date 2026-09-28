@@ -89,7 +89,16 @@ function finalization(componentId = evidence.componentId) {
       revalidateBeforeActivation: vi.fn(),
     },
     deps: {
-      ...finalDeps("example", session, { getSandbox: () => null, setDefault: vi.fn() }, vi.fn()),
+      ...finalDeps(
+        "example",
+        session,
+        {
+          getSandbox: () => null,
+          setDefault: vi.fn(),
+          recordCompletedExternalComponentSelection: vi.fn(() => true),
+        },
+        vi.fn(),
+      ),
       createExternalComponentActivationId: () => evidence.activationId,
       createExternalComponentActivationProof: () => ({
         gatewayName: "example",

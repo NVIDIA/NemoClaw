@@ -16,6 +16,7 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
+import { parseSandboxExternalComponentSelection } from "./registry/external-component-selection";
 import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
@@ -774,6 +775,9 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
         `Refusing to change sandbox '${name}' verified create checkpoint outside its transaction.`,
       );
     }
+    if (Object.prototype.hasOwnProperty.call(updates, "externalComponentSelection")) {
+      throw new Error("External component participation requires its verified commit boundary.");
+    }
     if (current.pendingCreateIdentity) {
       throw new Error(
         `Refusing to update sandbox '${name}' while its verified create checkpoint is incomplete.`,
@@ -795,6 +799,31 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       next.deferredN1xManagedVllmAccepted = undefined;
     }
     data.sandboxes[name] = next;
+    save(data);
+    return true;
+  });
+}
+
+/** Commit completed participation only for the identity that activation verified. */
+export function recordCompletedExternalComponentSelection(
+  name: string,
+  selection: SandboxEntry["externalComponentSelection"],
+): boolean {
+  const valid = parseSandboxExternalComponentSelection(selection);
+  if (!valid) return false;
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (
+      !current ||
+      current.pendingCreateIdentity ||
+      current.pendingRouteReservation ||
+      current.gatewayName !== valid.gatewayName ||
+      current.lifecycleGeneration !== valid.lifecycleGeneration ||
+      current.lifecycleLiveIdentityFingerprint !== valid.sandboxIdentityFingerprint
+    )
+      return false;
+    data.sandboxes[name] = { ...current, externalComponentSelection: valid };
     save(data);
     return true;
   });

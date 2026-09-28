@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import os from "node:os";
 import { isDeepStrictEqual } from "node:util";
-import { isValidNemoClawPort } from "../../config/model";
+import { createHash } from "node:crypto";
 
 import { createProviders, type Provider } from "../openshell/providers";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
@@ -31,15 +30,16 @@ import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { normalizeInferenceSelection } from "../../inference/selection";
-import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
+import { observeExternalComponentGatewayConfiguration } from "../../onboard/docker-driver-gateway-config";
 import {
-  managedGatewayStateRootOwnershipFailure,
-  resolveGatewayStateDirForPort,
-} from "../../onboard/gateway/state-dir";
+  gatewayConfigurationForExternalComponent,
+  loadExternalComponentDeclaration,
+} from "../../onboard/external-component";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
+import { observeGatewayBinding } from "./gateway-export";
 
 const CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -50,36 +50,32 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
   } as ObservedExportRegistry;
 }
 
-function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
-  const port = entry.gatewayPort;
-  if (!isValidNemoClawPort(port)) {
-    throw new Error("The persisted gateway port is incomplete or invalid.");
-  }
-  const name = resolveGatewayName(port);
-  if (entry.gatewayName !== name) {
-    throw new Error("The persisted gateway name and port disagree.");
-  }
-  return { name, port };
-}
-
 function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
-  const { name, port } = resolveGatewayBinding(entry);
-  const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
-  const stateDir = resolveGatewayStateDirForPort({
-    configured: configuredStateDir,
-    home: os.homedir(),
-    port,
-  });
-  const stateRootOwned =
-    managedGatewayStateRootOwnershipFailure(
-      { gatewayName: name, gatewayPort: port, stateDir },
-      { allowLegacyManagedState: !configuredStateDir },
-    ) === null;
+  const { name, port, stateDir, stateRootOwned } = observeGatewayBinding(entry);
+  const configured = stateRootOwned ? observeExternalComponentGatewayConfiguration(stateDir) : null;
+  const registration = configured ? loadExternalComponentDeclaration() : null;
+  registration?.revalidateBeforeActivation();
+  const digest = (value: unknown) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
   return {
     name,
     port,
     management: stateRootOwned ? "nemoclaw" : "unknown",
     stateRootOwned,
+    externalComponent: configured
+      ? {
+          componentId: configured.componentId,
+          schemaVersion: "interceptor" in configured ? 2 : 1,
+          registrationMatches:
+            registration !== null &&
+            isDeepStrictEqual(
+              configured,
+              gatewayConfigurationForExternalComponent(registration.declaration),
+            ),
+          configurationDigest: digest(configured),
+          registrationDigest: registration ? digest(registration.declaration) : null,
+        }
+      : null,
   };
 }
 
@@ -231,18 +227,18 @@ async function readProviderEvidence(
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
+  gatewayName: string,
   beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
-  const gateway = resolveGatewayBinding(entry);
-  const live = await readInferenceRoute(entry, gateway.name);
+  const live = await readInferenceRoute(entry, gatewayName);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
     live.provider,
-    gateway.name,
+    gatewayName,
     signal,
     managedServing,
   );
@@ -351,6 +347,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     stage = "inference-route";
     const inference = await inferenceFor(
       entry,
+      gateway.name,
       (nextStage) => {
         stage = nextStage;
       },

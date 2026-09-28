@@ -753,4 +753,45 @@ describe("sandbox registry normalization", () => {
     expect(registry.compareAndSetSandboxGatewayPort("alpha", replacement, 8080)).toBe(true);
     expect(registry.getSandbox("alpha")).toEqual({ ...replacement, gatewayPort: 8080 });
   });
+
+  it("retains completed component participation only for the verified sandbox identity", async () => {
+    const fingerprint = "a".repeat(64);
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: fingerprint,
+      },
+    });
+    const selection = {
+      schemaVersion: 1 as const,
+      componentId: "policy-governance",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: fingerprint,
+    };
+    expect(
+      registry.recordCompletedExternalComponentSelection("alpha", {
+        ...selection,
+        lifecycleGeneration: "other",
+      }),
+    ).toBe(false);
+    expect(registry.recordCompletedExternalComponentSelection("alpha", selection)).toBe(true);
+    expect(registry.getSandbox("alpha")?.externalComponentSelection).toEqual(selection);
+    expect(() =>
+      registry.updateSandbox("alpha", { externalComponentSelection: selection }),
+    ).toThrow();
+  });
+
+  it("rejects a malformed persisted component selection", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        externalComponentSelection: { schemaVersion: 1, componentId: "policy-governance" },
+      },
+    });
+    expect(() => registry.getSandbox("alpha")).toThrow(/invalid external component selection/u);
+  });
 });

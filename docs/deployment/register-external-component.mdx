@@ -253,7 +253,7 @@ NemoClaw classifies the activation result as follows:
 
 | Result | Onboarding behavior |
 |---|---|
-| `activated` with matching evidence | Clears operation-local activation evidence and completes onboarding after the repeated identity and policy check. |
+| `activated` with matching evidence | Records the component ID for this sandbox identity, clears operation-local activation evidence, and completes onboarding. |
 | `rejected` | Records a `failed` activation and preserves the sandbox. |
 | Timeout, disconnect, malformed response, non-`200` status, oversized response, extra response data, or evidence mismatch | Records an `ambiguous` activation and preserves the sandbox. |
 
@@ -271,6 +271,28 @@ Version 1 has no supported recovery operation for this state.
 Preserve the onboarding session, sandbox registry, sandbox, and component diagnostics for an identity-verified recovery decision.
 Do not delete or recover the sandbox from its mutable name alone.
 NemoClaw does not store a policy copy or durable policy authority in the incomplete state.
+
+## Export a Component Requirement
+
+After successful version 1 activation on a hosted OpenClaw sandbox, `$$nemoclaw config export` includes the component ID under `spec.gateway`:
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:8080
+    externalComponentRef: policy-governance
+```
+
+The reference tells the destination operator which component to register before deployment.
+It does not include socket paths, credentials, component policy, or an activation request.
+Version 1 can parse this requirement but cannot plan or apply a document that includes it.
+
+NemoClaw writes a small activation record only after the component returns `activated` and the sandbox evidence still matches.
+At export, NemoClaw compares that record with the live sandbox identity, gateway configuration, and current component declaration.
+If a component is configured without matching activation evidence, export stops without a document.
+Changing the component, gateway, or sandbox identity also stops export.
+Version 2 component export is not qualified.
 
 ## Keep Credentials Outside the Contract
 
