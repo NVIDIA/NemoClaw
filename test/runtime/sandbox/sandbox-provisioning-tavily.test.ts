@@ -21,7 +21,7 @@ function runPluginInstallBlock(
   const command = dockerRunCommandBetween(
     dockerfile,
     "# Install non-messaging OpenClaw plugins",
-    "# The reviewed cache stays root-owned and immutable to the sandbox user.",
+    "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));
 

@@ -174,7 +174,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
 });
 
 describe("CLI OpenShell sandbox policy writer", () => {
-  it("maps a successful write to exact gateway-pinned arguments", async () => {
+  it("keeps the host alive for OpenShell's policy activation window (#11798)", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
     const writer = createCliOpenShellSandboxPolicyWriter({ capture });
 
@@ -196,7 +196,7 @@ describe("CLI OpenShell sandbox policy writer", () => {
         "--wait",
         "my-dev-assistant-v2",
       ],
-      expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
+      expect.objectContaining({ ignoreError: true, timeout: 65_000 }),
     );
   });
 

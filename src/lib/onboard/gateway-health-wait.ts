@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
+import type { OpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse";
 import type { WaitUntilOptions } from "../core/wait";
 import { envInt } from "./env";
 import {
@@ -8,8 +10,6 @@ import {
   getLegacyPollDeadlineBudgetMs,
   waitUntilAsync,
 } from "./readiness-wait";
-
-type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string;
 
 export function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
   const isArm64 = process.arch === "arm64";
@@ -32,15 +32,15 @@ export function getGatewayHealthWaitConfig(_startStatus = 0, containerState = ""
 }
 
 export interface GatewayHealthWaitOptions {
-  attachGatewayMetadataIfNeeded: (options?: { forceRefresh?: boolean }) => void;
+  lifecycle: OpenShellGatewayLifecycle;
+  observer: OpenShellGatewayReuseObserver;
+  attachGatewayMetadataIfNeeded: (options?: { forceRefresh?: boolean }) => Promise<boolean>;
   gatewayClusterHealthcheckPassed: () => boolean;
   gatewayName: string;
   healthPollCount: number;
   healthPollIntervalSeconds: number;
-  isGatewayHealthy: (status: string, namedInfo: string, currentInfo: string) => boolean;
   isGatewayHttpReady: (signal?: AbortSignal) => Promise<boolean>;
   repairGatewayBootstrapSecrets: () => { repaired: boolean };
-  runCaptureOpenshell: RunCaptureOpenshell;
   sleepSeconds: (seconds: number) => void;
   now?: () => number;
 }
@@ -122,15 +122,15 @@ function startAbortableGatewayHttpProbe(
 }
 
 export async function waitForGatewayHealth({
+  lifecycle,
+  observer,
   attachGatewayMetadataIfNeeded,
   gatewayClusterHealthcheckPassed,
   gatewayName,
   healthPollCount,
   healthPollIntervalSeconds,
-  isGatewayHealthy,
   isGatewayHttpReady,
   repairGatewayBootstrapSecrets,
-  runCaptureOpenshell,
   sleepSeconds,
   now = Date.now,
 }: GatewayHealthWaitOptions): Promise<boolean> {
@@ -140,23 +140,23 @@ export async function waitForGatewayHealth({
     now,
     (ms) => sleepSeconds(ms / 1000),
   );
+  if (!waitOptions) return false;
+  const request = { target: { kind: "named" as const, gatewayName } };
+  const selected = await lifecycle.selectGateway(request);
+  if (!selected.ok) return false;
+  let attachmentAttempted = false;
   return (
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
       const repairResult = repairGatewayBootstrapSecrets();
-      if (repairResult.repaired) {
-        attachGatewayMetadataIfNeeded({ forceRefresh: true });
-      } else if (gatewayClusterHealthcheckPassed()) {
-        attachGatewayMetadataIfNeeded();
+      if (!attachmentAttempted && (repairResult.repaired || gatewayClusterHealthcheckPassed())) {
+        attachmentAttempted = true;
+        if (!(await attachGatewayMetadataIfNeeded({ forceRefresh: repairResult.repaired })))
+          return false;
       }
       const httpProbe = startAbortableGatewayHttpProbe(isGatewayHttpReady);
-      runCaptureOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-        ignoreError: true,
-      });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      if (!isGatewayHealthy(status, namedInfo, currentInfo)) {
+      const observed = await observer.observeGatewayReuse(request);
+      if (observed.error || !observed.healthy || !observed.namedMetadata) {
         httpProbe.abort();
         return false;
       }

@@ -415,7 +415,7 @@ export async function installSandboxSkill(
     stageCreated = true;
 
     const upload = captureOpenshell(
-      // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
+      // OpenShell SDK 0.0.116 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
       [
         "sandbox",

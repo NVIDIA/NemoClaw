@@ -16,7 +16,7 @@ export async function ensureMessagingHostForwardAfterRebuild(
 ): Promise<boolean> {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
-  const health = isSandboxPortForwardHealthy(
+  const health = await isSandboxPortForwardHealthy(
     sandboxName,
     forward.port,
     undefined,

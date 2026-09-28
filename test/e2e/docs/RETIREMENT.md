@@ -80,8 +80,8 @@ timing comparisons.
 - `test/e2e/registry/run.ts --emit-live-matrix` emits the live
   GitHub Actions matrix.
 - `.github/workflows/e2e.yaml` runs the live matrix.
-- `test/e2e/live/registry-targets.test.ts` executes supported
-  registry targets through the E2E workflow.
+- `test/e2e/live/registry-targets.test.ts` executes every registered
+  target through the E2E workflow.
 - `test/e2e/fixtures/` owns fixtures, clients, shell-probe bridges,
   artifact writing, cleanup, and redaction.
 

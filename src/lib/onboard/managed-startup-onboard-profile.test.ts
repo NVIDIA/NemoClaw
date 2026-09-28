@@ -242,7 +242,6 @@ describe("buildManagedStartupOnboardProfile", () => {
       agentConfig: {
         agent: "openclaw",
         webSearch: { enabled: true, provider: "tavily" },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       },
       tools: { disclosure: "direct", enabledGateways: [] },
     });

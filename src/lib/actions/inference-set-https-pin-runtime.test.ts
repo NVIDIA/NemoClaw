@@ -162,6 +162,9 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         "compatible.example",
       );
       expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain("/v1");
+      expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain(
+        "real-upstream-secret",
+      );
       expect(process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV]).toBeUndefined();
 
       const mutation = capture.mock.calls.find(

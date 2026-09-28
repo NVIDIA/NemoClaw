@@ -152,13 +152,13 @@ describe("gateway GPU passthrough inspection", () => {
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha", "beta"], "alpha", true)).toBe(false);
   });
 
-  it("does not categorically abort Jetson GPU passthrough on Docker-driver gateways", () => {
+  it("does not categorically abort Jetson GPU passthrough on Docker-driver gateways", async () => {
     vi.mocked(docker.dockerInspect).mockClear();
     const stopDashboardForwards = vi.fn();
     const retireLegacyGatewayForDockerDriverUpgrade = vi.fn();
     const destroyGatewayRuntimeForGpuReuse = vi.fn();
 
-    const result = reconcileGatewayGpuReuseForGpuIntent({
+    const result = await reconcileGatewayGpuReuseForGpuIntent({
       gatewayReuseState: healthy,
       gpuPassthrough: true,
       gatewayName: "nemoclaw",
@@ -180,7 +180,7 @@ describe("gateway GPU passthrough inspection", () => {
 
   // This hint had no coverage, so it kept printing the `gateway destroy` verb
   // that OpenShell removed before 0.0.44 (#8139).
-  it("prints openshell gateway remove without gateway destroy when the sandbox registry is unreadable (#8139)", () => {
+  it("prints openshell gateway remove without gateway destroy when the sandbox registry is unreadable (#8139)", async () => {
     // A "null" DeviceRequests value marks the gateway CPU-only. Onboard then
     // reads the sandbox registry, and this test makes that read throw.
     vi.mocked(docker.dockerInspect).mockReturnValue({
@@ -205,7 +205,7 @@ describe("gateway GPU passthrough inspection", () => {
       });
 
     try {
-      expect(() =>
+      await expect(
         reconcileGatewayGpuReuseForGpuIntent({
           gatewayReuseState: healthy,
           gpuPassthrough: true,
@@ -217,7 +217,7 @@ describe("gateway GPU passthrough inspection", () => {
           retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
           destroyGatewayRuntimeForGpuReuse: vi.fn(),
         }),
-      ).toThrow("exit 1");
+      ).rejects.toThrow("exit 1");
 
       expect(errors).toContain("    openshell gateway remove nemoclaw");
       expect(errors).toContain(

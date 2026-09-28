@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxBufferedCommandRequest,
@@ -10,7 +11,6 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
-import { buildOpenShellRuntimeSelectionEnv } from "../../adapters/openshell/runtime-selection";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
@@ -26,13 +26,13 @@ import {
   nvcfFunctionNotFoundMessage,
 } from "../../inference/nvcf-model-access";
 import { ROOT, shellQuote } from "../../runner";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
+  buildSandboxCommandEnvironment,
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
-} from "./process-recovery";
+} from "../../adapters/sandbox/command-transport";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
@@ -47,19 +47,7 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | {
-      ok: false;
-      detail: string;
-      httpStatus: number | null;
-      endpoint?: string;
-      /**
-       * True only when the in-sandbox probe could not run at all (the exec did
-       * not produce a usable result), as opposed to reaching the route and
-       * getting a rejection. A stuck/unresponsive container yields this. See
-       * #11165: rebuild must be able to recover such a sandbox.
-       */
-      unavailable?: boolean;
-    };
+  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
 
 export type SandboxInferenceInvocationDeps = {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
@@ -175,9 +163,7 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       ENV: "",
       HOME: "/usr/local/lib/nemoclaw",
     },
-    environment: input.runtimeSelection
-      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), input.runtimeSelection)
-      : buildSubprocessEnv(),
+    environment: buildSandboxCommandEnvironment(input.runtimeSelection),
     tty: false,
     timeoutMilliseconds,
   };
@@ -226,14 +212,16 @@ export async function probeSandboxInferenceInvocation(
     const execOptions: SandboxExecCommandOptions = {
       ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
       ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
-      localDockerFallbackPolicy: "never",
     };
     result = await execute(
       input.sandboxName,
       buildSandboxInferenceInvocationCommand(input),
       timeoutMs,
       execOptions,
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    });
   }
   if (!result) {
     return {
@@ -241,7 +229,6 @@ export async function probeSandboxInferenceInvocation(
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
       endpoint: resolveSandboxInferenceInvocationEndpoint(input),
-      unavailable: true,
     };
   }
   if (result.status === 0) {

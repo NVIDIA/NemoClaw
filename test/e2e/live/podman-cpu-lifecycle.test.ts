@@ -8,6 +8,11 @@ import path from "node:path";
 
 import { vi } from "vitest";
 import type { ContainerEngine } from "../../../src/lib/adapters/container-engine";
+import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity";
+import type { OpenShellSandboxObserver } from "../../../src/lib/adapters/openshell/sandbox-observer";
+import { withSandboxLifecycleLock } from "../../../src/lib/actions/sandbox/gateway-state";
+import { startSandbox } from "../../../src/lib/actions/sandbox/start";
+import { stopSandbox } from "../../../src/lib/actions/sandbox/stop";
 import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
@@ -15,18 +20,16 @@ import {
 } from "../../../src/lib/adapters/podman";
 import { buildDockerDriverGatewayEnv } from "../../../src/lib/onboard/docker-driver-gateway-env";
 import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
+import { ensureManagedGatewayStateRoot } from "../../../src/lib/onboard/gateway/state-dir";
 import {
   installPortableDemoSandboxLifecycle,
   portableDemoLifecycleInternals,
 } from "../../../src/lib/onboard/experimental/portable-demo-lifecycle";
 import { inspectPortablePodmanReadiness } from "../../../src/lib/onboard/experimental/portable-runtime-readiness";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderLifecycleInput,
-  RuntimeProviderLifecycleSurface,
-} from "../../../src/lib/onboard/runtime-provider/contract";
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman";
-import type { SandboxEntry } from "../../../src/lib/state/registry/types";
+import { createRuntimeProviderBundleRegistry } from "../../../src/lib/onboard/runtime-provider/registry";
+import { PODMAN_SANDBOX_ID_LABEL } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
+import type { SandboxEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -49,6 +52,9 @@ import {
   waitForHealthyGateway,
 } from "./podman-cpu-lifecycle-helpers.ts";
 
+// Prove OpenShell-owned lifecycle for every standard runtime after retirement
+// of NemoClaw's provider-specific container controller, with Docker unavailable;
+// the separate all-agent proof owns the managed-image release handshake.
 const AGENTS = [
   { agent: "openclaw", sandboxName: "podman-openclaw" },
   { agent: "hermes", sandboxName: "podman-hermes" },
@@ -70,11 +76,9 @@ const E2E_PHASES = [
   "prove cold activation and warm API readiness",
   "start the pinned OpenShell Podman gateway",
   "activate registered-agent identities through the pinned OpenShell CLI",
-  "exercise exact-container stop and start",
+  "exercise public registered-sandbox stop and start",
   "record successful final at-rest state",
 ] as const;
-
-type SupportedLifecycle = Extract<RuntimeProviderLifecycleSurface, { supported: true }>;
 
 function candidateAuthority() {
   const expectedSourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
@@ -98,11 +102,6 @@ function engines(): {
       socketAuthority,
     }),
   };
-}
-
-function supportedLifecycle(bundle: RuntimeProviderBundle): SupportedLifecycle {
-  expect(bundle.lifecycle.supported).toBe(true);
-  return bundle.lifecycle as SupportedLifecycle;
 }
 
 test(
@@ -221,8 +220,13 @@ exit 1
     expect(warmReadiness).toMatchObject({ ok: true, timing: { mode: "warm" } });
     runtimeEngines = engines();
 
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
+    const root = fs.mkdtempSync(path.join(REPO_ROOT, ".nemoclaw-podman-openshell-"));
     const stateDir = path.join(root, "gateway-state");
+    ensureManagedGatewayStateRoot({
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      stateDir,
+    });
     const cliEnv: NodeJS.ProcessEnv = {
       ...buildAvailabilityProbeEnv(),
       OPENSHELL_GATEWAY: GATEWAY_NAME,
@@ -396,45 +400,105 @@ exit 1
         schemaVersion: 4,
       });
 
-      progress.phase("exercise exact-container stop and start");
+      progress.phase("exercise public registered-sandbox stop and start");
       for (const { agent, sandboxName } of AGENTS) {
         const agentEngines = engines();
-        const agentBundle = createPodmanRuntimeProviderBundle({ engines: agentEngines });
-        const lifecycle = supportedLifecycle(agentBundle);
-        const sandbox: SandboxEntry = { agent, name: sandboxName, openshellDriver: "podman" };
-        const input: RuntimeProviderLifecycleInput = {
-          environment: process.env,
-          log: vi.fn(),
-          sandbox,
-          sandboxName,
-        };
-        const beforeStop = vi.fn();
         const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
+        const immutableIdentity = fingerprintOpenShellSandboxId(
+          initial.Config.Labels[PODMAN_SANDBOX_ID_LABEL]!,
+        )!;
+        let entry: SandboxEntry = {
+          agent,
+          gatewayName: GATEWAY_NAME,
+          lifecycleLiveIdentityFingerprint: immutableIdentity,
+          name: sandboxName,
+          openshellDriver: "podman",
+        };
+        const updateSandbox = vi.fn((_name: string, updates: Partial<SandboxEntry>) => {
+          entry = { ...entry, ...updates };
+          return true;
+        });
+        const runtimeProviders = createRuntimeProviderBundleRegistry([
+          ["podman", createPodmanRuntimeProviderBundle({ engines: agentEngines })],
+        ]);
+        const environment = {
+          ...cliEnv,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+        };
+        const withLifecycleLock: typeof withSandboxLifecycleLock = (name, operation) =>
+          withSandboxLifecycleLock(name, operation, {
+            stateDir: path.join(root, "public-lifecycle-locks"),
+          });
+        const observer: OpenShellSandboxObserver = {
+          listSandboxes: async () => ({
+            ok: true,
+            value: {
+              sandboxes: [{ name: sandboxName, phase: "Ready", readiness: "ready" }],
+            },
+          }),
+        };
+        const verifyRestartedAgent = vi.fn(async () => {
+          await runCommand(
+            shellProbe,
+            openshellBin,
+            [
+              "sandbox",
+              "exec",
+              "--name",
+              sandboxName,
+              "-g",
+              GATEWAY_NAME,
+              "--",
+              "cat",
+              "/tmp/nemoclaw-agent-proof",
+            ],
+            {
+              artifactName: `podman-lifecycle-restart-proof-${agent}`,
+              env: cliEnv,
+              timeoutMs: 60_000,
+            },
+          );
+        });
 
-        expect(lifecycle.stop(input, { beforeStop })).toEqual({ exitCode: 0, state: "stopped" });
-        expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
+        await stopSandbox(sandboxName, {
+          environment,
+          getSandbox: () => entry,
+          runtimeProviders,
+          stopSandboxChannels: vi.fn(),
+          teardownSandboxDashboardForward: async () => true,
+          updateSandbox,
+          withLifecycleLock,
+        });
+        expect(entry.stopped).toBe(true);
         const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(stopped.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
 
-        expect(agentBundle.preflightDoctor.preflightLifecycle("start", input)).toBeNull();
-        expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
-        await lifecycle.verifyStarted(
-          input,
-          vi.fn(async () => undefined),
-        );
+        await expect(
+          startSandbox(sandboxName, {
+            allowDockerRuntimeInspection: false,
+            environment,
+            getSandbox: () => entry,
+            observer,
+            probeGatewayProcess: async () => true,
+            runtimeProviders,
+            updateSandbox,
+            verifyGateway: verifyRestartedAgent,
+            withLifecycleLock,
+          }),
+        ).resolves.toEqual({ exitCode: 0 });
+        expect(verifyRestartedAgent).toHaveBeenCalledExactlyOnceWith(sandboxName);
+        expect(entry.lifecycleLiveIdentityFingerprint).toBe(immutableIdentity);
         const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
-        expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
-          exitCode: 0,
-          state: "stopped",
-        });
-        expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
-        const restarted = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
-        expect(restarted.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
-        expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
-          exitCode: 0,
-          state: "stopped",
+        await stopSandbox(sandboxName, {
+          environment,
+          getSandbox: () => entry,
+          runtimeProviders,
+          stopSandboxChannels: vi.fn(),
+          teardownSandboxDashboardForward: async () => true,
+          updateSandbox,
+          withLifecycleLock,
         });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });

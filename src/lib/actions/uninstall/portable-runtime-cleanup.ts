@@ -86,10 +86,13 @@ export interface PortableRuntimeCleanupDeps extends PortableDemoLifecycleDeps {
   ) => PortablePodmanLifecycleCommandResult;
   readonly withLifecycleLock?: <T>(
     sandboxName: string,
-    operation: () => Promise<T>,
+    operation: () => T | Promise<T>,
     stateDir: string,
   ) => Promise<T>;
-  readonly withRegistryLock?: <T>(registryFile: string, operation: () => Promise<T>) => Promise<T>;
+  readonly withRegistryLock?: <T>(
+    registryFile: string,
+    operation: () => T | Promise<T>,
+  ) => Promise<T>;
   readonly inspectRetirement?: (homeDir: string) => PortableRetirementRecovery | null;
   readonly prepareRetirement?: (
     homeDir: string,
@@ -142,10 +145,10 @@ async function withPortableFences<T>(
   const lifecycleStateDir = path.join(input.stateDir, "state");
   const withLifecycleLock =
     deps.withLifecycleLock ??
-    (<Value>(sandboxName: string, inner: () => Promise<Value>, stateDir: string) =>
+    (<Value>(sandboxName: string, inner: () => Value | Promise<Value>, stateDir: string) =>
       withMcpLifecycleLock(sandboxName, inner, { stateDir }));
   const withRegistryLock = deps.withRegistryLock ?? withProcessBoundRegistryLockAtAsync;
-  const acquireNext = async (index: number): Promise<T> => {
+  const acquireNext = (index: number): Promise<T> => {
     const sandboxName = sandboxNames[index];
     return sandboxName
       ? withLifecycleLock(sandboxName, () => acquireNext(index + 1), lifecycleStateDir)
@@ -291,7 +294,7 @@ export async function runPortableRuntimeCleanupTransaction(
     removed: number,
     sandboxNames: readonly string[],
     gatewayName: string,
-  ) => boolean,
+  ) => boolean | Promise<boolean>,
   deps: PortableRuntimeCleanupDeps = {},
 ): Promise<PortableRuntimeCleanupResult | null> {
   const hermesInput = {
@@ -337,7 +340,7 @@ export async function runPortableRuntimeCleanupTransaction(
     input,
     receipts.map((receipt) => receipt.sandboxName),
     deps,
-    () => {
+    async () => {
       const current = currentReceipts(input.stateDir);
       const currentRegistry = readGatewayRegistryFile(input.homeDir, input.registryFile);
       if (!isDeepStrictEqual(current, receipts) || !isDeepStrictEqual(currentRegistry, registry)) {
@@ -372,11 +375,11 @@ export async function runPortableRuntimeCleanupTransaction(
       for (const target of prepared) target.removeAndVerify();
       const sandboxContainersRemoved = prepared.filter((target) => target.present).length;
       if (
-        !continueAfterSandboxRemoval(
+        !(await continueAfterSandboxRemoval(
           sandboxContainersRemoved,
           receipts.map((receipt) => receipt.sandboxName),
           gatewayName,
-        )
+        ))
       )
         return null;
       if (

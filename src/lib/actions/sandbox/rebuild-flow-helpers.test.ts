@@ -1069,22 +1069,39 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
 
-  it("does not attempt recovery for a non-transport backup failure", async () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: [],
-      manifest: null,
-      unreachable: false,
-    });
+  it.each(["non-transport", "captured"] as const)(
+    "does not start the source after a %s backup failure (#11165)",
+    async (kind) => {
+      backupSpy.mockReturnValue({
+        success: false,
+        backedUpDirs: [],
+        backedUpFiles: [],
+        failedDirs: [".state"],
+        failedFiles: [],
+        manifest: null,
+        unreachable: kind === "captured",
+      });
 
-    await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-    expect(startSpy).not.toHaveBeenCalled();
-  });
+      await expect(
+        backupSandboxStateForRebuild(
+          "alpha",
+          makeSandboxEntry(),
+          false,
+          () => undefined,
+          makeBail(),
+          kind === "captured"
+            ? {
+                sandboxName: "alpha",
+                agentName: "openclaw",
+                directory: "/private/captured",
+                assertCurrent: vi.fn(),
+              }
+            : undefined,
+        ),
+      ).rejects.toThrow("bail: Failed to back up sandbox state.");
+      expect(startSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("falls through to the original abort when no stopped container can be found", async () => {
     backupSpy.mockReturnValue({
@@ -1188,145 +1205,5 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
       "bail: Could not return the sandbox's recovered container to its stopped state.",
     );
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
-  });
-});
-
-describe("backupSandboxStateForRebuild terminal-phase unreachable degrade (#11165)", () => {
-  let backupSpy: MockInstance;
-  let startSpy: MockInstance;
-  let backupStartedSpy: MockInstance;
-  let returnStoppedSpy: MockInstance;
-  let errorSpy: MockInstance;
-
-  beforeEach(() => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    backupSpy = vi.spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority");
-    startSpy = vi.spyOn(stoppedSandboxBackup, "startStoppedSandboxContainerForBackup");
-    backupStartedSpy = vi.spyOn(stoppedSandboxBackup, "backupStartedSandboxState");
-    returnStoppedSpy = vi.spyOn(stoppedSandboxBackup, "returnSandboxContainerToStopped");
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  const unreachableResult = {
-    success: false,
-    backedUpDirs: [],
-    backedUpFiles: [],
-    failedDirs: [".state"],
-    failedFiles: [],
-    manifest: null,
-    unreachable: true,
-  } as const;
-
-  it("proceeds without a backup manifest for a terminal-phase sandbox whose live state is unreachable", async () => {
-    // The start-then-retry recovery still fails because the container
-    // crash-loops. On a terminal-phase sandbox this must degrade to a
-    // no-backup destroy+recreate instead of aborting (#11165).
-    backupSpy.mockReturnValue(unreachableResult);
-    startSpy.mockReturnValue(null);
-
-    const result = await backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      makeBail(),
-      true,
-    );
-
-    expect(result).toBeNull();
-    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(errorLines.some((line: string) => line.includes("terminal phase"))).toBe(true);
-    expect(errorLines.some((line: string) => line.includes("will be discarded"))).toBe(true);
-    expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(false);
-  });
-
-  it("still aborts a terminal-phase sandbox when state exists but is permission-denied", async () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedDirReasons: { ".state": "permission denied" },
-      failedFiles: [],
-      manifest: null,
-      unreachable: true,
-    });
-    startSpy.mockReturnValue(null);
-
-    await expect(
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-        true,
-      ),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-  });
-
-  it("still aborts a terminal-phase sandbox when state was absent after extraction", async () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedDirReasons: { ".state": "absent after extraction" },
-      failedFiles: [],
-      manifest: null,
-      unreachable: true,
-    });
-    startSpy.mockReturnValue(null);
-
-    await expect(
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-        true,
-      ),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-  });
-
-  it("does not degrade a non-terminal sandbox even when the backup is unreachable", async () => {
-    backupSpy.mockReturnValue(unreachableResult);
-    startSpy.mockReturnValue(null);
-
-    await expect(
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-        false,
-      ),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-  });
-
-  it("prefers the successful start-retry backup over degrading a terminal-phase sandbox", async () => {
-    backupSpy.mockReturnValue(unreachableResult);
-    startSpy.mockReturnValue({ containerName: "openshell-alpha", runtimeProviderId: "docker" });
-    backupStartedSpy.mockResolvedValue(makeBackupResult());
-    returnStoppedSpy.mockReturnValue(true);
-
-    const result = await backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      makeBail(),
-      true,
-    );
-
-    expect(result).toEqual(makeBackupResult().manifest);
   });
 });

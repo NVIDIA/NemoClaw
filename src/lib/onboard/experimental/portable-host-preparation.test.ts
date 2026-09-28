@@ -93,6 +93,7 @@ function preparePortableExperimentalHost(
     env,
     {
       ...deps,
+      architecture: deps.architecture ?? "x64",
       docker:
         docker && simulateExistingPortableNetwork
           ? (args, childEnv) =>
@@ -171,6 +172,27 @@ describe("preparePortableExperimentalHost", () => {
     expect(env.DOCKER_HOST).toBeUndefined();
     expect(systemctl).not.toHaveBeenCalled();
     expect(docker).not.toHaveBeenCalled();
+  });
+  it("rejects arm64 before portable host effects (#11518)", () => {
+    const hostEffect = vi.fn(() => result());
+    const cpuPreflight = vi.fn(() => ({ ok: true as const, detail: "unused" }));
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    expect(() =>
+      preparePortableExperimentalHost(env, {
+        platform: "linux",
+        architecture: "arm64",
+        systemctl: hostEffect,
+        podman: hostEffect,
+        docker: hostEffect,
+        validateConfigAuthority: hostEffect,
+        cpuDelegationPreflight: cpuPreflight,
+      }),
+    ).toThrow(
+      "The portable experimental profile requires Linux x86_64 (amd64); detected Linux arm64.",
+    );
+    expect(env).toEqual({ NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" });
+    expect(hostEffect).not.toHaveBeenCalled();
+    expect(cpuPreflight).not.toHaveBeenCalled();
   });
 
   it("fails the portable preflight when the user hierarchy cannot enforce the CPU limit (#9188)", () => {

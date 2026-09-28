@@ -138,8 +138,8 @@ beforeEach(() => {
     agent: "openclaw",
     openshellDriver: "docker",
   });
-  fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
-    const error = fixture.validateSnapshotRestoreMutationMock(_path, options ?? {});
+  fixture.restoreSandboxStateMock.mockImplementation(async (_name, _path, options) => {
+    const error = await fixture.validateSnapshotRestoreMutationMock(_path, options ?? {});
     providerRestore.events.push(...(error ? [] : ["filesystem-restore"]));
     return {
       success: !error,

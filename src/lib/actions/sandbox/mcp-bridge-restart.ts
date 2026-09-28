@@ -32,6 +32,7 @@ import {
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
 import {
+  assertNoAmbiguousMcpCredentialTargets,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
@@ -98,6 +99,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const bridges = observed.bridges;
+  assertNoAmbiguousMcpCredentialTargets(Object.values(bridges));
   const targets = server ? [[server, bridges[server]] as const] : Object.entries(bridges);
   if (targets.length === 0) {
     console.log(`  No MCP servers for sandbox '${sandboxName}'.`);
@@ -197,6 +199,7 @@ export async function restoreExistingMcpBridgeRuntime(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  assertNoAmbiguousMcpCredentialTargets(entries);
   const resolvedByServer = await preflightMcpEntryTargets(entries);
   if (options.lifecyclePhase !== "teardown-rollback") {
     assertMcpCredentialBoundaryRuntimeVersion();

@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getRouterHealthSnapshot,
   inspectModelRouterProcessForPort,
+  isRouterResponsive,
   stopModelRouterProcess,
 } from "./model-router-process";
 
@@ -38,7 +39,14 @@ describe("getRouterHealthSnapshot (#8962)", () => {
       },
       async (port) => {
         const snapshot = await getRouterHealthSnapshot(port);
-        expect(snapshot).toEqual({ healthy: true, body });
+        expect(snapshot).toMatchObject({
+          healthy: true,
+          body,
+          capturedBodyBytes: Buffer.byteLength(body),
+          outcome: "complete",
+          statusCode: 200,
+        });
+        expect(snapshot.elapsedMs).toBeGreaterThanOrEqual(0);
       },
     );
   });
@@ -51,7 +59,12 @@ describe("getRouterHealthSnapshot (#8962)", () => {
       },
       async (port) => {
         const snapshot = await getRouterHealthSnapshot(port);
-        expect(snapshot).toEqual({ healthy: false, body: "router warming up" });
+        expect(snapshot).toMatchObject({
+          healthy: false,
+          body: "router warming up",
+          outcome: "complete",
+          statusCode: 503,
+        });
       },
     );
   });
@@ -63,7 +76,13 @@ describe("getRouterHealthSnapshot (#8962)", () => {
     const port = (server.address() as AddressInfo).port;
     try {
       const snapshot = await getRouterHealthSnapshot(port);
-      expect(snapshot).toEqual({ healthy: false, body: null });
+      expect(snapshot).toMatchObject({
+        healthy: false,
+        body: null,
+        capturedBodyBytes: 0,
+        outcome: "transport_error",
+        statusCode: null,
+      });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -78,13 +97,39 @@ describe("getRouterHealthSnapshot (#8962)", () => {
       },
       async (port) => {
         const snapshot = await getRouterHealthSnapshot(port, 300);
-        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.healthy).toBe(false);
         expect(snapshot.body).toContain('"error":"partial');
+        expect(snapshot).toMatchObject({ outcome: "timeout", statusCode: 200 });
       },
     );
   });
 
-  it("settles at the capture cap with the truncated body prefix", async () => {
+  it("aborts a pending semantic health response when startup no longer needs it (#12089)", async () => {
+    let notifyRequest: () => void = () => undefined;
+    const requestReceived = new Promise<void>((resolve) => {
+      notifyRequest = resolve;
+    });
+    const controller = new AbortController();
+
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write('{"healthy_endpoints":[');
+        notifyRequest();
+      },
+      async (port) => {
+        const snapshotPromise = getRouterHealthSnapshot(port, 10_000, controller.signal);
+        await requestReceived;
+        controller.abort();
+        await expect(snapshotPromise).resolves.toMatchObject({
+          healthy: false,
+          outcome: "aborted",
+        });
+      },
+    );
+  });
+
+  it("reports the truncated body prefix after an oversized response ends", async () => {
     const oversized = `{"unhealthy_endpoints":[{"error":"big"}],"pad":"${"x".repeat(70 * 1024)}"}`;
     await withHealthServer(
       (_req, res) => {
@@ -93,9 +138,96 @@ describe("getRouterHealthSnapshot (#8962)", () => {
       },
       async (port) => {
         const snapshot = await getRouterHealthSnapshot(port);
-        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.healthy).toBe(false);
         expect(snapshot.body?.length).toBe(64 * 1024);
         expect(snapshot.body).toContain('"error":"big"');
+        expect(snapshot).toMatchObject({
+          capturedBodyBytes: 64 * 1024,
+          outcome: "body_limit",
+          statusCode: 200,
+        });
+      },
+    );
+  });
+
+  it("keeps consuming an oversized response until the wall-clock deadline (#12089)", async () => {
+    let notifyBodyWritten: () => void = () => undefined;
+    const bodyWritten = new Promise<void>((resolve) => {
+      notifyBodyWritten = resolve;
+    });
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.write("x".repeat(64 * 1024 + 1), notifyBodyWritten);
+        // Never end the response; reaching the capture cap must not settle it.
+      },
+      async (port) => {
+        const snapshotPromise = getRouterHealthSnapshot(port, 300);
+        await bodyWritten;
+        const snapshot = await snapshotPromise;
+        expect(snapshot).toMatchObject({
+          healthy: false,
+          capturedBodyBytes: 64 * 1024,
+          outcome: "timeout",
+          statusCode: 200,
+        });
+        expect(snapshot.body?.length).toBe(64 * 1024);
+      },
+    );
+  });
+
+  it("treats a response exactly at the capture cap as complete", async () => {
+    const body = "x".repeat(64 * 1024);
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(body);
+      },
+      async (port) => {
+        await expect(getRouterHealthSnapshot(port)).resolves.toMatchObject({
+          healthy: true,
+          body,
+          capturedBodyBytes: 64 * 1024,
+          outcome: "complete",
+          statusCode: 200,
+        });
+      },
+    );
+  });
+
+  it("checks liveness without waiting for a hanging semantic health response (#12089)", async () => {
+    await withHealthServer(
+      (req, res) => {
+        switch (req.url) {
+          case "/health/liveliness":
+            res.writeHead(200);
+            res.end("ok");
+            break;
+          case "/health":
+            res.writeHead(200, { "content-type": "application/json" });
+            res.write('{"healthy_endpoints":[');
+            break;
+        }
+      },
+      async (port) => {
+        await expect(isRouterResponsive(port, 300)).resolves.toBe(true);
+        await expect(getRouterHealthSnapshot(port, 50)).resolves.toMatchObject({
+          healthy: false,
+          outcome: "timeout",
+          statusCode: 200,
+        });
+      },
+    );
+  });
+
+  it("bounds liveness by wall-clock time while informational responses continue (#12089)", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        const activity = setInterval(() => res.writeProcessing(), 20);
+        res.once("close", () => clearInterval(activity));
+      },
+      async (port) => {
+        await expect(isRouterResponsive(port, 100)).resolves.toBe(false);
       },
     );
   });
@@ -175,37 +307,37 @@ describe("inspectModelRouterProcessForPort", () => {
 });
 
 describe("stopModelRouterProcess", () => {
-  it("returns when the recorded PID does not report as running and the health endpoint is not healthy", async () => {
-    const isHealthy = vi.fn(async () => false);
+  it("returns when the recorded PID does not report as running and the liveness endpoint is unresponsive", async () => {
+    const isResponsive = vi.fn(async () => false);
     const kill = vi.fn();
 
     await expect(
       stopModelRouterProcess(123, 4000, {
         isRunning: () => false,
-        isHealthy,
+        isResponsive,
         kill,
       }),
     ).resolves.toBeUndefined();
 
-    expect(isHealthy).toHaveBeenCalledWith(4000, 1000);
+    expect(isResponsive).toHaveBeenCalledWith(4000, 1000);
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("refuses replacement when the recorded PID does not report as running but the health endpoint remains healthy", async () => {
+  it("refuses replacement when the recorded PID stops but the liveness endpoint responds", async () => {
     const kill = vi.fn();
 
     await expect(
       stopModelRouterProcess(123, 4000, {
         isRunning: () => false,
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill,
       }),
-    ).rejects.toThrow("PID 123 no longer reports as running but port 4000 remains healthy");
+    ).rejects.toThrow("PID 123 no longer reports as running but port 4000 remains responsive");
 
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("returns only after the recorded PID does not report as running and the health endpoint is not healthy", async () => {
+  it("returns only after the recorded PID does not report as running and the liveness endpoint is unresponsive", async () => {
     let running = true;
     let healthy = true;
     const signals: NodeJS.Signals[] = [];
@@ -213,7 +345,7 @@ describe("stopModelRouterProcess", () => {
     await stopModelRouterProcess(123, 4000, {
       isRunning: () => running,
       readCommandLine: () => ROUTER_ARGS,
-      isHealthy: async () => healthy,
+      isResponsive: async () => healthy,
       kill: (_pid, signal) => {
         signals.push(signal);
         running = false;
@@ -232,7 +364,7 @@ describe("stopModelRouterProcess", () => {
       stopModelRouterProcess(123, 4000, {
         isRunning: () => true,
         readCommandLine: () => ["/usr/bin/unrelated-service", "--port", "4000"],
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill: (_pid, signal) => signals.push(signal),
         sleep: async () => {},
       }),
@@ -245,7 +377,7 @@ describe("stopModelRouterProcess", () => {
       stopModelRouterProcess(123, 4000, {
         isRunning: () => true,
         readCommandLine: () => ROUTER_ARGS,
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill: () => {
           throw new Error("EPERM");
         },
@@ -261,7 +393,7 @@ describe("stopModelRouterProcess", () => {
       stopModelRouterProcess(123, 4000, {
         isRunning: () => true,
         readCommandLine: () => ROUTER_ARGS,
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill: (_pid, signal) => signals.push(signal),
         sleep: async () => {},
       }),
@@ -280,7 +412,7 @@ describe("stopModelRouterProcess", () => {
           ownershipChecks += 1;
           return ownershipChecks === 1 ? ROUTER_ARGS : ["/usr/bin/unrelated-service"];
         },
-        isHealthy: async () => false,
+        isResponsive: async () => false,
         kill: (_pid, signal) => signals.push(signal),
         sleep: async () => {},
       }),
@@ -302,7 +434,7 @@ describe("stopModelRouterProcess", () => {
           replacementOwnsPid ||= ownershipChecks === 2;
           return ROUTER_ARGS;
         },
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill: (_pid, signal) => {
           (replacementOwnsPid ? replacementSignals : routerSignals).push(signal);
         },
@@ -315,19 +447,19 @@ describe("stopModelRouterProcess", () => {
     expect(replacementSignals).toEqual([]);
   });
 
-  it("does not report success when the PID does not report as running but the health endpoint remains healthy", async () => {
+  it("does not report success when the PID stops but the liveness endpoint responds", async () => {
     let running = true;
 
     await expect(
       stopModelRouterProcess(123, 4000, {
         isRunning: () => running,
         readCommandLine: () => ROUTER_ARGS,
-        isHealthy: async () => true,
+        isResponsive: async () => true,
         kill: () => {
           running = false;
         },
         sleep: async () => {},
       }),
-    ).rejects.toThrow("port 4000 remains healthy");
+    ).rejects.toThrow("port 4000 remains responsive");
   });
 });

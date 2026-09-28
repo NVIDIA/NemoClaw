@@ -274,9 +274,7 @@ Use these details when your first-run path needs more control.
     NemoClaw registers inference, prompts for optional web search and messaging channels, prepares the managed startup profile, starts the sandbox from the managed image, sets up OpenClaw, and applies the selected network policy tier and presets.
 
     <Note>
-    Onboarding includes a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting in the startup profile so the dashboard is usable during setup.
-    NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
-    This setting is fixed when the sandbox is created; setting it in the host environment afterward does not affect that sandbox.
+    OpenClaw requires device pairing during onboarding. The managed startup profile still carries `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance only as legacy compatibility inputs while managed callers transition. OpenClaw 2026.9.1 retired the bypass, so NemoClaw does not emit a device-auth bypass key and changing this input does not skip pairing.
     </Note>
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.
@@ -293,7 +291,7 @@ Use these details when your first-run path needs more control.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
-    A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance.
+    A custom OpenClaw sandbox uses the same validated state backup boundary; OpenClaw's native plugin and package state is restored with the rest of its declared state.
     If a backup is skipped or fails, or automatic rebuild fails or is blocked, the installer exits nonzero before generic onboarding begins.
 
     The inference prompt presents these choices.

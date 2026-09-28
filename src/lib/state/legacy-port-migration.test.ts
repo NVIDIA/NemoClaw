@@ -8,7 +8,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
-import { hasMigratableLegacySandbox, migrateLegacyPortState } from "./legacy-port-migration";
+import {
+  acquireGatewayStateMigrationLock,
+  hasMigratableLegacySandbox,
+  migrateLegacyPortState,
+  releaseGatewayStateMigrationLock,
+} from "./legacy-port-migration";
 import {
   listRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery,
@@ -89,6 +94,55 @@ afterEach(() => {
 });
 
 describe("legacy non-default gateway state migration", () => {
+  it("does not delete a replacement when releasing the migration lock", () => {
+    const home = makeHome();
+    const lockPath = path.join(home, ".nemoclaw", ".gateway-state-migration.lock");
+    const handle = acquireGatewayStateMigrationLock(home);
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceAfterDetach = (source: fs.PathLike, destination: fs.PathLike) => {
+      renameSync(source, destination);
+      fs.mkdirSync(lockPath, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockPath, "owner"), String(process.pid), { mode: 0o600 });
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === lockPath && String(destination).startsWith(`${lockPath}.quarantine.`)
+        ? replaceAfterDetach(source, destination)
+        : renameSync(source, destination),
+    );
+
+    releaseGatewayStateMigrationLock(handle);
+
+    expect(fs.readFileSync(path.join(lockPath, "owner"), "utf8")).toBe(String(process.pid));
+  });
+
+  it("restores a replacement encountered while reclaiming a stale migration lock", () => {
+    const home = makeHome();
+    const lockPath = path.join(home, ".nemoclaw", ".gateway-state-migration.lock");
+    const displaced = `${lockPath}.displaced`;
+    fs.mkdirSync(lockPath, { mode: 0o700, recursive: true });
+    fs.writeFileSync(path.join(lockPath, "owner"), String(Number.MAX_SAFE_INTEGER), {
+      mode: 0o600,
+    });
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceBeforeDetach = (source: fs.PathLike, destination: fs.PathLike) => {
+      renameSync(source, displaced);
+      fs.mkdirSync(lockPath, { mode: 0o700 });
+      fs.writeFileSync(path.join(lockPath, "owner"), String(process.pid), { mode: 0o600 });
+      renameSync(source, destination);
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === lockPath && String(destination).startsWith(`${lockPath}.quarantine.`)
+        ? replaceBeforeDetach(source, destination)
+        : renameSync(source, destination),
+    );
+
+    expect(() => acquireGatewayStateMigrationLock(home)).toThrow(/another state operation owns/);
+    expect(fs.readFileSync(path.join(lockPath, "owner"), "utf8")).toBe(String(process.pid));
+    expect(fs.readFileSync(path.join(displaced, "owner"), "utf8")).toBe(
+      String(Number.MAX_SAFE_INTEGER),
+    );
+  });
+
   it("detects an exact migratable sandbox without changing legacy state", () => {
     const home = makeHome();
     const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
@@ -375,8 +429,10 @@ describe("legacy non-default gateway state migration", () => {
           "selected registry lock": `${selectedRegistry}.lock`,
         } as const
       )[scenario]!;
-      fs.mkdirSync(staleLock, { recursive: true });
-      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER));
+      fs.mkdirSync(staleLock, { mode: 0o700, recursive: true });
+      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER), {
+        mode: 0o600,
+      });
 
       expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
         migratedSandboxNames: ["port-box"],
@@ -388,6 +444,75 @@ describe("legacy non-default gateway state migration", () => {
       expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
     },
   );
+
+  it("attempts every lock release after a successful migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === selectedRegistryLock &&
+      String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+        ? failSelectedRelease()
+        : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/changed ownership/);
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
+  it("preserves a migration failure while attempting every lock release", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const backupSource = path.join(shared, "rebuild-backups", "port-box");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failBody = (): never => {
+      throw new Error("injected migration body failure");
+    };
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === backupSource
+        ? failBody()
+        : String(source) === selectedRegistryLock &&
+            String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+          ? failSelectedRelease()
+          : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /injected migration body failure/,
+    );
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
 
   it("partitions provable rows and recovery without a session but leaves credentials", () => {
     const home = makeHome();
@@ -533,8 +658,8 @@ describe("legacy non-default gateway state migration", () => {
     const stale = path.join(shared, ".gateway-state-migration.preparing.999999.5");
     const lock = path.join(shared, ".gateway-state-migration.lock");
     fs.mkdirSync(stale, { recursive: true });
-    fs.mkdirSync(lock);
-    fs.writeFileSync(path.join(lock, "owner"), String(process.pid));
+    fs.mkdirSync(lock, { mode: 0o700 });
+    fs.writeFileSync(path.join(lock, "owner"), String(process.pid), { mode: 0o600 });
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
       /another state operation owns/,

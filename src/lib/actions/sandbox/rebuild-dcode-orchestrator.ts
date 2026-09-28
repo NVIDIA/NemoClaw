@@ -24,7 +24,7 @@ type DcodeRebuildOrchestratorDeps = {
     sandboxName: string,
     bail: DcodeRebuildPreflightBail,
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): boolean;
+  ): boolean | Promise<boolean>;
   preflightCredentials(
     sandboxName: string,
     entry: RebuildSandboxEntry,
@@ -60,7 +60,6 @@ export type DcodeRebuildOrchestrator = {
     toolDisclosure: ToolDisclosure,
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
-    degradeUnavailableRoute: boolean,
     gatewayPort: number,
     baseImageOptions?: RebuildAgentBaseImageOptions,
     runtimeSelection?: OpenShellRuntimeSelection,
@@ -70,7 +69,6 @@ export type DcodeRebuildOrchestrator = {
     toolDisclosure: ToolDisclosure,
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
-    degradeUnavailableRoute: boolean,
     gatewayPort: number,
     runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<boolean>;
@@ -79,7 +77,6 @@ export type DcodeRebuildOrchestrator = {
     toolDisclosure: ToolDisclosure,
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
-    degradeUnavailableRoute: boolean,
     gatewayPort: number,
     runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<{ ok: true } | { ok: false; message: string; code?: number }>;
@@ -160,7 +157,9 @@ export function createDcodeRebuildOrchestrator(
           ) {
             return false;
           }
-          if (!deps.checkGatewaySchema(sandboxName, scope.bail, runtimeSelection)) return false;
+          if (!(await deps.checkGatewaySchema(sandboxName, scope.bail, runtimeSelection))) {
+            return false;
+          }
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
@@ -170,7 +169,6 @@ export function createDcodeRebuildOrchestrator(
       toolDisclosure,
       dcodeAutoApprovalMode,
       skipLiveRoute,
-      degradeUnavailableRoute,
       gatewayPort,
       baseImageOptions,
       runtimeSelection,
@@ -187,7 +185,6 @@ export function createDcodeRebuildOrchestrator(
             toolDisclosure,
             dcodeAutoApprovalMode,
             skipLiveRoute,
-            degradeUnavailableRoute,
             gatewayPort,
             log,
             bail: scope.bail,
@@ -204,7 +201,6 @@ export function createDcodeRebuildOrchestrator(
           toolDisclosure,
           dcodeAutoApprovalMode,
           skipLiveRoute,
-          degradeUnavailableRoute,
           gatewayPort,
           baseImageOptions,
           log,
@@ -225,7 +221,6 @@ export function createDcodeRebuildOrchestrator(
       toolDisclosure,
       dcodeAutoApprovalMode,
       skipLiveRoute,
-      degradeUnavailableRoute,
       gatewayPort,
       runtimeSelection,
     ) =>
@@ -239,7 +234,6 @@ export function createDcodeRebuildOrchestrator(
             toolDisclosure,
             dcodeAutoApprovalMode,
             skipLiveRoute,
-            degradeUnavailableRoute,
             gatewayPort,
             log,
             bail: scope.bail,
@@ -257,7 +251,6 @@ export function createDcodeRebuildOrchestrator(
           toolDisclosure,
           dcodeAutoApprovalMode,
           skipLiveRoute,
-          degradeUnavailableRoute,
           gatewayPort,
           log,
           bail: scope.bail,
@@ -272,7 +265,6 @@ export function createDcodeRebuildOrchestrator(
       toolDisclosure,
       dcodeAutoApprovalMode,
       skipLiveRoute,
-      degradeUnavailableRoute,
       gatewayPort,
       runtimeSelection,
     ) => {
@@ -293,7 +285,6 @@ export function createDcodeRebuildOrchestrator(
               toolDisclosure,
               dcodeAutoApprovalMode,
               skipLiveRoute,
-              degradeUnavailableRoute,
               gatewayPort,
               log,
               bail: capturedBail,
@@ -308,7 +299,6 @@ export function createDcodeRebuildOrchestrator(
               toolDisclosure,
               dcodeAutoApprovalMode,
               skipLiveRoute,
-              degradeUnavailableRoute,
               gatewayPort,
               log,
               bail: capturedBail,

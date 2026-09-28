@@ -48,6 +48,7 @@ import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
+  printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
@@ -61,21 +62,39 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
+export {
+  delegateRebuildToOwningRegistry,
+  restoreRecordedRebuildGatewayStateDir,
+} from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
-  /**
-   * True when the sandbox is present but observed in a terminal phase (e.g.
-   * `Error`, `CrashLoopBackOff`), i.e. a live-but-unresponsive container.
-   * Rebuild treats the container as unresponsive: in-sandbox probes and the
-   * live state backup may be degraded so it can proceed to destroy+recreate
-   * (#11165).
-   */
-  terminalPhase: boolean;
+  terminalPhase?: boolean;
 };
+
+/** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
+export async function prepareRebuildStoppedAgentState(
+  entry: RebuildSandboxEntry,
+  liveState: RebuildLiveState,
+  hasRecoveryManifest: boolean,
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
+): Promise<snapshotBackup.PreparedStoppedAgentState | null> {
+  if (
+    !liveState.terminalPhase ||
+    liveState.staleRecovery ||
+    hasRecoveryManifest ||
+    !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
+  )
+    return null;
+  return snapshotBackup.prepareStoppedAgentState(
+    entry.name,
+    getSandbox,
+    loadAgent(entry.agent ?? "openclaw"),
+  );
+}
 
 export type RebuildLiveStateOptions = {
   /** A digest-verified policy handoff bound to the prepared recovery manifest. */
@@ -219,34 +238,35 @@ export async function resolveRebuildLiveState(
 
   const liveNames = new Set(observed.value.sandboxes.map((sandbox) => sandbox.name));
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  const liveObservation = observed.value.sandboxes.find((sandbox) => sandbox.name === sandboxName);
-  if (liveObservation) {
-    const terminalPhase = liveObservation.readiness === "terminal";
-    if (terminalPhase) {
-      log(
-        `Sandbox '${sandboxName}' is live but in terminal phase '${liveObservation.phase ?? "unknown"}'; rebuild will treat the container as unresponsive (in-sandbox probes and live backup may be degraded)`,
-      );
-    }
-    return { staleRecovery: false, staleRegistrySnapshot: null, terminalPhase };
-  }
+  const liveSource = observed.value.sandboxes.find((sandbox) => sandbox.name === sandboxName);
+  if (liveSource)
+    return {
+      staleRecovery: false,
+      staleRegistrySnapshot: null,
+      ...(liveSource.readiness === "terminal" ? { terminalPhase: true } : {}),
+    };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
     const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
-      printWrongGatewayActiveGuidance(
-        sandboxName,
-        lifecycle.activeGateway,
-        console.error,
-        "rebuild --yes",
-      );
+      if (lifecycle.state === "connected_other") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          lifecycle.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+      } else {
+        printGatewayLifecycleHint(lifecycle, sandboxName, console.error);
+      }
       bail(
-        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (${lifecycle.state}).`,
       );
       return null;
     }
     log("Sandbox live on the healthy named gateway; using normal rebuild path");
-    return { staleRecovery: false, staleRegistrySnapshot: null, terminalPhase: false };
+    return { staleRecovery: false, staleRegistrySnapshot: null };
   }
 
   if (reconciled.state === "missing") {
@@ -264,7 +284,7 @@ export async function resolveRebuildLiveState(
       log(
         "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
       );
-      return { staleRecovery: true, staleRegistrySnapshot: loadRegistry(), terminalPhase: false };
+      return { staleRecovery: true, staleRegistrySnapshot: loadRegistry() };
     }
     console.log("");
     console.error(
@@ -498,25 +518,13 @@ export function pinRebuildAgentBaseImageForRecreate(
   };
 }
 
-/** Report where an incomplete backup snapshot was retained, when one exists. */
-function printRetainedIncompleteSnapshotHint(backupPath: string | undefined): void {
-  if (!backupPath) return;
-  console.error(`  Incomplete snapshot retained for manual recovery: ${backupPath}`);
-  console.error("  It is excluded from snapshot restore selection.");
-}
-
 export async function backupSandboxStateForRebuild(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-  /**
-   * The sandbox is live but in a terminal phase (e.g. `Error`,
-   * `CrashLoopBackOff`): its container cannot serve the SSH backup transport,
-   * and rebuild is about to destroy+recreate it. See #11165.
-   */
-  terminalPhase = false,
+  capturedAgentState?: sandboxState.BackupOptions["capturedAgentState"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -524,7 +532,7 @@ export async function backupSandboxStateForRebuild(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    {},
+    capturedAgentState ? { capturedAgentState } : {},
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },
@@ -537,8 +545,8 @@ export async function backupSandboxStateForRebuild(
   // already recovers a stopped container (#6500): start it, retry, then return
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
-  if (!backup.success && backup.unreachable) {
-    const started = startStoppedSandboxContainerForBackup(sandboxName);
+  if (!capturedAgentState && !backup.success && backup.unreachable) {
+    const started = await startStoppedSandboxContainerForBackup(sandboxName);
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
@@ -549,7 +557,7 @@ export async function backupSandboxStateForRebuild(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started);
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,
@@ -579,32 +587,6 @@ export async function backupSandboxStateForRebuild(
     }
   }
   if (!backup.success) {
-    const reasons = Object.values(backup.failedDirReasons ?? {});
-    const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
-    const anyAbsent = reasons.includes(BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
-    // A terminal-phase sandbox with a live-but-unresponsive container cannot
-    // serve the SSH backup transport, and the start-then-retry recovery above
-    // cannot help because the container immediately crash-loops. Rebuild is
-    // about to destroy+recreate that container, and the reporter's expected
-    // recovery explicitly discards the unreadable state. Degrade to a
-    // no-backup rebuild ONLY when the failure is a transport-unreachable class
-    // on a terminal sandbox. Permission-denied and absent-after-extraction
-    // mean the state exists but is mis-owned or unstable, so those keep the
-    // fail-closed abort even on a terminal sandbox (#11165).
-    if (terminalPhase && backup.unreachable && !anyPermissionDenied && !anyAbsent) {
-      console.error(
-        `  ${YW}⚠${R} Sandbox '${sandboxName}' is in a terminal phase and its live state could not be read (the container is unresponsive).`,
-      );
-      console.error(
-        "  Rebuild will recreate the sandbox from a clean image; unreadable live state cannot be preserved and will be discarded.",
-      );
-      if (backup.error) console.error(`  Reason: ${backup.error}`);
-      printRetainedIncompleteSnapshotHint(backup.manifest?.backupPath);
-      log(
-        `Degrading rebuild backup for terminal-phase sandbox '${sandboxName}': live state unreachable; proceeding to destroy+recreate without a backup manifest`,
-      );
-      return null;
-    }
     console.error("  Failed to back up sandbox state.");
     const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
     if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
@@ -615,6 +597,8 @@ export async function backupSandboxStateForRebuild(
       );
     }
     if (backup.failedDirs.length > 0) {
+      const reasons = Object.values(backup.failedDirReasons ?? {});
+      const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
       const allAbsent =
         reasons.length === backup.failedDirs.length &&
         reasons.every((reason) => reason === BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
@@ -639,7 +623,12 @@ export async function backupSandboxStateForRebuild(
       );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
-    printRetainedIncompleteSnapshotHint(backup.manifest?.backupPath);
+    if (backup.manifest?.backupPath) {
+      console.error(
+        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+      );
+      console.error("  It is excluded from snapshot restore selection.");
+    }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
     return undefined;

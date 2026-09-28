@@ -13,7 +13,6 @@ import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
-import { getOpenShellGatewayServiceStopCommand } from "./docker-driver-gateway-service";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
 import {
@@ -24,11 +23,13 @@ import {
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
+  /** Selected host port, used to print a fresh listener-verification command. */
+  gatewayPort?: number;
   /** Byte offset where the current gateway launch began writing the append-only log. */
   launchLogOffset: number;
   /** Identity-aware selected-state ownership probe supplied by the onboarding runtime. */
   isGatewayStateInUse?: () => boolean;
-  /** Resolve the service-manager stop command, or null for a standalone gateway. */
+  /** Return a stop command only after the caller proves selected port and state ownership. */
   resolveGatewayStopCommand?: () => string | null;
   printError?: (message?: string) => void;
 };
@@ -49,14 +50,15 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
 /**
  * Print the incompatible-database diagnosis and its state-move recovery.
  *
- * Managed gateways stop their owning service in the same command chain as the
- * state move, so `Restart=on-failure` cannot replace the process between a
- * separate check and the move. Standalone gateways have no manager to stop and
- * receive the move only after the runtime confirms that no matching gateway
- * process still uses the selected state (#8797; advisor findings PRA-1/PRA-2).
+ * A managed service is stopped before onboarding retries only when it owns the
+ * selected port and state. The retry re-evaluates ownership before it can
+ * offer the state move. Standalone gateways receive the move only after the
+ * runtime confirms that no matching gateway process still uses the selected
+ * state (#8797, #11720).
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
+  gatewayPort: number | undefined,
   isGatewayStateInUse: (() => boolean) | undefined,
   resolveGatewayStopCommand: () => string | null,
   printError: (message?: string) => void,
@@ -72,8 +74,31 @@ function printIncompatibleGatewayDatabaseRecovery(
   );
   printError("  This can happen after an OpenShell downgrade.");
   const stopCommand = resolveGatewayStopCommand();
-  if (!stopCommand && isGatewayStateInUse?.() !== false) {
+  if (stopCommand) {
+    printError(
+      "  Stop the selected gateway service, then run onboarding again so NemoClaw can verify that no gateway process still uses the selected state:",
+    );
+    printError(`    ${stopCommand} && ${recoveryCommand}`);
+    printError(
+      "  The stop command applies only to the verified listener. Onboarding checks all gateway processes again before it offers a state move.",
+    );
+    noteOnboardResumeHintShown();
+    return;
+  }
+  if (isGatewayStateInUse?.() !== false) {
     printError("  NemoClaw could not confirm that the standalone gateway process stopped.");
+    printError("  Inspect the current listener before stopping anything:");
+    printError(
+      gatewayPort === undefined
+        ? "    sudo lsof -iTCP -sTCP:LISTEN -P -n"
+        : `    sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`,
+    );
+    printError("  Verify each listed PID's user and full command:");
+    printError("    ps -p <PID> -o user=,args=");
+    printError(
+      "  Stop it through its verified owning service or installation. Otherwise, repeat both checks immediately before signaling only that PID.",
+    );
+    printError("  Do not infer ownership from the process name.");
     printError("  Stop the gateway, then run onboarding again:");
     printError(`    ${recoveryCommand}`);
     printError(
@@ -99,12 +124,8 @@ function printIncompatibleGatewayDatabaseRecovery(
   );
   printError("  Keep the archive owner-only until every required registration is restored.");
   const move = `mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${recoveryCommand}`;
-  printError(
-    stopCommand
-      ? "  Stop the gateway, create the archive, move the selected gateway state, then continue onboarding:"
-      : "  Create the archive, move the selected gateway state, then continue onboarding:",
-  );
-  printError(`    ${stopCommand ? `${stopCommand} && ${move}` : move}`);
+  printError("  Create the archive, move the selected gateway state, then continue onboarding:");
+  printError(`    ${move}`);
   noteOnboardResumeHintShown();
 }
 
@@ -113,10 +134,11 @@ export function reportDockerDriverGatewayStartFailure(
   childExit: ChildExitState,
   {
     exitOnFailure,
+    gatewayPort,
     launchLogOffset,
     isGatewayStateInUse,
     printError = console.error,
-    resolveGatewayStopCommand = getOpenShellGatewayServiceStopCommand,
+    resolveGatewayStopCommand = () => null,
   }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);
@@ -141,6 +163,7 @@ export function reportDockerDriverGatewayStartFailure(
   } else if (failure.kind === "database_migration_incompatible") {
     printIncompatibleGatewayDatabaseRecovery(
       logPath,
+      gatewayPort,
       isGatewayStateInUse,
       resolveGatewayStopCommand,
       printError,

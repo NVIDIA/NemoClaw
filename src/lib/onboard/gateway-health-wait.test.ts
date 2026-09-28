@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
@@ -11,22 +12,29 @@ import {
   waitForGatewayHealth,
 } from "./gateway-health-wait";
 
-function buildOptions(overrides: Partial<GatewayHealthWaitOptions> = {}): GatewayHealthWaitOptions {
+type HealthWaitTestOptions = GatewayHealthWaitOptions & { healthProbe: () => boolean };
+
+function buildOptions(overrides: Partial<HealthWaitTestOptions> = {}): HealthWaitTestOptions {
+  const healthProbe = overrides.healthProbe ?? vi.fn(() => true);
+  const adapters = gatewayAdaptersForTest();
+  adapters.observer.observeGatewayReuse.mockImplementation(async () => ({
+    gatewayReuseState: "healthy",
+    healthy: healthProbe(),
+    namedMetadata: true,
+    shouldSelect: false,
+    endpoints: [],
+    endpointBinding: "unknown",
+  }));
   return {
-    attachGatewayMetadataIfNeeded: vi.fn(),
+    ...adapters,
+    attachGatewayMetadataIfNeeded: vi.fn(async () => true),
     gatewayClusterHealthcheckPassed: vi.fn(() => false),
     gatewayName: "nemoclaw",
     healthPollCount: 1,
     healthPollIntervalSeconds: 2,
-    isGatewayHealthy: vi.fn(() => true),
+    healthProbe,
     isGatewayHttpReady: vi.fn(async () => true),
     repairGatewayBootstrapSecrets: vi.fn(() => ({ repaired: false })),
-    runCaptureOpenshell: vi.fn((args: string[]) => {
-      if (args[0] === "status") return "status";
-      if (args[0] === "gateway" && args[1] === "info" && args[2] === "-g") return "named";
-      if (args[0] === "gateway" && args[1] === "info") return "current";
-      return "";
-    }),
     sleepSeconds: vi.fn(),
     ...overrides,
   };
@@ -38,17 +46,17 @@ describe("waitForGatewayHealth", () => {
   });
 
   it("returns true only after OpenShell metadata and HTTP readiness are healthy", async () => {
-    const isGatewayHealthy = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const healthProbe = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
     const isGatewayHttpReady = vi.fn(async () => true);
     const options = buildOptions({
       healthPollCount: 2,
-      isGatewayHealthy,
+      healthProbe,
       isGatewayHttpReady,
     });
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
 
-    expect(isGatewayHealthy).toHaveBeenCalledTimes(2);
+    expect(healthProbe).toHaveBeenCalledTimes(2);
     expect(isGatewayHttpReady).toHaveBeenCalledTimes(2);
     expect(options.sleepSeconds).toHaveBeenCalledTimes(1);
     expect(options.sleepSeconds).toHaveBeenCalledWith(0.25);
@@ -65,7 +73,7 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(false);
 
-    expect(options.isGatewayHealthy).toHaveBeenCalledTimes(6);
+    expect(options.healthProbe).toHaveBeenCalledTimes(6);
     expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(6);
     expect(options.sleepSeconds).toHaveBeenCalledTimes(6);
     expect(options.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
@@ -95,28 +103,28 @@ describe("waitForGatewayHealth", () => {
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
 
     expect(options.attachGatewayMetadataIfNeeded).toHaveBeenCalledOnce();
-    expect(options.attachGatewayMetadataIfNeeded).toHaveBeenCalledWith();
+    expect(options.attachGatewayMetadataIfNeeded).toHaveBeenCalledWith({ forceRefresh: false });
   });
 
   it("polls until the configured health deadline instead of stopping at the count cap (#3768)", async () => {
     const clock = createVirtualClock();
-    const isGatewayHealthy = vi.fn(() => {
+    const healthProbe = vi.fn(() => {
       clock.advance(1);
       return false;
     });
     const options = buildOptions({
       healthPollCount: 10,
       healthPollIntervalSeconds: 1,
-      isGatewayHealthy,
+      healthProbe,
       now: clock.now,
       sleepSeconds: clock.sleeper,
     });
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(false);
 
-    expect(isGatewayHealthy).toHaveBeenCalled();
-    expect(isGatewayHealthy.mock.calls.length).toBeLessThan(10);
-    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(isGatewayHealthy.mock.calls.length);
+    expect(healthProbe).toHaveBeenCalled();
+    expect(healthProbe.mock.calls.length).toBeLessThan(10);
+    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(healthProbe.mock.calls.length);
     expect(clock.sleeper).toHaveBeenCalled();
     expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
     expect(clock.sleeper.mock.calls.every(([seconds]) => seconds <= 1)).toBe(true);
@@ -124,7 +132,7 @@ describe("waitForGatewayHealth", () => {
 
   it("preserves the configured immediate probes when the interval is zero (#3768)", async () => {
     const probeSignals: Array<AbortSignal | undefined> = [];
-    const isGatewayHealthy = vi
+    const healthProbe = vi
       .fn<() => boolean>()
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
@@ -133,7 +141,7 @@ describe("waitForGatewayHealth", () => {
     const options = buildOptions({
       healthPollCount: 3,
       healthPollIntervalSeconds: 0,
-      isGatewayHealthy,
+      healthProbe,
       isGatewayHttpReady: vi.fn(async (signal?: AbortSignal) => {
         probeSignals.push(signal);
         return true;
@@ -144,7 +152,7 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
 
-    expect(isGatewayHealthy).toHaveBeenCalledTimes(3);
+    expect(healthProbe).toHaveBeenCalledTimes(3);
     expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(3);
     expect(sleepSeconds).toHaveBeenCalledTimes(2);
     expect(sleepSeconds).toHaveBeenNthCalledWith(1, 0);
@@ -163,8 +171,7 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(false);
 
-    expect(options.runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(options.isGatewayHealthy).not.toHaveBeenCalled();
+    expect(options.healthProbe).not.toHaveBeenCalled();
     expect(options.isGatewayHttpReady).not.toHaveBeenCalled();
   });
 
@@ -178,7 +185,7 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).rejects.toBe(probeError);
 
-    expect(options.isGatewayHealthy).toHaveBeenCalledOnce();
+    expect(options.healthProbe).toHaveBeenCalledOnce();
     expect(options.isGatewayHttpReady).toHaveBeenCalledOnce();
     expect(options.sleepSeconds).not.toHaveBeenCalled();
   });
@@ -196,65 +203,39 @@ describe("waitForGatewayHealth", () => {
 
     expect(options.repairGatewayBootstrapSecrets).not.toHaveBeenCalled();
     expect(options.attachGatewayMetadataIfNeeded).not.toHaveBeenCalled();
-    expect(options.runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(options.isGatewayHealthy).not.toHaveBeenCalled();
+    expect(options.healthProbe).not.toHaveBeenCalled();
     expect(options.isGatewayHttpReady).not.toHaveBeenCalled();
     expect(options.sleepSeconds).not.toHaveBeenCalled();
   });
 
-  it("reselects the gateway and probes status, named info, and active info in order", async () => {
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      if (args[0] === "status") return "status";
-      if (args[0] === "gateway" && args[1] === "info" && args[2] === "-g") return "named";
-      if (args[0] === "gateway" && args[1] === "info") return "current";
-      return "";
-    });
-    const isGatewayHealthy = vi.fn(() => true);
-    const options = buildOptions({ isGatewayHealthy, runCaptureOpenshell });
-
+  it("selects once before polling the exact named gateway", async () => {
+    const options = buildOptions();
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
-
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["gateway", "select", "nemoclaw"], {
-      ignoreError: true,
+    expect(options.lifecycle.selectGateway).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(2, ["status"], { ignoreError: true });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(3, ["gateway", "info", "-g", "nemoclaw"], {
-      ignoreError: true,
+    expect(options.observer.observeGatewayReuse).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(4, ["gateway", "info"], {
-      ignoreError: true,
-    });
-    expect(isGatewayHealthy).toHaveBeenCalledWith("status", "named", "current");
   });
 
-  it("starts the HTTP readiness probe before collecting OpenShell metadata", async () => {
+  it("starts HTTP readiness before the awaited metadata observation", async () => {
     const events: string[] = [];
-    const openshellOutputByCommand = new Map([
-      ["status", "status"],
-      ["gateway info -g nemoclaw", "named"],
-      ["gateway info", "current"],
-    ]);
+    const adapters = gatewayAdaptersForTest();
+    const observation = await adapters.observer.observeGatewayReuse({});
+    adapters.observer.observeGatewayReuse.mockImplementation(async () => {
+      events.push("metadata");
+      return observation;
+    });
     const options = buildOptions({
+      ...adapters,
       isGatewayHttpReady: vi.fn(async () => {
         events.push("http");
         return true;
       }),
-      runCaptureOpenshell: vi.fn((args: string[]) => {
-        const command = args.join(" ");
-        events.push(command);
-        return openshellOutputByCommand.get(command) ?? "";
-      }),
     });
-
     await expect(waitForGatewayHealth(options)).resolves.toBe(true);
-
-    expect(events).toEqual([
-      "http",
-      "gateway select nemoclaw",
-      "status",
-      "gateway info -g nemoclaw",
-      "gateway info",
-    ]);
+    expect(events).toEqual(["http", "metadata"]);
   });
 
   it("aborts the HTTP readiness probe when OpenShell metadata is unhealthy", async () => {
@@ -263,7 +244,7 @@ describe("waitForGatewayHealth", () => {
     let aborted = false;
     const options = buildOptions({
       healthPollCount: 1,
-      isGatewayHealthy: vi.fn(() => false),
+      healthProbe: vi.fn(() => false),
       isGatewayHttpReady: vi.fn(
         (signal?: AbortSignal) =>
           new Promise<boolean>((resolve) => {

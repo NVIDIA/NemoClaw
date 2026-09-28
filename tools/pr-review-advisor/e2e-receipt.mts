@@ -126,10 +126,15 @@ export function validateE2eRecommendations(
   if (!Check(e2eRecommendationInputSchema, value))
     throw new Error("Invalid E2E recommendation record");
   const input = value as E2eRecommendationInput;
-  if ((input.recommendations.length === 0) !== (input.noAdditionalE2eReason !== null)) {
-    throw new Error(
-      "Empty recommendations require an explicit reason; selected recommendations forbid it",
-    );
+  if (
+    input.recommendations.length === 0 &&
+    input.unresolvedRecommendations.length === 0 &&
+    input.noAdditionalE2eReason === null
+  ) {
+    throw new Error("Empty recommendations require an explicit reason or unresolved coverage");
+  }
+  if (input.recommendations.length > 0 && input.noAdditionalE2eReason !== null) {
+    throw new Error("Selected recommendations forbid a no-additional-E2E reason");
   }
   const seen = new Set<string>();
   const allowedJobs = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
@@ -148,7 +153,7 @@ export function createE2eRecommendationRecorder(inventory: TrustedE2eRecommendat
     tool: defineTool({
       name: E2E_RECEIPT_TOOL,
       label: "Record complete E2E recommendations",
-      description: `Record every additional E2E recommendation for this specialist, including optional coverage. Do not repeat the deterministic floor. Record a reason for an empty list. Put needed coverage without a supported selector in unresolvedRecommendations. This records evidence only and cannot dispatch tests. Trusted inventory: ${JSON.stringify(inventory)}`,
+      description: `Record every additional E2E recommendation for this specialist, including optional coverage. Do not repeat the deterministic floor. For an empty list, provide either a no-additional-E2E reason or unresolved coverage. Put needed coverage without a supported selector in unresolvedRecommendations. This records evidence only and cannot dispatch tests. Trusted inventory: ${JSON.stringify(inventory)}`,
       parameters: e2eRecommendationInputSchema,
       executionMode: "sequential",
       execute: async (_id, input) => {

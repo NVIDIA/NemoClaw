@@ -101,7 +101,8 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 
 ## File Reference
 
-NemoClaw seeds the six template files below when the default workspace directory exists, is not a symbolic link, and is empty.
+NemoClaw seeds the first six template files in the table below when the default workspace directory exists, is not a symbolic link, and is empty.
+The remaining entries appear later, when the policy step or the agent's own memory writes create them.
 Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.
 
 | File | Purpose |
@@ -112,6 +113,7 @@ Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace t
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
 | `TOOLS.md` | Records workspace-specific tool guidance and operational notes. |
 | `HEARTBEAT.md` | Defines recurring heartbeat checks when heartbeat processing is enabled. |
+| `POLICY.md` | Redacted network-policy context for the in-sandbox agent. NemoClaw writes this file during the onboarding policy step and refreshes it when a preset changes. |
 | `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
 | `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
 
@@ -125,6 +127,7 @@ All workspace files reside inside the sandbox filesystem:
 ├── HEARTBEAT.md
 ├── IDENTITY.md
 ├── MEMORY.md             # created on first long-term memory use
+├── POLICY.md             # written by the onboarding policy step
 ├── SOUL.md
 ├── TOOLS.md
 ├── USER.md

@@ -32,7 +32,7 @@ export function writeFixture(root: string, file: string, contents: string): void
 }
 
 export function validationFixture(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-validation-test-"));
+  const root = fs.realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-validation-test-")));
   fixtureGit(root, "init", "--initial-branch=main");
   writeFixture(
     root,
@@ -66,12 +66,15 @@ export function replaceInputBeforeRead(root: string, linked: boolean) {
   return replace;
 }
 
-export function changeInputDuringRead() {
+export function changeInputDuringRead(file: string) {
+  const expected = fs.statSync(file);
   const change = vi.fn((descriptor: number) => fs.fchmodSync(descriptor, 0o600));
   const read = fs.readFileSync;
   vi.spyOn(fs, "readFileSync").mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
     const bytes = read(...args);
-    if (typeof args[0] === "number" && change.mock.calls.length === 0) change(args[0]);
+    const stat = typeof args[0] === "number" ? fs.fstatSync(args[0]) : undefined;
+    if (stat?.dev === expected.dev && stat.ino === expected.ino && change.mock.calls.length === 0)
+      change(args[0] as number);
     return bytes;
   });
   return change;

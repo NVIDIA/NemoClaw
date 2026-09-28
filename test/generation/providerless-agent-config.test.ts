@@ -132,7 +132,7 @@ const expectAbsent: Record<Agent, (config: any) => void> = {
   openclaw(config) {
     expect(config.models).toBeUndefined();
     expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.plugins.allow).toContain("nemoclaw");
+    expect(config.plugins.allow).toBeUndefined();
   },
   hermes(config) {
     for (const key of ["model", "providers", "custom_providers", "_nemoclaw_upstream"])

@@ -16,9 +16,9 @@ export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
   "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
   "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-  "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
   DEEPAGENTS_OBSERVABILITY_CHECK,
   DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK,
+  "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
 ] as const;
 
 export function cloudExperimentalChecksForOnboarding(

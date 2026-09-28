@@ -9,8 +9,26 @@ import {
   nativeStateProcessIdentitiesAreValid,
   parseOpenClawAgentText,
 } from "../fixtures/openclaw-agent-output.ts";
+import { buildOpenClawFirstTurnLatencyEvidence } from "../live/agent-turn-latency-helpers.ts";
 
 describe("OpenClaw agent-output fixture", () => {
+  it("preserves one hosted JSON reply and its agent-duration evidence", () => {
+    const output = JSON.stringify({
+      status: "ok",
+      result: {
+        payloads: [{ text: "42" }],
+        meta: { durationMs: 1_250 },
+      },
+    });
+
+    expect(parseOpenClawAgentText(output)).toBe("42");
+    expect(buildOpenClawFirstTurnLatencyEvidence(output, 1_500)).toEqual({
+      firstTurnAgentDuration: { durationMs: 1_250, status: "available" },
+      firstTurnCommandMs: 1_500,
+      firstTurnHostOverheadMs: 250,
+    });
+  });
+
   it("rejects echoed user messages as agent-response evidence", () => {
     expect(
       parseOpenClawAgentText(

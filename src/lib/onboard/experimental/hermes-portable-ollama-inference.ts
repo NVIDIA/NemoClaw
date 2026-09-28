@@ -687,7 +687,7 @@ function atOllamaRecoveryPhase<T>(phase: HermesPortableOllamaRecoveryPhase, oper
 }
 
 export interface HermesPortableOllamaRecoveryInput {
-  readonly intent: "connect-probe-only";
+  readonly intent: "connect-probe-only" | "connect-interactive";
   readonly sandboxName: string;
   readonly entry: SandboxEntry;
   readonly env?: NodeJS.ProcessEnv;
@@ -974,8 +974,8 @@ export async function recoverHermesPortableOllamaInference(
   input: HermesPortableOllamaRecoveryInput,
   overrides: Partial<HermesPortableOllamaRecoveryDeps> = {},
 ): Promise<HermesPortableOllamaRecoveryResult> {
-  if (input.intent !== "connect-probe-only") {
-    failRecovery("recovery is restricted to connect --probe-only");
+  if (input.intent !== "connect-probe-only" && input.intent !== "connect-interactive") {
+    failRecovery("recovery requires a supported connect intent");
   }
   const deps = { ...DEFAULT_RECOVERY_DEPS, ...overrides };
   const recoveryTiming = createHermesPortableOllamaRecoveryTimingRecorder(deps.recoveryTiming);

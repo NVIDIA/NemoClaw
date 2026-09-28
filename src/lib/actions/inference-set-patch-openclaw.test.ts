@@ -69,20 +69,19 @@ describe("patchOpenClawInferenceConfig", () => {
     });
   });
 
-  it("updates the explicit main agents.list model without changing secondary defaults", () => {
+  it("updates the explicit main agents.entries model without changing secondary defaults", () => {
     const config: ConfigObject = {
       agents: {
         defaults: { model: { primary: "inference/nvidia/old-model" } },
-        list: [
-          { id: "main", default: true, model: "inference/nvidia/old-model" },
-          {
-            id: "research",
+        entries: {
+          main: { default: true, model: "inference/nvidia/old-model" },
+          research: {
             default: true,
             model: "inference/nvidia/secondary-model",
             workspace: "/sandbox/.openclaw/workspace-research",
             agentDir: "/sandbox/.openclaw/agents/research",
           },
-        ],
+        },
       },
       models: {
         mode: "merge",
@@ -104,16 +103,15 @@ describe("patchOpenClawInferenceConfig", () => {
 
     expect(config.agents).toEqual({
       defaults: { model: { primary: "inference/nvidia/new-model" } },
-      list: [
-        { id: "main", default: true, model: "inference/nvidia/new-model" },
-        {
-          id: "research",
+      entries: {
+        main: { default: true, model: "inference/nvidia/new-model" },
+        research: {
           default: true,
           model: "inference/nvidia/secondary-model",
           workspace: "/sandbox/.openclaw/workspace-research",
           agentDir: "/sandbox/.openclaw/agents/research",
         },
-      ],
+      },
     });
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
