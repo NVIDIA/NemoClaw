@@ -1738,6 +1738,14 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         !options.nativeStateSource && isSshTransportFailure(result),
       );
     }
+    // Reject sparse encodings with the bounded raw parser before invoking the
+    // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
+    // fixtures differently, but the security boundary must be deterministic.
+    const rawArchiveViolation = nativeArchiveRawCredentialViolation(archivePath);
+    if (rawArchiveViolation === "native state sparse archive entry") {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
+    }
     const validation = validateTarEntries({ filePath: archivePath }, rootResult.root);
     if (!validation.safe) {
       rmSync(backupPath, { recursive: true, force: true });
