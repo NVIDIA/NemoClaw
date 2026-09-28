@@ -1004,7 +1004,8 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--from-image <repository>@<digest>`
 
 Onboard a published OpenClaw or Hermes image with the Docker runtime without building a Dockerfile.
-Supply an immutable SHA-256 digest with `--from-image` or `NEMOCLAW_FROM_IMAGE`.
+Supply an immutable SHA-256 digest with `--from-image`.
+In non-interactive mode, you can instead set `NEMOCLAW_FROM_IMAGE`.
 In non-interactive mode, supply a sandbox name with `--name` or `NEMOCLAW_SANDBOX_NAME`.
 The image publisher owns its content and compatibility with your NemoClaw release.
 

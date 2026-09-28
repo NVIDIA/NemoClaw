@@ -959,11 +959,15 @@ async function qualifyExternalImage(
   if (onboard.exitCode !== 0) {
     await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
+    return Promise.reject(
+      new Error(`external image onboard ${agent} failed:\n${resultText(onboard)}`),
+    );
   }
   await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
     artifactNamePrefix: `external-image-${agent}-ready`,
     env,
   });
+  await runAgentTurn(sandbox, agent, sandboxName, "before", env);
 
   const beforeInspection = await inspectDockerImageId(
     host,
