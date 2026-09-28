@@ -105,6 +105,10 @@ describe("custom OpenClaw model reconciliation", () => {
     expect(dockerfile).toContain(
       "RUN NEMOCLAW_CUSTOM_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \\",
     );
+    expect(dockerfile).toContain("ENV NEMOCLAW_MODEL=aws/anthropic/bedrock-claude-opus-4-8 \\");
+    expect(dockerfile).toContain(
+      "NEMOCLAW_PRIMARY_MODEL_REF=inference/aws/anthropic/bedrock-claude-opus-4-8",
+    );
     expect(dockerfile.trimEnd().endsWith("USER sandbox")).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
     expect(config.agents.defaults.model.primary).toBe(

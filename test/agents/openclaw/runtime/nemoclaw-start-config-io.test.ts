@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +25,10 @@ describe("runtime model override (#759)", () => {
     return extractShellFunctionFromSource(src, name);
   }
 
-  function runApplyModelOverride(env: Record<string, string> = {}) {
+  function runApplyModelOverride(
+    env: Record<string, string> = {},
+    options: { configWritable?: boolean; uid?: number } = {},
+  ) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-model-override-"));
     const openclawDir = path.join(root, ".openclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
@@ -54,7 +58,7 @@ describe("runtime model override (#759)", () => {
     const hashPath = path.join(openclawDir, ".config-hash");
     fs.writeFileSync(hashPath, "oldhash\n");
     fs.chmodSync(openclawDir, 0o2770);
-    fs.chmodSync(configPath, 0o660);
+    fs.chmodSync(configPath, options.configWritable === false ? 0o440 : 0o660);
     fs.chmodSync(hashPath, 0o660);
 
     const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
@@ -64,7 +68,7 @@ describe("runtime model override (#759)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "id() { echo 0; }",
+      `id() { echo ${options.uid ?? 0}; }`,
       "normalize_mutable_config_perms() { :; }",
       'run_openclaw_config_as_owner() { "$@"; }',
       `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
@@ -79,19 +83,21 @@ describe("runtime model override (#759)", () => {
       encoding: "utf-8",
       env: { ...process.env, ...env },
     });
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const configRaw = fs.readFileSync(configPath, "utf-8");
+    const config = JSON.parse(configRaw);
     const hash = fs.readFileSync(hashPath, "utf-8");
+    const expectedHash = `${createHash("sha256").update(configRaw).digest("hex")}  openclaw.json\n`;
     const modes = {
       dir: fs.statSync(openclawDir).mode & 0o7777,
       config: fs.statSync(configPath).mode & 0o777,
       hash: fs.statSync(hashPath).mode & 0o777,
     };
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash, modes };
+    return { result, config, hash, expectedHash, modes };
   }
 
   it("applies model, API, context, max-token, and reasoning overrides and recomputes the hash", () => {
-    const { result, config, hash } = runApplyModelOverride({
+    const { result, config, hash, expectedHash } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
       NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       NEMOCLAW_CONTEXT_WINDOW: "4096",
@@ -110,7 +116,30 @@ describe("runtime model override (#759)", () => {
       maxTokens: 512,
       reasoning: true,
     });
-    expect(hash).toContain("openclaw.json");
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("applies an explicit model override to a writable non-root config", () => {
+    const { result, config, hash, expectedHash } = runApplyModelOverride(
+      { NEMOCLAW_MODEL_OVERRIDE: "inference/selected-model" },
+      { uid: 1000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/selected-model");
+    expect(config.models.providers.inference.models[0].id).toBe("inference/selected-model");
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("leaves a sealed config unchanged for non-root override startup", () => {
+    const { result, config, hash } = runApplyModelOverride(
+      { NEMOCLAW_MODEL_OVERRIDE: "inference/selected-model" },
+      { configWritable: false, uid: 1000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("old-model");
+    expect(hash).toBe("oldhash\n");
   });
 
   it("restores mutable config permissions after successful overrides", () => {

@@ -969,12 +969,6 @@ apply_model_override() {
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
     || return 0
 
-  # Host overrides require root startup authority.
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
@@ -983,6 +977,11 @@ apply_model_override() {
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
     return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[SECURITY] Model/inference overrides ignored: OpenClaw config is not writable by the sandbox user\n' >&2
+    return 0
   fi
 
   local model_override="${NEMOCLAW_MODEL_OVERRIDE:-}"
@@ -1122,7 +1121,8 @@ PYOVERRIDE
 # reconciliation the file's stale entry can be pushed back, reverting
 # the route.
 #
-# Probe the live gateway via `openshell inference get --json` and
+# Probe the live gateway via the supported `openshell inference get` text
+# contract and
 # treat it as the source of truth: when the gateway model differs
 # from the file, align both primary and the inference provider's
 # first model entry so the agent identity and the gateway route stay
@@ -1141,14 +1141,15 @@ reconcile_agent_model_with_provider() {
   # overwrite the user's explicit choice with an inference/-prefixed variant.
   [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
 
-  if [ "$(id -u)" -ne 0 ]; then
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
   [ -f "$config_file" ] || return 0
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[config] Agent model reconciliation skipped: OpenClaw config is not writable by the sandbox user\n' >&2
+    return 0
+  fi
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     return 0
@@ -1158,11 +1159,19 @@ reconcile_agent_model_with_provider() {
   if command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
       python3 - <<'PYPROBE'
-import json, subprocess
+import os
+import re
+import subprocess
+
+gateway_name = os.environ.get("NEMOCLAW_OPENSHELL_GATEWAY_NAME", "nemoclaw")
+if re.fullmatch(r"nemoclaw(?:-[1-9][0-9]{0,4})?", gateway_name) is None:
+    raise SystemExit(0)
 try:
     result = subprocess.run(
-        ["openshell", "inference", "get", "--json"],
+        ["openshell", "inference", "get", "-g", gateway_name],
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=3,
         check=False,
     )
@@ -1170,12 +1179,30 @@ except Exception:
     raise SystemExit(0)
 if result.returncode != 0:
     raise SystemExit(0)
-try:
-    data = json.loads(result.stdout)
-except Exception:
+
+ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+lines = ansi_escape.sub("", result.stdout).splitlines()
+section_count = 0
+in_inference_section = False
+models = []
+for line in lines:
+    if re.fullmatch(r"(?:Gateway )?Inference:\s*", line, re.IGNORECASE):
+        section_count += 1
+        in_inference_section = True
+        continue
+    if in_inference_section and re.fullmatch(r"\S.*:\s*", line):
+        in_inference_section = False
+        continue
+    if not in_inference_section:
+        continue
+    match = re.fullmatch(r"\s*Model:\s*(.+?)\s*", line)
+    if match:
+        models.append(match.group(1))
+
+if section_count != 1 or len(models) != 1:
     raise SystemExit(0)
-model = data.get("model") if isinstance(data, dict) else None
-if isinstance(model, str) and model:
+model = models[0]
+if len(model) <= 512 and re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
     print(model)
 PYPROBE
     )"
@@ -1274,8 +1301,12 @@ if os.environ.get("RECONCILE_SOURCE") == "gateway":
     if not isinstance(first, dict):
         first = {}
         models_list[0] = first
+    model_changed = first.get("id") not in (bare, provider_model)
     first["id"] = bare
     first["name"] = provider_model
+    if model_changed:
+        first.pop("contextWindow", None)
+        first.pop("maxTokens", None)
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYRECONCILE_WRITE

@@ -227,6 +227,7 @@ function appendCustomOpenClawModelReconcile(
 
   const encodedModel = Buffer.from(model, "utf8").toString("base64");
   const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
+  const qualifiedModel = model.startsWith("inference/") ? model : `inference/${model}`;
   const useRoot = finalUser === null ? "" : "USER root\n";
   const restoreUser = finalUser === null ? "" : `${finalUser.text}\n`;
   return `${dockerfile.trimEnd()}
@@ -234,6 +235,8 @@ function appendCustomOpenClawModelReconcile(
 # Reconcile inherited OpenClaw model metadata with this custom image's selected route.
 ARG NEMOCLAW_CUSTOM_MODEL_B64=${encodedModel}
 ARG NEMOCLAW_CUSTOM_MODEL_LIMITS_B64=${encodedLimits}
+ENV NEMOCLAW_MODEL=${model} \\
+    NEMOCLAW_PRIMARY_MODEL_REF=${qualifiedModel}
 ${useRoot}RUN NEMOCLAW_CUSTOM_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \\
     NEMOCLAW_CUSTOM_MODEL_B64="\${NEMOCLAW_CUSTOM_MODEL_B64}" \\
     NEMOCLAW_CUSTOM_MODEL_LIMITS_B64="\${NEMOCLAW_CUSTOM_MODEL_LIMITS_B64}" \\

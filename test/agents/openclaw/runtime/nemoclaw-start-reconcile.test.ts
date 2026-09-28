@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,20 +18,22 @@ const START_SCRIPT = path.join(
 
 interface RunReconcileOptions {
   /**
-   * Output the stubbed `openshell inference get --json` should print.
+   * Model the stubbed `openshell inference get -g nemoclaw` should print.
    * - undefined → no openshell on PATH (probe falls back to in-file logic).
-   * - "" → openshell exists but returns empty JSON (probe yields no model).
-   * - non-empty string → openshell returns `{"model": <string>}`.
+   * - "" → openshell exists but returns an unconfigured inference section.
+   * - non-empty string → openshell returns a configured inference section.
    * Ignored when `gatewayRawOutput` is set.
    */
   gatewayModel?: string;
   /**
-   * Raw stdout the stub emits instead of a JSON-formatted payload. Use to
-   * exercise malformed-JSON or unexpected-shape paths. Takes precedence
+   * Raw stdout the stub emits instead of a formatted inference section. Use to
+   * exercise malformed or unexpected-shape paths. Takes precedence
    * over `gatewayModel` when both are set.
    */
   gatewayRawOutput?: string;
+  configWritable?: boolean;
   env?: Record<string, string>;
+  uid?: number;
 }
 
 describe("agent identity reconciliation with provider (#3175)", () => {
@@ -53,7 +56,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     fs.writeFileSync(configPath, JSON.stringify(initialConfig));
     fs.writeFileSync(hashPath, "oldhash\n");
     fs.chmodSync(openclawDir, 0o2770);
-    fs.chmodSync(configPath, 0o660);
+    fs.chmodSync(configPath, options.configWritable === false ? 0o440 : 0o660);
     fs.chmodSync(hashPath, 0o660);
 
     const binDir = path.join(root, "bin");
@@ -61,16 +64,18 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const installStub =
       options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
     if (installStub) {
+      const model = options.gatewayRawOutput === undefined ? options.gatewayModel : undefined;
       const payload =
         options.gatewayRawOutput !== undefined
           ? options.gatewayRawOutput
-          : options.gatewayModel === ""
-            ? "{}"
-            : JSON.stringify({ model: options.gatewayModel });
+          : model === ""
+            ? "Inference:\n  Not configured\n"
+            : `Inference:\n  Provider: compatible-endpoint\n  Model: ${model}\n`;
       const stub = [
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        `  printf '%s' ${JSON.stringify(payload)}`,
+        '  [ "$#" -eq 4 ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] || exit 64',
+        `  printf '%b' ${JSON.stringify(payload)}`,
         "  exit 0",
         "fi",
         "exit 1",
@@ -91,7 +96,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "id() { echo 0; }",
+      `id() { echo ${options.uid ?? 0}; }`,
       helperFns,
       fn,
       "reconcile_agent_model_with_provider",
@@ -119,14 +124,16 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       encoding: "utf-8",
       env: { ...process.env, ...options.env, PATH: pathValue },
     });
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const configRaw = fs.readFileSync(configPath, "utf-8");
+    const config = JSON.parse(configRaw);
     const hash = fs.readFileSync(hashPath, "utf-8");
+    const expectedHash = `${createHash("sha256").update(configRaw).digest("hex")}  openclaw.json\n`;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash };
+    return { result, config, hash, expectedHash };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config, hash, expectedHash } = runReconcile({
       agents: { defaults: { model: { primary: "inference/old-model" } } },
       models: {
         providers: {
@@ -140,8 +147,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
+    expect(hash).toBe(expectedHash);
   });
 
   it("is a no-op when primary already matches the provider's model", () => {
@@ -165,7 +171,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   it("falls back to an inference-qualified model ref when provider metadata lacks name", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config, hash, expectedHash } = runReconcile({
       agents: { defaults: { model: { primary: "inference/old-model" } } },
       models: {
         providers: {
@@ -179,8 +185,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
+    expect(hash).toBe(expectedHash);
   });
 
   it("is a no-op when openclaw.json has no inference provider", () => {
@@ -234,7 +239,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   it("still reconciles from the live gateway when no explicit model override is set", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config, hash, expectedHash } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
         models: {
@@ -259,8 +264,92 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.models.providers.inference.models[0].id).toBe(
       "nvidia/nemotron-3-super-120b-a12b",
     );
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("reconciles a writable config when startup runs as a non-root sandbox user", () => {
+    const { result, config, hash, expectedHash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/baked-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [
+                {
+                  id: "baked-model",
+                  name: "inference/baked-model",
+                  contextWindow: 131_072,
+                  maxTokens: 4096,
+                },
+              ],
+            },
+          },
+        },
+      },
+      { gatewayModel: "selected-model", uid: 1000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/selected-model");
+    expect(config.models.providers.inference.models[0]).toEqual({
+      id: "selected-model",
+      name: "inference/selected-model",
+    });
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("preserves explicit limits when only the provider model name is stale", () => {
+    const { result, config, hash, expectedHash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/selected-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [
+                {
+                  id: "selected-model",
+                  name: "inference/stale-display-name",
+                  contextWindow: 200_000,
+                  maxTokens: 8192,
+                },
+              ],
+            },
+          },
+        },
+      },
+      { gatewayModel: "selected-model", uid: 1000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.models.providers.inference.models[0]).toEqual({
+      id: "selected-model",
+      name: "inference/selected-model",
+      contextWindow: 200_000,
+      maxTokens: 8192,
+    });
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("leaves a sealed config unchanged for non-root startup", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/baked-model" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "baked-model", name: "inference/baked-model" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, {
+      configWritable: false,
+      gatewayModel: "selected-model",
+      uid: 1000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
   });
 
   it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
@@ -458,9 +547,9 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(hash).not.toBe("oldhash\n");
   });
 
-  it("falls back to the in-file reconcile when the gateway probe emits malformed JSON", () => {
-    // A future packaging shift could ship an `openshell` shim that doesn't
-    // implement `inference get --json` and returns junk on stdout. The
+  it("falls back to the in-file reconcile when the gateway probe emits malformed output", () => {
+    // A future packaging shift could ship an `openshell` shim that returns
+    // junk on stdout. The
     // current absorb-via-SystemExit(0) path should still leave the user
     // in the legacy in-file reconcile state — pinning this so a refactor
     // of the probe parser can't silently degrade to "do nothing".
@@ -476,7 +565,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
           },
         },
       },
-      { gatewayRawOutput: "<html>not json at all</html>" },
+      { gatewayRawOutput: "<html>not gateway output at all</html>" },
     );
 
     expect(result.status).toBe(0);
