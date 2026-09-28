@@ -10,7 +10,7 @@ metadata:
   name: kubernetes-hosted-nvidia
   uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
 spec:
-  # Supply the existing cluster gateway; local kind setup is an optional test fixture.
+  # Supply the existing Kubernetes cluster's OpenShell gateway.
   gateway:
     management: external
     endpoint: https://openshell.example.com

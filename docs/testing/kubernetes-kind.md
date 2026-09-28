@@ -98,12 +98,12 @@ Keep the printed repository digest for the manifest; the image store must retain
 Create the cluster and load that image from the repository root:
 
 ```sh
-export NC_KIND_STATE="$HOME/.local/state/nemoclaw/managed-kind-test"
-python3 tools/kubernetes/stack.py cluster --state-dir "$NC_KIND_STATE"
+export NC_CLUSTER_STATE="$HOME/.local/state/nemoclaw/managed-kind-test"
+python3 tools/kubernetes/stack.py cluster --state-dir "$NC_CLUSTER_STATE"
 python3 tools/kubernetes/stack.py load-image \
-  --state-dir "$NC_KIND_STATE" --image nc-kubernetes-dev:openclaw-kubernetes
-export NEMOCLAW_CLUSTER_KUBECONFIG="$NC_KIND_STATE/kubeconfig"
-python3 -B - "$NC_KIND_STATE/ownership.json" <<'PYCODE'
+  --state-dir "$NC_CLUSTER_STATE" --image nc-kubernetes-dev:openclaw-kubernetes
+export NEMOCLAW_CLUSTER_KUBECONFIG="$NC_CLUSTER_STATE/kubeconfig"
+python3 -B - "$NC_CLUSTER_STATE/ownership.json" <<'PYCODE'
 import json, sys
 receipt = json.load(open(sys.argv[1]))
 print("Use this context in the manifest: kind-" + receipt["cluster"])
@@ -130,7 +130,7 @@ No `stack.py deploy`, `stack.py connect`, or `environment.env` step is needed fo
 The SDK automatically provisions the managed gateway and opens its authenticated connection for each operation.
 Keep both the cluster ownership directory and the SDK state directory.
 After testing, use `nemoclaw destroy --state-dir ./state` to remove agents and uninstall the owned gateway release while retaining data.
-Use the separate confirmed `stack.py cleanup --state-dir "$NC_KIND_STATE" --confirm-cluster NAME` command only when ready to delete the entire disposable cluster and all its persistent volumes.
+Use the separate confirmed `stack.py cleanup --state-dir "$NC_CLUSTER_STATE" --confirm-cluster NAME` command only when ready to delete the entire disposable cluster and all its persistent volumes.
 Its cluster name must match the saved ownership receipt.
 Local SDK credentials remain in `state/kubernetes` and need separate private-file cleanup after retirement.
 

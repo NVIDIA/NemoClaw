@@ -374,13 +374,15 @@ class Runner:
                 "Docker did not retain the built repository digest; enable its containerd image store"
             )
         helper = [PYTHON, str(REPO / "tools/kubernetes/stack.py")]
-        kind = self.state / "kind"
-        self.run("Create isolated kind cluster", helper + ["cluster", "--state-dir", str(kind)])
-        receipt = json.loads((kind / "ownership.json").read_text())
+        cluster_state = self.state / "kind"
+        self.run(
+            "Create isolated kind cluster", helper + ["cluster", "--state-dir", str(cluster_state)]
+        )
+        receipt = json.loads((cluster_state / "ownership.json").read_text())
         self.cluster = receipt["cluster"]
         self.run(
             "Load verified image into owned cluster",
-            helper + ["load-image", "--state-dir", str(kind), "--image", image_tag],
+            helper + ["load-image", "--state-dir", str(cluster_state), "--image", image_tag],
         )
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -394,7 +396,7 @@ class Runner:
         )
         write_private(config, text)
         test_env = {
-            "NEMOCLAW_CLUSTER_KUBECONFIG": str(kind / "kubeconfig"),
+            "NEMOCLAW_CLUSTER_KUBECONFIG": str(cluster_state / "kubeconfig"),
             "NEMOCLAW_TEST_KUBERNETES_CONFIG": str(config),
             "NEMOCLAW_TEST_KUBERNETES_STATE": str(self.state / "sdk-state"),
             "NEMOCLAW_TEST_BUNDLE": str(REPO / "dist" / native),
@@ -427,7 +429,7 @@ class Runner:
             self.state / "retry-inference.sh",
             "#!/bin/sh\nset -eu\ncd " + shlex.quote(str(REPO)) + "\n" + shlex.join(retry) + "\n",
         )
-        self.emit(f"\nManifest: {config}\nPrivate kubeconfig: {kind / 'kubeconfig'}\n")
+        self.emit(f"\nManifest: {config}\nPrivate kubeconfig: {cluster_state / 'kubeconfig'}\n")
         self.run(
             "Run full Kubernetes lifecycle",
             [str(test_binary), FULL_TEST, "--ignored", "--exact", "--nocapture"],
@@ -437,7 +439,8 @@ class Runner:
         if not keep_cluster:
             self.run(
                 "Delete completed test cluster",
-                helper + ["cleanup", "--state-dir", str(kind), "--confirm-cluster", self.cluster],
+                helper
+                + ["cleanup", "--state-dir", str(cluster_state), "--confirm-cluster", self.cluster],
             )
         self.emit("\nPASS: three agent responses, unchanged plan, export/reapply, and destroy.\n")
         self.emit(
@@ -449,12 +452,19 @@ class Runner:
 
     def failure(self, message):
         self.emit(f"\nFAILED: {message}\nPrivate state retained: {self.state}\n")
-        kind = self.state / "kind"
-        if (kind / "kubeconfig").is_file():
+        cluster_state = self.state / "kind"
+        if (cluster_state / "kubeconfig").is_file():
             self.emit(
                 "Inspect this cluster with:\n"
                 + shlex.join(
-                    ["kubectl", "--kubeconfig", str(kind / "kubeconfig"), "get", "pods", "-A"]
+                    [
+                        "kubectl",
+                        "--kubeconfig",
+                        str(cluster_state / "kubeconfig"),
+                        "get",
+                        "pods",
+                        "-A",
+                    ]
                 )
                 + "\n"
             )
@@ -468,9 +478,11 @@ class Runner:
                 "Changing an exported key does not update the installed provider credential.\n"
                 "For HTTP 401, validate the key with e2e.py --check-inference, then start a fresh test if correcting the key.\n"
             )
-        if self.cluster is None and (kind / "ownership.json").is_file():
+        if self.cluster is None and (cluster_state / "ownership.json").is_file():
             try:
-                candidate = json.loads((kind / "ownership.json").read_text()).get("cluster", "")
+                candidate = json.loads((cluster_state / "ownership.json").read_text()).get(
+                    "cluster", ""
+                )
                 if re.fullmatch(r"nemoclaw-v1-[a-z0-9]{8}", candidate):
                     self.cluster = candidate
             except (OSError, ValueError):
@@ -484,7 +496,7 @@ class Runner:
                         str(REPO / "tools/kubernetes/stack.py"),
                         "cleanup",
                         "--state-dir",
-                        str(kind),
+                        str(cluster_state),
                         "--confirm-cluster",
                         self.cluster,
                     ]

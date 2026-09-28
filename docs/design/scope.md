@@ -79,6 +79,7 @@ Generated credentials and gateway storage must remain private and retained after
 This authentication profile is an explicit development qualification choice, not a production identity service.
 Existing production issuers continue to use the external-gateway credential-reference path.
 Kind remains an explicitly selected local test fixture, and its endpoint, issuer, credentials, and image-loading procedure are not deployment defaults.
+Deployment variables and generic examples use Kubernetes or cluster naming; kind-specific runtime inputs belong only to the optional local test fixtures.
 A separate, explicitly invoked local installer may create one owned kind cluster and deploy the pinned upstream OpenShell chart, its Agent Sandbox prerequisite, an enforcing CNI, and a scoped development authentication fixture.
 The optional pinned CPU inference fixture and Kubernetes builds of the existing agent images may be deployed there for lifecycle and inference tests.
 Those builds must preserve private workspace permissions while matching the upstream Kubernetes driver's non-root identity.

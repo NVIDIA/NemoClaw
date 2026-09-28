@@ -9,7 +9,7 @@ metadata:
   name: kubernetes-agent
   uid: 785e7cc0-d2c1-4847-aede-a9b0ba2b8d83
 spec:
-  # Supply the existing cluster gateway; local kind setup is an optional test fixture.
+  # Supply the existing Kubernetes cluster's OpenShell gateway.
   gateway:
     management: external
     endpoint: https://openshell.example.com
