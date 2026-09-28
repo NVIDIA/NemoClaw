@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { constants, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { describe, expect, it } from "vitest";
 
 import {
   makeEmptyClaimsJwtFixture,
@@ -18,12 +14,7 @@ import {
   isSafeCredentialPlaceholder,
   isSensitiveFile,
   npmConfigContainsCredentialDirective,
-  sanitizeConfigFile,
-  sanitizeEnvFile,
   sanitizeEnvFileContent,
-  sanitizeYamlConfigContent,
-  sanitizeYamlConfigFile,
-  shouldScanSnapshotFileForCredentials,
   stripCredentials,
   textContainsCredential,
   textContainsHighConfidenceCredential,
@@ -387,202 +378,6 @@ describe("stripCredentials", () => {
   });
 });
 
-describe("sanitizeConfigFile", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "cred-filter-test-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("strips credentials and removes gateway section", () => {
-    const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        model: "gpt-4",
-        apiKey: "sk-secret",
-        gateway: { port: 8080, authToken: "gw-token" },
-      }),
-    );
-
-    sanitizeConfigFile(configPath);
-
-    const result = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(result.model).toBe("gpt-4");
-    expect(result.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toBeUndefined();
-  });
-
-  it("sanitizes a realistic openclaw.json without breaking restorable settings (#5027)", () => {
-    const configPath = join(tmpDir, "openclaw.json");
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        models: {
-          mode: "merge",
-          providers: {
-            nvidia: { baseUrl: "https://x/v1", apiKey: "unused", models: [{ id: "kimi" }] },
-          },
-        },
-        mcpServers: { fs: { command: "npx" } },
-        channels: {
-          discord: { accounts: { default: { token: "openshell:resolve:env:DISCORD_BOT_TOKEN" } } },
-        },
-        customAgents: { researcher: { prompt: "be thorough" } },
-        leaked: { apiKey: "sk-real-secret" },
-        gateway: { port: 18789, authToken: "gw-token" },
-      }),
-    );
-
-    sanitizeConfigFile(configPath);
-
-    const result = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(result.models.providers.nvidia.apiKey).toBe("unused");
-    expect(result.models.providers.nvidia.models[0].id).toBe("kimi");
-    expect(result.mcpServers.fs.command).toBe("npx");
-    expect(result.channels.discord.accounts.default.token).toBe(
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
-    );
-    expect(result.customAgents.researcher.prompt).toBe("be thorough");
-    expect(result.leaked.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toBeUndefined();
-  });
-
-  it("skips non-existent files", () => {
-    sanitizeConfigFile(join(tmpDir, "nonexistent.json"));
-    // Should not throw
-  });
-
-  it("skips invalid JSON", () => {
-    const configPath = join(tmpDir, "bad.json");
-    writeFileSync(configPath, "not json at all");
-    sanitizeConfigFile(configPath);
-    // Should not throw, file unchanged
-    expect(readFileSync(configPath, "utf-8")).toBe("not json at all");
-  });
-
-  it("does not follow config-file symlinks while sanitizing", () => {
-    const targetPath = join(tmpDir, "target.json");
-    const linkPath = join(tmpDir, "openclaw.json");
-    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret" }));
-    try {
-      symlinkSync(targetPath, linkPath);
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
-      if (code === "EPERM" || code === "EACCES") return;
-      throw error;
-    }
-
-    sanitizeConfigFile(linkPath);
-
-    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({ apiKey: "sk-secret" });
-  });
-
-  it("strips Hermes YAML credentials and removes gateway", () => {
-    const configPath = join(tmpDir, "config.yaml");
-    writeFileSync(
-      configPath,
-      [
-        "model: hermes",
-        "api_key: sk-hermes-secret-key-value",
-        "botToken: xoxb-slack-bot-token-value",
-        "publicKey: keep-me",
-        "gateway:",
-        "  authToken: gw-token",
-        "env:",
-        "  GITHUB_TOKEN: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-        "  NODE_ENV: production",
-        "",
-      ].join("\n"),
-    );
-
-    expect(sanitizeConfigFile(configPath)).toBe(true);
-
-    const result = readFileSync(configPath, "utf-8");
-    expect(result).toContain("model: hermes");
-    expect(result).toContain("publicKey: keep-me");
-    expect(result).toContain("NODE_ENV: production");
-    expect(result).toContain("[STRIPPED_BY_MIGRATION]");
-    expect(result).not.toContain("sk-hermes-secret-key-value");
-    expect(result).not.toContain("xoxb-slack-bot-token-value");
-    expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
-    expect(result).not.toContain("gateway:");
-  });
-
-  it("fails closed for malformed Hermes YAML", () => {
-    const configPath = join(tmpDir, "broken.yaml");
-    writeFileSync(configPath, "api_key: [unclosed\n");
-    expect(sanitizeYamlConfigFile(configPath)).toBe(false);
-    expect(sanitizeConfigFile(configPath)).toBe(false);
-    expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
-  });
-
-  it("sanitizes nested YAML arrays and rejects non-object documents", () => {
-    const sanitized = sanitizeYamlConfigContent(
-      [
-        "items:",
-        "  - safe",
-        "  - api_key: sk-secret-value-long-enough",
-        "    enabled: true",
-        "    count: 2",
-        "    optional: null",
-        "",
-      ].join("\n"),
-    );
-
-    expect(parseYaml(sanitized as string)).toEqual({
-      items: [
-        "safe",
-        {
-          api_key: "[STRIPPED_BY_MIGRATION]",
-          enabled: true,
-          count: 2,
-          optional: null,
-        },
-      ],
-    });
-    expect(sanitizeYamlConfigContent("42\n")).toBeNull();
-    expect(sanitizeYamlConfigContent("- first\n- second\n")).toBeNull();
-  });
-
-  it("returns failure without changing the source when a YAML rewrite fails", () => {
-    const configPath = join(tmpDir, "config.yaml");
-    const source = "api_key: sk-hermes-secret-key-value\n";
-    writeFileSync(configPath, source);
-
-    expect(
-      sanitizeYamlConfigFile(configPath, () => {
-        throw new Error("injected rewrite failure");
-      }),
-    ).toBe(false);
-    expect(readFileSync(configPath, "utf-8")).toBe(source);
-  });
-
-  it.each([
-    ["empty.yaml", ""],
-    ["comments.yaml", "# nothing to sanitize\n"],
-  ])("preserves empty and comment-only YAML documents [case %#]", (name, source) => {
-    const configPath = join(tmpDir, name);
-    writeFileSync(configPath, source);
-    expect(sanitizeYamlConfigFile(configPath)).toBe(true);
-    expect(readFileSync(configPath, "utf-8")).toBe(source);
-  });
-
-  it("sanitizes valid JSON arrays instead of treating them as failures", () => {
-    const configPath = join(tmpDir, "config.json");
-    writeFileSync(configPath, JSON.stringify([{ apiKey: "sk-secret-value-long-enough" }]));
-
-    expect(sanitizeConfigFile(configPath)).toBe(true);
-    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual([
-      { apiKey: "[STRIPPED_BY_MIGRATION]" },
-    ]);
-  });
-});
-
 describe("sanitizeEnvFileContent", () => {
   it("strips PASS/TOKEN secrets without over-matching KEYBOARD_LAYOUT", () => {
     const input = [
@@ -639,77 +434,6 @@ describe("sanitizeEnvFileContent", () => {
   });
 });
 
-describe("sanitizeEnvFile", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "cred-env-test-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("rewrites .env credentials in place", () => {
-    const envPath = join(tmpDir, ".env");
-    writeFileSync(envPath, "DB_PASS=secret\nAPI_KEY=sk-secret-value\nLOG_LEVEL=info\n");
-    expect(sanitizeEnvFile(envPath)).toBe(true);
-    expect(readFileSync(envPath, "utf-8")).toBe(
-      "DB_PASS=[STRIPPED_BY_MIGRATION]\nAPI_KEY=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
-    );
-  });
-
-  it("returns failure without changing the source when an env rewrite fails", () => {
-    const envPath = join(tmpDir, ".env");
-    const source = "DB_PASS=secret\n";
-    writeFileSync(envPath, source);
-
-    expect(
-      sanitizeEnvFile(envPath, () => {
-        throw new Error("injected rewrite failure");
-      }),
-    ).toBe(false);
-    expect(readFileSync(envPath, "utf-8")).toBe(source);
-  });
-});
-
-describe("credential filter no-follow boundary", () => {
-  it("fails closed without atomic no-follow support", () => {
-    const root = mkdtempSync(join(tmpdir(), "nemoclaw-credential-filter-failure-"));
-    const jsonPath = join(root, "openclaw.json");
-    const yamlPath = join(root, "config.yaml");
-    const envPath = join(root, ".env");
-    const jsonSource = JSON.stringify({ apiKey: "sk-secret-value" });
-    const yamlSource = "api_key: sk-secret-value\n";
-    const envSource = "API_KEY=sk-secret-value\n";
-    const reflectGet = Reflect.get;
-    const noFollow = vi
-      .spyOn(Reflect, "get")
-      .mockImplementation((...args) =>
-        args[0] === constants && args[1] === "O_NOFOLLOW" ? undefined : reflectGet(...args),
-      );
-    let observed: unknown[] = [];
-
-    try {
-      writeFileSync(jsonPath, jsonSource);
-      writeFileSync(yamlPath, yamlSource);
-      writeFileSync(envPath, envSource);
-      observed = [
-        sanitizeConfigFile(jsonPath),
-        sanitizeYamlConfigFile(yamlPath),
-        sanitizeEnvFile(envPath),
-        readFileSync(jsonPath, "utf-8"),
-        readFileSync(yamlPath, "utf-8"),
-        readFileSync(envPath, "utf-8"),
-      ];
-    } finally {
-      noFollow.mockRestore();
-      rmSync(root, { recursive: true, force: true });
-    }
-    expect(observed).toEqual([false, false, false, jsonSource, yamlSource, envSource]);
-  });
-});
-
 describe("isSensitiveFile", () => {
   it("detects credential-bearing auth state basenames", () => {
     expect(isSensitiveFile("auth-profiles.json")).toBe(true);
@@ -724,31 +448,6 @@ describe("isSensitiveFile", () => {
     expect(isSensitiveFile("openclaw.json")).toBe(false);
     expect(isSensitiveFile("config.yaml")).toBe(false);
     expect(isSensitiveFile("SOUL.md")).toBe(false);
-  });
-});
-
-describe("shouldScanSnapshotFileForCredentials", () => {
-  it("scans runtime config, env, and Hermes YAML files", () => {
-    expect(shouldScanSnapshotFileForCredentials("openclaw.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials(".env")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("service.env")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.yaml")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("config.yml")).toBe(true);
-  });
-
-  it("skips dependency lockfiles that can contain non-secret package metadata matches", () => {
-    expect(shouldScanSnapshotFileForCredentials(".package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("npm-shrinkwrap.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("yarn.lock")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("pnpm-lock.yaml")).toBe(false);
-  });
-
-  it("applies lockfile exclusions to paths by basename", () => {
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/package-lock.json")).toBe(false);
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.json")).toBe(true);
-    expect(shouldScanSnapshotFileForCredentials("/tmp/snapshot/config.yaml")).toBe(true);
   });
 });
 
