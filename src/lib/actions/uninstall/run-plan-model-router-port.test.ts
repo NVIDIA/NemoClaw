@@ -18,7 +18,7 @@ import {
 } from "../../onboard/docker-driver-gateway-config";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { runUninstallPlan, type RunResult } from "./run-plan";
-import { createRouterMigrationHarness } from "./run-plan-model-router-port.test-support";
+import { createRouterMigrationHarness } from "../../../../test/support/uninstall-model-router-migration";
 import { readOnboardSessionModelRouter } from "./runtime-commands";
 
 const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });

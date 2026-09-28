@@ -8,8 +8,11 @@ import path from "node:path";
 import {
   withProvenManagedGatewayProcess,
   withSuccessfulPreUninstallBackup,
-} from "../../../../test/support/uninstall-managed-gateway-test-support";
-import { runUninstallPlanProduction, type RunResult } from "./run-plan";
+} from "./uninstall-managed-gateway-test-support";
+import {
+  runUninstallPlanProduction,
+  type RunResult,
+} from "../../src/lib/actions/uninstall/run-plan";
 
 type CleanupFailure =
   | "missing-lsof"
