@@ -1162,7 +1162,6 @@ reconcile_agent_model_with_provider() {
   fi
 
   local gateway_model=""
-  local model_source="gateway"
   if [ -f "$custom_route_receipt" ]; then
     if ! run_openclaw_config_as_owner /usr/bin/python3 -I - \
       "$config_file" "$custom_route_receipt" <<'PYCUSTOMROUTE'; then
@@ -1224,9 +1223,12 @@ PYCUSTOMROUTE
       return 1
     fi
     # The staged Dockerfile bound the selected route to this exact config.
-    # Preserve it through the first launch; the host retires the receipt only
-    # after final deployment verification observes a healthy inference route.
-    model_source="custom-image"
+    # Do not fall through to legacy models[0] reconciliation: a base config
+    # may contain multiple models and the selected custom model may be later
+    # in that list. The host retires this one-start authority only after final
+    # deployment verification succeeds.
+    ensure_mutable_openclaw_config_hash
+    return $?
   elif command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
       python3 - <<'PYPROBE'
@@ -1292,7 +1294,7 @@ PYPROBE
 
   local provider_model_ref
   provider_model_ref="$(
-    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" MODEL_SOURCE="$model_source" \
+    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
       /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
 import json, os, sys
 
@@ -1328,7 +1330,7 @@ if gateway_target is not None:
     first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
     if primary_ok and first_name_ok and first_id_ok:
         sys.exit(0)
-    print(f"{os.environ.get('MODEL_SOURCE', 'gateway')}\t{gateway_target}")
+    print(f"gateway\t{gateway_target}")
     sys.exit(0)
 
 # Legacy fallback: gateway probe is unavailable. Align primary with
@@ -1341,19 +1343,10 @@ legacy_target = qualify(first.get("name") or first.get("id"))
 if legacy_target is None:
     sys.exit(0)
 if isinstance(primary, str) and primary == legacy_target:
-    if os.environ.get("MODEL_SOURCE") == "custom-image":
-        print("already-synced")
     sys.exit(0)
 print(f"legacy\t{legacy_target}")
 PYRECONCILE_READ
   )"
-
-  if [ "$provider_model_ref" = "already-synced" ]; then
-    # A valid custom-route receipt also binds the config hash. Refresh the
-    # mutable hash before the host runs its verification and retirement exec.
-    ensure_mutable_openclaw_config_hash
-    return $?
-  fi
 
   if [ -z "$provider_model_ref" ]; then
     return 0

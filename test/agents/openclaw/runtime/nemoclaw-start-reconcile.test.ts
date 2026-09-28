@@ -293,14 +293,22 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(hash).toBe(expectedHash);
   });
 
-  it("preserves an integrity-bound custom image route through first startup", () => {
+  it("preserves an integrity-bound custom route when the selected model is not models[0]", () => {
     const { result, config, hash, expectedHash } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/selected-model" } } },
         models: {
           providers: {
             inference: {
-              models: [{ id: "selected-model", name: "inference/selected-model" }],
+              models: [
+                {
+                  id: "baked-model",
+                  name: "inference/baked-model",
+                  contextWindow: 131_072,
+                  maxTokens: 4096,
+                },
+                { id: "selected-model", name: "inference/selected-model" },
+              ],
             },
           },
         },
@@ -314,7 +322,8 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/selected-model");
-    expect(config.models.providers.inference.models[0].id).toBe("selected-model");
+    expect(config.models.providers.inference.models[0].id).toBe("baked-model");
+    expect(config.models.providers.inference.models[1].id).toBe("selected-model");
     expect(hash).toBe(expectedHash);
   });
 
