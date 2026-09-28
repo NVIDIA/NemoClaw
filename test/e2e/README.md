@@ -589,7 +589,9 @@ Each target selects its runner through the catalogue.
 The reusable workflow validates the catalogue plan before candidate checkout.
 It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
 It then owns checkout, Docker authentication, reviewed host preparation, setup, CLI artifact restoration, OpenShell installation, runner telemetry, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
-Catalogue entries may request only the reviewed `expect` and `iptables` host packages.
+Catalogue host packages are allowlisted: `expect`, `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
+Only `gpu-double-onboard` and `hermes-slack` declare the seven native Podman prerequisites through `podmanHostPackages`; their Docker rows receive no added packages.
+The planner combines common `hostPackages` with `podmanHostPackages` only for Podman rows and emits the existing `host_packages` input.
 The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
 A host package or selector alone does not require a dedicated workflow job.
