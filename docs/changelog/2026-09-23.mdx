@@ -158,3 +158,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Rerun the affected sandbox's rebuild with the same settings; do not delete its recovery files.
   Related change: [PR #11389](https://github.com/NVIDIA/NemoClaw/pull/11389).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+- Linux Ollama onboarding retries a timed-out systemd execution proof with a bounded direct proof as the configured service user.
+  Onboarding continues when the direct proof succeeds and stops without restarting Ollama when it fails or times out.
+  Related change: [PR #12337](https://github.com/NVIDIA/NemoClaw/pull/12337).
+  Refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
