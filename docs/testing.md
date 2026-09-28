@@ -80,11 +80,14 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 python3 -B -m unittest discover -s image -p test_builds.py
+NEMOCLAW_TEST_IMAGE_CACHE=1 python3 -B image/test_build_cache.py
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+The cache regression uses a native Docker builder and the pinned Rust image to build two source revisions with matching package versions and archived timestamps.
+It checks that an updated caller receives the updated library through the agent Dockerfile's cache policy, using an isolated build context and no deployment resources.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, generic runtime behavior tests against Fabric's installed fixture adapter, and Fabric's Pi compilation and tests.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.

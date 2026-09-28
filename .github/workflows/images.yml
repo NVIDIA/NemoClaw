@@ -43,6 +43,8 @@ jobs:
         run: |
           python3 -B -m unittest discover -s image -p test_builds.py
           docker buildx bake --check agents ollama-proxy
+      - name: Check Fabric source changes with a warm build cache
+        run: NEMOCLAW_TEST_IMAGE_CACHE=1 python3 -B image/test_build_cache.py
       - name: Check packaging and generic Fabric lifecycle
         run: docker buildx bake check
       - name: Build local images with installed Fabric metadata

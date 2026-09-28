@@ -39,10 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
+# Archived sources can predate cached Cargo fingerprints from another revision.
+# Share downloads; keep compiled artifacts local to this source-specific layer.
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
-    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
+    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
+    && rm -rf /src/fabric/target
 
 FROM common-wheels AS harness-wheels
 ARG HARNESS

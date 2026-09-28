@@ -111,6 +111,9 @@ Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local reposito
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; selected images contain only their required harness dependencies.
+Fabric builds cache dependency downloads and completed Docker layers, while compiled Cargo artifacts stay within each build.
+Sharing compiled artifacts across source archives can reuse an older core library when package versions match and archived files predate the cached build.
+After updating the checkout, rerun the builder normally to use the corrected cache behavior; no shared-cache cleanup is required.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
 The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
