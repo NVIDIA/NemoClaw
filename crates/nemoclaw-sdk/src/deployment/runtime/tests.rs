@@ -2,28 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::managed::GATEWAY_STORAGE_KIND;
+use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND};
 
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
-
-pub(in crate::deployment) fn kubernetes_context() -> (Document, crate::compile::Generations) {
-    let original =
-        Document::parse(include_bytes!("../../../tests/fixtures/config/local.yaml").as_slice())
-            .unwrap();
-    let mut value = serde_json::to_value(original).unwrap();
-    value["spec"]["gateway"] = json!({
-        "management":"managed", "endpoint":"https://127.0.0.1:17671",
-        "kubernetes": {
-            "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
-            "prerequisites":{"agentSandbox":{"management":"existing"}},
-            "authentication":{"profile":"development"}
-        }
-    });
-    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
-    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let generations = Record::new(document.clone()).unwrap().generations;
-    (document, generations)
-}
 
 #[test]
 fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {

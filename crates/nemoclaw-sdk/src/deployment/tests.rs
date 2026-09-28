@@ -4,6 +4,25 @@ use crate::config::{ComputeDriver, Gateway};
 
 use super::*;
 
+pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
+    let original =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(original).unwrap();
+    value["spec"]["gateway"] = json!({
+        "management":"managed", "endpoint":"https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
+            "prerequisites":{"agentSandbox":{"management":"existing"}},
+            "authentication":{"profile":"development"}
+        }
+    });
+    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    (document, generations)
+}
+
 #[test]
 fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
     struct ProvisioningOnly;
@@ -16,7 +35,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
             }
         }
     }
-    let (mut document, _) = runtime::tests::kubernetes_context();
+    let (mut document, _) = kubernetes_context();
     document.spec.inference_providers[0].credential = Some(Credential {
         env: "UNREAD_INFERENCE_KEY".into(),
     });

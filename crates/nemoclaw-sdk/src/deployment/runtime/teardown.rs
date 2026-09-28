@@ -346,7 +346,7 @@ mod tests {
                 panic!("an empty agent teardown must not resolve gateway credentials")
             }
         }
-        let (document, _) = crate::deployment::runtime::tests::kubernetes_context();
+        let (document, _) = crate::deployment::tests::kubernetes_context();
         let mut record = Record::new(document).unwrap();
         record.begin_runtime_apply(&record.document.clone());
         let directory = tempfile::tempdir().unwrap();
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn kubernetes_destroy_retains_storage_and_rejects_an_unbound_gateway() {
-        let (document, _) = crate::deployment::runtime::tests::kubernetes_context();
+        let (document, _) = crate::deployment::tests::kubernetes_context();
         let record = Record::new(document).unwrap();
         let targets = compile::runtime_targets(&record.document, &record.generations).unwrap();
         let bindings: BTreeMap<String, StateBinding> = targets
