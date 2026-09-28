@@ -140,6 +140,10 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       expect(encodedLimits).not.toBe("");
       expect(patched).toContain("sha256sum openclaw.json > .config-hash");
       expect(patched).toContain(".nemoclaw-custom-route-pending");
+      expect(patched).toContain(
+        "ENV NEMOCLAW_MODEL=provider/selected-model \\\n" +
+          "    NEMOCLAW_PRIMARY_MODEL_REF=inference/provider/selected-model",
+      );
       expect(patched.trimEnd().endsWith("USER 1001:1001")).toBe(true);
 
       const embedded = patched.match(

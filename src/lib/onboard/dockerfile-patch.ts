@@ -215,12 +215,15 @@ function appendCustomOpenClawModelReconcile(
   const restoreUser = finalUser === null ? "" : `\n${finalUser.text}`;
   const encodedModel = Buffer.from(model, "utf8").toString("base64");
   const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
+  const primaryModelRef = model.startsWith("inference/") ? model : `inference/${model}`;
 
   return `${dockerfile.trimEnd()}
 
 # Reconcile inherited OpenClaw model metadata with this custom image's route.
 ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
 ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=${encodedLimits}
+ENV NEMOCLAW_MODEL=${model} \\
+    NEMOCLAW_PRIMARY_MODEL_REF=${primaryModelRef}
 ${useRoot}RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
 import base64
 import hashlib
