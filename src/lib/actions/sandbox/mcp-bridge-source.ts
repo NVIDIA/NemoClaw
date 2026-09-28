@@ -607,25 +607,33 @@ async function enrichFromPolicy(
         .map((rule) => rule.params.name)
     : [];
 
-  const denyTools =
+  const denyToolInspection = inspectMcpDeniedToolSelectors(
     denyRulesFromEndpoint.length > 0
       ? denyRulesFromEndpoint
       : legacyDenyTools.length > 0
         ? legacyDenyTools
+        : [],
+  );
+
+  const denyTools =
+    denyToolInspection.ok
+      ? denyToolInspection.selectors
+      : legacyDenyTools.length > 0
+        ? legacyDenyTools
         : [];
-  const rawAllowTools = allowRules;
 
   const policyConflict =
     !deniedToolInspection.ok ||
-    (rawAllowTools.length > 0
-      ? rawAllowTools.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool))
+    !denyToolInspection.ok ||
+    (allowRules.length > 0
+      ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool))
       : false)
       ? "Live policy contains invalid tool selectors."
       : endpointConflict;
 
   const allowTools =
-    rawAllowTools.length > 0
-      ? rawAllowTools.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool))
+    allowRules.length > 0
+      ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool))
       : undefined;
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&
