@@ -32,7 +32,13 @@ fn unknown_id_reuses_state_and_only_immutable_fields_require_replacement() {
 
 #[test]
 fn stopped_managed_process_reapplies_install_without_promising_readiness_or_replacement() {
-    for kind in ["managed_gateway", "inference_service", "ollama_service"] {
+    for kind in [
+        "managed_gateway",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+        "inference_service",
+        "ollama_service",
+    ] {
         let definition = Definition::new(kind, &["spec", "running"], &["running"]);
         for running in ["true", "false"] {
             let prior = BTreeMap::from([

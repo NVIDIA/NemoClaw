@@ -8,6 +8,30 @@ use nemoclaw_sdk::{
 use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "invokes the model of an explicitly selected existing owned Kubernetes deployment"]
+async fn owned_kubernetes_agent_response_from_retained_state() {
+    let config = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_KUBERNETES_CONFIG").expect("explicit config required"),
+    );
+    let state = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_KUBERNETES_STATE")
+            .expect("explicit retained state required"),
+    );
+    assert!(config.is_absolute() && state.is_absolute());
+    let document = Document::parse(fs::File::open(config).unwrap()).unwrap();
+    assert_eq!(document.spec.sandboxes.len(), 1);
+    assert_eq!(
+        document.spec.sandboxes[0].runtime.provider,
+        ComputeDriver::Kubernetes
+    );
+    assert!(state.join("intent.json").is_file());
+    println!(
+        "Verified agent response: {}",
+        nemoclaw_e2e::verify_agent(&document, &state).await
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "mutates an explicitly configured owned Kubernetes gateway and invokes its model"]
 async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys() {
     let config = PathBuf::from(

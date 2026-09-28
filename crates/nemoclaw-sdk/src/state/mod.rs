@@ -45,6 +45,10 @@ impl Record {
         document.validate()?;
         let mut generations = Generations::new();
         let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
+        if document.spec.gateway.as_kubernetes().is_some() {
+            kinds.push(crate::kubernetes::GATEWAY_KIND);
+            kinds.push(crate::kubernetes::STORAGE_KIND);
+        }
         kinds.extend(crate::services::generation_kinds(&document)?);
         kinds.sort_unstable();
         kinds.dedup();
@@ -66,6 +70,15 @@ impl Record {
         })
     }
     pub fn validate_pending_intent(&self, document: &Document) -> Result<(), Error> {
+        if self.pending
+            && self.runtime_pending
+            && self.document.spec.gateway.as_kubernetes().is_some()
+            && self.digest != document.digest()
+        {
+            return Err(Error::Conflict(
+                "unfinished Kubernetes platform apply requires its original configuration and state for recovery",
+            ));
+        }
         if !self.pending || self.runtime_pending {
             return Ok(());
         }

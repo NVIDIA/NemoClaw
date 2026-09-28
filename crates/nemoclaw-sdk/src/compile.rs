@@ -360,6 +360,12 @@ pub(super) fn compile_with_plans(
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
+    if gateway.as_kubernetes().is_some() {
+        provider["credential_env"] = json!("NEMOCLAW_MANAGED_K8S_TOKEN");
+        provider["tls_ca_env"] = json!("NEMOCLAW_MANAGED_K8S_CA");
+        provider["tls_certificate_env"] = json!("NEMOCLAW_MANAGED_K8S_CERT");
+        provider["tls_key_env"] = json!("NEMOCLAW_MANAGED_K8S_KEY");
+    }
     let mut resources = json!({});
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()

@@ -11,6 +11,335 @@ fn external_document() -> Value {
     input
 }
 
+fn managed_document() -> Value {
+    let mut input = external_document();
+    input["spec"]["gateway"] = json!({
+        "management": "managed",
+        "endpoint": "https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig": {"env": "CLUSTER_KUBECONFIG"},
+            "context": "explicit-context",
+            "namespace": "owned-gateway",
+            "prerequisites": {"agentSandbox": {"management": "managed"}},
+            "authentication": {"profile": "development"}
+        }
+    });
+    input
+}
+
+#[test]
+fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults() {
+    for management in ["existing", "managed"] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["prerequisites"]["agentSandbox"]["management"] =
+            json!(management);
+        assert!(jsonschema::is_valid(&schema::input_schema(), &input));
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        assert!(document.has_runtime());
+        assert!(document.spec.gateway.as_managed().is_some());
+        assert!(document.spec.gateway.as_local_managed().is_none());
+        assert_eq!(
+            document.spec.gateway.as_kubernetes().unwrap().context,
+            "explicit-context"
+        );
+        assert!(
+            document
+                .spec
+                .gateway
+                .as_managed()
+                .unwrap()
+                .bridge()
+                .is_err()
+        );
+        assert_eq!(document.credential_names(), ["CLUSTER_KUBECONFIG"]);
+        assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        assert_eq!(
+            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+            document
+        );
+    }
+}
+
+#[test]
+fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for (parent, field) in [
+        ("/spec/gateway", "endpoint"),
+        ("/spec/gateway/kubernetes", "kubeconfig"),
+        ("/spec/gateway/kubernetes/kubeconfig", "env"),
+        ("/spec/gateway/kubernetes", "context"),
+        ("/spec/gateway/kubernetes", "namespace"),
+        ("/spec/gateway/kubernetes", "prerequisites"),
+        ("/spec/gateway/kubernetes/prerequisites", "agentSandbox"),
+        (
+            "/spec/gateway/kubernetes/prerequisites/agentSandbox",
+            "management",
+        ),
+        ("/spec/gateway/kubernetes", "authentication"),
+        ("/spec/gateway/kubernetes/authentication", "profile"),
+    ] {
+        let mut input = managed_document();
+        input
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            !validator.is_valid(&input),
+            "accepted omitted {parent}/{field}"
+        );
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+    }
+}
+
+#[test]
+fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authentication() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for (path, value) in [
+        ("/spec/gateway/endpoint", json!("")),
+        ("/spec/gateway/endpoint", json!("http://127.0.0.1:17671")),
+        ("/spec/gateway/endpoint", json!("https://localhost:17671")),
+        ("/spec/gateway/endpoint", json!("https://127.0.0.2:17671")),
+        (
+            "/spec/gateway/endpoint",
+            json!("https://gateway.example:17671"),
+        ),
+        ("/spec/gateway/endpoint", json!("https://127.0.0.1")),
+        ("/spec/gateway/endpoint", json!("https://127.0.0.1:0")),
+        ("/spec/gateway/endpoint", json!("https://127.0.0.1:65536")),
+        ("/spec/gateway/endpoint", json!("https://127.0.0.1:17671/")),
+        (
+            "/spec/gateway/endpoint",
+            json!("https://127.0.0.1:17671?token=value"),
+        ),
+        (
+            "/spec/gateway/endpoint",
+            json!("https://user:password@127.0.0.1:17671"),
+        ),
+        ("/spec/gateway/kubernetes/context", json!("")),
+        ("/spec/gateway/kubernetes/namespace", json!("")),
+        (
+            "/spec/gateway/kubernetes/namespace",
+            json!("Invalid_Namespace"),
+        ),
+        ("/spec/gateway/kubernetes/kubeconfig/env", json!("")),
+        (
+            "/spec/gateway/kubernetes/kubeconfig/env",
+            json!("/private/kubeconfig"),
+        ),
+        (
+            "/spec/gateway/kubernetes/authentication/profile",
+            json!("none"),
+        ),
+        (
+            "/spec/gateway/kubernetes/authentication/profile",
+            json!("production"),
+        ),
+        (
+            "/spec/gateway/kubernetes/prerequisites/agentSandbox/management",
+            json!("auto"),
+        ),
+        ("/spec/sandboxes/0/runtime/provider", json!("docker")),
+    ] {
+        let mut input = managed_document();
+        *input.pointer_mut(path).unwrap() = value;
+        assert!(!validator.is_valid(&input), "accepted invalid {path}");
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+        if let Ok(document) = serde_json::from_value::<Document>(input) {
+            assert!(
+                document.validate().is_err(),
+                "accepted direct Rust value at {path}"
+            );
+        }
+    }
+    for (field, value) in [
+        ("engine", json!("unix:///var/run/docker.sock")),
+        ("engine", json!("")),
+        ("networkCIDR", json!("172.30.1.0/24")),
+        ("image", json!(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE)),
+        ("imagePullPolicy", json!("Never")),
+        ("credential", json!({"env":"GATEWAY_TOKEN"})),
+        (
+            "tls",
+            json!({"ca":{"env":"CA"},"certificate":{"env":"CERT"},"key":{"env":"KEY"}}),
+        ),
+    ] {
+        let mut input = managed_document();
+        let empty_default = field == "engine" && value == json!("");
+        input["spec"]["gateway"][field] = value;
+        assert!(!validator.is_valid(&input), "accepted {field}");
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+        if let Ok(document) = serde_json::from_value::<Document>(input)
+            && !empty_default
+        {
+            assert!(document.validate().is_err(), "accepted direct Rust {field}");
+        }
+    }
+}
+
+#[test]
+fn managed_kubernetes_accepts_explicit_port_boundaries_and_rejects_mixed_drivers() {
+    for port in [1, 443, 65535] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["endpoint"] = json!(format!("https://127.0.0.1:{port}"));
+        Document::parse(input.to_string().as_bytes()).unwrap();
+    }
+    let mut input = managed_document();
+    let mut docker = input["spec"]["sandboxes"][0].clone();
+    docker["name"] = json!("docker-assistant");
+    docker["runtime"]["provider"] = json!("docker");
+    input["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(docker);
+    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
+    assert!(
+        serde_json::from_value::<Document>(input)
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+}
+
+#[test]
+fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for name in [
+        "NEMOCLAW_KUBERNETES_STATE",
+        "NEMOCLAW_MANAGED_K8S_TOKEN",
+        "NEMOCLAW_MANAGED_K8S_CA",
+    ] {
+        for path in [
+            "/spec/gateway/kubernetes/kubeconfig",
+            "/spec/inferenceProviders/0/credential",
+        ] {
+            let mut input = managed_document();
+            input["spec"]["inferenceProviders"][0]["endpoint"] =
+                json!("https://inference.example/v1");
+            input["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"HOSTED_API_KEY"});
+            *input.pointer_mut(path).unwrap() = json!({"env":name});
+            assert!(!validator.is_valid(&input));
+            assert!(Document::parse(input.to_string().as_bytes()).is_err());
+            assert!(
+                serde_json::from_value::<Document>(input)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn managed_kubeconfig_reference_cannot_override_process_controls() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for name in [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "KUBECONFIG",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "SHELL",
+        "ENV",
+        "BASH_ENV",
+        "IFS",
+        "CDPATH",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "HELM_PLUGINS",
+        "HELM_KUBECONTEXT",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "TF_CLI_CONFIG_FILE",
+        "TOFU_DATA_DIR",
+        "PLUGIN_PROTOCOL_VERSIONS",
+        "NEMOCLAW_INTERNAL_HELPER",
+        "NEMOCLAW_KUBERNETES_STATE",
+        "NEMOCLAW_MANAGED_K8S_TOKEN",
+        "KUBERNETES_MASTER",
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
+        "KUBERNETES_SERVICE_PORT_HTTPS",
+    ] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
+        assert!(
+            !validator.is_valid(&input),
+            "accepted kubeconfig reference {name}"
+        );
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+        let direct = serde_json::from_value::<Document>(input).unwrap();
+        assert!(direct.validate().is_err());
+        assert!(
+            direct
+                .spec
+                .gateway
+                .as_managed()
+                .unwrap()
+                .validate_managed()
+                .is_err()
+        );
+    }
+    for name in [
+        "CLUSTER_KUBECONFIG",
+        "DEVELOPMENT_CLUSTER",
+        "KUBECONFIG_PATH",
+    ] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
+        Document::parse(input.to_string().as_bytes()).unwrap();
+    }
+}
+
+#[test]
+fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
+    for name in [
+        "PATH",
+        "HOME",
+        "AWS_ACCESS_KEY_ID",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+    ] {
+        let mut input = external_document();
+        input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("docker");
+        input["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
+        input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": name});
+        Document::parse(input.to_string().as_bytes()).unwrap();
+    }
+}
+
+#[test]
+fn managed_kubernetes_target_cannot_enter_legacy_engine_specs() {
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("../src/managed/reference.json")).unwrap();
+    for fixture in fixtures {
+        let mut raw: Value = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        let mut gateway = managed_document()["spec"]["gateway"].clone();
+        gateway.as_object_mut().unwrap().remove("management");
+        raw["gateway"] = gateway;
+        let spec: nemoclaw_sdk::managed::Spec = serde_json::from_value(raw).unwrap();
+        // A forged Docker driver must not route an otherwise valid Kubernetes target to an engine.
+        assert!(spec.gateway.validate_managed().is_ok());
+        assert!(spec.validate().is_err());
+        assert!(spec.json().is_err());
+        assert!(spec.container("/owned-data").is_err());
+    }
+}
+
 #[test]
 fn kubernetes_selects_the_gateway_driver_and_preserves_it_on_export() {
     let input = external_document();
@@ -82,7 +411,7 @@ fn kubernetes_image_requirement_preserves_other_sandbox_defaults() {
 }
 
 #[test]
-fn kubernetes_rejects_managed_gateways_before_deployment() {
+fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
     let mut input = external_document();
     input["spec"]["gateway"] = json!({"management": "managed"});
     assert!(Document::parse(input.to_string().as_bytes()).is_err());
@@ -97,16 +426,16 @@ fn kubernetes_rejects_managed_gateways_before_deployment() {
 
 #[test]
 fn kubernetes_rejects_managed_services_even_when_no_route_selects_them() {
-    let mut input = external_document();
     let managed =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
-    input["spec"]["services"] = serde_json::to_value(managed.spec.services.clone()).unwrap();
-    assert!(Document::parse(input.to_string().as_bytes()).is_err());
-    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
-
-    let mut document = Document::parse(external_document().to_string().as_bytes()).unwrap();
-    document.spec.services = managed.spec.services;
-    assert!(document.validate().is_err());
+    for mut input in [external_document(), managed_document()] {
+        let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
+        input["spec"]["services"] = serde_json::to_value(managed.spec.services.clone()).unwrap();
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+        assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
+        document.spec.services = managed.spec.services.clone();
+        assert!(document.validate().is_err());
+    }
 }
 
 #[test]

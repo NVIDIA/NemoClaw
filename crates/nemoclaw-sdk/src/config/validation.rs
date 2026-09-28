@@ -193,6 +193,9 @@ impl Document {
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
+        if self.kubernetes.is_some() {
+            return validate_endpoint(&self.endpoint, true);
+        }
         let authority = self
             .endpoint
             .strip_prefix("http://")

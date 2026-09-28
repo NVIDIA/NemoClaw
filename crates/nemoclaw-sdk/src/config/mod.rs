@@ -22,6 +22,8 @@ pub use image_pull_policy::ImagePullPolicy;
 mod network;
 pub use network::*;
 mod kinds;
+mod kubernetes;
+pub use kubernetes::*;
 #[doc(hidden)]
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
@@ -145,6 +147,9 @@ impl Document {
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
+        if let Some(kubernetes) = g.as_kubernetes() {
+            names.push(kubernetes.kubeconfig.env.as_str());
+        }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());
         }
@@ -178,7 +183,9 @@ impl Document {
     }
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
-        if let Gateway::Managed(gateway) = gateway {
+        if let Gateway::Managed(gateway) = gateway
+            && gateway.kubernetes.is_none()
+        {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
             default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
@@ -259,6 +266,11 @@ impl ManagedGateway {
     /// # Errors
     /// Returns an error for malformed IPv4 CIDRs or an address overflow.
     pub fn bridge(&self) -> Result<String, ConfigError> {
+        if self.kubernetes.is_some() {
+            return Err(ConfigError::new(
+                "Kubernetes gateways have no local engine bridge",
+            ));
+        }
         bridge_address(&self.network_cidr)
     }
 }
@@ -288,6 +300,16 @@ impl Gateway {
             Self::External(_) => None,
         }
     }
+    /// Explicit existing-cluster settings for a managed Kubernetes gateway.
+    pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
+        self.as_managed()
+            .and_then(|gateway| gateway.kubernetes.as_ref())
+    }
+    /// Local Docker or Podman installation settings; excludes Kubernetes targets.
+    pub fn as_local_managed(&self) -> Option<&ManagedGateway> {
+        self.as_managed()
+            .filter(|gateway| gateway.kubernetes.is_none())
+    }
     /// Mutable installation settings, when this deployment manages the gateway.
     pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
         match self {
@@ -296,8 +318,9 @@ impl Gateway {
         }
     }
     pub(crate) fn managed(&self) -> Result<&ManagedGateway, ConfigError> {
-        self.as_managed()
-            .ok_or(ConfigError::new("operation requires a managed gateway"))
+        self.as_local_managed().ok_or(ConfigError::new(
+            "operation requires a managed local gateway",
+        ))
     }
     pub(crate) fn credential(&self) -> Option<&Credential> {
         match self {

@@ -474,7 +474,8 @@ class Stack:
         self.kubectl("delete", "namespace", namespace, "--wait=false")
         print("NetworkPolicy ingress and egress tests passed: allow, deny, then allow.", flush=True)
 
-    def deploy(self):
+    def cluster(self):
+        """Prepare only the disposable cluster and enforcing network for SDK apply."""
         self.prepare()
         self.create()
         self.guard()
@@ -484,6 +485,9 @@ class Stack:
         )
         self.kubectl("wait", "--for=condition=Ready", "node", "--all", "--timeout=300s")
         self.policy_probe()
+
+    def deploy(self):
+        self.cluster()
         self.guard()
         self.kubectl("apply", "--server-side", "-f", str(self.state / "agentSandbox-pinned.yaml"))
         self.kubectl(
@@ -694,7 +698,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=["preflight", "render", "deploy", "verify", "connect", "load-image", "cleanup"],
+        choices=[
+            "preflight",
+            "render",
+            "cluster",
+            "deploy",
+            "verify",
+            "connect",
+            "load-image",
+            "cleanup",
+        ],
     )
     parser.add_argument(
         "--state-dir", type=Path, default=Path.home() / ".local/state/nemoclaw/kubernetes-dev"

@@ -149,6 +149,8 @@ pub mod docker;
 
 pub mod managed;
 
+pub mod kubernetes;
+
 pub mod hardware;
 
 mod tofu_ui;

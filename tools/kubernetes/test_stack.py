@@ -19,6 +19,26 @@ SPEC.loader.exec_module(stack)
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_cluster_action_stops_after_network_preparation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = stack.Stack(Path(directory))
+            with (
+                mock.patch.object(instance, "prepare"),
+                mock.patch.object(instance, "create"),
+                mock.patch.object(instance, "guard"),
+                mock.patch.object(instance, "kubectl") as kubectl,
+                mock.patch.object(instance, "policy_probe") as probe,
+                mock.patch.object(instance, "apply_json") as resources,
+            ):
+                instance.cluster()
+            probe.assert_called_once_with()
+            resources.assert_not_called()
+            calls = str(kubectl.call_args_list)
+            self.assertIn("calico-pinned.yaml", calls)
+            self.assertNotIn("agentSandbox", calls)
+            self.assertNotIn("secret", calls)
+            self.assertNotIn("openshell", calls)
+
     def setUp(self):
         self.binding = {
             "context": "kind-nemoclaw-v1-test1234",

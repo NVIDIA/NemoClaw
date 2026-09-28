@@ -5,6 +5,64 @@ use crate::config::{ComputeDriver, Gateway};
 use super::*;
 
 #[test]
+fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
+    struct ProvisioningOnly;
+    impl Secrets for ProvisioningOnly {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            if name == "TEST_KUBECONFIG" {
+                Ok("/private/kubeconfig".into())
+            } else {
+                Err(crate::ObservationError::Authentication)
+            }
+        }
+    }
+    let (mut document, _) = runtime::tests::kubernetes_context();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "UNREAD_INFERENCE_KEY".into(),
+    });
+    let temporary = tempfile::tempdir().unwrap();
+    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(ProvisioningOnly));
+    let expected = temporary
+        .path()
+        .join("kubernetes")
+        .to_string_lossy()
+        .into_owned();
+    for directory in [
+        temporary.path().join("runtime"),
+        temporary.path().join(".export-copy"),
+    ] {
+        let environment = deployment
+            .provider_environment(&document, &directory, true)
+            .unwrap();
+        assert_eq!(environment[crate::kubernetes::STATE_ENV], expected);
+        assert_eq!(environment["TEST_KUBECONFIG"], "/private/kubeconfig");
+        assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
+        assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
+    }
+    deployment.operation_environment.insert(
+        crate::kubernetes::TOKEN_ENV.into(),
+        "synthetic-token".into(),
+    );
+    let environment = deployment
+        .provider_environment(&document, temporary.path(), true)
+        .unwrap();
+    assert_eq!(environment[crate::kubernetes::TOKEN_ENV], "synthetic-token");
+    for name in [
+        crate::kubernetes::STATE_ENV,
+        crate::kubernetes::TOKEN_ENV,
+        crate::kubernetes::CA_ENV,
+        crate::kubernetes::CERT_ENV,
+        crate::kubernetes::KEY_ENV,
+    ] {
+        assert!(matches!(
+            credential_environment([name], &ProvisioningOnly, temporary.path()),
+            Err(Error::Conflict(_))
+        ));
+    }
+}
+
+#[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
     for address in [
         compile::GATEWAY_CAPABILITIES_ADDRESS,

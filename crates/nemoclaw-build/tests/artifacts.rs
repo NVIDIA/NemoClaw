@@ -96,6 +96,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "Cargo.lock",
         "rust-toolchain.toml",
         "versions.json",
+        "tools/kubernetes/sources.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
         "runtimes/example/Dockerfile",
@@ -105,17 +106,27 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 7);
+    assert_eq!(first.len(), 8);
     for name in [
         "target/output",
         ".local/secret",
         "crates/sdk/target/generated.rs",
+        "crates/sdk/src/kubernetes/__pycache__/platform.cpython-312.pyc",
     ] {
         let file = root.path().join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, b"ignored").unwrap();
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+    std::fs::write(
+        root.path().join("tools/kubernetes/sources.json"),
+        b"new pin",
+    )
+    .unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&nemoclaw_build::source_inputs(root.path()).unwrap())
+    );
 }
 
 #[test]
@@ -169,6 +180,7 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
         "Cargo.lock",
         "rust-toolchain.toml",
         "versions.json",
+        "tools/kubernetes/sources.json",
         "LICENSE",
         "crates/runtime/src/main.rs",
         "crates/sdk/NOTICE.md",

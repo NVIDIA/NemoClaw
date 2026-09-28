@@ -70,6 +70,12 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
     }
     fs::create_dir(root.path().join("crates")).unwrap();
     fs::create_dir(root.path().join("runtimes")).unwrap();
+    fs::create_dir_all(root.path().join("tools/kubernetes")).unwrap();
+    fs::copy(
+        repository.join("tools/kubernetes/sources.json"),
+        root.path().join("tools/kubernetes/sources.json"),
+    )
+    .unwrap();
     fs::write(root.path().join("crates/changed.rs"), "changed source\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
         .current_dir(root.path())

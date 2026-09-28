@@ -95,8 +95,7 @@ impl Deployment {
                 ));
             }
         }
-        let environment =
-            gateway_environment(&record.document, self.secrets.as_ref(), &stage.directory)?;
+        let environment = self.provider_environment(&record.document, &stage.directory, true)?;
         crate::process::run(
             &stage.directory,
             &bundle.tofu(),
@@ -177,10 +176,14 @@ impl Deployment {
             ));
         }
 
-        self.export_runtime(&bundle, &store, &record, cancel)
+        let (operation, _connection) = self
+            .connected(&record.document, &record.generations, cancel)
+            .await?;
+        operation
+            .export_runtime(&bundle, &store, &record, cancel)
             .await?;
         (self.progress)(Progress::Exporting);
-        let observations = self
+        let observations = operation
             .export_observations(&bundle, &store, &record, false, cancel)
             .await?;
         let mut document = record.document;

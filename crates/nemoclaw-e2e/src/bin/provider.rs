@@ -14,6 +14,15 @@ impl Fixture {
     fn mode(&self) -> String {
         fs::read_to_string(self.directory.join("mode")).unwrap()
     }
+    fn resource(&self, kind: &str) -> PathBuf {
+        self.directory.join(
+            if nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
+                format!("{kind}.json")
+            } else {
+                "resource.json".into()
+            },
+        )
+    }
 }
 #[async_trait]
 impl Backend for Fixture {
@@ -54,7 +63,7 @@ impl Backend for Fixture {
             &service, &capacity, false,
         )
     }
-    async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+    async fn read(&self, kind: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
         let mode = self.mode();
         if mode == "read-error" {
             return Err(ObservationError::Transport);
@@ -62,7 +71,7 @@ impl Backend for Fixture {
         if mode == "absent" {
             return Ok(None);
         }
-        let bytes = match fs::read(self.directory.join("resource.json")) {
+        let bytes = match fs::read(self.resource(kind)) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(ObservationError::Transport),
@@ -80,23 +89,25 @@ impl Backend for Fixture {
     async fn ensure(&self, kind: &str, want: &Row) -> Mutation {
         let mut row = want.clone();
         row.insert("id".into(), "fixture-id".into());
-        if kind == "inference_service" {
+        let incomplete = self.mode() == format!("create-error-{kind}");
+        if kind == "inference_service"
+            || nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind)
+        {
             row.insert("running".into(), "true".into());
         }
-        fs::write(
-            self.directory.join("resource.json"),
-            serde_json::to_vec(&row).unwrap(),
-        )
-        .unwrap();
+        if incomplete && nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
+            row.insert("running".into(), "false".into());
+        }
+        fs::write(self.resource(kind), serde_json::to_vec(&row).unwrap()).unwrap();
         if self.mode() == "create-error" {
             Mutation::partial(row, ObservationError::Transport)
         } else {
             Mutation::complete(row)
         }
     }
-    async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
-        fs::remove_file(self.directory.join("resource.json"))
-            .map_err(|_| ObservationError::Transport)
+    async fn remove(&self, kind: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+        fs::write(self.directory.join("removed"), kind).unwrap();
+        fs::remove_file(self.resource(kind)).map_err(|_| ObservationError::Transport)
     }
 }
 struct FixtureProvider {
@@ -131,6 +142,20 @@ impl Provider for FixtureProvider {
                 "inference_service".into(),
                 Box::new(ResourceAdapter::new(
                     Definition::new("inference_service", &["spec", "running"], &["running"]),
+                    self.backend.clone(),
+                )) as Box<dyn DynamicResource>,
+            ),
+            (
+                "kubernetes_storage".into(),
+                Box::new(ResourceAdapter::new(
+                    Definition::new("kubernetes_storage", &["spec", "running"], &["running"]),
+                    self.backend.clone(),
+                )) as Box<dyn DynamicResource>,
+            ),
+            (
+                "kubernetes_gateway".into(),
+                Box::new(ResourceAdapter::new(
+                    Definition::new("kubernetes_gateway", &["spec", "running"], &["running"]),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
             ),

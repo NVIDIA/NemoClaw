@@ -153,6 +153,31 @@
         }
       ]
     },
+    "AgentSandboxPrerequisite": {
+      "additionalProperties": false,
+      "description": "Ownership policy for the pinned Agent Sandbox controller and custom resource definitions.",
+      "properties": {
+        "management": {
+          "description": "Existing verifies a compatible installation; managed installs owned prerequisites when absent and does not adopt a foreign installation.",
+          "oneOf": [
+            {
+              "const": "existing",
+              "description": "Require the pinned prerequisite to exist without taking ownership.",
+              "type": "string"
+            },
+            {
+              "const": "managed",
+              "description": "Install the pinned prerequisite when absent; preserve foreign ownership and retained resources.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "management"
+      ],
+      "type": "object"
+    },
     "AgentTools": {
       "anyOf": [
         {
@@ -312,9 +337,20 @@
       "description": "A reference to a caller-provided environment variable; the configuration contains no credential value.",
       "properties": {
         "env": {
-          "description": "Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential.",
+          "description": "Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_ prefix are reserved for SDK runtime controls.",
+          "not": {
+            "anyOf": [
+              {
+                "const": "NEMOCLAW_KUBERNETES_STATE"
+              },
+              {
+                "pattern": "^NEMOCLAW_MANAGED_K8S_"
+              }
+            ]
+          },
           "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
-          "type": "string"
+          "type": "string",
+          "x-nemoclaw-error": "credential environment reference must be valid and must not shadow managed Kubernetes runtime controls"
         }
       },
       "required": [
@@ -489,53 +525,84 @@
       "type": "object"
     },
     "Gateway": {
-      "description": "Install a local gateway or connect to an existing gateway.",
+      "description": "Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.",
       "oneOf": [
         {
           "additionalProperties": false,
           "description": "A gateway installed and managed by this deployment.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
+          "else": {
+            "properties": {
+              "endpoint": {
+                "anyOf": [
+                  {
+                    "const": ""
+                  },
+                  {
+                    "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"
+                  }
+                ],
+                "default": "http://127.0.0.1:17681"
+              },
+              "engine": {
+                "anyOf": [
+                  {
+                    "const": ""
+                  },
+                  {
+                    "pattern": "^unix:///"
+                  }
+                ],
+                "default": "unix:///var/run/docker.sock"
+              },
+              "image": {
+                "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
+                "enum": [
+                  "",
+                  "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"
+                ]
+              },
+              "networkCIDR": {
+                "anyOf": [
+                  {
+                    "const": ""
+                  },
+                  {
+                    "pattern": "/24$"
+                  }
+                ],
+                "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+              }
+            },
+            "required": []
+          },
+          "if": {
+            "required": [
+              "kubernetes"
+            ]
+          },
           "properties": {
             "endpoint": {
-              "anyOf": [
-                {
-                  "const": ""
-                },
-                {
-                  "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"
-                }
-              ],
-              "default": "http://127.0.0.1:17681",
-              "description": "Local gateway HTTP origin with an unprivileged loopback port.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
             },
             "engine": {
-              "anyOf": [
-                {
-                  "const": ""
-                },
-                {
-                  "pattern": "^unix:///"
-                }
-              ],
-              "default": "unix:///var/run/docker.sock",
-              "description": "Managed gateway Unix engine socket; Podman requires its API service socket.",
+              "description": "Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
-              "description": "Managed gateway image pinned by the SDK.",
-              "enum": [
-                "",
-                "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"
-              ],
+              "description": "Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart."
+              "description": "Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes."
+            },
+            "kubernetes": {
+              "$ref": "#/$defs/ManagedKubernetes",
+              "description": "Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
             },
             "management": {
               "const": "managed",
@@ -543,22 +610,53 @@
               "type": "string"
             },
             "networkCIDR": {
-              "anyOf": [
-                {
-                  "const": ""
-                },
-                {
-                  "pattern": "/24$"
-                }
-              ],
-              "description": "Canonical private IPv4 /24 for a managed gateway.",
+              "description": "Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
             }
           },
           "required": [
             "management"
           ],
+          "then": {
+            "allOf": [
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "engine"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "image"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "imagePullPolicy"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "networkCIDR"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "properties": {
+              "endpoint": {
+                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "endpoint"
+            ],
+            "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
+          },
           "title": "Managed gateway",
           "type": "object"
         },
@@ -1248,6 +1346,123 @@
           "type": "object"
         }
       ]
+    },
+    "KubernetesAuthentication": {
+      "additionalProperties": false,
+      "description": "Authentication provisioned for a managed Kubernetes gateway.",
+      "properties": {
+        "profile": {
+          "description": "Development generates the scoped local authentication fixture. Existing production issuers use gateway.management: external.",
+          "oneOf": [
+            {
+              "const": "development",
+              "description": "Generated authentication for isolated development qualification only.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "KubernetesPrerequisites": {
+      "additionalProperties": false,
+      "description": "Installation policy for the pinned Kubernetes prerequisites.",
+      "properties": {
+        "agentSandbox": {
+          "$ref": "#/$defs/AgentSandboxPrerequisite",
+          "description": "Whether to require an existing Agent Sandbox installation or install the pinned prerequisite when absent."
+        }
+      },
+      "required": [
+        "agentSandbox"
+      ],
+      "type": "object"
+    },
+    "ManagedKubernetes": {
+      "additionalProperties": false,
+      "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context.",
+      "properties": {
+        "authentication": {
+          "$ref": "#/$defs/KubernetesAuthentication",
+          "description": "Explicit generated development authentication profile; this is not a production identity service."
+        },
+        "context": {
+          "description": "Exact kubeconfig context used for every cluster operation.",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f]+$(?![\\s\\S])",
+          "type": "string"
+        },
+        "kubeconfig": {
+          "$ref": "#/$defs/Credential",
+          "description": "Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",
+          "properties": {
+            "env": {
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PATH",
+                      "HOME",
+                      "USERPROFILE",
+                      "KUBECONFIG",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "SYSTEMROOT",
+                      "COMSPEC",
+                      "PATHEXT",
+                      "SHELL",
+                      "ENV",
+                      "BASH_ENV",
+                      "IFS",
+                      "CDPATH",
+                      "SSL_CERT_FILE",
+                      "SSL_CERT_DIR",
+                      "REQUESTS_CA_BUNDLE",
+                      "CURL_CA_BUNDLE",
+                      "HTTP_PROXY",
+                      "HTTPS_PROXY",
+                      "ALL_PROXY",
+                      "NO_PROXY",
+                      "KUBERNETES_MASTER",
+                      "KUBERNETES_SERVICE_HOST",
+                      "KUBERNETES_SERVICE_PORT",
+                      "KUBERNETES_SERVICE_PORT_HTTPS"
+                    ]
+                  },
+                  {
+                    "pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"
+                  }
+                ]
+              },
+              "x-nemoclaw-error": "kubeconfig environment reference must not shadow process, trust, proxy, or cluster controls"
+            }
+          }
+        },
+        "namespace": {
+          "description": "Namespace for this deployment's gateway and generated development authentication resources.",
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\\s\\S])",
+          "type": "string"
+        },
+        "prerequisites": {
+          "$ref": "#/$defs/KubernetesPrerequisites",
+          "description": "Explicit prerequisite ownership. Managed installation may create cluster-wide resources when the pinned prerequisite is absent."
+        }
+      },
+      "required": [
+        "kubeconfig",
+        "context",
+        "namespace",
+        "prerequisites",
+        "authentication"
+      ],
+      "type": "object"
     },
     "Manifest": {
       "additionalProperties": false,
@@ -3653,21 +3868,23 @@
         ]
       },
       "then": {
-        "anyOf": [
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "enum": [
-                                "",
-                                "docker"
-                              ]
+        "else": {
+          "anyOf": [
+            {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "runtime": {
+                            "properties": {
+                              "provider": {
+                                "enum": [
+                                  "",
+                                  "docker"
+                                ]
+                              }
                             }
                           }
                         }
@@ -3676,42 +3893,94 @@
                   }
                 }
               }
+            },
+            {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "runtime": {
+                            "properties": {
+                              "provider": {
+                                "const": "podman"
+                              }
+                            },
+                            "required": [
+                              "provider"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "runtime"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sandboxes"
+                  ]
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            }
+          ]
+        },
+        "if": {
+          "properties": {
+            "spec": {
+              "properties": {
+                "gateway": {
+                  "required": [
+                    "kubernetes"
+                  ]
+                }
+              },
+              "required": [
+                "gateway"
+              ]
             }
           },
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "runtime": {
-                          "properties": {
-                            "provider": {
-                              "const": "podman"
-                            }
-                          },
-                          "required": [
-                            "provider"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "runtime"
-                      ]
-                    }
+          "required": [
+            "spec"
+          ]
+        },
+        "then": {
+          "properties": {
+            "spec": {
+              "properties": {
+                "sandboxes": {
+                  "items": {
+                    "properties": {
+                      "runtime": {
+                        "properties": {
+                          "provider": {
+                            "const": "kubernetes"
+                          }
+                        },
+                        "required": [
+                          "provider"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "runtime"
+                    ]
                   }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          }
-        ]
+                }
+              },
+              "required": [
+                "sandboxes"
+              ]
+            }
+          },
+          "required": [
+            "spec"
+          ]
+        }
       }
     },
     {
@@ -3751,27 +4020,56 @@
       "then": {
         "allOf": [
           {
-            "properties": {
-              "spec": {
+            "anyOf": [
+              {
                 "properties": {
-                  "gateway": {
+                  "spec": {
                     "properties": {
-                      "management": {
-                        "const": "external"
+                      "gateway": {
+                        "properties": {
+                          "management": {
+                            "const": "external"
+                          }
+                        },
+                        "required": [
+                          "management"
+                        ]
                       }
                     },
                     "required": [
-                      "management"
+                      "gateway"
                     ]
                   }
                 },
                 "required": [
-                  "gateway"
+                  "spec"
+                ]
+              },
+              {
+                "properties": {
+                  "spec": {
+                    "properties": {
+                      "gateway": {
+                        "properties": {
+                          "management": {
+                            "const": "managed"
+                          }
+                        },
+                        "required": [
+                          "management",
+                          "kubernetes"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "gateway"
+                    ]
+                  }
+                },
+                "required": [
+                  "spec"
                 ]
               }
-            },
-            "required": [
-              "spec"
             ]
           },
           {
@@ -3786,7 +4084,7 @@
             }
           }
         ],
-        "x-nemoclaw-error": "Kubernetes requires an external gateway and external inference endpoints; managed services are not supported"
+        "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
       }
     }
   ],
@@ -3822,6 +4120,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, Agent Sandbox prerequisite management, and development authentication profile. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; every sandbox selects kubernetes. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",

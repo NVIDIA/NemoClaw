@@ -30,11 +30,35 @@ pub async fn verify_agent(
     assert_eq!(sandboxes.len(), 1);
     let binding: Row =
         serde_json::from_value(sandboxes[0]["instances"][0]["attributes"].clone()).unwrap();
-    let client = OpenShell::connect(
-        &document.spec.gateway,
-        std::sync::Arc::new(EnvironmentSecrets),
-    )
-    .unwrap();
+    let connection = if document.spec.gateway.as_kubernetes().is_some() {
+        let intent: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("intent.json")).unwrap()).unwrap();
+        let generations = serde_json::from_value(intent["generations"].clone()).unwrap();
+        Some(
+            nemoclaw_sdk::kubernetes::connection(
+                document,
+                &generations,
+                directory,
+                &EnvironmentSecrets,
+                &nemoclaw_sdk::CancellationToken::new(),
+            )
+            .await
+            .unwrap(),
+        )
+    } else {
+        None
+    };
+    let client = if let Some(connection) = &connection {
+        connection
+            .client(std::sync::Arc::new(EnvironmentSecrets))
+            .unwrap()
+    } else {
+        OpenShell::connect(
+            &document.spec.gateway,
+            std::sync::Arc::new(EnvironmentSecrets),
+        )
+        .unwrap()
+    };
     client.inference_ready(&binding).await.unwrap();
     client.agent_response(&binding).await.unwrap()
 }

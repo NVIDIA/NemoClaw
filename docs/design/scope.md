@@ -64,14 +64,24 @@ Compilation alone does not qualify migration or platforms.
 ## Kubernetes Development Branch
 
 The user requested a Kubernetes backend on a branch from `v1` on 2026-09-22.
-This branch accepts `runtime.provider: kubernetes` through an existing, exactly version-matched OpenShell Kubernetes gateway and preserves the SDK's lifecycle and ownership rules.
-Kubernetes requires an external gateway and external inference connections; local managed gateway and service configurations are rejected.
+This branch accepts `runtime.provider: kubernetes` through an exactly version-matched OpenShell Kubernetes gateway and preserves the SDK's lifecycle and ownership rules.
+Kubernetes uses external inference connections; local managed gateway and inference service configurations are rejected.
 On 2026-09-23, the user clarified that this path must use an existing Kubernetes cluster independently of kind and reuse the Docker path's credential-reference mechanism.
-The normal path takes the platform-owned OpenShell gateway endpoint and existing `credential.env` references; it does not create a cluster or read an ambient kubeconfig.
+The external-gateway path takes the platform-owned OpenShell gateway endpoint and existing `credential.env` references; it does not create a cluster or read an ambient kubeconfig.
+On 2026-09-28, the user authorized managed Kubernetes provisioning within SDK plan, apply, export, recovery, and destroy, selected generated development authentication, and permitted owned prerequisites to be installed when absent.
+The managed path requires `gateway.management: managed`, an explicit `kubernetes` target with a kubeconfig environment reference, context, namespace, Agent Sandbox prerequisite management, and `authentication.profile: development`.
+It uses an existing cluster without depending on kind and requires an explicit HTTPS endpoint at `127.0.0.1` with a nonzero port for the per-command port forward.
+Plan remains observational; only explicit apply may provision resources.
+The SDK may install the pinned upstream OpenShell chart and generated development authentication resources and, when `prerequisites.agentSandbox.management: managed` is selected, install owned pinned Agent Sandbox prerequisites when absent, including their cluster-wide resources.
+Existing compatible prerequisites remain externally owned; a conflicting or incompatible installation must fail without adoption or replacement.
+Generated credentials and gateway storage must remain private and retained after destroy; teardown must not remove preexisting prerequisites or foreign resources.
+This authentication profile is an explicit development qualification choice, not a production identity service.
+Existing production issuers continue to use the external-gateway credential-reference path.
 Kind remains an explicitly selected local test fixture, and its endpoint, issuer, credentials, and image-loading procedure are not deployment defaults.
 A separate, explicitly invoked local installer may create one owned kind cluster and deploy the pinned upstream OpenShell chart, its Agent Sandbox prerequisite, an enforcing CNI, and a scoped development authentication fixture.
 The optional pinned CPU inference fixture and Kubernetes builds of the existing agent images may be deployed there for lifecycle and inference tests.
 Those builds must preserve private workspace permissions while matching the upstream Kubernetes driver's non-root identity.
-The SDK continues to own OpenShell resources; the platform installer owns the Kubernetes prerequisites and retains them after SDK destroy.
+The SDK owns OpenShell resources in both paths and the provisioning resources it installs in the managed path.
+In the external-gateway path, the platform installer owns the Kubernetes prerequisites and retains them after SDK destroy.
 This decision does not create a maintained OpenShell fork, a NemoClaw Kubernetes operator, or production and compatibility claims.
 See the [Kubernetes procedure](../kubernetes.md) for credential custody and retained state, and the [kind test guide](../testing/kubernetes-kind.md) for local setup and explicit cluster cleanup.

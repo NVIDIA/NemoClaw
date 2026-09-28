@@ -31,6 +31,32 @@ fn runtime_targets_with_plans(
     if !document.has_runtime() {
         return Ok(Vec::new());
     }
+    if document.spec.gateway.as_kubernetes().is_some() {
+        let settings = document.spec.gateway.as_managed().ok_or(Error::State(
+            "managed Kubernetes gateway settings are missing",
+        ))?;
+        return [
+            crate::kubernetes::STORAGE_KIND,
+            crate::kubernetes::GATEWAY_KIND,
+        ]
+        .into_iter()
+        .map(|kind| {
+            let spec = crate::kubernetes::Spec {
+                layout: 1,
+                kind: kind.into(),
+                name: format!("{}-gateway", document.workspace()),
+                owner: document.metadata.uid.clone(),
+                generation: generation(generations, kind)?.into(),
+                settings: settings.clone(),
+            };
+            Ok(Target {
+                kind: kind.into(),
+                address: format!("nemoclaw_{kind}.runtime"),
+                values: Row::from([("spec".into(), spec.encode()?)]),
+            })
+        })
+        .collect();
+    }
     let Some(settings) = document.spec.gateway.as_managed() else {
         return Ok(service_plans.targets().cloned().collect());
     };
@@ -86,6 +112,30 @@ pub(crate) fn runtime_graph(
         crate::services::InstallStage::Runtime,
     )?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
+    if document.spec.gateway.as_kubernetes().is_some() {
+        // Platform resources must be plannable before their gateway credentials
+        // exist. The following deployment stage verifies the authenticated API.
+        graph["provider"]["nemoclaw"] = json!({"platform_only": true});
+        graph.as_object_mut().unwrap().remove("data");
+        graph["resource"] = json!({});
+        let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
+        for target in &targets {
+            let mut attributes =
+                json!({"spec": target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
+            attributes["lifecycle"] = json!({"postcondition": [{
+                "condition": "${self.running == \"true\"}",
+                "error_message": "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
+            }]});
+            if target.kind == crate::kubernetes::STORAGE_KIND {
+                attributes["lifecycle"]["prevent_destroy"] = json!(true);
+            } else {
+                attributes["depends_on"] = json!(["nemoclaw_kubernetes_storage.runtime"]);
+            }
+            let (kind, name) = target.address.split_once('.').unwrap();
+            graph["resource"][kind][name] = attributes;
+        }
+        return Ok((graph, targets));
+    }
     // Sandbox observations belong to the graph owning their resource bindings.
     graph["data"]
         .as_object_mut()

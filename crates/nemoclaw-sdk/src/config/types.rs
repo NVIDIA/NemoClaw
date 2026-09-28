@@ -79,7 +79,7 @@ pub struct Spec {
 /// A reference to a caller-provided environment variable; the configuration contains no credential value.
 pub struct Credential {
     #[serde(rename = "env")]
-    /// Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential.
+    /// Uppercase environment variable name. For TLS and kubeconfig fields, its value is a local file path; otherwise it is a bearer/API credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_ prefix are reserved for SDK runtime controls.
     pub env: String,
 }
 
@@ -101,7 +101,7 @@ pub struct TLS {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "management", rename_all = "lowercase")]
-/// Install a local gateway or connect to an existing gateway.
+/// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 pub enum Gateway {
     /// A gateway installed and managed by this deployment.
     /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
@@ -121,20 +121,19 @@ impl Default for Gateway {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
-/// Installation settings for a managed local gateway.
+/// Installation settings for a managed gateway. Without kubernetes, use a local Docker or rootless Linux Podman engine. Kubernetes requires an explicit existing-cluster target and the development authentication profile.
 pub struct ManagedGateway {
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local gateway HTTP origin with an unprivileged loopback port.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway Unix engine socket; Podman requires its API service socket.
+    /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
     pub engine: String,
     #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway image pinned by the SDK.
+    /// Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.
     pub image: String,
     #[serde(
         rename = "imagePullPolicy",
@@ -142,12 +141,16 @@ pub struct ManagedGateway {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "super::ImagePullPolicy")]
-    /// Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart.
+    /// Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes.
     pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Canonical private IPv4 /24 for a managed gateway.
+    /// Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.
     pub network_cidr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::ManagedKubernetes")]
+    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    pub kubernetes: Option<super::ManagedKubernetes>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -65,11 +65,7 @@ pub(crate) async fn run_with_progress(
             .stderr(Stdio::piped())
             .env_clear();
         for (name, value) in std::env::vars_os() {
-            let upper = name.to_string_lossy().to_ascii_uppercase();
-            if !["TF_", "TOFU_", "PLUGIN_", "NEMOCLAW_INTERNAL_"]
-                .iter()
-                .any(|prefix| upper.starts_with(prefix))
-            {
+            if inherited_variable(&name.to_string_lossy()) {
                 command.env(name, value);
             }
         }
@@ -195,6 +191,43 @@ pub(crate) async fn run_with_progress(
         diagnostic: message.trim().into(),
         postcondition_failures,
     })
+}
+
+fn inherited_variable(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    ![
+        "TF_",
+        "TOFU_",
+        "PLUGIN_",
+        "NEMOCLAW_INTERNAL_",
+        "NEMOCLAW_MANAGED_K8S_",
+    ]
+    .iter()
+    .any(|prefix| upper.starts_with(prefix))
+        && upper != crate::kubernetes::STATE_ENV
+}
+
+#[cfg(test)]
+#[test]
+fn kubernetes_connection_environment_requires_explicit_operation_overrides() {
+    for name in [
+        crate::kubernetes::STATE_ENV,
+        crate::kubernetes::TOKEN_ENV,
+        crate::kubernetes::CA_ENV,
+        crate::kubernetes::CERT_ENV,
+        crate::kubernetes::KEY_ENV,
+    ] {
+        assert!(!inherited_variable(name));
+        assert!(!inherited_variable(&name.to_ascii_lowercase()));
+    }
+    for name in [
+        "PATH",
+        "HOME",
+        "NVIDIA_INFERENCE_API_KEY",
+        "OPERATOR_KUBECONFIG",
+    ] {
+        assert!(inherited_variable(name));
+    }
 }
 
 #[cfg(test)]

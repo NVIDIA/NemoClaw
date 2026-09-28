@@ -95,11 +95,13 @@ impl OperationResult {
 
 /// The same desired-state operations used by the CLI. The selected state
 /// directory is locked for each operation; callers retain it across failures.
+#[derive(Clone)]
 pub struct Deployment {
     state_directory: PathBuf,
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    operation_environment: BTreeMap<String, String>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -108,6 +110,7 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
+            operation_environment: BTreeMap::new(),
         }
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
@@ -117,6 +120,52 @@ impl Deployment {
     pub fn with_progress(mut self, progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.progress = progress;
         self
+    }
+    async fn connected(
+        &self,
+        document: &Document,
+        generations: &compile::Generations,
+        cancel: &CancellationToken,
+    ) -> Result<(Self, Option<crate::kubernetes::Connection>), Error> {
+        if document.spec.gateway.as_kubernetes().is_none() {
+            return Ok((self.clone(), None));
+        }
+        let directory = std::path::absolute(&self.state_directory)
+            .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?;
+        let connection = crate::kubernetes::connection(
+            document,
+            generations,
+            &directory,
+            self.secrets.as_ref(),
+            cancel,
+        )
+        .await?;
+        let mut operation = self.clone();
+        operation.operation_environment = connection.environment();
+        Ok((operation, Some(connection)))
+    }
+    fn provider_environment(
+        &self,
+        document: &Document,
+        directory: &Path,
+        gateway_only: bool,
+    ) -> Result<BTreeMap<String, String>, Error> {
+        let mut environment = if gateway_only {
+            gateway_environment(document, self.secrets.as_ref(), directory)?
+        } else {
+            command_environment(document, self.secrets.as_ref(), directory)?
+        };
+        if document.spec.gateway.as_kubernetes().is_some() {
+            let state = std::path::absolute(&self.state_directory)
+                .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
+                .join("kubernetes");
+            environment.insert(
+                crate::kubernetes::STATE_ENV.into(),
+                state.to_string_lossy().into_owned(),
+            );
+            environment.extend(self.operation_environment.clone());
+        }
+        Ok(environment)
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
         let started = std::time::Instant::now();
@@ -195,7 +244,10 @@ impl Deployment {
                 .push("OpenShell registration and sandbox require the managed gateway".into());
             return Ok(result);
         }
-        let bindings = self
+        let (operation, _connection) = self
+            .connected(&document, &record.generations, cancel)
+            .await?;
+        let bindings = operation
             .state_bindings(
                 &bundle,
                 &store,
@@ -217,22 +269,23 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
-        (self.progress)(Progress::Validating);
-        self.prepare(
+        (operation.progress)(Progress::Validating);
+        operation.prepare(
             &bundle,
             &store,
             &compile::compile(&document, &record.generations, &bundle.manifest.version)?,
         )?;
-        self.tofu(
-            &bundle,
-            &store,
-            &document,
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            cancel,
-        )
-        .await?;
-        (self.progress)(Progress::Planning);
-        let plan = self
+        operation
+            .tofu(
+                &bundle,
+                &store,
+                &document,
+                &["init", "-upgrade", "-input=false", "-no-color"],
+                cancel,
+            )
+            .await?;
+        (operation.progress)(Progress::Planning);
+        let plan = operation
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
         let root_changes = check_plan(&plan, &allowed, &bindings)?;
@@ -261,8 +314,8 @@ impl Deployment {
         record.destroy_runtime = false;
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
-        (self.progress)(Progress::Applying);
-        let applied = self
+        (operation.progress)(Progress::Applying);
+        let applied = operation
             .tofu(
                 &bundle,
                 &store,
@@ -279,7 +332,7 @@ impl Deployment {
                 postcondition_failures: Some(addresses),
                 ..
             } = &error
-                && let Ok(observations) = self
+                && let Ok(observations) = operation
                     .sandbox_observations(&bundle, &store, &document, &plan, cancel)
                     .await
                 && !addresses.is_empty()
@@ -312,7 +365,7 @@ impl Deployment {
         }
         record.finish_apply();
         store.save(&record)?;
-        result.health = self
+        result.health = operation
             .sandbox_observations(&bundle, &store, &document, &plan, cancel)
             .await?
             .into_iter()
@@ -467,7 +520,7 @@ impl Deployment {
             let env = if matches!(args.first(), Some(&"init" | &"show")) {
                 crate::state::schema_environment(&store.directory)
             } else {
-                command_environment(document, self.secrets.as_ref(), &store.directory)?
+                self.provider_environment(document, &store.directory, false)?
             };
             if matches!(args.first(), Some(&"plan" | &"apply")) {
                 let mut args = args.to_vec();
@@ -544,6 +597,9 @@ fn gateway_environment(
 ) -> Result<BTreeMap<String, String>, Error> {
     let gateway = &document.spec.gateway;
     let mut names = BTreeSet::new();
+    if let Some(kubernetes) = gateway.as_kubernetes() {
+        names.insert(kubernetes.kubeconfig.env.as_str());
+    }
     if let Some(credential) = gateway.credential() {
         names.insert(credential.env.as_str());
     }
@@ -564,10 +620,17 @@ fn credential_environment<'a>(
 ) -> Result<BTreeMap<String, String>, Error> {
     let mut env = crate::state::schema_environment(directory);
     for name in names {
-        if ["TF_", "TOFU_", "PLUGIN_", "NEMOCLAW_INTERNAL_"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
+        if [
+            "TF_",
+            "TOFU_",
+            "PLUGIN_",
+            "NEMOCLAW_INTERNAL_",
+            "NEMOCLAW_MANAGED_K8S_",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
             || name == "CHECKPOINT_DISABLE"
+            || name == crate::kubernetes::STATE_ENV
         {
             return Err(Error::Conflict(
                 "credential reference conflicts with a reserved runtime control variable",

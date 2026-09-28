@@ -62,6 +62,16 @@ pub struct ResourceSchema {
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
+            kind: crate::kubernetes::STORAGE_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::GATEWAY_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
             kind: "ollama_proxy_storage",
             fields: &["name", "owner", "generation", "engine"],
             mutable: &[],
@@ -97,11 +107,16 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
         computed_digest: false,
         observed_running: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | crate::kubernetes::GATEWAY_KIND
+                | crate::kubernetes::STORAGE_KIND
         ),
         retained_storage: matches!(
             kind,
-            installers::ollama::STORAGE_KIND | installers::vllm::STORAGE_KIND
+            installers::ollama::STORAGE_KIND
+                | installers::vllm::STORAGE_KIND
+                | crate::kubernetes::STORAGE_KIND
         ),
         runtime_process: matches!(
             kind,
@@ -593,6 +608,14 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<RegisteredBackend>, ObservationError> {
+        if matches!(
+            kind,
+            crate::kubernetes::STORAGE_KIND | crate::kubernetes::GATEWAY_KIND
+        ) {
+            return Ok(Some(RegisteredBackend(Box::new(
+                crate::kubernetes::KubernetesBackend::new(),
+            ))));
+        }
         if matches!(
             kind,
             installers::vllm::SERVICE_KIND

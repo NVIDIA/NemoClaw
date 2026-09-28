@@ -8,8 +8,68 @@ For an existing cluster, use the [Kubernetes backend guide](../kubernetes.md); t
 The [branch scope decision](../design/scope.md#kubernetes-development-branch) permits this isolated setup.
 Deleting the cluster deletes its local persistent volumes and every sandbox in it.
 
+## Test the Managed YAML Path
+
+The SDK can now provision the gateway and agents through one managed manifest.
+For that path, this helper prepares only a disposable kind cluster and enforcing CNI; `nemoclaw apply` owns OpenShell and agent deployment.
+Use a fresh private cluster state directory, a verified native bundle, and the tools listed below.
+On Apple silicon, build the native bundle with `--platform darwin_arm64` under the pinned Rust toolchain and build the agent image with `AGENT_PLATFORM=linux/arm64`.
+The [managed lifecycle test](../validation/kubernetes-managed-kind-linux-amd64.md) passed on Linux AMD64.
+The Apple silicon instructions have not been qualified by that run.
+
+For Apple silicon, build the Kubernetes agent target from the repository root before loading it:
+
+```sh
+AGENT_PLATFORM=linux/arm64 IMAGE_PREFIX=nc-kubernetes-dev \
+  docker buildx bake openclaw-kubernetes --load
+docker image inspect nc-kubernetes-dev:openclaw-kubernetes \
+  --format '{{index .RepoDigests 0}}'
+```
+
+On Linux AMD64, use `AGENT_PLATFORM=linux/amd64` instead.
+Keep the printed repository digest for the manifest; the image store must retain repository digests as described in the [agent image procedure](../build.md#build-agent-images).
+Create the cluster and load that image from the repository root:
+
+```sh
+export NC_KIND_STATE="$HOME/.local/state/nemoclaw/managed-kind-test"
+python3 tools/kubernetes/stack.py cluster --state-dir "$NC_KIND_STATE"
+python3 tools/kubernetes/stack.py load-image \
+  --state-dir "$NC_KIND_STATE" --image nc-kubernetes-dev:openclaw-kubernetes
+export NEMOCLAW_CLUSTER_KUBECONFIG="$NC_KIND_STATE/kubeconfig"
+python3 -B - "$NC_KIND_STATE/ownership.json" <<'PYCODE'
+import json, sys
+receipt = json.load(open(sys.argv[1]))
+print("Use this context in the manifest: kind-" + receipt["cluster"])
+PYCODE
+```
+
+`load-image` verifies the imported OCI content and registers the immutable digest references in the owned kind nodes.
+It does not publish the image.
+If this private state directory already owns a completed test, choose a new directory or retire that exact old cluster first; do not delete its ownership receipt to bypass checks.
+
+Copy [managed-development.yaml](../../examples/kubernetes/managed-development.yaml) outside the checkout.
+Set its context to the printed value, replace its deployment UID, and replace all three image references with your built image’s repository digest.
+Keep the generated development authentication profile and managed prerequisite selection.
+Supply `NVIDIA_INFERENCE_API_KEY` privately through the same environment-reference mechanism as Docker.
+From the directory containing the adapted `deployment.yaml`, run:
+
+```sh
+nemoclaw plan --state-dir ./state deployment.yaml
+nemoclaw apply --state-dir ./state deployment.yaml
+nemoclaw export --state-dir ./state --output exported.yaml
+```
+
+No `stack.py deploy`, `stack.py connect`, or `environment.env` step is needed for this workflow.
+The SDK automatically provisions the managed gateway and opens its authenticated connection for each operation.
+Keep both the cluster ownership directory and the SDK state directory.
+After testing, use `nemoclaw destroy --state-dir ./state` to remove agents and uninstall the owned gateway release while retaining data.
+Use the separate confirmed `stack.py cleanup --state-dir "$NC_KIND_STATE" --confirm-cluster NAME` command only when ready to delete the entire disposable cluster and all its persistent volumes.
+Its cluster name must match the saved ownership receipt.
+Local SDK credentials remain in `state/kubernetes` and need separate private-file cleanup after retirement.
+
 ## Create an Isolated kind Stack
 
+This older fixture installs the platform separately for testing an external-gateway manifest.
 Run the following commands from the repository root on a Linux AMD64 development host.
 Install Python 3.12 or newer, OpenSSL, Docker with Buildx, kind, kubectl, and Helm before starting.
 The helper uses existing noninteractive sudo only when the current user cannot access Docker; it does not change groups, socket permissions, host packages, drivers, or kernel settings.

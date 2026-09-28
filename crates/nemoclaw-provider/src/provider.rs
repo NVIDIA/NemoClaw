@@ -32,6 +32,7 @@ pub struct ProviderConfig {
     tls_certificate_env: Value<String>,
     tls_key_env: Value<String>,
     destroy: Value<bool>,
+    platform_only: Value<bool>,
 }
 fn text(value: Value<String>) -> String {
     match value {
@@ -164,20 +165,17 @@ impl Provider for NemoClawProvider {
             "tls_certificate_env",
             "tls_key_env",
             "destroy",
+            "platform_only",
         ] {
             attributes.insert(
                 name.into(),
                 Attribute {
-                    attr_type: if name == "destroy" {
+                    attr_type: if matches!(name, "destroy" | "platform_only") {
                         AttributeType::Bool
                     } else {
                         AttributeType::String
                     },
-                    constraint: if name == "endpoint" {
-                        AttributeConstraint::Required
-                    } else {
-                        AttributeConstraint::Optional
-                    },
+                    constraint: AttributeConstraint::Optional,
                     ..Default::default()
                 },
             );
@@ -208,7 +206,8 @@ impl Provider for NemoClawProvider {
         ]
         .into_iter()
         .any(|value| matches!(value, Value::Unknown))
-            || matches!(config.destroy, Value::Unknown);
+            || matches!(config.destroy, Value::Unknown)
+            || matches!(config.platform_only, Value::Unknown);
         match self.backend.0.write() {
             Ok(mut slot) => {
                 *slot = if deferred {
@@ -223,6 +222,26 @@ impl Provider for NemoClawProvider {
             }
         }
         if deferred {
+            return Some(());
+        }
+        if matches!(config.platform_only, Value::Value(true)) {
+            if [
+                &config.endpoint,
+                &config.credential_env,
+                &config.tls_ca_env,
+                &config.tls_certificate_env,
+                &config.tls_key_env,
+            ]
+            .iter()
+            .any(|value| matches!(value, Value::Value(_)))
+            {
+                diags.root_error_short("Platform-only provider configuration cannot include gateway connection settings");
+                return None;
+            }
+            self.destroying.store(
+                matches!(config.destroy, Value::Value(true)),
+                Ordering::Release,
+            );
             return Some(());
         }
         let mut gateway = nemoclaw_sdk::config::ExternalGateway {
@@ -463,6 +482,65 @@ mod tests {
                     .await
                     .is_err()
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn platform_only_clears_gateway_access_and_rejects_connection_inputs() {
+        let provider = NemoClawProvider::default();
+        provider
+            .configure(&mut Diagnostics::default(), String::new(), known())
+            .await
+            .unwrap();
+        let mut diagnostics = Diagnostics::default();
+        provider
+            .configure(
+                &mut diagnostics,
+                String::new(),
+                ProviderConfig {
+                    platform_only: Value::Value(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        assert!(provider.backend.client().is_err());
+        assert!(!provider.destroying.load(Ordering::Acquire));
+        assert!(
+            provider
+                .backend
+                .plan("workspace", &Row::new(), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            provider
+                .backend
+                .ensure("workspace", &Row::new())
+                .await
+                .error()
+                .is_some()
+        );
+        for field in 0..5 {
+            let mut config = ProviderConfig {
+                platform_only: Value::Value(true),
+                ..Default::default()
+            };
+            match field {
+                0 => config.endpoint = Value::Value("https://127.0.0.1:17671".into()),
+                1 => config.credential_env = Value::Value("UNREAD_TOKEN".into()),
+                2 => config.tls_ca_env = Value::Value("UNREAD_CA".into()),
+                3 => config.tls_certificate_env = Value::Value("UNREAD_CERT".into()),
+                _ => config.tls_key_env = Value::Value("UNREAD_KEY".into()),
+            }
+            assert!(
+                provider
+                    .configure(&mut Diagnostics::default(), String::new(), config)
+                    .await
+                    .is_none()
+            );
+            assert!(provider.backend.client().is_err());
         }
     }
 }

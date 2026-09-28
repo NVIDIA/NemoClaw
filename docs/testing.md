@@ -114,6 +114,20 @@ It also runs OpenClaw tools, execution, search, and tracing checks.
 Native messaging belongs to OpenClaw; NemoClaw tests that its adapter preserves unrelated native configuration and rejects drift in deployment-owned settings.
 These fixtures use no live credentials, send no external messages, and do not test GPU inference or live OpenShell deployments.
 
+## Managed Kubernetes Tests
+
+With Python 3.12 or newer and OpenSSL available, run these deterministic tests from the repository root:
+
+```sh
+python3 -B -m unittest discover -s crates/nemoclaw-sdk/src/kubernetes -p 'test_*.py'
+python3 -B -m unittest discover -s tools/kubernetes -p 'test_*.py'
+```
+
+These tests use temporary files and isolated local subprocesses; they do not contact Kubernetes or Docker.
+They check cluster identity, retained credentials, interrupted provisioning and removal, API defaulting, development authentication, and child-process cancellation.
+Native CI runs them on Linux alongside the Rust lifecycle tests.
+Use the separate [kind procedure](testing/kubernetes-kind.md#test-the-managed-yaml-path) for a live managed deployment.
+
 ## CLI Tests
 
 Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.
