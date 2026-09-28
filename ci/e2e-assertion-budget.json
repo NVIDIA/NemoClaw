@@ -12,31 +12,31 @@
     "epicLiveExpectCalls": 2677
   },
   "limits": {
-    "testFileCount": 79,
-    "liveFileCount": 190,
+    "testFileCount": 78,
+    "liveFileCount": 186,
     "direct": {
-      "expectCalls": 1378,
-      "matcherAssertions": 1357,
+      "expectCalls": 1338,
+      "matcherAssertions": 1317,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 443,
+      "namedAssertionHelpers": 442,
       "failCalls": 0,
-      "throwGuards": 71,
+      "throwGuards": 66,
       "objectFieldAssertions": 168,
-      "assertionPoints": 2142,
-      "generatedProbeBlocks": 94,
-      "generatedProbeConditions": 239
+      "assertionPoints": 2096,
+      "generatedProbeBlocks": 92,
+      "generatedProbeConditions": 228
     },
     "unique": {
-      "expectCalls": 1813,
-      "matcherAssertions": 1787,
+      "expectCalls": 1773,
+      "matcherAssertions": 1747,
       "nodeAssertions": 126,
-      "namedAssertionHelpers": 688,
+      "namedAssertionHelpers": 687,
       "failCalls": 1,
-      "throwGuards": 559,
+      "throwGuards": 548,
       "objectFieldAssertions": 245,
-      "assertionPoints": 3406,
-      "generatedProbeBlocks": 218,
-      "generatedProbeConditions": 764
+      "assertionPoints": 3354,
+      "generatedProbeBlocks": 214,
+      "generatedProbeConditions": 736
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -97,7 +97,6 @@
       "test/e2e/live/openclaw-inference-switch.test.ts": [49, 55, 50, 57, 2],
       "test/e2e/live/openclaw-skill-cli.test.ts": [10, 14, 10, 14, 1],
       "test/e2e/live/openclaw-slack-pairing.test.ts": [11, 18, 26, 84, 10],
-      "test/e2e/live/openclaw-tui-chat-correlation.test.ts": [40, 46, 40, 52, 4],
       "test/e2e/live/openshell-credential-generation-window.test.ts": [42, 92, 43, 112, 18],
       "test/e2e/live/openshell-gateway-auth-source-contract.test.ts": [0, 0, 16, 28, 2],
       "test/e2e/live/openshell-gateway-upgrade.test.ts": [6, 15, 6, 26, 6],
