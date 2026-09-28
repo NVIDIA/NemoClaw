@@ -62,16 +62,12 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
     case "openclaw-config":
       return [
         { path: "/usr/local/bin/openclaw" },
-        // npm entrypoints are #!/usr/bin/env node scripts. OpenShell binds
-        // policy to /proc/<pid>/exe and ancestors, not spoofable argv paths.
         { path: "/usr/local/bin/node" },
         { path: "/usr/bin/node" },
       ];
     case "hermes-config":
       return [
         { path: "/usr/local/bin/hermes" },
-        // Hermes is a Python console script; /proc/<pid>/exe resolves the venv
-        // interpreter to the system Python binary after the wrapper execs it.
         { path: "/usr/bin/python3*" },
         { path: "/opt/hermes/.venv/bin/python*" },
       ];
@@ -91,18 +87,36 @@ function renderMcpBridgePolicyYaml(
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
-  // OpenShell resolves this hostname for every new connection, validates every
-  // current answer against allowed_ips, and connects to that validated list.
   const allowedIps = [...target.addresses];
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
   const normalizedAllowTools = allowTools ? [...allowTools].sort() : [];
   const isAllowlistMode = normalizedAllowTools.length > 0;
 
-  // In allowlist mode, we generate explicit allow rules for each tool.
-  // In denylist mode (default), we generate deny rules for each tool.
-  const toolRules = isAllowlistMode
-    ? normalizedAllowTools.map((tool) => ({ allow: { method: "tools/call", tool } }))
-    : normalizedDenyTools.map((tool) => ({ deny: { method: "tools/call", tool } }));
+  // OpenShell 0.0.116 reads:
+  // - tool names from allow.params.name (in allowlist mode)
+  // - denials from endpoint.deny_rules (in denylist mode)
+  const denyRules = normalizedDenyTools.map((tool) => ({
+    method: "tools/call",
+    tool,
+  }));
+
+  // In allowlist mode, also emit explicit allow rules in the rules array
+  const allowRules = normalizedAllowTools.map((tool) => ({
+    allow: { method: "tools/call", tool },
+  }));
+
+  // In denylist mode, emit explicit deny rules in the rules array
+  const denyRulesForRules = normalizedDenyTools.map((tool) => ({
+    deny: { method: "tools/call", tool },
+  }));
+
+  const mcpConfig = isAllowlistMode
+    ? {
+        allow: normalizedAllowTools.map((tool) => ({ params: { name: tool } })),
+      }
+    : {
+        deny_rules: denyRules,
+      };
 
   return YAML.stringify({
     preset: {
@@ -125,10 +139,12 @@ function renderMcpBridgePolicyYaml(
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
               strict_tool_names: true,
               allow_all_known_mcp_methods: false,
+              ...mcpConfig,
             },
             rules: [
               ...MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
-              ...toolRules,
+              ...allowRules,
+              ...denyRulesForRules,
             ],
           },
         ],
@@ -161,7 +177,6 @@ export function buildMcpBridgePolicyYaml(
   );
 }
 
-/** Render the temporary credential-free policy used before first provider attachment. */
 export function buildMcpBridgeCapabilityPolicyYaml(
   server: string,
   url: string,

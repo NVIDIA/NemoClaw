@@ -9,6 +9,8 @@ import {
   addMcpBridge as addMcpBridgeLifecycle,
   updateMcpBridgeDenyTools as updateMcpBridgeDenyToolsLifecycle,
   refreshMcpBridgePublicPins,
+  updateMcpBridgeAllowTools,
+  clearMcpBridgeAllowTools,
 } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -431,6 +433,12 @@ export async function dispatchMcpBridgeCommand(
         const options = parseMcpUpdateArgs(rest);
         if ("refreshPublicPins" in options)
           await refreshMcpBridgePublicPins(sandboxName, options.server);
+        else if ("allowTools" in options)
+          await updateMcpBridgeAllowTools(sandboxName, options.server, options.allowTools);
+        else if ("clearAllowTools" in options)
+          await clearMcpBridgeAllowTools(sandboxName, options.server);
+        else if ("clearDenyTools" in options)
+          await updateMcpBridgeDenyTools(sandboxName, options.server, []);
         else await updateMcpBridgeDenyTools(sandboxName, options.server, options.denyTools);
         return;
       }

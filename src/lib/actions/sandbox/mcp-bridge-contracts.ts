@@ -110,6 +110,7 @@ export interface McpBridgeToolDiscoveryResult {
 
 export type ParsedMcpUpdateArgs =
   | { server: string; denyTools: string[] }
+  | { server: string; clearDenyTools: true }
   | { server: string; refreshPublicPins: true }
   | { server: string; allowTools: string[] }
   | { server: string; clearAllowTools: true };

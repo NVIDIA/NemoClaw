@@ -5,9 +5,10 @@ import { createHash } from "node:crypto";
 import { McpBridgeError, type McpSourceEntry, type McpTransport } from "./mcp-bridge-contracts";
 
 /**
- * Verify an MCP server's supply-chain identity against a pinned digest.
- * This protects against supply-chain attacks where a compromised server binary
- * is substituted for a trusted one.
+ * Verify an MCP server's operator-provided identity pin against the stored pin.
+ * This is an operator-managed pin (not an attested artifact verification).
+ * It protects against accidental configuration drift but not supply-chain substitution.
+ * For attested verification, use SLSA provenance or sigstore attestation separately.
  */
 export async function verifyMcpServerIdentity(
   entry: McpSourceEntry,
@@ -25,7 +26,7 @@ export async function verifyMcpServerIdentity(
 
   if (entry.serverIdentity.digest !== expectedIdentity) {
     throw new McpBridgeError(
-      `MCP server '${entry.server}' identity mismatch: expected ${expectedIdentity}, recorded ${entry.serverIdentity.digest}. The server binary may have been replaced. Remove and re-add with the correct --server-identity.`,
+      `MCP server '${entry.server}' operator pin mismatch: expected ${expectedIdentity}, stored ${entry.serverIdentity.digest}. The server binary may have been replaced. Remove and re-add with the correct --server-identity.`,
       2,
       "supply-chain",
     );
@@ -65,13 +66,9 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
     );
   }
 
-  if (requireOAuth && transport !== "sse") {
-    throw new McpBridgeError(
-      "--require-oauth requires SSE transport (--transport sse) with an HTTPS endpoint.",
-      2,
-      "supply-chain",
-    );
-  }
+  // Note: OAuth enforcement happens at the credential boundary (provider attachment),
+  // not at transport validation. This function only validates transport compatibility.
+  // The --require-oauth flag is recorded and enforced at credential attachment time.
 }
 
 /**

@@ -295,7 +295,16 @@ describe("source-backed MCP denied-tool policy updates", () => {
       legacy: {},
     });
     mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
-      new Map([["github", { addresses: ["192.0.2.1"] }]]),
+      new Map([
+        [
+          "github",
+          {
+            addresses: ["10.20.30.40"],
+            trustedPrivateCapability: true,
+            trustedPrivateHost: "mcp.example.test",
+          },
+        ],
+      ]),
     );
 
     // Should NOT throw drift error for trusted-private

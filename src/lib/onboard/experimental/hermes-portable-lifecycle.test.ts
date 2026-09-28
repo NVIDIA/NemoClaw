@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAgent } from "../../agent/defs";
 import DebugCliCommand from "../../../commands/debug";
 import type { SandboxEntry } from "../../state/registry";
@@ -60,6 +60,10 @@ vi.mock("../../agent/defs", async (importOriginal) => {
         ? privateHermesManifestAgent(original.loadAgent(name, env))
         : original.loadAgent(name, env),
   };
+});
+import { cleanupPrivateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
+afterAll(() => {
+  cleanupPrivateHermesManifestAgent();
 });
 let stateDir: string;
 let policyPath: string;
@@ -301,7 +305,6 @@ describe("Hermes portable lifecycle", () => {
       expect(openshellMutationCalls(command, "stop")).toHaveLength(stops);
     },
   );
-
   it.each(["authenticated-health", "final-authority"])(
     "reports %s timeout on the running fast path (#11652)",
     async (phase) => {
@@ -326,7 +329,6 @@ describe("Hermes portable lifecycle", () => {
       expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
     },
   );
-
   it("reconciles and stops a partially applied start after its allowance expires (#11652)", async () => {
     const fixture = lifecycleDeps(activeReceipt(), false, { startStatus: 1 });
     const capture = fixture.captureOpenShell.getMockImplementation()!;
@@ -350,7 +352,6 @@ describe("Hermes portable lifecycle", () => {
       expect.objectContaining({ stdout: expect.stringContaining('"Running":false') }),
     );
   });
-
   it("shares the caller allowance across start and exec readiness, then rolls back (#11652)", async () => {
     const fixture = lifecycleDeps(activeReceipt(), false);
     const capture = fixture.captureOpenShell.getMockImplementation()!;
@@ -378,7 +379,6 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(command, "start")).toHaveLength(1);
     expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
   });
-
   it.each([
     { initialPhase: "Error" as const, status: "running" },
     { initialPhase: "Error" as const, status: "exited" },

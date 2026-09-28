@@ -15,7 +15,7 @@ function copyHermesManifestAgent(source: AgentDefinition): AgentDefinition {
   return { ...source, manifestPath };
 }
 
-const privateCopies = new Map<string, AgentDefinition>();
+const privateCopies = new Map<string, { agent: AgentDefinition; directory: string }>();
 
 /**
  * Return an owner-only copy of a source agent's manifest and a cloned agent
@@ -30,8 +30,25 @@ const privateCopies = new Map<string, AgentDefinition>();
  */
 export function privateHermesManifestAgent(source: AgentDefinition): AgentDefinition {
   const existing = privateCopies.get(source.manifestPath);
-  if (existing) return existing;
+  if (existing) return existing.agent;
   const copy = copyHermesManifestAgent(source);
-  privateCopies.set(source.manifestPath, copy);
+  // Extract the directory from the manifest path for cleanup
+  const directory = path.dirname(copy.manifestPath);
+  privateCopies.set(source.manifestPath, { agent: copy, directory });
   return copy;
+}
+
+/**
+ * Remove all cached manifest copies and their directories.
+ * Call this in an afterAll hook to clean up temporary files.
+ */
+export function cleanupPrivateHermesManifestAgent(): void {
+  for (const { directory } of privateCopies.values()) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+    } catch {
+      // Best effort cleanup; ignore errors
+    }
+  }
+  privateCopies.clear();
 }

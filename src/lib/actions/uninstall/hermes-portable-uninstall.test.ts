@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { writeConfigFile } from "../../state/config-io";
@@ -26,6 +26,7 @@ import {
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
 import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninstall-transaction";
+import { cleanupPrivateHermesManifestAgent } from "../../onboard/experimental/__test-helpers__/hermes-manifest-agent";
 
 // Uninstall preparation re-reads the current Hermes manifest through lifecycle
 // removal, so resolve it from an owner-only copy instead of the checkout's
@@ -42,6 +43,10 @@ vi.mock("../../agent/defs", async (importOriginal) => {
         ? privateHermesManifestAgent(original.loadAgent(name, env))
         : original.loadAgent(name, env),
   };
+});
+
+afterAll(() => {
+  cleanupPrivateHermesManifestAgent();
 });
 
 let homeDir: string;

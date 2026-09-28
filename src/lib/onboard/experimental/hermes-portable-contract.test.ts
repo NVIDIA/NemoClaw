@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
 import type { AgentDefinition } from "../../agent/definition-types";
@@ -14,6 +14,7 @@ import {
   assertCurrentHermesPortableStartupContract,
   resolveHermesPortableStartupContract,
 } from "./hermes-portable-contract";
+import { cleanupPrivateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
 
 // Resolve the Hermes agent from an owner-only manifest copy so startup-contract
 // reads do not depend on the checkout's group-level file modes. The manifest
@@ -28,6 +29,10 @@ vi.mock("../../agent/defs", async (importOriginal) => {
         ? privateHermesManifestAgent(original.loadAgent(name, env))
         : original.loadAgent(name, env),
   };
+});
+
+afterAll(() => {
+  cleanupPrivateHermesManifestAgent();
 });
 
 const SANDBOX = "alpha";

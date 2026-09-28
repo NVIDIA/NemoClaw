@@ -91,6 +91,7 @@ import {
   uniqueEnvNames,
   validateMcpServerName,
   validateSandboxName,
+  VALID_ALLOW_TOOL_RE,
 } from "./mcp-bridge-validation";
 import {
   verifyMcpServerIdentity,
@@ -851,11 +852,14 @@ async function addMcpBridgeUnlocked(
   // Compute tool policy (allowlist vs denylist)
   const toolPolicy = computeToolPolicy(options.allowTools, denyTools);
 
+  // Resolve transport independently of identity pinning
+  const transport = options.transport ?? inferTransportFromUrl(normalizedUrl);
+
   // Build server identity if provided
   const serverIdentity = options.serverIdentity
     ? {
         digest: options.serverIdentity,
-        transport: options.transport ?? inferTransportFromUrl(normalizedUrl),
+        transport,
         verifiedAt: Date.now(),
       }
     : undefined;
@@ -879,9 +883,16 @@ async function addMcpBridgeUnlocked(
     ...(providerName ? { providerName } : {}),
     policyName,
     ...(serverIdentity ? { serverIdentity } : {}),
-    transport: serverIdentity?.transport,
+    transport,
     ...(options.requireOAuth ? { requireOAuth: true } : {}),
   };
+
+  // Enforce HTTPS requirement for --require-oauth at the action boundary.
+  // The CLI parser checks this, but the action boundary must also enforce it
+  // to protect against direct API calls.
+  if (options.requireOAuth && !normalizedUrl.startsWith("https://")) {
+    throw new McpBridgeError("--require-oauth requires an HTTPS MCP endpoint.", 2);
+  }
 
   // Supply-chain verification: if an existing entry has a pinned identity, verify it matches
   if (existingEntry?.serverIdentity && options.serverIdentity) {
@@ -1207,4 +1218,177 @@ async function addMcpBridgeUnlocked(
     throw error;
   }
   return providerRuntimeSelection;
+}
+
+export async function updateMcpBridgeAllowTools(
+  sandboxName: string,
+  server: string,
+  allowTools: readonly string[],
+): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
+    return updateMcpBridgeAllowToolsUnlocked(sandboxName, server, allowTools);
+  });
+}
+
+async function updateMcpBridgeAllowToolsUnlocked(
+  sandboxName: string,
+  server: string,
+  allowTools: readonly string[],
+): Promise<void> {
+  validateSandboxName(sandboxName);
+  validateMcpServerName(server);
+  const normalizedAllowTools = [...new Set(allowTools)].sort();
+  for (const tool of normalizedAllowTools) {
+    if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+      throw new McpBridgeError(
+        `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+        2,
+      );
+    }
+  }
+  const sandbox = getSandboxOrThrow(sandboxName);
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
+  const legacyNames = Object.keys(observed.sources.legacy).sort();
+  if (legacyNames.length > 0) {
+    throw new McpBridgeError(
+      `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it.`,
+      2,
+    );
+  }
+  const storedEntry = observed.bridges[server];
+  if (!storedEntry) {
+    throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
+  }
+  assertAuthenticatedBridgeEntry(storedEntry);
+  const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
+  if (!target || target.addresses.length === 0) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has no validated address pins. No policy was changed.`,
+    );
+  }
+
+  // Drift check for public pins
+  if (
+    !storedEntry.trustedPrivateHost &&
+    storedEntry.allowedIps &&
+    storedEntry.allowedIps.length > 0
+  ) {
+    const recordedPins = [
+      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
+    ].sort();
+    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
+    if (!isDeepStrictEqual(recordedPins, freshPins)) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
+        2,
+      );
+    }
+  }
+
+  const {
+    allowTools: _previousAllowTools,
+    denyTools: _previousDenyTools,
+    ...entryWithoutTools
+  } = storedEntry;
+  const updatedEntry: McpSourceEntry = {
+    ...entryWithoutTools,
+    allowTools: normalizedAllowTools,
+    allowedIps: [...target.addresses],
+  };
+  assertGeneratedPolicyMutationSafe(sandboxName, updatedEntry);
+  assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+  await assertMcpProviderRecoverable(updatedEntry, runtimeSelection);
+
+  await removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  try {
+    await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The MCP route remains blocked. Retry with \`nemoclaw ${sandboxName} mcp update ${server} --allow-tool ${normalizedAllowTools.join(" --allow-tool ")}\`.`,
+    );
+  }
+  console.log(`  Updated allowed tools for MCP server '${server}'.`);
+}
+
+export async function clearMcpBridgeAllowTools(sandboxName: string, server: string): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
+    return clearMcpBridgeAllowToolsUnlocked(sandboxName, server);
+  });
+}
+
+async function clearMcpBridgeAllowToolsUnlocked(
+  sandboxName: string,
+  server: string,
+): Promise<void> {
+  validateSandboxName(sandboxName);
+  validateMcpServerName(server);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
+  const legacyNames = Object.keys(observed.sources.legacy).sort();
+  if (legacyNames.length > 0) {
+    throw new McpBridgeError(
+      `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it.`,
+      2,
+    );
+  }
+  const storedEntry = observed.bridges[server];
+  if (!storedEntry) {
+    throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
+  }
+  assertAuthenticatedBridgeEntry(storedEntry);
+  const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
+  if (!target || target.addresses.length === 0) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has no validated address pins. No policy was changed.`,
+    );
+  }
+
+  // Drift check for public pins
+  if (
+    !storedEntry.trustedPrivateHost &&
+    storedEntry.allowedIps &&
+    storedEntry.allowedIps.length > 0
+  ) {
+    const recordedPins = [
+      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
+    ].sort();
+    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
+    if (!isDeepStrictEqual(recordedPins, freshPins)) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
+        2,
+      );
+    }
+  }
+
+  const {
+    allowTools: _previousAllowTools,
+    denyTools: _previousDenyTools,
+    ...entryWithoutTools
+  } = storedEntry;
+  const updatedEntry: McpSourceEntry = {
+    ...entryWithoutTools,
+    allowedIps: [...target.addresses],
+  };
+  assertGeneratedPolicyMutationSafe(sandboxName, updatedEntry);
+  assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+  await assertMcpProviderRecoverable(updatedEntry, runtimeSelection);
+
+  await removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  try {
+    await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The MCP route remains blocked. Retry with \`nemoclaw ${sandboxName} mcp update ${server} --clear-allow-tools\`.`,
+    );
+  }
+  console.log(`  Cleared allowed tools for MCP server '${server}'.`);
 }

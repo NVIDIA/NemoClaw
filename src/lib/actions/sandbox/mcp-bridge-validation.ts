@@ -262,8 +262,8 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
   }
 }
 
-const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
-const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
+export const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
+export const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
 
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
@@ -611,8 +611,11 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       2,
     );
   }
+  if (clearDenyTools) {
+    return { server, clearDenyTools: true };
+  }
 
-  return { server, denyTools: clearDenyTools ? [] : normalizeMcpDenyTools(denyTools) };
+  return { server, denyTools: normalizeMcpDenyTools(denyTools) };
 }
 
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {

@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect, it, vi } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { recoverHermesPortableSandboxLifecycle } from "./hermes-portable-lifecycle";
@@ -22,6 +22,7 @@ import {
   LABELS,
 } from "./hermes-portable-lifecycle.test-fixture";
 import { openshellMutationCalls } from "./hermes-portable-lifecycle.test-fixtures";
+import { cleanupPrivateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
 
 // Recovery re-reads the current Hermes manifest, so resolve it from an
 // owner-only copy instead of the checkout's group-writable modes. The manifest
@@ -36,6 +37,10 @@ vi.mock("../../agent/defs", async (importOriginal) => {
         ? privateHermesManifestAgent(original.loadAgent(name, env))
         : original.loadAgent(name, env),
   };
+});
+
+afterAll(() => {
+  cleanupPrivateHermesManifestAgent();
 });
 
 it("rejects registry drift during policy observation before recovery mutations (#11479)", async (context) => {
