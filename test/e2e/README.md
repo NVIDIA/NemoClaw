@@ -75,8 +75,9 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and builds only the candidate shared policy boundary.
+The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -743,6 +744,9 @@ Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
+Empty-message failures include the message index, role, and allowlisted provider
+error metadata from JSONL or SQLite. Provider error text and unknown field values
+are omitted. These diagnostics do not change failure classification or retries.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named

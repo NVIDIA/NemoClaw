@@ -526,6 +526,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
       // Exact #11251 template after immutable stable-override validation.
       "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+      // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+      "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
     ],
     manifests: [
       {
