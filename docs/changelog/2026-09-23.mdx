@@ -84,9 +84,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Existing `brew` access remains until you remove `brew` and add `brew-balanced`; Open retains `brew`.
   Related change: [PR #10487](https://github.com/NVIDIA/NemoClaw/pull/10487).
   Refer to [Network Policies](/user-guide/openclaw/reference/network-policies#policy-tiers) for tier and replacement details.
-- Rebuild can preserve declared state from a managed Docker OpenClaw sandbox in `Phase: Error` without starting or executing in its stopped container.
-  It requires an unchanged source container and exclusively owned managed state volume; user-managed `.env` and `.mcp.json` files are excluded.
-  Related change: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305).
+- Rebuild can preserve declared state from a managed Docker OpenClaw or Deep Agents Code sandbox in `Phase: Error` without starting or executing in its stopped container.
+  Deep Agents Code also preserves native MCP configuration through a bounded recovery handoff.
+  It requires an unchanged source container and exclusively owned managed state volume; user-managed credential files are excluded.
+  Related changes: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305) and [PR #11293](https://github.com/NVIDIA/NemoClaw/pull/11293).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for requirements and recovery limits.
 - Uninstall leaves unrelated Docker containers intact and keeps a managed gateway running until its registered sandboxes are cleaned up.
   For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.

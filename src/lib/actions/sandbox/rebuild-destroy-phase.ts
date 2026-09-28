@@ -36,7 +36,7 @@ export type RebuildDeleteValidationResult =
   | { ok: false; message: string; code?: number };
 
 export interface RebuildDestroyPhaseInput {
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState;
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState;
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
@@ -234,7 +234,7 @@ export async function runRebuildDestroyPhase(
         bail,
         input.runtimeSelection,
         input.mcpEntries ?? [],
-        ...(input.capturedOpenClawState ? ([input.capturedOpenClawState] as const) : ([] as const)),
+        ...(input.capturedAgentState ? ([input.capturedAgentState] as const) : ([] as const)),
       );
       return preparation;
     },
@@ -243,9 +243,9 @@ export async function runRebuildDestroyPhase(
       // fingerprints match the registry. Probe afterward so a Deep Agents
       // user `.mcp.json` is not confused with the separate managed projection.
       // This can block on SSH, so it must finish before the final DCode check.
-      if (input.capturedOpenClawState) {
+      if (input.capturedAgentState) {
         console.warn(
-          "  User-managed files outside the declared OpenClaw state cannot be checked on the stopped sandbox and will not be restored. Re-add them after rebuild or manage them from the host.",
+          "  User-managed files outside the declared agent state cannot be checked on the stopped sandbox and will not be restored. Re-add them after rebuild or manage them from the host.",
         );
       } else if (!staleRecovery) {
         warnUnpreservedUserManagedFiles(sandboxName, log, preparation.runtimeSelection);
