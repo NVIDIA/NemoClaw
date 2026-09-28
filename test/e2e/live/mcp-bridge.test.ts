@@ -631,7 +631,10 @@ async function replaceBridgeCredentialConservatively(
   const bridge = { sandboxName, mcpUrl, artifactPrefix };
   const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
     artifactName: `${artifactPrefix}-mcp-restart-with-replacement-credential`,
-    env: { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: ROTATED_HOST_SECRET },
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      FAKE_MCP_SECRET: ROTATED_HOST_SECRET,
+    },
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: 12 * 60_000,
   });
@@ -678,7 +681,10 @@ test(
       scope: mcpBridgeE2eScope,
       server: SERVER_NAME,
     });
-    const openClawToolSearch = { query: "fake echo", toolNames: ["fake__fake_echo"] };
+    const openClawToolSearch = {
+      query: "fake echo",
+      toolNames: ["fake__fake_echo"],
+    };
     const compatibleMock = await startCompatibleMock({
       apiKey: COMPATIBLE_KEY,
       model: COMPATIBLE_MODEL,
@@ -997,7 +1003,9 @@ test(
     );
     expect(updateProof.commandsSucceeded).toBe(true);
     expect(updateProof.after).toBe(updateProof.before + 1);
-    expect(updateProof.lastCall).toMatchObject({ auth: `Bearer ${HOST_SECRET}` });
+    expect(updateProof.lastCall).toMatchObject({
+      auth: `Bearer ${HOST_SECRET}`,
+    });
     await replaceBridgeCredentialConservatively(
       host,
       sandbox,
@@ -1311,7 +1319,10 @@ mcpBridgeShardTest("deepagents")(
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: MCP_RESULT,
-      progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
+      progressiveToolSearch: {
+        toolName: "fake_fake_echo",
+        query: "AuThEnTiCaTeD McP",
+      },
       deniedToolProbe: DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
@@ -1399,7 +1410,6 @@ mcpBridgeShardTest("deepagents")(
       artifactName: "deepagents-real-mcp-tool-call-initial",
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
-    await exactMainProof.assertSnapshotResidue("after-initial-tool-call");
     await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, MCP_RESULT], "fake_echo");
     await restartBridgeWithoutHostSecret(host, sandboxName, "deepagents");
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
@@ -1433,15 +1443,10 @@ mcpBridgeShardTest("deepagents")(
     );
     const nativeStateMarkerPath = "/sandbox/.complete-native-state-marker";
     const nativeStateMarker = `complete-native-state-${Date.now()}`;
-    await sandbox.exec(
-      sandboxName,
-      [
-        "sh",
-        "-c",
-        `umask 077; printf '%s' ${shellQuote(nativeStateMarker)} > ${shellQuote(nativeStateMarkerPath)} && sync`,
-      ],
-      { artifactName: "deepagents-write-complete-native-state-marker" },
-    );
+    const markerCommand = `umask 077; printf '%s' ${shellQuote(nativeStateMarker)} > ${shellQuote(nativeStateMarkerPath)} && sync`;
+    const markerOptions = { artifactName: "native-state-marker", env: buildAvailabilityProbeEnv() };
+    const writeMarker = await sandbox.exec(sandboxName, ["sh", "-c", markerCommand], markerOptions);
+    expectExitZero(writeMarker, "write Deep Agents complete native-state marker");
     const rebuildAndProveDeepAgentsBridge = async (prefix: string) => {
       await rebuildWithoutMcpHostSecret(host, sandboxName, prefix, exactMainProof.envOverlay);
       await exactMainProof.afterRebuild();

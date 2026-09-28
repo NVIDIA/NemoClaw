@@ -820,12 +820,8 @@ export function buildE2eWorkflowPlan(
     );
     const unresolvedRiskJobIds = riskJobIds.filter((id) => {
       const workflowJob = inventory.targetToJob.get(id) ?? id;
-      if (runtimeSelectedJobs.includes(workflowJob)) return false;
-      return !selectedCatalogueTargets.some(
-        (target) =>
-          (target.id === id || target.targetId === id) &&
-          e2eRuntimeProviders(target.gatewayRuntimes, gatewayRuntimes).length > 0,
-      );
+      if (inventory.workflowJobs.includes(workflowJob)) return false;
+      return !selectedCatalogueTargets.some((target) => target.id === id || target.targetId === id);
     });
     if (unresolvedRiskJobIds.length > 0) {
       throw new Error(

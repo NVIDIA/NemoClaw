@@ -229,6 +229,25 @@ function rejectStoppedState(message: string): never {
   throw new Error(message);
 }
 
+function makePrivateTreeRemovable(root: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  fs.chmodSync(root, stat.mode | 0o300);
+  for (const name of fs.readdirSync(root)) {
+    const child = path.join(root, name);
+    const childStat = fs.lstatSync(child);
+    if (childStat.isDirectory() && !childStat.isSymbolicLink()) {
+      makePrivateTreeRemovable(child);
+    }
+  }
+}
+
 /** Prepare a private complete native-state copy before inspecting a stopped source. */
 export async function prepareStoppedAgentState(
   sandboxName: string,
@@ -273,12 +292,14 @@ export async function prepareStoppedAgentState(
   const raw = path.join(temporary, "raw");
   const cleanupOnExit = (): void => {
     try {
+      makePrivateTreeRemovable(raw);
       fs.rmSync(temporary, { recursive: true, force: true });
     } catch {
       /* private files remain owner-only */
     }
   };
   const dispose = (): void => {
+    makePrivateTreeRemovable(raw);
     fs.rmSync(temporary, { recursive: true, force: true });
     process.removeListener("exit", cleanupOnExit);
   };
@@ -314,6 +335,9 @@ export async function prepareStoppedAgentState(
     if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
       rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
     }
+    if (sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries).length > 0) {
+      rejectStoppedState("Stopped state archive contains an unsafe hard-link extraction layout.");
+    }
     // This provider-owned stream has already containment-checked hard-link
     // targets and limited headers to files, directories, and links. Extract
     // into a new private directory without resolving symlink targets: absolute
@@ -321,7 +345,7 @@ export async function prepareStoppedAgentState(
     // must preserve them rather than write through them.
     const extracted = spawnSync("tar", ["-xf", archivePath, "--no-same-owner", "-C", raw], {
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
+      timeout: sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS,
     });
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       rejectStoppedState("Stopped state archive failed snapshot extraction.");

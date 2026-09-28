@@ -77,7 +77,7 @@ const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT),
 
 const MANIFEST_VERSION = 2;
 const NATIVE_STATE_ARCHIVE = "native-home.tar";
-const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
+export const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
@@ -587,6 +587,67 @@ export function rejectSymlinkExtractionTraversal(
         );
         break;
       }
+    }
+  }
+  return violations;
+}
+
+/**
+ * Reject hard-link targets that tar would resolve through an earlier archive
+ * symlink. The check runs before extraction so the host never asks tar to
+ * resolve a container-controlled link target.
+ */
+export function rejectHardLinkExtractionTraversal(
+  tarArchive: TarListingSource,
+  entries: readonly string[],
+): string[] {
+  const symlinks: Array<{ path: string; index: number; entry: string }> = [];
+  const hardLinks: Array<{ target: string; index: number; entry: string }> = [];
+  const violations: string[] = [];
+  let index = 0;
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar link listing", (line) => {
+    const entry = entries[index];
+    if (entry === undefined) return;
+    const normalizedEntry = path.posix.normalize(entry.replace(/^\.\//u, "")).replace(/\/$/u, "");
+    if (line.startsWith("l")) {
+      symlinks.push({ path: normalizedEntry, index, entry });
+    } else if (line.startsWith("h") || / link to /u.test(line)) {
+      const marker = line.lastIndexOf(" link to ");
+      if (marker < 0) {
+        violations.push(`uninspectable hard link: ${entry}`);
+      } else {
+        hardLinks.push({
+          target: line.slice(marker + " link to ".length).trim(),
+          index,
+          entry,
+        });
+      }
+    }
+    index += 1;
+  });
+  if (listingFailure) return [listingFailure];
+  if (index !== entries.length) return ["tar link listing did not match archive inventory"];
+
+  for (const hardLink of hardLinks) {
+    const target = path.posix.normalize(hardLink.target.replace(/^\.\//u, "")).replace(/\/$/u, "");
+    if (
+      hardLink.target.startsWith("/") ||
+      target === ".." ||
+      target.startsWith("../") ||
+      target.includes("\0")
+    ) {
+      violations.push(`unsafe hard-link target '${hardLink.target}' in '${hardLink.entry}'`);
+      continue;
+    }
+    const symlink = symlinks.find(
+      (candidate) =>
+        candidate.index < hardLink.index &&
+        (target === candidate.path || target.startsWith(`${candidate.path}/`)),
+    );
+    if (symlink) {
+      violations.push(
+        `hard-link target '${hardLink.target}' in '${hardLink.entry}' resolves through symlink '${symlink.entry}'`,
+      );
     }
   }
   return violations;
@@ -1540,11 +1601,14 @@ function copyNativeArchiveToPrivateDescriptor(
     const symlinkViolations = validation.safe
       ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
       : [];
+    const hardLinkTraversalViolations = validation.safe
+      ? rejectHardLinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+      : [];
     const result = {
       descriptor,
       sha256: hash.digest("hex"),
       entries: validation.entries,
-      violations: [...validation.violations, ...symlinkViolations],
+      violations: [...validation.violations, ...symlinkViolations, ...hardLinkTraversalViolations],
     };
     descriptor = null;
     return result;
@@ -1974,7 +2038,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
+        `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
     }
 

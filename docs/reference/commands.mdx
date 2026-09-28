@@ -1375,20 +1375,27 @@ $$nemoclaw my-assistant config get --key models.default --format yaml
 
 #### `$$nemoclaw <name> config set`
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
+
+This host command is not available for OpenClaw because OpenClaw owns `openclaw.json` after first launch.
+Connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
+Use `$$nemoclaw inference set`, credential commands, and policy commands when the change also requires host-side OpenShell state.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
 
 Write one value into the agent configuration in a sandbox. The command validates every HTTP and HTTPS URL in the value, including URLs nested inside JSON objects or arrays. It pins an HTTP host to the validated IP address.
 
 ```bash
-$$nemoclaw my-assistant config set --key agents.defaults.model.primary --value nvidia/nemotron
-$$nemoclaw my-assistant config set --key agents.defaults.timeoutSeconds --value 600 --restart
+$$nemoclaw my-assistant config set --key model.default --value openai:nvidia/nemotron
+$$nemoclaw my-assistant config set --key agent.max_turns --value 100 --restart
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--key <dotpath>` | Dotpath to update in the config. Required |
 | `--value <value>` | Value to write. The command parses a JSON value when it can, and otherwise writes the text as a string. Required |
-| `--restart` | Restart a supported OpenClaw or Hermes gateway after writing |
+| `--restart` | Restart the Hermes gateway after writing |
 | `--config-accept-new-path` | Write a dotpath that does not already exist in the config |
 
 The command treats a dotpath that does not already exist in the config as a possible typo. An interactive run asks for confirmation before writing the new dotpath. A run without a TTY, or a run with `NEMOCLAW_NON_INTERACTIVE=1`, refuses the write. Pass `--config-accept-new-path`, or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`, to write the new dotpath without the confirmation. If the confirmation reaches the end of input, for example when you press `Ctrl-D` or run the command from a harness that closes stdin, the command exits non-zero without writing and repeats the same guidance.
@@ -1407,7 +1414,7 @@ For Deep Agents sandboxes, `config set` is unavailable because managed startup (
 
 </AgentOnly>
 
-Host-side config, inference, gateway recovery, snapshot, policy, channel, and sandbox destruction mutations serialize per sandbox.
+Host-side config, inference, gateway recovery, backup, policy, channel, and sandbox destruction mutations serialize per sandbox.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1420,12 +1427,13 @@ For a stopped standard sandbox, `recover` asks OpenShell to start that exact san
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-After the sandbox is available, `recover` sends authenticated requests only to repair supported in-sandbox agent processes and host forwards. Standard sandbox start and stop remain OpenShell-owned.
+After the sandbox is available, `recover` sends authenticated requests only to verify supported in-sandbox agent processes and repair supported state for a running gateway and host forwards.
+Standard sandbox start and stop remain OpenShell-owned.
 The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+When `recover` finds a stopped built-in OpenClaw or Hermes agent gateway, it reports the stopped gateway and does not relaunch it.
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.

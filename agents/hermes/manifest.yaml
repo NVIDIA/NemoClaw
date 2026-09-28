@@ -69,8 +69,8 @@ skills:
 
 user_managed_files:
   # Relative to /sandbox, not config.dir. Hermes stores user-edited API-key
-  # values in /sandbox/.hermes/.env, and rebuild should warn before dropping
-  # values that cannot enter the credential-free native-home archive.
+  # values in /sandbox/.hermes/.env. Rebuild captures the complete native
+  # home/workspace and aborts when the credential scan rejects the archive.
   - .hermes/.env
 
 # ── Authentication ──────────────────────────────────────────────

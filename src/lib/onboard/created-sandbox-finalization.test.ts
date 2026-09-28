@@ -308,7 +308,63 @@ describe("created DCode sandbox finalization", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("restores the complete native state before validation and registry publication (#11767)", async () => {
+  it("blocks registry publication when restored complete native state drifts (#11767)", async () => {
+    const fixture = makeRestoreFixture();
+    const order: string[] = [];
+    const registeredConfigs: string[] = [];
+    try {
+      await expect(
+        finalizeCreatedSandbox(
+          {
+            sandboxName: "dcode",
+            restoreBackupPath: fixture.backupPath,
+            preUpgradeBackup: false,
+            targetAgentType: "langchain-deepagents-code",
+            validateManagedDcode: true,
+            provider: "nvidia-prod",
+            model: "new-model",
+            preferredInferenceApi: null,
+          },
+          {
+            ...preparedRestoreAuthority("dcode"),
+            restoreRecreatedSandboxState: async (name, backup, options) => {
+              order.push("restore");
+              return await sandboxState.restoreRecreatedSandboxState(name, backup, options);
+            },
+            getDcodeSelectionDrift: async () => {
+              order.push("validate");
+              const restored = fs.readFileSync(fixture.currentPath, "utf8");
+              expect(restored).toContain('default = "openai:old-model"');
+              return {
+                changed: true,
+                providerChanged: false,
+                modelChanged: true,
+                existingProvider: "nvidia-prod",
+                existingModel: "openai:old-model",
+                unknown: false,
+              };
+            },
+            register: () => {
+              order.push("register");
+              registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+            },
+            note: vi.fn(),
+            error: vi.fn(),
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
+          },
+        ),
+      ).rejects.toThrow("exit 1");
+
+      expect(order).toEqual(["restore", "validate"]);
+      expect(registeredConfigs).toEqual([]);
+    } finally {
+      process.env.PATH = fixture.oldPath;
+    }
+  });
+
+  it("restores matching complete native state before registry publication (#11767)", async () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
     const registeredConfigs: string[] = [];
@@ -321,7 +377,7 @@ describe("created DCode sandbox finalization", () => {
           targetAgentType: "langchain-deepagents-code",
           validateManagedDcode: true,
           provider: "nvidia-prod",
-          model: "new-model",
+          model: "old-model",
           preferredInferenceApi: null,
         },
         {
@@ -332,12 +388,15 @@ describe("created DCode sandbox finalization", () => {
           },
           getDcodeSelectionDrift: async () => {
             order.push("validate");
+            expect(fs.readFileSync(fixture.currentPath, "utf8")).toContain(
+              'default = "openai:old-model"',
+            );
             return {
               changed: false,
               providerChanged: false,
               modelChanged: false,
               existingProvider: "nvidia-prod",
-              existingModel: "openai:new-model",
+              existingModel: "openai:old-model",
               unknown: false,
             };
           },
@@ -894,7 +953,11 @@ describe("created OpenClaw sandbox finalization", () => {
   it.each([
     {
       failure: "remote exit",
-      migrate: async () => ({ status: 1, stdout: "", stderr: "migration collision" }),
+      migrate: async () => ({
+        status: 1,
+        stdout: "",
+        stderr: "migration collision",
+      }),
     },
     {
       failure: "transport failure",

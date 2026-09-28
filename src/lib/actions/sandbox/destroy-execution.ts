@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -62,52 +63,125 @@ export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
 }
 
-const DEEP_AGENTS_NATIVE_ROOT = "/sandbox";
+const SANDBOX_NATIVE_ROOT = "/sandbox";
+const COMPLETE_NATIVE_HOME_AGENTS = new Set(["hermes", "langchain-deepagents-code", "openclaw"]);
 
-function deepAgentsProtectedNativeRootEntries(hostMounts: SandboxEntry["hostMounts"]): string[] {
+function requireNormalizedNativeRoot(agentName: string, configuredRoot: string): string {
+  const normalized = path.posix.normalize(configuredRoot);
+  if (
+    normalized !== configuredRoot ||
+    !path.posix.isAbsolute(configuredRoot) ||
+    !normalized.startsWith(`${SANDBOX_NATIVE_ROOT}/`) ||
+    !/^\/sandbox\/[A-Za-z0-9._/-]+$/u.test(normalized)
+  ) {
+    throw new Error(
+      `Agent '${agentName}' has an unsafe native-home root; registry or manifest repair is required.`,
+    );
+  }
+  return normalized;
+}
+
+function requireProtectedNativePath(relativePath: string, agentName: string): string {
+  const normalized = path.posix.normalize(relativePath);
+  if (
+    normalized !== relativePath ||
+    path.posix.isAbsolute(relativePath) ||
+    normalized === "." ||
+    normalized.startsWith("../")
+  ) {
+    throw new Error(
+      `Agent '${agentName}' has an unsafe user-managed path; registry or manifest repair is required.`,
+    );
+  }
+  return `${SANDBOX_NATIVE_ROOT}/${normalized}`;
+}
+
+function protectedNativeHomeEntries(
+  agentName: string,
+  nativeRoot: string,
+  userManagedFiles: readonly string[],
+  hostMounts: SandboxEntry["hostMounts"],
+): string[] {
   const protectedEntries = new Set<string>();
-  for (const mount of hostMounts ?? []) {
-    if (typeof mount.target !== "string") {
-      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+  for (const relativePath of userManagedFiles) {
+    const managedPath = requireProtectedNativePath(relativePath, agentName);
+    if (managedPath === nativeRoot || managedPath.startsWith(`${nativeRoot}/`)) {
+      protectedEntries.add(managedPath);
     }
-    const normalized = path.posix.normalize(mount.target);
-    const prefix = `${DEEP_AGENTS_NATIVE_ROOT}/`;
-    if (normalized !== mount.target || !normalized.startsWith(prefix)) {
-      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+  }
+  if (agentName === "langchain-deepagents-code") {
+    for (const mount of hostMounts ?? []) {
+      if (typeof mount.target !== "string") {
+        throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+      }
+      const normalized = path.posix.normalize(mount.target);
+      const prefix = `${SANDBOX_NATIVE_ROOT}/`;
+      if (normalized !== mount.target || !normalized.startsWith(prefix)) {
+        throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
+      }
+      protectedEntries.add(normalized);
     }
-    const topLevel = normalized.slice(prefix.length).split("/")[0];
-    if (!topLevel) {
-      throw new Error("Deep Agents host-mount target is invalid; registry repair is required.");
-    }
-    protectedEntries.add(`${DEEP_AGENTS_NATIVE_ROOT}/${topLevel}`);
   }
   return [...protectedEntries].sort();
 }
 
-function wipeDeepAgentsNativeHome(
+function wipeAgentNativeHome(
   sandboxName: string,
+  agentName: string,
   runOpenshell: DestroyRunOpenshell,
   hostMounts: SandboxEntry["hostMounts"],
 ): void {
-  const protectedEntries = deepAgentsProtectedNativeRootEntries(hostMounts);
+  if (!COMPLETE_NATIVE_HOME_AGENTS.has(agentName)) return;
+  const agent = resolveRegisteredAgentDefinition({ agent: agentName });
+  if (!agent) {
+    throw new Error(
+      `Agent '${agentName}' could not be resolved for native-home cleanup; registry or manifest repair is required.`,
+    );
+  }
+  const nativeRoot =
+    agentName === "langchain-deepagents-code"
+      ? SANDBOX_NATIVE_ROOT
+      : requireNormalizedNativeRoot(agentName, agent.configPaths.dir);
+  const protectedEntries = protectedNativeHomeEntries(
+    agentName,
+    nativeRoot,
+    agent.userManagedFiles,
+    hostMounts,
+  );
   const script = [
     "set -eu",
-    `root=${DEEP_AGENTS_NATIVE_ROOT}`,
-    'if [ ! -d "$root" ] || [ -L "$root" ]; then echo "unsafe Deep Agents native root" >&2; exit 20; fi',
+    `root='${nativeRoot}'`,
+    'if [ ! -e "$root" ]; then exit 0; fi',
+    'if [ ! -d "$root" ] || [ -L "$root" ]; then echo "unsafe agent native root" >&2; exit 20; fi',
     'uid="$(id -u)"',
     'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
     '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
-    "  protected=false",
-    '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
-    '  if [ "$protected" = true ]; then continue; fi',
-    '  find "$entry" -xdev -depth -user "$uid" \\( -type d -exec rmdir -- {} \\; -o ! -type d -exec rm -f -- {} \\; \\) 2>/dev/null || :',
+    '  find "$entry" -xdev -depth -user "$uid" -exec sh -c \'',
+    '    candidate="$1"; shift',
+    '    for keep in "$@"; do',
+    '      case "$candidate" in "$keep"|"$keep"/*) exit 0 ;; esac',
+    '      case "$keep" in "$candidate"/*) exit 0 ;; esac',
+    "    done",
+    '    if [ -d "$candidate" ] && [ ! -L "$candidate" ]; then',
+    '      rmdir -- "$candidate" 2>/dev/null || :',
+    "    else",
+    '      rm -f -- "$candidate" 2>/dev/null || :',
+    "    fi",
+    '  \' nemoclaw-native-cleanup-entry {} "$@" \\;',
     "done",
     'for entry in "$root"/.[!.]* "$root"/..?* "$root"/*; do',
     '  if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi',
-    "  protected=false",
-    '  for keep in "$@"; do if [ "$entry" = "$keep" ]; then protected=true; break; fi; done',
-    '  if [ "$protected" = true ]; then continue; fi',
-    '  if find "$entry" -xdev -user "$uid" -print -quit | grep -q .; then echo "Deep Agents native root retains sandbox-owned state" >&2; exit 21; fi',
+    '  if find "$entry" -xdev -user "$uid" -exec sh -c \'',
+    '    candidate="$1"; shift',
+    '    for keep in "$@"; do',
+    '      case "$candidate" in "$keep"|"$keep"/*) exit 0 ;; esac',
+    '      case "$keep" in "$candidate"/*) exit 0 ;; esac',
+    "    done",
+    '    printf "%s\\n" "$candidate"',
+    '  \' nemoclaw-native-cleanup-check {} "$@" \\; | grep -q .; then',
+    '    echo "agent native root retains sandbox-owned state" >&2',
+    "    exit 21",
+    "  fi",
     "done",
   ].join("\n");
   const result = runOpenshell(
@@ -120,7 +194,7 @@ function wipeDeepAgentsNativeHome(
       "sh",
       "-c",
       script,
-      "nemoclaw-deep-agents-native-cleanup",
+      "nemoclaw-native-home-cleanup",
       ...protectedEntries,
     ],
     {
@@ -132,7 +206,7 @@ function wipeDeepAgentsNativeHome(
   );
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
     throw new Error(
-      `Deep Agents native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
+      `${agent.displayName} native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
     );
   }
   if (result.status !== 0 || result.error) {
@@ -141,7 +215,7 @@ function wipeDeepAgentsNativeHome(
       .trim()
       .slice(0, 500);
     throw new Error(
-      `Could not remove the sandbox-owned Deep Agents native home before sandbox deletion${detail ? `: ${detail}` : "."}`,
+      `Could not remove the sandbox-owned ${agent.displayName} native home before sandbox deletion${detail ? `: ${detail}` : "."}`,
     );
   }
 }
@@ -175,7 +249,7 @@ type SandboxDestroyExecutionInput = {
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
-    wipeDeepAgentsNativeHome?: typeof wipeDeepAgentsNativeHome;
+    wipeAgentNativeHome?: typeof wipeAgentNativeHome;
     deleteConvergence?: {
       now?: () => number;
       sleep?: (milliseconds: number) => void;
@@ -257,7 +331,11 @@ function describeAcceptedDeleteConvergenceFailure(
   sandboxName: string,
   gatewayName: string,
   convergence: SandboxDeleteConvergenceResult,
-): Readonly<{ deleteOutput: string; gatewayUnreachable: boolean; timedOut: boolean }> {
+): Readonly<{
+  deleteOutput: string;
+  gatewayUnreachable: boolean;
+  timedOut: boolean;
+}> {
   const observation = convergence.lastObservation;
   const prefix = `OpenShell accepted deletion of sandbox '${sandboxName}', but`;
   const preserved = "Local recovery state was preserved.";
@@ -312,7 +390,9 @@ async function finalizeMcpDestroy(
   preparation: McpDestroyPreparation,
   force: boolean,
 ): Promise<void> {
-  await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
+  await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, {
+    force,
+  });
 }
 
 export async function executeSandboxDestroy({
@@ -347,7 +427,10 @@ export async function executeSandboxDestroy({
     );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
     const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
-      ? { identities: undefined, providerIdentity: expectedRuntimeProviderIdentity }
+      ? {
+          identities: undefined,
+          providerIdentity: expectedRuntimeProviderIdentity,
+        }
       : expectedContainerIdentities === undefined
         ? { identities: undefined }
         : { identities: expectedContainerIdentities };
@@ -355,7 +438,9 @@ export async function executeSandboxDestroy({
       verdict: ReturnType<typeof classifyDestroyContainerIdentity>,
     ): DestroyContainerIdentityProof | null => {
       if (verdict.status === "clear") {
-        return { identities: verdict.identity === null ? [] : [verdict.identity] };
+        return {
+          identities: verdict.identity === null ? [] : [verdict.identity],
+        };
       }
       if (verdict.status === "recovery") return { identities: verdict.identities };
       return null;
@@ -463,10 +548,16 @@ export async function executeSandboxDestroy({
         return { status: "match" };
       }
       if (verdict.status === "probe-failed") {
-        return { status: "probe-failed", detail: redactDestroyError(verdict.detail) };
+        return {
+          status: "probe-failed",
+          detail: redactDestroyError(verdict.detail),
+        };
       }
       if (verdict.status === "ambiguous") {
-        return { status: "ambiguous", detail: redactDestroyError(verdict.reason) };
+        return {
+          status: "ambiguous",
+          detail: redactDestroyError(verdict.reason),
+        };
       }
       return { status: "changed" };
     };
@@ -623,10 +714,11 @@ export async function executeSandboxDestroy({
     const sandboxRuntimeConfirmedAbsent =
       expectedContainerIdentities?.length === 0 ||
       (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
-    if (sandbox?.agent === "langchain-deepagents-code" && !sandboxRuntimeConfirmedAbsent) {
+    if (sandbox && !sandboxRuntimeConfirmedAbsent) {
       try {
-        (deps.wipeDeepAgentsNativeHome ?? wipeDeepAgentsNativeHome)(
+        (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
+          sandbox.agent || "openclaw",
           selectedRunOpenshell,
           sandbox.hostMounts,
         );

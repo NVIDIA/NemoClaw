@@ -1004,6 +1004,17 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("recognizes known native-state risk jobs when the requested runtime filters them out", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["podman"] },
+    );
+
+    expect(selectedWorkflowJobs(plan)).not.toEqual(
+      expect.arrayContaining(["onboard-repair", "onboard-resume"]),
+    );
+  });
+
   it.each([
     "src/lib/actions/sandbox/auto-pair-approval.ts",
     "src/lib/actions/sandbox/restore-gateway-pairing.ts",
