@@ -3302,7 +3302,8 @@ Recovery depends on the reported state. Follow [Recover a Failed Cross-Sandbox C
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it stops the sandbox and holds its OpenClaw gateway down while it restores state and runs `openclaw doctor --fix`.
 It then releases the maintenance window for one native OpenClaw start.
-If maintenance entry, restoration, or doctor fails, NemoClaw attempts to stop the destination and prints lifecycle recovery steps.
+If maintenance entry, restoration, or doctor fails, NemoClaw prints lifecycle recovery steps.
+After maintenance starts, NemoClaw also attempts to stop the destination and reports whether that stop was verified.
 If NemoClaw directs you to stop and start the destination, run `$$nemoclaw <destination> stop`, then `$$nemoclaw <destination> start`.
 If that start reports that it consumed the OpenClaw maintenance abort and leaves the destination stopped, run `$$nemoclaw <destination> start` again.
 Verify that the destination is ready.
