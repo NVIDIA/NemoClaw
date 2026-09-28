@@ -10,7 +10,7 @@ import {
 } from "../../sandbox/create-stream";
 import { redactCredentialText } from "../../security/credential-filter";
 import { redact } from "../../security/redact";
-import { waitUntilAsync } from "../../core/wait";
+import { sleepMs, waitUntilAsync } from "../../core/wait";
 import { resolveOpenshellBinary, withSelectedOpenShellCommandOptions } from "./command-argv";
 import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
@@ -35,7 +35,11 @@ import { OPENSHELL_HEAVY_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./comman
 const DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const CAPTURE_LIMIT_BYTES = 1024 * 1024;
 
-export { createCliOpenShellSandboxLookupFromRunner, createCliOpenShellSandboxObserverFromRunner };
+export {
+  createCliOpenShellSandboxLookupFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+  sleepMs as sleepOpenShellLifecycleMs,
+};
 
 const DELETE_ABSENCE_MAX_ATTEMPTS = 20;
 const DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
@@ -221,6 +225,7 @@ function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
     !validCreateText(request.source.reference) ||
     request.startupCommand.length === 0 ||
     request.startupCommand.some((value) => !validCreateText(value)) ||
+    (request.autoProviders === true && (request.providers?.length ?? 0) > 0) ||
     (request.runtimeSelection &&
       request.runtimeSelection.gatewayName !== request.target.gatewayName)
   ) {
@@ -274,6 +279,7 @@ export function renderCreateOpenShellSandboxArgs(request: CreateOpenShellSandbox
       `${name}=${value}`,
     ]),
     ...(request.providers ?? []).flatMap((provider) => ["--provider", provider]),
+    ...(request.autoProviders === true ? ["--auto-providers"] : []),
     "--",
     ...request.startupCommand,
   ];

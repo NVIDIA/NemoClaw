@@ -66,10 +66,8 @@ import {
   runOllamaPullScenario,
 } from "../support/onboard-selection-test-helpers.js";
 
-const CREDENTIAL_RETRY_PROMPT =
-  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
-const CREDENTIAL_RETRY_PROMPT_RE =
-  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const CREDENTIAL_RETRY_PROMPT = "  Options: retry, back, exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE = /Options: retry, back, exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
@@ -355,6 +353,7 @@ function makeRemoteModelValidatorDeps(
 function makeInteractiveValidationRecovery() {
   return createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt: async () => "",
     validateNvidiaApiKeyValue: () => null,
     getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
@@ -914,6 +913,7 @@ async function runCredentialRetryScenario(scenario: CredentialRetryScenario) {
   };
   const recovery = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt,
     validateNvidiaApiKeyValue: (value, credentialEnv) =>
       credentialEnv === "NVIDIA_INFERENCE_API_KEY" && !value.startsWith("nvapi-")
@@ -3141,7 +3141,7 @@ const runner = require(${runnerPath});
 
 const { messages, prompts } = installPromptQueue(credentials, ["", "", "retry", "nvapi-good"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
@@ -3275,7 +3275,7 @@ const runner = require(${runnerPath});
 
 const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {

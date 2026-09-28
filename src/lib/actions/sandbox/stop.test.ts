@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as agentRuntime from "../../agent/runtime";
@@ -316,6 +320,88 @@ describe("stopSandbox", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("stops a sandbox from its sibling gateway registry and records stop intent there", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stop-cross-root-"));
+    const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
+    const registryFile = path.join(registryDir, "sandboxes.json");
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: "my-sandbox",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "my-sandbox": {
+            name: "my-sandbox",
+            dashboardPort: 19443,
+            gatewayName: "nemoclaw-8245",
+            gatewayPort: 8245,
+            lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sandbox-alpha"),
+            openshellDriver: "docker",
+          },
+        },
+      }),
+    );
+    vi.stubEnv("HOME", home);
+    try {
+      const verifyForwardRelease = vi
+        .fn<OpenShellForwardAdapter["verifyForwardRelease"]>()
+        .mockResolvedValue({ state: "released" });
+      const h = harness({
+        teardownSandboxDashboardForward: (sandboxName) =>
+          teardownSandboxDashboardForward(sandboxName, {
+            forwardAdapterForAuthority: () => ({ verifyForwardRelease }),
+            resolveForwardRuntimeAuthority: () => ({
+              authority: {
+                endpoint: "https://127.0.0.1:8245",
+                owner: {
+                  endpoint: null,
+                  gatewayName: "nemoclaw-8245",
+                  gatewayPort: 8245,
+                  mode: "nemoclaw-managed",
+                  requiredCapabilities: [],
+                  source: "standalone",
+                  stateDir: null,
+                  supervisor: null,
+                },
+              },
+              runtime: {
+                gatewayEndpoint: "https://127.0.0.1:8245",
+                gatewayName: "nemoclaw-8245",
+                workspace: "default",
+              },
+            }),
+          }),
+      });
+      const {
+        getSandbox: _getSandbox,
+        listSandboxes: _listSandboxes,
+        updateSandbox: _updateSandbox,
+        ...deps
+      } = h.deps;
+
+      await expect(stopSandbox("my-sandbox", deps)).resolves.toEqual({ exitCode: 0 });
+
+      expect(
+        JSON.parse(fs.readFileSync(registryFile, "utf8")).sandboxes["my-sandbox"],
+      ).toMatchObject({ gatewayPort: 8245, stopped: true });
+      expect(verifyForwardRelease).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          forwards: [
+            expect.objectContaining({
+              gatewayName: "nemoclaw-8245",
+              port: 19443,
+              sandboxName: "my-sandbox",
+            }),
+          ],
+        }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("gracefully stops in-sandbox channels before stopping through OpenShell (#6026)", async () => {

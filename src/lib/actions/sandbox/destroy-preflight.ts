@@ -24,6 +24,12 @@ import type {
 } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  removeSandboxFromOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -43,6 +49,38 @@ export type SandboxDestroyPreflight = {
   sandboxConfirmedAbsent: boolean;
   sandboxPresence?: DestroySandboxPresence;
 };
+
+export type SandboxDestroyRegistryAuthority = {
+  entry: SandboxEntry | null;
+  getSandbox: typeof registry.getSandbox;
+  listSandboxes: typeof registry.listSandboxes;
+  removeSandbox: typeof registry.removeSandbox;
+};
+
+/** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
+export function resolveSandboxDestroyRegistryAuthority(
+  sandboxName: string,
+): SandboxDestroyRegistryAuthority {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName);
+  if (!hit) {
+    return {
+      entry: registry.getSandbox(sandboxName),
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      removeSandbox: registry.removeSandbox,
+    };
+  }
+  return {
+    entry: hit.entry,
+    getSandbox: getSandboxAcrossGatewayRoots,
+    listSandboxes: () => ({
+      sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
+      defaultSandbox: null,
+    }),
+    removeSandbox: (name) =>
+      name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
+  };
+}
 
 export function resolveSandboxDestroyGatewayName(
   sandboxName: string,
@@ -300,14 +338,16 @@ export async function stopModelRouterForDestroyedSandbox(
 export async function prepareSandboxDestroy(
   sandboxName: string,
   {
+    getSandbox = registry.getSandbox,
     retainedRecoveryGatewayName,
     operationRuntimeSelection,
   }: {
+    getSandbox?: typeof registry.getSandbox;
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): Promise<SandboxDestroyPreflight> {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
     typeof import("../../adapters/openshell/runtime"),

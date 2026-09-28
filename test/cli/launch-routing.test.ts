@@ -57,6 +57,9 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
     path.join(localBin, "openshell"),
     [
       "#!/usr/bin/env bash",
+      'case "$*" in',
+      "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+      "esac",
       `calls_file=${JSON.stringify(callsFile)}`,
       `call_argv_file=${JSON.stringify(callArgvFile)}`,
       `exec_argv_file=${JSON.stringify(execArgvFile)}`,

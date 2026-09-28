@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -17,8 +18,16 @@ import {
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
+  sleepOpenShellLifecycleMs,
   waitForSandboxDeleteAbsence,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
+import {
+  fingerprintOpenShellSandboxId,
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
+  observeCreatedOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
+} from "../../adapters/openshell/sandbox-identity";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
@@ -50,7 +59,6 @@ import {
 } from "../../onboard/temp-files";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { streamSandboxCreate } from "../../sandbox/create-stream";
 import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
@@ -77,7 +85,7 @@ import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
-} from "./sandbox-exec-output";
+} from "../../adapters/sandbox/sandbox-exec-output";
 import {
   probeGatewayRunning,
   selectSandboxGatewayIfRegistered,
@@ -116,7 +124,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
 export type SnapshotRequest =
   | { kind: "help" }
   | { kind: "create"; name?: string }
@@ -150,7 +157,20 @@ function snapshotExit(exitCode = 1): never {
   throw new SnapshotCommandError([], exitCode);
 }
 
-function failUnregisteredSnapshotClone(sandboxName: string, gatewayName: string): never {
+function failUnregisteredSnapshotClone(
+  sandboxName: string,
+  gatewayName: string,
+  ambiguousCreateAttemptNonce?: string,
+): never {
+  if (ambiguousCreateAttemptNonce) {
+    throw new SnapshotCommandError([
+      `  OpenShell did not confirm whether sandbox '${sandboxName}' was created, and NemoClaw could not reconcile one exact Ready identity.`,
+      `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${ambiguousCreateAttemptNonce}`,
+      "  Snapshot state was not restored. The exact route and create-attempt record remain protected.",
+      "  Do not submit another create attempt until OpenShell confirms this labelled sandbox is absent or identifies the retained sandbox for cleanup.",
+      `  Inspect: openshell sandbox list -g ${shellQuote(gatewayName)} --selector ${shellQuote(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${ambiguousCreateAttemptNonce}`)} --output json`,
+    ]);
+  }
   throw new SnapshotCommandError([
     `  Sandbox '${sandboxName}' was created, but NemoClaw could not verify the same valid Ready identity from its owning gateway before registration.`,
     "  Snapshot state was not restored and the clone was not registered.",
@@ -370,28 +390,75 @@ async function autoCreateSandboxFromSource(
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
   dstHermesApiPort: number | null,
-): Promise<void> {
+): Promise<SandboxEntry> {
+  const openshellBin = getOpenshellBinary();
+  const createAttemptNonce = randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString(
+    "hex",
+  );
+  let createdSandboxId: string | null = null;
+  const captureCreatedIdentity = (args: string[], options?: Record<string, unknown>): string => {
+    const result = captureOpenshell(args, {
+      ...options,
+      openshellBinary: openshellBin,
+      ignoreError: true,
+    });
+    if (result.status !== 0) {
+      throw new Error(`Command failed with status ${String(result.status ?? 1)}`);
+    }
+    return result.output || "";
+  };
+  const bindCreatedSandboxId = (sandboxId: string): string => {
+    if (createdSandboxId && createdSandboxId !== sandboxId) {
+      throw new Error("OpenShell create-attempt identity changed before clone registration.");
+    }
+    createdSandboxId = sandboxId;
+    return sandboxId;
+  };
+  const settleCreatedSandboxId = (): string =>
+    bindCreatedSandboxId(
+      settleCreatedOpenShellSandboxId({
+        sandboxName: dstName,
+        gatewayName: sourceGatewayName,
+        createAttemptNonce,
+        runCaptureOpenshell: captureCreatedIdentity,
+        priorSandboxId: createdSandboxId,
+        sleep: sleepOpenShellLifecycleMs,
+      }),
+    );
+  const observeCreatedClone = () => {
+    const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+      ignoreError: true,
+      openshellBinary: openshellBin,
+    });
+    const observation = observeCreatedOpenShellSandboxId(
+      {
+        sandboxName: dstName,
+        gatewayName: sourceGatewayName,
+        createAttemptNonce,
+        runCaptureOpenshell: captureCreatedIdentity,
+      },
+      OPENSHELL_PROBE_TIMEOUT_MS,
+    );
+    if (observation.state !== "matched") {
+      return {
+        state: "not_ready" as const,
+        liveIdentityFingerprint: null,
+      };
+    }
+    const sandboxId = bindCreatedSandboxId(observation.sandboxId);
+    return {
+      state:
+        list.status === 0 && isSandboxReady(list.output || "", dstName)
+          ? ("ready" as const)
+          : ("not_ready" as const),
+      liveIdentityFingerprint: fingerprintOpenShellSandboxId(sandboxId),
+    };
+  };
   const cloneLifecycle = createSnapshotCloneLifecycle(
     dstName,
     sourceGatewayName,
-    (sandboxName, gatewayName) => {
-      const get = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
-        ignoreError: true,
-      });
-      const list = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
-        ignoreError: true,
-      });
-      return {
-        state:
-          get.status === 0 && list.status === 0 && isSandboxReady(list.output || "", sandboxName)
-            ? ("ready" as const)
-            : ("not_ready" as const),
-        liveIdentityFingerprint:
-          get.status === 0 ? fingerprintSandboxLiveIdentity(get.output || "") : null,
-      };
-    },
+    observeCreatedClone,
   );
-  const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
   const startupCommand = [
@@ -403,123 +470,159 @@ async function autoCreateSandboxFromSource(
   ];
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
-  let cloneHostLocalReservation: Pick<
-    SandboxEntry,
-    "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance"
-  > | null = null;
-  const releaseCloneHostLocalReservation = (): void => {
-    if (!cloneHostLocalReservation) return;
-    const current = registry.getSandbox(dstName);
-    if (
-      current?.pendingRouteReservation === true &&
-      current.hostLocalInferenceReceipt === cloneHostLocalReservation.hostLocalInferenceReceipt &&
-      isDeepStrictEqual(
-        current.hostLocalInferenceProvenance,
-        cloneHostLocalReservation.hostLocalInferenceProvenance,
-      )
-    ) {
-      registry.removeSandbox(dstName);
-    }
-    cloneHostLocalReservation = null;
-  };
-
-  const command = openshellBin;
-  const commandArgs = [
-    "sandbox",
-    "create",
-    "-g",
-    sourceGatewayName,
-    "--name",
-    dstName,
-    "--from",
-    fromImage,
-    "--policy",
-    createPolicyPath,
-    "--auto-providers",
-    "--",
-    ...startupCommand,
-  ];
-
   const sourceAuthority = srcEntry as SandboxEntry;
-  if (sourceAuthority.hostLocalInferenceProvenance) {
-    if (
-      typeof sourceAuthority.hostLocalInferenceReceipt !== "string" ||
+  if (
+    sourceAuthority.hostLocalInferenceProvenance &&
+    (typeof sourceAuthority.hostLocalInferenceReceipt !== "string" ||
       typeof sourceAuthority.provider !== "string" ||
       typeof sourceAuthority.model !== "string" ||
       !isValidForwardPort(sourceAuthority.gatewayPort) ||
-      typeof sourceAuthority.openshellDriver !== "string"
-    ) {
+      typeof sourceAuthority.openshellDriver !== "string")
+  ) {
+    throw new SnapshotCommandError(
+      "Source host-local inference lifecycle authority is incomplete.",
+    );
+  }
+  const cloneRouteReservation = {
+    provider: sourceAuthority.provider ?? null,
+    model: sourceAuthority.model ?? null,
+    endpointUrl: sourceAuthority.endpointUrl ?? null,
+    endpointSource: sourceAuthority.endpointSource ?? null,
+    credentialEnv: sourceAuthority.credentialEnv ?? null,
+    preferredInferenceApi: sourceAuthority.preferredInferenceApi ?? null,
+    gatewayName: sourceGatewayName,
+    gatewayPort: sourceAuthority.gatewayPort ?? undefined,
+    openshellDriver: sourceAuthority.openshellDriver ?? undefined,
+    reservationSessionId: createAttemptNonce,
+    ...(sourceAuthority.hostLocalInferenceReceipt !== undefined
+      ? { hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt }
+      : {}),
+    ...(sourceAuthority.hostLocalInferenceProvenance
+      ? {
+          hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
+        }
+      : {}),
+  };
+  let cloneRouteReservationSessionId: string | null = null;
+  const reserveCloneRoute = (requireAbsent: boolean): void => {
+    if (cloneRouteReservationSessionId) return;
+    const reserved = requireAbsent
+      ? registry.reserveSandboxInferenceRoute(dstName, cloneRouteReservation, {
+          requireAbsent: true,
+        })
+      : registry.reserveSandboxInferenceRoute(dstName, cloneRouteReservation);
+    if (!reserved) {
       throw new SnapshotCommandError(
-        "Source host-local inference lifecycle authority is incomplete.",
+        `Could not retain clone route authority for '${dstName}' because its registry row changed.`,
       );
     }
-    const reserved = registry.reserveSandboxInferenceRoute(dstName, {
-      provider: sourceAuthority.provider,
-      model: sourceAuthority.model,
-      endpointUrl: sourceAuthority.endpointUrl ?? null,
-      endpointSource: sourceAuthority.endpointSource ?? null,
-      credentialEnv: sourceAuthority.credentialEnv ?? null,
-      preferredInferenceApi: sourceAuthority.preferredInferenceApi ?? null,
-      gatewayName: sourceGatewayName,
-      gatewayPort: sourceAuthority.gatewayPort,
-      openshellDriver: sourceAuthority.openshellDriver,
-      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
-    });
-    if (!reserved) {
+    cloneRouteReservationSessionId = createAttemptNonce;
+  };
+  const releaseCloneRouteReservation = (): void => {
+    if (!cloneRouteReservationSessionId) return;
+    const current = registry.getSandbox(dstName);
+    if (
+      current?.pendingRouteReservation === true &&
+      current.reservationSessionId === cloneRouteReservationSessionId
+    ) {
+      registry.removeSandboxRouteReservationIfCurrent(current);
+    }
+    cloneRouteReservationSessionId = null;
+  };
+
+  if (sourceAuthority.hostLocalInferenceProvenance) {
+    try {
+      reserveCloneRoute(false);
+    } catch {
       throw new SnapshotCommandError(
         "Could not reserve the clone's exact host-local inference authority.",
       );
     }
-    cloneHostLocalReservation = {
-      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
-    };
   }
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
-  let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+  const sandboxLifecycle = createCliOpenShellSandboxLifecycleFromRunner(runOpenshell, {
+    resolveBinary: () => openshellBin,
+  });
+  let readyCheckIdentityError: Error | null = null;
+  const createRequest = Object.freeze({
+    sandboxName: dstName,
+    target: Object.freeze({ kind: "named" as const, gatewayName: sourceGatewayName }),
+    source: Object.freeze({ reference: fromImage }),
+    policyPath: createPolicyPath,
+    autoProviders: true,
+    labels: Object.freeze({ [NEMOCLAW_CREATE_ATTEMPT_LABEL]: createAttemptNonce }),
+    startupCommand: Object.freeze([...startupCommand]),
+    environment: Object.freeze({ ...createEnv }),
+  });
+  let createResult: Awaited<ReturnType<typeof sandboxLifecycle.createSandbox>>;
   try {
-    createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
+    createResult = await sandboxLifecycle.createSandbox(createRequest, {
       // Use a pre-built image, so skip build+push and jump to pod creation.
       initialPhase: "create",
-      // Wait until the sandbox actually reaches Ready state, not just appears in the list.
+      // Wait until this exact nonce-owned sandbox reaches Ready, not just any
+      // same-name sandbox visible in the gateway list.
       readyCheck: () => {
         const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
           ignoreError: true,
+          openshellBinary: openshellBin,
         });
-        if (list.status !== 0) return false;
-        return isSandboxReady(list.output || "", dstName);
+        if (list.status !== 0 || !isSandboxReady(list.output || "", dstName)) return false;
+        const observation = observeCreatedOpenShellSandboxId(
+          {
+            sandboxName: dstName,
+            gatewayName: sourceGatewayName,
+            createAttemptNonce,
+            runCaptureOpenshell: captureCreatedIdentity,
+          },
+          OPENSHELL_PROBE_TIMEOUT_MS,
+        );
+        if (observation.state === "invalid") {
+          readyCheckIdentityError = new Error(
+            `OpenShell create-attempt identity is invalid (${observation.diagnostic}).`,
+          );
+          return true;
+        }
+        if (observation.state === "pending") return false;
+        try {
+          bindCreatedSandboxId(observation.sandboxId);
+        } catch (error) {
+          readyCheckIdentityError =
+            error instanceof Error
+              ? error
+              : new Error("OpenShell create-attempt identity changed.");
+          return true;
+        }
+        return true;
       },
     });
   } catch (error) {
-    releaseCloneHostLocalReservation();
+    releaseCloneRouteReservation();
     throw error;
   }
 
-  if (createResult.status !== 0 && !createResult.forcedReady) {
-    releaseCloneHostLocalReservation();
+  if (createResult.status !== 0 && !createResult.forcedReady && !createResult.ambiguous) {
+    releaseCloneRouteReservation();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
     snapshotExit(1);
   }
 
-  // Double-check Ready after stream exit.
-  const verify = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
-    ignoreError: true,
-  });
-  if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  try {
+    if (readyCheckIdentityError) throw readyCheckIdentityError;
+    settleCreatedSandboxId();
+  } catch {
+    reserveCloneRoute(true);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
   try {
     lifecycleRegistration = cloneLifecycle.capture();
   } catch {
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+    reserveCloneRoute(true);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
@@ -539,12 +642,13 @@ async function autoCreateSandboxFromSource(
   try {
     finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
   } catch {
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+    reserveCloneRoute(true);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   const cloneSourceEntry = srcEntry as SandboxEntry;
+  let pendingCloneRegistration: SandboxEntry;
   try {
-    registry.registerSandbox(
+    pendingCloneRegistration = registry.registerSandbox(
       {
         ...cloneSourceEntry,
         name: dstName,
@@ -575,16 +679,20 @@ async function autoCreateSandboxFromSource(
         ...finalLifecycleRegistration,
       },
       undefined,
-      { pending: true },
+      {
+        pending: true,
+        ...(cloneRouteReservationSessionId ? { reservationSessionId: createAttemptNonce } : {}),
+      },
     );
   } catch {
-    releaseCloneHostLocalReservation();
+    releaseCloneRouteReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  // The pending registry row now owns any host-local inference reservation.
+  // The pending registry row now owns any retained route reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
-  cloneHostLocalReservation = null;
+  cloneRouteReservationSessionId = null;
+  return pendingCloneRegistration;
 }
 
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
@@ -737,19 +845,153 @@ async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Prom
 
 type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
 
+function isSnapshotCloneCreateAttemptNonce(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length === NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH &&
+    /^[0-9a-f]+$/u.test(value)
+  );
+}
+
+function isPendingAmbiguousSnapshotClone(entry: SandboxEntry | null): entry is SandboxEntry & {
+  pendingRouteReservation: true;
+  reservationSessionId: string;
+} {
+  return Boolean(
+    entry &&
+    registry.isRouteOnlySandboxReservation(entry) &&
+    isSnapshotCloneCreateAttemptNonce(entry.reservationSessionId),
+  );
+}
+
+function pendingSnapshotCloneRouteMatchesSource(
+  pending: SandboxEntry,
+  sourceEntry: SandboxEntry,
+  sourceGatewayName: string,
+): boolean {
+  return (
+    pending.gatewayName === sourceGatewayName &&
+    (pending.gatewayPort ?? null) === (sourceEntry.gatewayPort ?? null) &&
+    (pending.openshellDriver ?? null) === (sourceEntry.openshellDriver ?? null) &&
+    pending.hostLocalInferenceReceipt === sourceEntry.hostLocalInferenceReceipt &&
+    isDeepStrictEqual(
+      pending.hostLocalInferenceProvenance,
+      sourceEntry.hostLocalInferenceProvenance,
+    ) &&
+    (pending.provider ?? null) === (sourceEntry.provider ?? null) &&
+    (pending.model ?? null) === (sourceEntry.model ?? null) &&
+    (pending.endpointUrl ?? null) === (sourceEntry.endpointUrl ?? null) &&
+    (pending.endpointSource ?? null) === (sourceEntry.endpointSource ?? null) &&
+    (pending.credentialEnv ?? null) === (sourceEntry.credentialEnv ?? null) &&
+    (pending.preferredInferenceApi ?? null) === (sourceEntry.preferredInferenceApi ?? null)
+  );
+}
+
+function retainedAmbiguousSnapshotCloneError(
+  targetSandbox: string,
+  sourceGatewayName: string,
+  createAttemptNonce: string,
+  detail: string,
+): SnapshotCommandError {
+  const label = `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`;
+  return new SnapshotCommandError([
+    `Cannot release the retained route reservation for '${targetSandbox}': ${detail}.`,
+    `Create-attempt label: ${label}`,
+    "Do not retry the create until OpenShell confirms that both the labelled sandbox and destination name are absent.",
+    `Inspect: openshell sandbox list -g ${shellQuote(sourceGatewayName)} --selector ${shellQuote(label)} --output json`,
+  ]);
+}
+
+function reconcileAmbiguousSnapshotCloneReservation(
+  targetSandbox: string,
+  pending: SandboxEntry & { reservationSessionId: string },
+  sourceEntry: SandboxEntry,
+  sourceGatewayName: string,
+): PendingSnapshotCloneRecovery {
+  const createAttemptNonce = pending.reservationSessionId;
+  if (!pendingSnapshotCloneRouteMatchesSource(pending, sourceEntry, sourceGatewayName)) {
+    throw retainedAmbiguousSnapshotCloneError(
+      targetSandbox,
+      sourceGatewayName,
+      createAttemptNonce,
+      "its inference route no longer matches the snapshot source",
+    );
+  }
+  const observation = observeCreatedOpenShellSandboxId(
+    {
+      sandboxName: targetSandbox,
+      gatewayName: sourceGatewayName,
+      createAttemptNonce,
+      runCaptureOpenshell: (args, options) => {
+        const result = captureOpenshell(args, { ...options, ignoreError: true });
+        if (result.status !== 0) {
+          throw new Error(`Command failed with status ${String(result.status ?? 1)}`);
+        }
+        return result.output || "";
+      },
+    },
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
+  if (observation.state !== "pending" || observation.sandboxId !== null) {
+    const detail =
+      observation.state === "invalid"
+        ? `the create-attempt selector is inconclusive (${observation.diagnostic})`
+        : "OpenShell still reports a sandbox for the create-attempt label";
+    throw retainedAmbiguousSnapshotCloneError(
+      targetSandbox,
+      sourceGatewayName,
+      createAttemptNonce,
+      detail,
+    );
+  }
+  const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+    ignoreError: true,
+  });
+  if (list.status !== 0) {
+    throw retainedAmbiguousSnapshotCloneError(
+      targetSandbox,
+      sourceGatewayName,
+      createAttemptNonce,
+      "the owning gateway could not confirm destination-name absence",
+    );
+  }
+  if (parseLiveSandboxNames(list.output || "").has(targetSandbox)) {
+    throw retainedAmbiguousSnapshotCloneError(
+      targetSandbox,
+      sourceGatewayName,
+      createAttemptNonce,
+      "OpenShell still reports the destination name",
+    );
+  }
+  if (!registry.removeSandboxRouteReservationIfCurrent(pending)) {
+    throw retainedAmbiguousSnapshotCloneError(
+      targetSandbox,
+      sourceGatewayName,
+      createAttemptNonce,
+      "the retained route reservation changed during reconciliation",
+    );
+  }
+  return "removed";
+}
+
 async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
 ): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
-  if (
-    !pending ||
-    pending.pendingRouteReservation !== true ||
-    registry.isRouteOnlySandboxReservation(pending)
-  ) {
+  if (!pending || pending.pendingRouteReservation !== true) {
     return "not-pending";
   }
+  if (isPendingAmbiguousSnapshotClone(pending)) {
+    return reconcileAmbiguousSnapshotCloneReservation(
+      targetSandbox,
+      pending,
+      sourceEntry,
+      sourceGatewayName,
+    );
+  }
+  if (registry.isRouteOnlySandboxReservation(pending)) return "not-pending";
   if (
     pending.gatewayName !== sourceGatewayName ||
     pending.imageTag !== sourceEntry.imageTag ||
@@ -793,7 +1035,12 @@ async function reconcilePendingSnapshotClone(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
   }
-  if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
+  const sessionCanFinalize =
+    pending.reservationSessionId === undefined ||
+    isSnapshotCloneCreateAttemptNonce(pending.reservationSessionId);
+  const finalized =
+    sessionCanFinalize && registry.finalizePendingSandboxRegistrationIfCurrent(pending);
+  if (!finalized) {
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' changed while its registration was being finalized. Retry the restore.`,
     );
@@ -1016,6 +1263,8 @@ async function runSnapshotRestoreUnlocked(
   const hasPendingCreatedClone =
     targetEntry?.pendingRouteReservation === true &&
     !registry.isRouteOnlySandboxReservation(targetEntry);
+  const hasPendingAmbiguousClone = isPendingAmbiguousSnapshotClone(targetEntry);
+  const hasPendingSnapshotClone = hasPendingCreatedClone || hasPendingAmbiguousClone;
 
   // #3756 P1 preflight: resolve the snapshot selector AND the source pod
   // image before any destructive action. A bad selector, missing snapshot,
@@ -1196,7 +1445,7 @@ async function runSnapshotRestoreUnlocked(
     // precise "destination exists" error instead of a misleading
     // "source not found" or "cannot resolve image" message when both are
     // also broken.
-    if (targetExists && !request.force && !hasPendingCreatedClone) {
+    if (targetExists && !request.force && !hasPendingSnapshotClone) {
       console.error(`  Destination sandbox '${targetSandbox}' already exists.`);
       console.error(
         "  Restoring into an existing sandbox is unsupported because it would silently mutate its filesystem.",
@@ -1228,7 +1477,7 @@ async function runSnapshotRestoreUnlocked(
       }
       snapshotExit(1);
     }
-    if (targetExists && !hasPendingCreatedClone) {
+    if (targetExists && !hasPendingSnapshotClone) {
       // --force confirmed above. Prompt for the destination name (unless
       // --yes or NEMOCLAW_NON_INTERACTIVE=1), then delete and recreate.
       const nonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -1326,6 +1575,7 @@ async function runSnapshotRestoreUnlocked(
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
+      let pendingCloneRegistration: SandboxEntry | null = null;
       try {
         const refreshedClonePolicy = await prepareSnapshotClonePolicy(
           lockedSourceEntry,
@@ -1349,7 +1599,7 @@ async function runSnapshotRestoreUnlocked(
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
         }
-        await autoCreateSandboxFromSource(
+        pendingCloneRegistration = await autoCreateSandboxFromSource(
           sandboxName,
           targetSandbox,
           lockedSourceEntry,
@@ -1378,9 +1628,15 @@ async function runSnapshotRestoreUnlocked(
           ]);
         }
       }
-      if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
-        registry.removeSandbox(targetSandbox);
-        failUnregisteredSnapshotClone(targetSandbox, lockedGatewayName);
+      const finalized =
+        pendingCloneRegistration !== null &&
+        registry.finalizePendingSandboxRegistrationIfCurrent(pendingCloneRegistration);
+      if (!finalized) {
+        throw new SnapshotCommandError([
+          `Pending clone '${targetSandbox}' changed while NemoClaw finalized its registration.`,
+          "Snapshot state was not restored. The current registry row was preserved.",
+          `Inspect '${targetSandbox}' before retrying. Retry without --force only when it remains the matching pending clone.`,
+        ]);
       }
       console.log(`  ${G}\u2713${R} Sandbox '${targetSandbox}' created`);
     };

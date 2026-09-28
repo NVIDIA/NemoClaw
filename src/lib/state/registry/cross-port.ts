@@ -10,13 +10,18 @@ import {
   registryEntryGatewayPort,
   resolveHome,
   type GatewayRegistryEntry,
+  withRegistryLockAt,
 } from "../gateway-registry";
+import { writeConfigFile } from "../config-io";
+import { removeSandboxFromRegistry } from "../registry-reversible-removal";
 import type { SandboxEntry } from "./types";
 
 export interface CrossPortSandboxHit {
   entry: SandboxEntry;
   /** Recorded or directory-derived owning gateway port; null when unrecorded on the base root. */
   gatewayPort: number | null;
+  /** Gateway port whose state root contains this registry file. */
+  registryGatewayPort?: number;
   registryFile: string;
 }
 
@@ -62,6 +67,7 @@ function listSandboxHitsAcrossGatewayRoots(home: string): CrossPortSandboxHit[] 
           state.gatewayPort === DEFAULT_GATEWAY_PORT && !hasRecordedGatewayIdentity
             ? null
             : gatewayPort,
+        registryGatewayPort: state.gatewayPort,
         registryFile,
       });
     }
@@ -92,16 +98,108 @@ export function findSandboxAcrossGatewayRoots(
   return matches[0];
 }
 
+/** Read one unambiguous sandbox from the registry root that owns it. */
+export function getSandboxAcrossGatewayRoots(
+  sandboxName: string,
+  home: string = resolveHome(),
+): SandboxEntry | null {
+  return findSandboxAcrossGatewayRoots(sandboxName, home)?.entry ?? null;
+}
+
+/** Persist intentional-stop state in the registry root that owns the sandbox. */
+export function recordSandboxStopIntentInOwningGatewayRegistry(
+  hit: CrossPortSandboxHit,
+  stopped: boolean,
+  home: string = resolveHome(),
+): boolean {
+  try {
+    const sandboxName = hit.entry.name;
+    return withRegistryLockAt(hit.registryFile, () => {
+      const registry = readGatewayRegistryFile(home, hit.registryFile);
+      const current = registry?.sandboxes[sandboxName];
+      if (
+        !registry ||
+        !current ||
+        current.pendingRouteReservation === true ||
+        current.pendingCreateIdentity !== undefined
+      ) {
+        return false;
+      }
+      writeConfigFile(hit.registryFile, {
+        ...registry,
+        sandboxes: {
+          ...registry.sandboxes,
+          [sandboxName]: { ...current, stopped },
+        },
+      });
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Persist intentional-stop state after resolving one unambiguous owning registry. */
+export function recordSandboxStopIntentAcrossGatewayRoots(
+  sandboxName: string,
+  stopped: boolean,
+  home: string = resolveHome(),
+): boolean {
+  try {
+    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+    return hit ? recordSandboxStopIntentInOwningGatewayRegistry(hit, stopped, home) : false;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove one sandbox from its owning registry while preserving default-pointer revision rules. */
+export function removeSandboxFromOwningGatewayRegistry(
+  hit: CrossPortSandboxHit,
+  home: string = resolveHome(),
+): boolean {
+  const sandboxName = hit.entry.name;
+  return withRegistryLockAt(hit.registryFile, () => {
+    const registry = readGatewayRegistryFile(home, hit.registryFile);
+    if (!registry) return false;
+    const result = removeSandboxFromRegistry(registry, sandboxName);
+    if (!result.receipt) return false;
+    writeConfigFile(hit.registryFile, result.registry);
+    return true;
+  });
+}
+
+/** Remove one sandbox after resolving one unambiguous owning registry. */
+export function removeSandboxAcrossGatewayRoots(
+  sandboxName: string,
+  home: string = resolveHome(),
+): boolean {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+  return hit ? removeSandboxFromOwningGatewayRegistry(hit, home) : false;
+}
+
+function listEntriesAcrossGatewayRoots(published: boolean, home: string): SandboxEntry[] {
+  return listSandboxHitsAcrossGatewayRoots(home)
+    .map(({ entry }) => entry)
+    .filter((entry) => (entry.pendingRouteReservation === true) === !published);
+}
+
 function listNamesAcrossGatewayRoots(published: boolean, home: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const { entry } of listSandboxHitsAcrossGatewayRoots(home)) {
-    if ((entry.pendingRouteReservation === true) !== !published) continue;
+  for (const entry of listEntriesAcrossGatewayRoots(published, home)) {
     if (seen.has(entry.name)) continue;
     seen.add(entry.name);
     names.push(entry.name);
   }
   return names;
+}
+
+/** Published sandbox entries across every registry root, base root first, then ports ascending. */
+export function listPublishedSandboxesAcrossGatewayRoots(
+  home: string = resolveHome(),
+): SandboxEntry[] {
+  return listEntriesAcrossGatewayRoots(true, home);
 }
 
 /** Published sandbox names across every registry root, base root first, then ports ascending. */

@@ -74,6 +74,7 @@ export interface RebuildBackupPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -156,8 +157,10 @@ export async function runRebuildBackupPhase(
           input.runtimeSelection,
         );
   let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  input.capturedAgentState?.assertCurrent();
   if (
     !preparedRecoveryManifest &&
+    !input.capturedAgentState &&
     !input.staleRecovery &&
     (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
@@ -180,6 +183,7 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
+        ...(input.capturedAgentState ? ([input.capturedAgentState] as const) : ([] as const)),
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

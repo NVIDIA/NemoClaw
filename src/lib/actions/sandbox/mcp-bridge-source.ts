@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import type { CapturedAgentState } from "../../state/state-directory-restore";
 import { isDeepStrictEqual } from "node:util";
 import { readLegacyMcpRegistryProjection } from "../../state/registry/legacy-mcp";
 
@@ -21,7 +24,7 @@ import {
   inspectMcpProvider,
   type McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
@@ -240,12 +243,13 @@ function buildHermesSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
-function buildOpenClawSourceCommand(configDir: string): string {
-  const nativePath = path.posix.join(configDir, "openclaw.json");
-  const legacyPath = path.posix.join(configDir, "workspace", "config", "mcporter.json");
-  const payload = { nativePath, legacyPath };
+function buildJsonMcpSourceScript(configDir: string, deepAgents = false): string {
+  const nativePath = path.posix.join(configDir, deepAgents ? ".mcp.json" : "openclaw.json");
+  const legacyPath = deepAgents
+    ? path.posix.join(configDir, ".nemoclaw-mcp.json")
+    : path.posix.join(configDir, "workspace", "config", "mcporter.json");
+  const payload = { nativePath, legacyPath, deepAgents };
   return [
-    "node - <<'NODE'",
     'const fs = require("node:fs");',
     `const paths = JSON.parse(${sourcePayload(payload)});`,
     "const MAX_BYTES = 262144;",
@@ -254,13 +258,17 @@ function buildOpenClawSourceCommand(configDir: string): string {
     "  let fd; try { fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }",
     "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || (before.uid !== 0 && before.uid !== process.getuid()) || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
     "}",
-    "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return /^[A-Z_][A-Z0-9_]*$/.test(suffix) ? suffix : null; }",
+    "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (paths.deepAgents) suffix = suffix.replace(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_/, ''); else if (/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return (paths.deepAgents ? /^[A-Za-z_][A-Za-z0-9_]{0,127}$/ : /^[A-Z_][A-Z0-9_]*$/).test(suffix) ? suffix : null; }",
+    "function deepServers(data) { const servers = data && typeof data === 'object' && !Array.isArray(data) && Object.hasOwn(data, 'mcpServers') ? data.mcpServers : {}; if (!servers || typeof servers !== 'object' || Array.isArray(servers)) throw new Error('invalid Deep Agents MCP server map'); return servers; }",
     "const records = [];",
-    "const native = read(paths.nativePath); const nativeServers = native && native.mcp && native.mcp.servers; if (nativeServers && typeof nativeServers === 'object' && !Array.isArray(nativeServers)) for (const [server, value] of Object.entries(nativeServers)) if (value && typeof value === 'object' && typeof value.url === 'string') records.push({ server, url: value.url, env: envName(value.headers), source: 'native' });",
-    "const legacy = read(paths.legacyPath); const legacyServers = legacy && legacy.mcpServers; if (legacyServers && typeof legacyServers === 'object' && !Array.isArray(legacyServers)) for (const [server, value] of Object.entries(legacyServers)) if (value && typeof value === 'object' && typeof value.baseUrl === 'string') records.push({ server, url: value.baseUrl, env: envName(value.headers), source: 'legacy' });",
+    "const native = read(paths.nativePath); const nativeServers = paths.deepAgents ? deepServers(native) : native && native.mcp && native.mcp.servers; if (nativeServers && typeof nativeServers === 'object' && !Array.isArray(nativeServers)) for (const [server, value] of Object.entries(nativeServers)) if (value && typeof value === 'object' && typeof value.url === 'string') records.push({ server, url: value.url, env: envName(value.headers), source: 'native' });",
+    "const legacy = read(paths.legacyPath); const legacyServers = paths.deepAgents ? deepServers(legacy) : legacy && legacy.mcpServers; if (legacyServers && typeof legacyServers === 'object' && !Array.isArray(legacyServers)) for (const [server, value] of Object.entries(legacyServers)) if (value && typeof value === 'object' && typeof value[paths.deepAgents ? 'url' : 'baseUrl'] === 'string') records.push({ server, url: value[paths.deepAgents ? 'url' : 'baseUrl'], env: envName(value.headers), source: 'legacy' });",
     "process.stdout.write(JSON.stringify(records));",
-    "NODE",
   ].join("\n");
+}
+
+function buildOpenClawSourceCommand(configDir: string): string {
+  return ["node - <<'NODE'", buildJsonMcpSourceScript(configDir), "NODE"].join("\n");
 }
 
 function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
@@ -414,30 +422,77 @@ async function inspectAgentMcpSourcesForAgent(
 ): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
-  const result = await executeSandboxCommand(
-    sandbox.name,
-    sourceCommand(adapter, agent.configPaths.dir),
-    {
-      runtimeSelection,
-    },
-  );
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>> | null;
+  try {
+    result = await executeSandboxExecCommand(
+      sandbox.name,
+      sourceCommand(adapter, agent.configPaths.dir),
+      undefined,
+      { runtimeSelection },
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (!result) throw new McpBridgeError(`Sandbox '${sandbox.name}' is unreachable.`);
   if (result.status !== 0) {
     const detail = redactBridgeFailureForDisplay(result.stderr.trim() || "source read failed");
     throw new McpBridgeError(`Could not inspect ${agent.displayName} MCP configuration: ${detail}`);
   }
-  const native: Record<string, McpSourceEntry> = {};
-  const legacy: Record<string, McpSourceEntry> = {};
   const records =
     adapter === "hermes-config"
       ? parseHermesSourceRecords(result.stdout)
       : parseSourceRecords(result.stdout);
+  return sourceSnapshotFromRecords(records, agent.name, adapter);
+}
+
+function sourceSnapshotFromRecords(
+  records: readonly SourceRecord[],
+  agentName: string,
+  adapter: AgentMcpAdapter,
+): AgentMcpSourceSnapshot {
+  const native: Record<string, McpSourceEntry> = {};
+  const legacy: Record<string, McpSourceEntry> = {};
   for (const record of records) {
-    const entry = entryFromRecord(record, agent.name, adapter);
+    const entry = entryFromRecord(record, agentName, adapter);
     if (!entry) continue;
     (record.source === "native" ? native : legacy)[entry.server] = entry;
   }
   return { native, legacy };
+}
+
+/** Use the same bounded reader on provider-captured regular files without executing sandbox code. */
+export function inspectCapturedAgentMcpSources(source: CapturedAgentState): AgentMcpSourceSnapshot {
+  source.assertCurrent();
+  let output: string;
+  try {
+    output = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        buildJsonMcpSourceScript(
+          source.directory,
+          source.agentName === "langchain-deepagents-code",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {},
+        cwd: source.directory,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10_000,
+        maxBuffer: SOURCE_OUTPUT_MAX_BYTES,
+      },
+    );
+  } catch {
+    throw new McpBridgeError("Could not inspect the captured agent MCP configuration.");
+  }
+  source.assertCurrent();
+  return sourceSnapshotFromRecords(
+    parseSourceRecords(output),
+    source.agentName,
+    source.agentName === "openclaw" ? "openclaw-config" : "deepagents-config",
+  );
 }
 
 function policyEntryForServer(
@@ -701,7 +756,15 @@ export async function removeLegacyAgentMcpEntry(
   } else {
     return;
   }
-  const result = await executeSandboxCommand(sandbox.name, command, { runtimeSelection });
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>> | null;
+  try {
+    result = await executeSandboxExecCommand(sandbox.name, command, undefined, {
+      runtimeSelection,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (!result || result.status !== 0) {
     throw new McpBridgeError(
       `Native MCP migration succeeded for '${entry.server}', but legacy source cleanup failed. Rerun migration after inspecting the legacy agent configuration.`,

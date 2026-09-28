@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { E2eRuntimeProviderId } from "../fixtures/runtime-provider.ts";
 import { asExportedConfig } from "../../support/config-export-document.ts";
+import { inspectConfigExportArtifactSafety } from "../fixtures/phases/config-export-validation.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -182,17 +185,40 @@ export async function exportBraveConfig(
   );
 }
 
+/** The live test keeps its Docker assertions; Podman records its verified refusal. */
+export async function completeBraveConfigExport(
+  runtimeProvider: E2eRuntimeProviderId,
+  artifacts: ArtifactSink,
+  verifyDockerExport: () => Promise<void>,
+): Promise<void> {
+  if (runtimeProvider === "podman") {
+    await artifacts.writeJson("brave-config-export-evidence.json", {
+      sandboxName: SANDBOX_NAME,
+      runtimeProvider: "podman",
+      classification: "expected-refusal",
+      refusalCategory: "unsupported",
+      outputPublished: false,
+    });
+  } else {
+    await verifyDockerExport();
+  }
+}
+
 /** Validate private export output before retaining only public spec evidence. */
 export function assertBraveExport(raw: string, credentialValues: readonly string[]) {
-  for (const value of credentialValues) {
-    expect(raw.includes(value), "Export must omit credential values").toBe(false);
-  }
-  const document = asExportedConfig(YAML.parse(raw));
+  const decoded = YAML.parse(raw);
+  const safety = inspectConfigExportArtifactSafety(raw, credentialValues, decoded);
+  expect(
+    safety.knownSecretsAbsent && safety.internalTransportsAbsent,
+    "Export must omit credential values and internal transports",
+  ).toBe(true);
+  const document = asExportedConfig(decoded);
   const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
   expect(webSearch?.provider).toBe("brave");
   expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
   const sandbox = document.spec.sandboxes[0]!;
-  expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
+  const primary = sandbox.agent;
+  expect(primary?.integrationRefs).toEqual(["brave-search"]);
   return document.spec;
 }
 

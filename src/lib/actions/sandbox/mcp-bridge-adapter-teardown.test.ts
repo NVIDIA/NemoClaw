@@ -85,6 +85,7 @@ vi.mock("./mcp-bridge-validation", () => ({
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForStoppedSandboxRebuild,
   prepareMcpBridgesForRebuild,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
@@ -156,6 +157,44 @@ describe("MCP adapter teardown rollback", () => {
       expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
       expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
       expect(mocks.detachProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["openclaw", "openclaw-config"],
+    ["langchain-deepagents-code", "deepagents-config"],
+  ] as const)(
+    "preserves captured %s MCP intent without executing in or detaching the stopped source (#11165)",
+    async (agentName, adapter) => {
+      mocks.getSandboxOrThrow.mockReturnValue({ name: "alpha", agent: agentName });
+      const source = {
+        sandboxName: "alpha",
+        agentName,
+        directory: "/private/captured",
+        assertCurrent: vi.fn(),
+      };
+      const nativeEntry = { ...entry, agent: agentName, adapter };
+      const result = await prepareMcpBridgesForStoppedSandboxRebuild(
+        "alpha",
+        [nativeEntry],
+        source,
+        runtimeSelection,
+      );
+      expect(result.entries).toEqual([nativeEntry]);
+      expect(result.detachedProviderEntries).toEqual([]);
+      expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalled();
+      expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(source.assertCurrent).toHaveBeenCalledTimes(2);
+      await expect(result.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+      mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
+        "version: 1\nnetwork_policies:\n  changed: {}\n",
+      );
+      await expect(result.revalidateBeforeDelete?.()).rejects.toThrow("policy changed");
+      await expect(
+        prepareMcpBridgesForStoppedSandboxRebuild("beta", [nativeEntry], source, runtimeSelection),
+      ).rejects.toThrow("does not match");
     },
   );
 

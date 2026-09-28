@@ -469,27 +469,37 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(harness.calls.some((call) => call.startsWith("remote:"))).toBe(false);
   });
 
-  it("falls back only before mutation and fails closed for explicit connectivity failure", () => {
-    const automatic = new PreparationHarness();
-    trustFirstRail(automatic);
-    automatic.localConnectivity = false;
-    expect(prepareDualStationPair(preparationOptions(), automatic.deps)).toMatchObject({
-      kind: "single-station",
-      reason: expect.stringMatching(/jumbo-frame/),
-    });
-    expect(automatic.statePhases).toEqual([]);
+  it.each([false, true])(
+    "falls back before mutation and retains explicit-peer refusal with legacy migration=%s",
+    (migrateLegacySingleStationHead) => {
+      const automatic = new PreparationHarness();
+      trustFirstRail(automatic);
+      automatic.localConnectivity = false;
+      expect(
+        prepareDualStationPair(
+          { ...preparationOptions(), migrateLegacySingleStationHead },
+          automatic.deps,
+        ),
+      ).toMatchObject({
+        kind: "single-station",
+        reason: expect.stringMatching(/jumbo-frame/),
+      });
+      expect(automatic.statePhases).toEqual([]);
+      expect(automatic.calls.filter((call) => call.startsWith("remote:"))).toEqual([]);
+      expect(automatic.calls).not.toContain("local:--bind-controller");
 
-    const explicitTarget = "ubuntu@station-b";
-    const explicit = new PreparationHarness();
-    explicit.trusted.set(explicitTarget, sshBinding(explicitTarget));
-    explicit.peerConnectivity = false;
-    expect(() =>
-      prepareDualStationPair(
-        { ...preparationOptions(), explicitPeer: explicitTarget },
-        explicit.deps,
-      ),
-    ).toThrow(/jumbo-frame/);
-  });
+      const explicitTarget = "ubuntu@station-b";
+      const explicit = new PreparationHarness();
+      explicit.trusted.set(explicitTarget, sshBinding(explicitTarget));
+      explicit.peerConnectivity = false;
+      expect(() =>
+        prepareDualStationPair(
+          { ...preparationOptions(), explicitPeer: explicitTarget, migrateLegacySingleStationHead },
+          explicit.deps,
+        ),
+      ).toThrow(/jumbo-frame/);
+    },
+  );
 
   it("leaves an automatically discovered peer with active vLLM unchanged", () => {
     const harness = new PreparationHarness();

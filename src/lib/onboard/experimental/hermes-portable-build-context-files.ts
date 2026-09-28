@@ -83,6 +83,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   },
   { path: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/policies/presets/brave.yaml", mode: "100644" },
+  { path: "nemoclaw-blueprint/policies/presets/brew-balanced.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/policies/presets/brew.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/policies/presets/claude-code.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/policies/presets/github.yaml", mode: "100644" },

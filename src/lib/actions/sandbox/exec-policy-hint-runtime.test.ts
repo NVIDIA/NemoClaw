@@ -179,7 +179,8 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       "nemoclaw-8091",
     );
 
-    expect(hint).toContain("nemoclaw oc-fresh exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw oc-fresh connect");
+    expect(hint).toContain("openclaw devices list --json");
     expect(stderr).toEqual([hint]);
   });
 

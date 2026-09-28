@@ -1092,23 +1092,25 @@ describe("readiness-gated runtime preflight", () => {
 
   const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
   const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
-
-  async function runRealProviderPreflight(gpuName: string, n1xWslProduct: boolean | undefined) {
-    // The proof phase lets `detectGpu()` detect WSL itself, and the N1x
-    // classification requires WSL.
+  async function runRealProviderPreflight(
+    gpuName: string,
+    n1xWslProduct: boolean | undefined,
+    provedGpuName = gpuName,
+  ) {
+    // The proof phase lets `detectGpu()` detect WSL itself; N1x classification requires WSL.
     vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const captureHostCommand = vi
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, ${provedGpuName}, 63936, 60000\n`,
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
     const runCaptureImpl = vi.fn((command: readonly string[]) =>
       command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
-        ? `${gpuName}, 999999, 999999\n`
+        ? `${gpuName}, 63936, 60000\n`
         : "",
     );
 
@@ -1134,7 +1136,7 @@ describe("readiness-gated runtime preflight", () => {
         },
       ),
     );
-    return { gpu: result.gpu, captureHostCommand };
+    return { gpu: result.gpu, readinessReport: result.readinessReport, captureHostCommand };
   }
 
   it.each([
@@ -1178,37 +1180,25 @@ describe("readiness-gated runtime preflight", () => {
       platform: "linux",
       containerGpuProof: { providerId: "docker", passed: true },
       n1xWslProduct: false,
-      totalMemoryMB: 999_999,
+      totalMemoryMB: 63_936,
       computeConstrained: true,
     });
     expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
   });
 
-  it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {
-    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
-      deps?.proveArm64ContainerGpu !== null &&
-        deps?.onContainerGpuProof?.({ providerId: "docker", passed: false });
-      return null;
-    });
-
-    const result = await runReadinessGatedRuntimePreflight(
-      {},
-      {
-        nonInteractive: true,
-        collectGatewayReadiness: async () => collectedGatewayReadiness(),
-        assessHost: wslDockerDesktopHost,
-        detectGpu,
-        warnIfHostProxyMissesLoopback: vi.fn(),
-        assertRuntimeProviderHealthy: vi.fn(),
-        validateSandboxGpuPreflight: vi.fn(),
-      },
+  it("preserves a rejected bounded WSL GPU proof as an absent readiness capability (#7411, #12073)", async () => {
+    const { gpu, readinessReport } = await runRealProviderPreflight(
+      ACCEPTED_N1X_GPU_NAME,
+      false,
+      "NVIDIA GB300",
     );
 
-    expect(result.readinessReport.capabilities).toContainEqual({
+    expect(gpu).toBeNull();
+    expect(readinessReport.capabilities).toContainEqual({
       id: "host.platform.wsl_gpu_passthrough",
       state: "absent",
     });
-    expect(result.readinessReport.findings).toContainEqual(
+    expect(readinessReport.findings).toContainEqual(
       expect.objectContaining({ id: "host.platform.wsl_gpu_passthrough_unavailable" }),
     );
   });

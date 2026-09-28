@@ -76,17 +76,16 @@ The cleanup targets `/sandbox/.openclaw/<channel>/`.
 The cleanup targets `/sandbox/.hermes/platforms/<channel>/`.
 </AgentOnly>
 
-NemoClaw runs the cleanup through `openshell sandbox exec` first.
-If OpenShell is unavailable or its outcome is inconclusive, NemoClaw retries the same cleanup through the sandbox's registered local runtime provider unless OpenShell reports cancellation.
-NemoClaw permits this retry only because removing the declared paths is idempotent and the success sentinel verifies completion.
-A runtime validation or identity refusal stops removal instead of falling through to SSH.
-If the sentinel remains absent after any permitted local retry, NemoClaw tries SSH.
+NemoClaw runs cleanup in running sandboxes through `openshell sandbox exec`.
+A failed, cancelled, or inconclusive native command does not retry through the local runtime provider or SSH.
+Cleanup succeeds only when the command exits successfully and returns its completion sentinel.
 
 <AgentOnly variant="openclaw">
-For OpenClaw WeChat only, if the sentinel remains absent after those attempts, NemoClaw asks the registered runtime provider to run its distinct stopped-state cleanup.
+For OpenClaw WeChat only, NemoClaw checks the registered runtime provider for its distinct stopped-state cleanup before attempting native command execution.
 The provider confirms that the runtime resource belongs to the registered sandbox, is stopped, and has one writable state resource that contains the declared paths.
 The helper removes only the WeChat state paths declared by the channel manifest.
-Only when WeChat appears in neither the messaging plan nor the current OpenShell policy does NemoClaw treat state cleanup as complete without inspecting the state resource if the registry entry is missing, the provider does not support stopped-state cleanup, or no eligible stopped runtime resource exists.
+If the registry entry is missing, the provider does not support stopped-state cleanup, or no eligible stopped runtime resource exists, NemoClaw falls through to native cleanup.
+Removal proceeds only when that command exits successfully and returns its completion sentinel.
 </AgentOnly>
 
 If the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.

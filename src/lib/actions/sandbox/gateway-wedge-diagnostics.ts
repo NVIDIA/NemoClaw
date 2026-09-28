@@ -22,7 +22,10 @@ import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-c
 import type { OpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs";
 import { shellQuote } from "../../runner";
 import { redactFull } from "../../security/redact";
-import type { SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+} from "../../adapters/sandbox/command-transport";
 
 export type SandboxExec = (
   sandboxName: string,
@@ -108,7 +111,7 @@ export async function collectGatewayWedgeDiagnostics(
  */
 export async function printGatewayWedgeDiagnostics(
   sandboxName: string,
-  exec: SandboxExec,
+  exec: SandboxExec = executeSandboxExecCommand,
 ): Promise<boolean> {
   const wedgeLines = await collectGatewayWedgeDiagnostics(sandboxName, exec);
   if (wedgeLines.length === 0) {

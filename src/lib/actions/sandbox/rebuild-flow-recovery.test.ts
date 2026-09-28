@@ -11,16 +11,152 @@ import {
   installRebuildFlowTestHooks,
   policies,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { mcpBridgeSource } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  mcpBridgeSource,
+  openClawLifecycle,
+  snapshotBackup,
+  pairingSettlement,
+  mcpBridge,
+} from "../../../../test/helpers/rebuild-flow-harness";
+import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "./rebuild-flow-test-fixtures";
+import {
+  configureDcodeSession,
+  makeDcodeSandboxEntry,
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 
 describe("rebuildSandbox flow: recovery", () => {
-  installRebuildFlowTestHooks();
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it("retains prepared recovery when baseline write pairing is still pending", async () => {
+    const manifest = makePreparedRecoveryManifest();
+    const harness = createRebuildFlowHarness();
+    vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+      kind: "incomplete",
+      reason: "scope-upgrade-not-approved",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest,
+      }),
+    ).rejects.toThrow("OpenClaw pairing remained incomplete after prepared recovery.");
+
+    expect(fs.existsSync(path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("rebuild completed");
+  });
+
+  function stoppedRecoveryHarness(
+    agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
+  ) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"));
+    fs.writeFileSync(
+      path.join(directory, agentName === "openclaw" ? "openclaw.json" : ".mcp.json"),
+      "{}",
+    );
+    const captured = {
+      sandboxName: "alpha",
+      agentName,
+      directory,
+      cleanupDirectory: directory,
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(() => fs.rmSync(directory, { recursive: true, force: true })),
+    };
+    const harness = createRebuildFlowHarness({
+      ...(agentName === "langchain-deepagents-code"
+        ? {
+            agentName,
+            sandboxEntry: makeDcodeSandboxEntry(),
+            dcodeRouteResults: [{ ok: false, detail: "the stopped source cannot execute a probe" }],
+          }
+        : {}),
+      sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
+    });
+    ({
+      openclaw: () => undefined,
+      "langchain-deepagents-code": () => configureDcodeSession(harness),
+    })[agentName]();
+    vi.spyOn(snapshotBackup, "prepareStoppedAgentState").mockResolvedValue(captured);
+    return { captured, harness };
+  }
+
+  it.each(["openclaw", "langchain-deepagents-code"] as const)(
+    "rebuilds terminal %s from captured state without executing in the source (#11165)",
+    async (agentName) => {
+      const { captured, harness } = stoppedRecoveryHarness(agentName);
+      try {
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).resolves.toBeUndefined();
+        expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({ capturedAgentState: captured }),
+        );
+        expect(harness.onboardSpy).toHaveBeenCalled();
+        expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+        expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+        expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+        expect(captured.dispose).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(captured.directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("preserves a changed stopped source instead of deleting it", async () => {
+    const { captured, harness } = stoppedRecoveryHarness();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    captured.dispose.mockImplementation(() => {
+      throw new Error("cleanup refused");
+    });
+    captured.assertCurrent.mockImplementation(() => {
+      throw new Error("stopped source changed");
+    });
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("stopped source changed");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(captured.dispose).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(JSON.stringify(captured.cleanupDirectory)),
+      );
+    } finally {
+      fs.rmSync(captured.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the Deep Agents source when its identity changes after MCP preparation (#11165)", async () => {
+    const { captured, harness } = stoppedRecoveryHarness("langchain-deepagents-code");
+    const prepare = mcpBridge.prepareMcpBridgesForStoppedSandboxRebuild;
+    vi.spyOn(mcpBridge, "prepareMcpBridgesForStoppedSandboxRebuild").mockImplementation(
+      async (...args) => {
+        const result = await prepare(...args);
+        captured.assertCurrent.mockImplementation(() => {
+          throw new Error("stopped source resumed");
+        });
+        return result;
+      },
+    );
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("DCode replacement validation failed before sandbox deletion");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.directory, { recursive: true, force: true });
+    }
+  });
 
   function makePreparedRecoveryPolicy(policy: string) {
     const manifest = makePreparedRecoveryManifest();
@@ -806,7 +942,7 @@ describe("rebuildSandbox flow: recovery", () => {
   it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
-      executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
+      executeSandboxExecCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
         applied: true,
         verified: false,

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { asExportedConfig } from "../../support/config-export-document.ts";
+import { isPodmanConfigExportRefusal } from "../fixtures/phases/config-export-validation.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -14,11 +15,12 @@ import { testTimeout } from "../../helpers/timeouts.ts";
 import {
   assertBraveConfig,
   assertBraveExport,
+  completeBraveConfigExport,
+  exportBraveConfig,
   assertBraveShellCredentialBoundary,
   cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
-  exportBraveConfig,
   onboardBrave,
   reuseBraveSandboxWithWebSearchDisabled,
   runBraveAgentWithSecretBoundaryCheck,
@@ -57,8 +59,8 @@ test(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "onboard succeeds with BRAVE_API_KEY present",
-        "config export validates the live managed Brave profile and produces schema-valid configuration",
-        "repeated export preserves the same spec and references BRAVE_API_KEY without credential values or internal transports",
+        "Docker config export validates the live managed Brave profile and produces schema-valid configuration; Podman refuses export without publishing a file",
+        "repeated Docker export preserves the same spec and references BRAVE_API_KEY without credential values or internal transports",
         "OpenClaw web search config is enabled and selects provider=brave",
         "OpenClaw stores a BRAVE_API_KEY placeholder rather than the raw key",
         "OpenClaw agent can perform a Brave-backed web search",
@@ -103,37 +105,44 @@ test(
       "phase-2-brave-config-export-first",
       redactionValues,
     );
-    expect(first.exitCode, resultText(first)).toBe(0);
-    const firstRaw = fs.readFileSync(firstPath, "utf8");
-    const firstSpec = assertBraveExport(firstRaw, redactionValues);
+    expect(
+      runtimeProvider.id === "podman"
+        ? isPodmanConfigExportRefusal(first, fs.readdirSync(exportDirectory).length !== 0)
+        : first.exitCode === 0,
+      resultText(first),
+    ).toBe(true);
+    await completeBraveConfigExport(runtimeProvider.id, artifacts, async () => {
+      const firstRaw = fs.readFileSync(firstPath, "utf8");
+      const firstSpec = assertBraveExport(firstRaw, redactionValues);
 
-    const repeatPath = path.join(exportDirectory, "repeat.yaml");
-    const repeat = await exportBraveConfig(
-      host,
-      repeatPath,
-      "phase-2-brave-config-export-repeat",
-      redactionValues,
-    );
-    expect(repeat.exitCode, resultText(repeat)).toBe(0);
-    const repeatRaw = fs.readFileSync(repeatPath, "utf8");
-    expect(
-      redactionValues.some((value) => repeatRaw.includes(value)),
-      "Repeated export must omit credential values",
-    ).toBe(false);
-    const repeatSpec = asExportedConfig(YAML.parse(repeatRaw)).spec;
-    expect(
-      /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u.test(firstRaw + repeatRaw),
-      "Export must omit internal environment transports and credential placeholders",
-    ).toBe(false);
-    expect(repeatSpec).toEqual(firstSpec);
-    await artifacts.writeJson("brave-config-export-evidence.json", {
-      sandboxName: SANDBOX_NAME,
-      provider: "brave",
-      credentialReference: "BRAVE_API_KEY",
-      expectedShapeObserved: true,
-      repeatedSpecMatches: true,
-      credentialValuesAbsent: true,
-      internalTransportsAbsent: true,
+      const repeatPath = path.join(exportDirectory, "repeat.yaml");
+      const repeat = await exportBraveConfig(
+        host,
+        repeatPath,
+        "phase-2-brave-config-export-repeat",
+        redactionValues,
+      );
+      expect(repeat.exitCode, resultText(repeat)).toBe(0);
+      const repeatRaw = fs.readFileSync(repeatPath, "utf8");
+      expect(
+        redactionValues.some((value) => repeatRaw.includes(value)),
+        "Repeated export must omit credential values",
+      ).toBe(false);
+      const repeatSpec = asExportedConfig(YAML.parse(repeatRaw)).spec;
+      expect(
+        /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u.test(firstRaw + repeatRaw),
+        "Export must omit internal environment transports and credential placeholders",
+      ).toBe(false);
+      expect(repeatSpec).toEqual(firstSpec);
+      await artifacts.writeJson("brave-config-export-evidence.json", {
+        sandboxName: SANDBOX_NAME,
+        provider: "brave",
+        credentialReference: "BRAVE_API_KEY",
+        expectedShapeObserved: true,
+        repeatedSpecMatches: true,
+        credentialValuesAbsent: true,
+        internalTransportsAbsent: true,
+      });
     });
 
     const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
