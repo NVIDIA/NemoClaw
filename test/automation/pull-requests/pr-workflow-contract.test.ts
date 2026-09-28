@@ -27,7 +27,9 @@ type CiWorkflow = {
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
-const reviewedInstallerHashRevision = "6546d47e4bd2bc8d51d05a1e96383714336db488";
+const reviewedInstallerHashRef =
+  "${{ github.event.pull_request.base.sha == '241fcd199275fa1d1ac6bf9beddd991117398536' && " +
+  "'9daa989354dcdf3756165337877bf659d9d27dc6' || github.event.pull_request.base.sha }}";
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -253,7 +255,7 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
       ? []
       : ["reviewed installer hash checkout must use the pinned checkout action"]),
     ...(reviewedCheckout?.with?.repository === "NVIDIA/NemoClaw" &&
-    reviewedCheckout.with.ref === reviewedInstallerHashRevision
+    reviewedCheckout.with.ref === reviewedInstallerHashRef
       ? []
       : ["reviewed installer hash checkout must use the exact NVIDIA-owned revision"]),
     ...(reviewedCheckout?.with?.path === ".trusted-installer-hash"
