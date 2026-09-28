@@ -98,7 +98,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(76);
+    expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -156,7 +156,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(45);
+    expect(catalogueIds).toHaveLength(46);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -180,17 +180,22 @@ describe("E2E workflow plan", () => {
       "openshell-credential-generation-window",
     ]);
   });
-  it("keeps common egress coverage without a Brave credential", () => {
+  it("keeps Brave isolation and common egress coverage without a Brave credential", () => {
     const plan = buildE2eWorkflowPlan();
     const rows = plan.catalogueMatrices["nvidia-inference"].map((row) => row.id);
     expect(rows).toEqual(
       expect.arrayContaining([
+        "brave-search",
         "common-egress-agent-openclaw-balanced-weather",
         "common-egress-agent-openclaw-open-reference",
         "common-egress-agent-hermes-open-reference",
       ]),
     );
-    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+    const brave = buildE2eWorkflowPlan({ targets: "brave-search" });
+    expect(brave.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "brave-search",
+    );
+    expect(selectedWorkflowJobs(brave)).toEqual(["catalogue-nvidia-inference"]);
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 

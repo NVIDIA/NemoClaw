@@ -640,7 +640,18 @@ It preserves the real curl request, private credential file, query parameters, a
 The worker backend returns deterministic search results and HTTP 401, 403, 429, and 503 failures.
 The test removes its worker and temporary files after success or failure.
 
-The former `brave-search` live target and its unused assertion helpers are retired.
+The `brave-search` live target retains the Brave-specific isolation regression for #7425.
+It onboards a real OpenShell sandbox with a synthetic Brave credential, then reads the running OpenClaw gateway's `/proc` environment and opens a fresh login shell.
+Both observations must show an absent key or an OpenShell placeholder; missing or unreadable process evidence fails.
+The test uses the `nvidia-inference` profile and never reads a real Brave secret.
+Its host curl wrapper routes validation to the loopback backend and delegates unrelated requests.
+A test-only OpenShell wrapper refuses only onboarding's optional Brave egress curl request.
+Sandbox creation, provider attachment, the production isolation guard, and the two runtime observations still execute through real OpenShell.
+The fixture verifies that validation ran and the configured Brave probe was intercepted, so disabled search cannot pass as isolation evidence.
+Cleanup destroys the sandbox and removes the mock backend and wrappers.
+
+`test/e2e/support/brave-search-isolation.test.ts` owns deterministic probe selection, raw-key rejection, missing-process failures, and stub delegation checks.
+It does not substitute for runtime isolation evidence.
 The coverage disposition is:
 
 | Former live evidence | Current owner and scope |
@@ -650,9 +661,10 @@ The coverage disposition is:
 | OpenClaw search configuration and credential placeholder | `test/generation/generate-openclaw-config-web-search.test.ts` tests generated configuration. |
 | Raw credential rejection and search response verification | `src/lib/onboard/web-search-verify.test.ts` covers the production isolation guard, placeholder requests, results, and failures with mocked sandbox commands. |
 | Disabled-search reuse and retained policy | `src/lib/onboard/openclaw-setup.test.ts` and `policy-resume-selection.test.ts` cover reconciliation and policy selection. |
-| Sandbox identity, cleanup, and provider credential rewriting | The existing lifecycle, security-posture, and `openshell-credential-generation-window` live targets retain the shared runtime boundaries. |
+| Raw Brave credential isolation in the running agent and fresh login shell | `brave-search` retains both real sandbox observations with a synthetic key. |
+| Sandbox identity, cleanup, and inference/MCP provider credential rewriting | The existing lifecycle, security-posture, and `openshell-credential-generation-window` live targets retain the shared runtime boundaries. |
 | A live Brave result, model-generated search title, and Brave service reachability | Removed from the gate. These depended on third-party availability and quota; mocked coverage does not claim to qualify the live Brave service. |
-| Brave-specific export assertion helper and its self-tests | Removed with their sole live consumer. Production export tests remain. |
+| Brave-specific export assertion helper and its self-tests | Removed with the export scenarios. Production export tests remain. |
 
 The common-egress targets retain their live network policy and agent-fetch boundaries.
 They disable optional search explicitly and use the `nvidia-inference` profile.

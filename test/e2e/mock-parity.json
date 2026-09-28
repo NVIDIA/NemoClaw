@@ -3,6 +3,15 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/brave-search.test.ts",
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/helpers/brave-backend.ts"],
+      "fast": [
+        "test/onboarding/brave-search-integration.test.ts",
+        "test/e2e/support/brave-search-isolation.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/deferred-onboarding.test.ts",
       "fast": [
         "src/lib/actions/installer/deferred-onboarding.test.ts",
