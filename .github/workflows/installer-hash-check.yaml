@@ -4,9 +4,9 @@
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
 # Checked: allowlisted OpenShell installer and Brev release assets.
 # Reports the required network-backed drift check on every PR, every push to
-# main, and weekly. Pull requests execute checker code from their base commit.
-# A new release-manifest allowlist entry must land on main in a prerequisite PR
-# before a later PR changes runtime selectors to that release.
+# main, and weekly. Pull requests execute an immutable reviewed checker revision.
+# Advance that revision only after reviewing its verifier and exact trust entries;
+# never resolve the checker from a mutable branch or the current PR head.
 
 name: Security / Verify Installer Hashes
 
@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 5
     steps:
       # The checkout of the latest PR commit supplies data only. The checker and
-      # pin parser execute from the checkout of the PR base SHA below.
+      # pin parser execute from the immutable reviewed revision below.
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,11 +52,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout base-trusted installer hash action
+      - name: Checkout reviewed installer hash action
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          repository: NVIDIA/NemoClaw
+          # Reviewed verifier with the exact bounded-curl template from #12374.
+          ref: 6546d47e4bd2bc8d51d05a1e96383714336db488
           path: .trusted-installer-hash
           persist-credentials: false
           sparse-checkout: |
@@ -78,7 +80,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: ./.github/actions/setup-reviewed-npm
 
-      - name: Verify pull request installer hashes from base-trusted code
+      - name: Verify pull request installer hashes from reviewed code
         if: github.event_name == 'pull_request'
         uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
         with:
