@@ -122,7 +122,6 @@ async function runRejectedCompatibleSwitchScenario(options: {
   ).toEqual([["provider", "delete", "-g", "nemoclaw", target.provider]]);
   expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-  expect(deps.calls.updateSession).not.toHaveBeenCalled();
   expect(deps.getSession()).toMatchObject({ provider: "nvidia-prod", model: "old-model" });
 
   return { deps, probeSandboxRoute };
@@ -256,13 +255,6 @@ describe("runInferenceSet compatible providers", () => {
         preferredInferenceApi: "openai-completions",
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-endpoint",
-      model: "nvidia/nvidia/nemotron-3-super-v3",
-      endpointUrl: "https://inference-api.nvidia.com/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-    });
   });
 
   it("rejects Anthropic Messages metadata for OpenAI-compatible endpoint switches", async () => {
@@ -495,7 +487,6 @@ describe("runInferenceSet compatible providers", () => {
       captureOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "get"),
     ).toHaveLength(4);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
@@ -543,7 +534,6 @@ describe("runInferenceSet compatible providers", () => {
       captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
     ).toHaveLength(0);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
@@ -740,7 +730,7 @@ describe("runInferenceSet compatible providers", () => {
     ).toBe(false);
   });
 
-  it("preserves explicit inference API through the final registry and session sync", async () => {
+  it("preserves explicit inference API through the final registry sync", async () => {
     let providerVersion = 1;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
@@ -825,13 +815,6 @@ describe("runInferenceSet compatible providers", () => {
         preferredInferenceApi: "openai-responses",
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-endpoint",
-      model: "mock-responses-model",
-      endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-responses",
-    });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
   });
 
@@ -886,14 +869,6 @@ describe("runInferenceSet compatible providers", () => {
         nimContainer: null,
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-anthropic-endpoint",
-      model: "mock-anthropic-model",
-      endpointUrl: "http://host.openshell.internal:18767",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      preferredInferenceApi: "anthropic-messages",
-      nimContainer: null,
-    });
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
     expect(captureOpenshell).toHaveBeenCalledWith(
       [

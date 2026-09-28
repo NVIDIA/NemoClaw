@@ -194,7 +194,7 @@ async function rebuildSandboxUnlocked(
 ): Promise<void> {
   let executionOptions = opts;
   if (!executionOptions.recoveryManifest) {
-    const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+    const transaction = onboardSession.loadRebuildSession(sandboxName)?.checkpoint?.sandboxRecreate;
     const registryEntry = registry.load().sandboxes[sandboxName];
     if (transaction?.sandboxName === sandboxName && registryEntry) {
       const retainedRecovery = findRebuildRecoveryBackup({

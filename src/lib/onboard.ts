@@ -3413,7 +3413,7 @@ module.exports = {
   startDockerDriverGateway,
   startGatewayForRecovery,
   managedWorkloadOnboard,
-  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
+  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds, createForwardPortObserver },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,
