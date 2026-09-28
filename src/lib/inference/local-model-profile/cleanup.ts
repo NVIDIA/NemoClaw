@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { writeConfigFile } from "../../state/config-io";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import { dockerCapture, dockerForceRm, dockerRun } from "../../adapters/docker/local-model-runtime";
 import {
@@ -1615,8 +1616,7 @@ function pendingHostLocalVllmRetirementPath(homeDir: string | undefined): string
  */
 export function recordPendingHostLocalVllmRetirement(sandboxName: string, homeDir?: string): void {
   const filePath = pendingHostLocalVllmRetirementPath(homeDir);
-  fs.mkdirSync(path.dirname(filePath), { mode: 0o700, recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({ sandboxName })}\n`, { mode: 0o600 });
+  writeConfigFile(filePath, { sandboxName });
 }
 
 /** Sandbox name whose managed vLLM retirement is pending, or null. */

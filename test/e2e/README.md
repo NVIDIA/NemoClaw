@@ -1599,25 +1599,30 @@ Validate phase coverage without executing test bodies with:
 npm run test:e2e-phases:check
 ```
 
+### Managed vLLM final-consumer lifecycle
+
+The existing `gpu-e2e` target runs its managed vLLM case twice. Each cycle onboards
+the supported fixed profile on port 18000, exports its configuration, then checks
+status, doctor, and connect with the port override cleared. Normal cleanup destroys
+the final sandbox and checks actual container and listener absence before any
+fixture fallback cleanup. The second cycle proves that onboarding can reacquire
+the released GPU resources.
+
+Source tests own shared-consumer retention, receipt ownership, invalid recorded
+routes, and interrupted-cleanup recovery. The physical Spark Express test retains
+its existing platform-specific qualification.
+
 ### DGX Spark Express vLLM
 
-`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile, and the managed vLLM last-consumer lifecycle.
+`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
 It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
 The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
 It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
-The live target refuses to replace either of its two sandbox names, a pre-existing `nemoclaw-vllm` container, or a listener on its non-default test port.
+The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
-After the first onboard, it runs `status` and `doctor` without carrying `NEMOCLAW_VLLM_PORT` forward and verifies that both report health on the custom port.
-This profile is bearer-protected, so NemoClaw reads that port from the managed container's published loopback binding.
-`src/lib/inference/local.test.ts`, `src/lib/actions/sandbox/status.test.ts`, and `src/lib/actions/sandbox/doctor-inference.test.ts` cover recorded-route port selection for bearerless servers.
-The target then runs `connect --probe-only` with `NEMOCLAW_VLLM_PORT` set to a verified-unused port.
-The probe succeeds because `connect` does not read that variable on a healthy route.
-`src/lib/actions/sandbox/connect-route-repair.test.ts` covers the repair path that reads the recorded port.
-The target destroys the final consumer, verifies that the managed container and listener are absent, then onboards a second sandbox on the released port and verifies inference again.
-The successful second managed-vLLM start is the GPU-resource reacquisition evidence.
 The standard E2E artifacts retain bounded command output.
 
 Run the target from a clean candidate checkout on the Spark host:
@@ -1631,7 +1636,7 @@ npx tsx tools/e2e/live-vitest-invocation.mts run \
   --test-path test/e2e/live/spark-express-vllm.test.ts
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `status` and `doctor` report health on the custom port without `NEMOCLAW_VLLM_PORT`, `connect --probe-only` succeeds without `NEMOCLAW_VLLM_PORT` naming that port, final-consumer destroy retires the managed container and listener, a subsequent managed-vLLM onboard reacquires the GPU resource, `inference.local` completes a chat request after reacquisition, and unrelated sandbox egress receives an HTTP `403` response.
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.

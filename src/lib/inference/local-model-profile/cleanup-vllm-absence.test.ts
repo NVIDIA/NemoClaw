@@ -14,6 +14,9 @@ import {
 } from "../serving/vllm-host-local-lifecycle";
 import { managedVllmStateDir } from "../vllm-api-key";
 import {
+  HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE,
+  readPendingHostLocalVllmRetirement,
+  recordPendingHostLocalVllmRetirement,
   cleanupLocalModelRuntimes,
   retireHostLocalVllmRuntime,
   type LocalModelRuntimeCleanupOptions,
@@ -175,3 +178,19 @@ it.each(inventoryCases)(
     });
   },
 );
+
+it("records pending vLLM retirement without overwriting a linked host file", () => {
+  const home = temporaryHome();
+  const stateDir = managedVllmStateDir(home);
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const unrelatedFile = path.join(home, "unrelated.json");
+  fs.writeFileSync(unrelatedFile, "untouched", { mode: 0o600 });
+  fs.symlinkSync(unrelatedFile, path.join(stateDir, HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE));
+
+  recordPendingHostLocalVllmRetirement("alpha", home);
+
+  expect({
+    unrelated: fs.readFileSync(unrelatedFile, "utf8"),
+    pending: readPendingHostLocalVllmRetirement(home),
+  }).toEqual({ unrelated: "untouched", pending: "alpha" });
+});
