@@ -352,6 +352,15 @@ describe("complete native home persistence", () => {
         path.join(nativeRoot, "node_modules", "example", "package.json"),
         JSON.stringify({ apiKey: "dependency-metadata-is-not-runtime-config" }),
       );
+      const dependencySource = path.join(
+        nativeRoot,
+        ".openclaw/extensions/nemoclaw/node_modules/execa/lib/stdio/type.js",
+      );
+      fs.mkdirSync(path.dirname(dependencySource), { recursive: true });
+      fs.writeFileSync(
+        dependencySource,
+        "export const FILE_PATH_KEYS = new Set(['file', 'append']);\n",
+      );
       fs.writeFileSync(
         path.join(nativeRoot, "schemas", "config.schema.json"),
         JSON.stringify({ apiKey: { type: "string" } }),
@@ -397,6 +406,17 @@ describe("complete native home persistence", () => {
         recursive: true,
       });
       fs.copyFileSync(bundledCredentialBoundary, bundledCredentialBoundaryCopy);
+      const bundledRuntimeCode = path.join(
+        import.meta.dirname,
+        "../..",
+        "nemoclaw/dist/blueprint/runner.js",
+      );
+      const bundledRuntimeCodeCopy = path.join(
+        nativeRoot,
+        ".openclaw/extensions/nemoclaw/dist/blueprint/runner.js",
+      );
+      fs.mkdirSync(path.dirname(bundledRuntimeCodeCopy), { recursive: true });
+      fs.copyFileSync(bundledRuntimeCode, bundledRuntimeCodeCopy);
       fs.writeFileSync(path.join(nativeRoot, inspectionMarker), "unrelated");
       fs.writeFileSync(
         path.join(nativeRoot, ".openclaw", "unknown-state.json"),
@@ -817,6 +837,11 @@ describe("complete native home persistence", () => {
       JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    [
+      "a concrete token in bundled NemoClaw runtime code",
+      ".openclaw/extensions/nemoclaw/dist/injected.js",
+      `export const token = "ghp_${"abcdef1357902468"}";`,
+    ],
     [
       "a dependency package manifest",
       "node_modules/example/package.json",

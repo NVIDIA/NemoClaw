@@ -399,7 +399,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
     [
       "sh",
       "-c",
-      'set -eu; shift; while [ "$#" -gt 0 ]; do path="$1"; value="$2"; shift 2; mkdir -p "$(dirname "$path")"; printf \'%s\' "$value" > "$path"; done',
+      'set -eu; while [ "$#" -gt 0 ]; do path="$1"; value="$2"; shift 2; mkdir -p "$(dirname "$path")"; printf \'%s\' "$value" > "$path"; done',
       "sh",
       ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
     ],
@@ -587,7 +587,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
     [
       "sh",
       "-c",
-      'set -eu; shift; while [ "$#" -gt 0 ]; do path="$1"; expected="$2"; shift 2; actual="$(cat "$path")"; [ "$actual" = "$expected" ] || { echo "native state mismatch: $path" >&2; exit 41; }; printf \'%s\\n\' "$actual"; done',
+      'set -eu; while [ "$#" -gt 0 ]; do path="$1"; expected="$2"; shift 2; actual="$(cat "$path")"; [ "$actual" = "$expected" ] || { echo "native state mismatch: $path" >&2; exit 41; }; printf \'%s\\n\' "$actual"; done',
       "sh",
       ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
     ],

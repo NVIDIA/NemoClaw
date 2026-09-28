@@ -1234,6 +1234,18 @@ function isBundledProviderProfileSchema(entry: string): boolean {
   );
 }
 
+const NATIVE_DEPENDENCY_TREE_SEGMENTS = new Set([".venv", "node_modules", "site-packages", "venv"]);
+
+function isNativeDependencyTreeEntry(entry: string): boolean {
+  const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
+  return segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment));
+}
+
+function isBundledNemoclawRuntimeCodeEntry(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  return normalized.startsWith(".openclaw/extensions/nemoclaw/dist/");
+}
+
 function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
@@ -1314,15 +1326,18 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
           if (!shouldSkipNativeRawCredentialScan(fileName)) {
-            // Package manifests carry descriptive credential-field schemas and
-            // receive a separate structure-aware scan below. Raw recognizable
-            // secrets and Authorization headers remain enabled here.
+            // Dependency and bundled runtime source contain symbols such as
+            // FILE_PATH_KEYS that look like credential assignments. They
+            // receive high-confidence scanning here; package manifests also
+            // receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
-              fileName !== "package.json",
+              fileName !== "package.json" &&
+                !isNativeDependencyTreeEntry(entry) &&
+                !isBundledNemoclawRuntimeCodeEntry(entry),
               fileName === ".npmrc",
               providerProfileSchema,
             );
