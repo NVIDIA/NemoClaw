@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
+  createManagedImageSandboxWithDiagnostics,
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
   MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   managedImageProtectedSandboxName,
@@ -70,6 +71,38 @@ function runManagedOpenClawHeartbeatProbe(
 }
 
 describe("protected managed-image runtime contract", () => {
+  it("retains redacted create-client failure evidence without authorizing a retry", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "managed-create-diagnostic-"));
+    const executable = path.join(directory, "openshell-fixture");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    fs.writeFileSync(
+      executable,
+      "#!/bin/sh\necho 'create failed: https://user:password@example.test' >&2\nexit 2\n",
+      { mode: 0o700 },
+    );
+    try {
+      const createSandbox = createManagedImageSandboxWithDiagnostics(
+        () => {
+          throw new Error("unexpected buffered command");
+        },
+        () => executable,
+      );
+      const result = await createSandbox({
+        sandboxName: VALID_SANDBOX,
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        source: { reference: IMAGE },
+        startupCommand: ["true"],
+        environment: {},
+      });
+      expect(result).toMatchObject({ status: 2, ambiguous: true, sawProgress: false });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("create failed:"));
+      expect(error.mock.calls.flat().join(" ")).not.toContain("user:password");
+    } finally {
+      error.mockRestore();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("projects declared managed state roots through the selected provider driver", () => {
     const mount = {
       type: "volume" as const,

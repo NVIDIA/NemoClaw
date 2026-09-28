@@ -44,6 +44,7 @@ import {
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
+  createManagedImageSandboxWithDiagnostics,
   isManagedImageLocalInferenceKind,
   managedImageFailureDetail,
   type ManagedImageLocalInferenceKind,
@@ -1209,6 +1210,10 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         },
         {
           commandExecutor,
+          createSandbox: createManagedImageSandboxWithDiagnostics(
+            onboard.runOpenshell,
+            () => onboard!.openshellArgv([])[0],
+          ),
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
           sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
