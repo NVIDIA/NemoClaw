@@ -136,11 +136,12 @@ describe("Brave Search E2E export assertion", () => {
 
 const diagnostic = JSON.stringify({
   error: {
+    oclif: { exit: 2 },
     message:
       "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
   },
 });
-const refusal = { exitCode: 2, signal: null, timedOut: false, stdout: "", stderr: diagnostic };
+const refusal = { exitCode: 1, signal: null, timedOut: false, stdout: "", stderr: diagnostic };
 
 it.each([
   { name: "stderr refusal", result: {}, outputExists: false, accepted: true },
@@ -160,6 +161,7 @@ it.each([
   { name: "timeout", result: { timedOut: true }, outputExists: false, accepted: false },
   { name: "signal", result: { signal: "SIGTERM" as const }, outputExists: false, accepted: false },
   { name: "successful export", result: { exitCode: 0 }, outputExists: false, accepted: false },
+  { name: "non-JSON exit status", result: { exitCode: 2 }, outputExists: false, accepted: false },
   {
     name: "another unsupported feature",
     result: {

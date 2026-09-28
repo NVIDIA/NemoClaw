@@ -921,8 +921,9 @@ export function isPodmanConfigExportRefusal(
 ): boolean {
   try {
     const output = JSON.parse(resultText(result)) as { error?: { message?: unknown } };
+    // oclif JSON mode exits 1; error.oclif.exit records the underlying error code.
     return (
-      result.exitCode === 2 &&
+      result.exitCode === 1 &&
       result.signal === null &&
       !result.timedOut &&
       !outputExists &&
