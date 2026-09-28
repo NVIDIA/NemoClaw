@@ -512,7 +512,9 @@ A same-name recreation started by `$$nemoclaw onboard` uses the same replacement
 
 If the complete native home/workspace cannot be archived, NemoClaw reports the transfer failure and stops before deleting the original sandbox.
 This fail-closed behavior also applies to `rebuild --force`; NemoClaw never publishes a partial native-home archive as a restore source.
-Failed native-state captures are removed instead of being retained as incomplete recovery archives.
+NemoClaw removes failed native-state captures when cleanup succeeds instead of retaining them as incomplete recovery archives.
+If that cleanup also fails, NemoClaw reports and retains the incomplete backup path.
+Preserve that path while investigating the reported failure, or remove it only after the failure is resolved and you have confirmed that the original sandbox remains intact.
 Repair source access, free backup-disk space, or remove credential-bearing content identified by the error, then rerun the rebuild while the original sandbox remains intact.
 
 <Warning title="Forced Rebuild Scope">

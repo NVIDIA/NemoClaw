@@ -522,11 +522,12 @@ export const RISK_RULES: readonly RiskRule[] = [
       "failed mutations remain retryable without destructive cleanup",
     ],
     matches: (file) =>
-      (file.startsWith("src/") ||
+      file.startsWith("src/lib/state/") ||
+      ((file.startsWith("src/") ||
         file.startsWith("nemoclaw/") ||
         file.startsWith("scripts/") ||
         file.startsWith("nemoclaw-blueprint/")) &&
-      MUTATION_FILE.test(file),
+        MUTATION_FILE.test(file)),
   },
   {
     id: "shared-agent",
