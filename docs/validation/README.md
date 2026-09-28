@@ -26,6 +26,7 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 The [Kubernetes kind development validation](kubernetes-kind-linux-amd64.md) records the local Linux AMD64 external-gateway stack, lifecycle checks, immutable artifacts, and upstream reliability limit.
 The [managed Kubernetes validation](kubernetes-managed-kind-linux-amd64.md) records SDK platform provisioning, three-agent lifecycle checks, hosted inference, and retained-storage teardown.
 The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-linux-amd64.md) records a full managed lifecycle with a real hosted response from every agent.
+The [single-command Kubernetes validation](kubernetes-script-linux-amd64.md) records automatic builds, fresh kind setup, the three-agent lifecycle, and ownership-checked cluster cleanup.
 
 | Behavior | Tests and Results |
 |---|---|

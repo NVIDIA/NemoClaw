@@ -8,9 +8,59 @@ For an existing cluster, use the [Kubernetes backend guide](../kubernetes.md); t
 The [branch scope decision](../design/scope.md#kubernetes-development-branch) permits this isolated setup.
 Deleting the cluster deletes its local persistent volumes and every sandbox in it.
 
+## Run the Complete Test
+
+From the `codex/kubernetes-backend` checkout, install Python 3.12 or newer, Rustup or the pinned Rust toolchain, a C compiler, Docker with Buildx, kind, kubectl, Helm, and OpenSSL.
+Docker must be running with Linux containers matching the host architecture and a containerd image store that retains repository digests.
+The script detects macOS or Linux and ARM64 or AMD64, prepares the pinned Rust and Protocol Buffers tools locally, and builds the native bundle and matching Linux agent image.
+It does not change system packages, Docker permissions, or the default kubeconfig.
+
+The only required configuration input is `NVIDIA_INFERENCE_API_KEY`.
+This opt-in test creates a fresh disposable cluster and sends real requests to the hosted NVIDIA model configured in the [three-agent sample](../../examples/kubernetes/managed-development.yaml).
+On success, it destroys the deployment and deletes its owned cluster, including that cluster's volumes and Secrets.
+On failure or interruption, it retains the cluster and private state for diagnosis.
+Previous clusters are preserved.
+
+From the repository root, read the key without placing its value in shell history and run:
+
+```sh
+export NVIDIA_INFERENCE_API_KEY="$(python3 -c 'import getpass; print(getpass.getpass("NVIDIA inference API key: "))')"
+python3 tools/kubernetes/e2e.py
+```
+
+If the key is already exported, run only the second command.
+The runner creates a private directory under `$HOME/.local/state/nemoclaw/k8s-e2e-*` and prints its path.
+It generates `deployment.yaml` from the managed example, selects an available loopback port, and uses the cluster's explicit private kubeconfig.
+No bundle, image, context, state-directory, or test configuration exports are needed.
+The inference key is passed only to the compiled lifecycle test; build tools and cluster setup do not receive it.
+Generated manifests and retry commands contain environment references, never the key value.
+The log redacts the supplied key, and SDK diagnostics do not include upstream response bodies or credentials.
+Generated development authentication and retained SDK state remain private and outside Git.
+
+A successful run prints `PASS` after checking all three native agent responses, an unchanged plan, CLI export, unchanged SDK reapply with identical resource IDs, and CLI destroy.
+After all tests or inference retries finish, run `unset NVIDIA_INFERENCE_API_KEY` to remove the key from this shell.
+Private state and evidence remain after cluster cleanup; local build caches and the uniquely tagged agent image also remain.
+Use `python3 tools/kubernetes/e2e.py --keep-cluster` to keep the cluster after a successful test; the test still destroys the agents and gateway, retaining the SDK's default storage and authentication resources.
+
+If the test fails, use the exact inspection and cleanup commands printed by the runner.
+The inspection command includes `--kubeconfig`; your default `kubectl` context remains unchanged.
+When a manifest has been generated, the runner also prints a single `sh .../retry-inference.sh` command that uses the retained test binary, manifest, and SDK state.
+Use it only after apply has completed, while the deployment is retained and the key remains exported.
+It invokes inference without rerunning apply or destroy and does not resume the remaining lifecycle assertions.
+Keep the matching bundle and checkout available for that retry.
+A new `e2e.py` invocation always starts a fresh test and leaves earlier failures intact.
+Cleanup refuses deletion if a partially created cluster cannot prove its saved ownership.
+
+The probe reports fixed failure categories such as missing credentials, TLS or DNS failure, timeout, malformed response, or selected HTTP statuses, together with the affected sandbox name.
+These messages do not reveal upstream response content.
+Older agent images retain the previous generic failure; this runner builds the current image.
+
+The automated runner [passed on Linux AMD64](../validation/kubernetes-script-linux-amd64.md); Apple silicon still needs a live run on that host.
+
 ## Test the Managed YAML Path
 
-The SDK can now provision the gateway and agents through one managed manifest.
+Use this manual procedure when you want to run each lifecycle command separately.
+The SDK can provision the gateway and agents through one managed manifest.
 For that path, this helper prepares only a disposable kind cluster and enforcing CNI; `nemoclaw apply` owns OpenShell and agent deployment.
 Use a fresh private cluster state directory, a verified native bundle, and the tools listed below.
 On Apple silicon, build the native bundle with `--platform darwin_arm64` under the pinned Rust toolchain and build the agent image with `AGENT_PLATFORM=linux/arm64`.

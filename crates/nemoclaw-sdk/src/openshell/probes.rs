@@ -7,6 +7,38 @@ use std::time::Duration;
 
 const AGENT_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 
+fn inference_probe_result(exit: i32) -> Result<(), Error> {
+    if exit == 0 {
+        return Ok(());
+    }
+    // The image probe emits no diagnostics. Decode only its fixed exit-code
+    // vocabulary; neither stdout, stderr, nor a backend message is trusted.
+    Err(Error::Conflict(match exit {
+        20 => "inference through the sandbox failed: invalid configuration; resources retained",
+        21 => "inference through the sandbox failed: missing credential; resources retained",
+        22 => "inference through the sandbox failed: unsupported API; resources retained",
+        23 => "inference through the sandbox failed: network failure; resources retained",
+        24 => "inference through the sandbox failed: request timed out; resources retained",
+        25 => "inference through the sandbox failed: TLS verification failed; resources retained",
+        26 => "inference through the sandbox failed: DNS lookup failed; resources retained",
+        27 => "inference through the sandbox failed: connection refused; resources retained",
+        28 => "inference through the sandbox failed: invalid JSON response; resources retained",
+        29 => "inference through the sandbox failed: empty or invalid result; resources retained",
+        40 => "inference through the sandbox failed: HTTP 400; resources retained",
+        41 => "inference through the sandbox failed: HTTP 401; resources retained",
+        43 => "inference through the sandbox failed: HTTP 403; resources retained",
+        44 => "inference through the sandbox failed: HTTP 404; resources retained",
+        48 => "inference through the sandbox failed: HTTP 408; resources retained",
+        49 => "inference through the sandbox failed: HTTP 429; resources retained",
+        50 => "inference through the sandbox failed: HTTP 500; resources retained",
+        52 => "inference through the sandbox failed: HTTP 502; resources retained",
+        53 => "inference through the sandbox failed: HTTP 503; resources retained",
+        54 => "inference through the sandbox failed: HTTP 504; resources retained",
+        55 => "inference through the sandbox failed: HTTP request rejected; resources retained",
+        _ => "inference through the sandbox failed; resources retained",
+    }))
+}
+
 fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
     if let Ok(
         phase @ (proto::SandboxPhase::Error
@@ -387,12 +419,7 @@ impl OpenShell {
                 90,
             )
             .await?;
-        if exit != 0 {
-            return Err(Error::Conflict(
-                "inference through the sandbox failed; resources retained",
-            ));
-        }
-        Ok(())
+        inference_probe_result(exit)
     }
     pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
         let agent = response_agent(binding)?;
@@ -463,6 +490,45 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inference_failures_report_only_fixed_exit_code_diagnostics() {
+        inference_probe_result(0).unwrap();
+        for (exit, category) in [
+            (20, "invalid configuration"),
+            (21, "missing credential"),
+            (22, "unsupported API"),
+            (23, "network failure"),
+            (24, "request timed out"),
+            (25, "TLS verification failed"),
+            (26, "DNS lookup failed"),
+            (27, "connection refused"),
+            (28, "invalid JSON response"),
+            (29, "empty or invalid result"),
+            (40, "HTTP 400"),
+            (41, "HTTP 401"),
+            (43, "HTTP 403"),
+            (44, "HTTP 404"),
+            (48, "HTTP 408"),
+            (49, "HTTP 429"),
+            (50, "HTTP 500"),
+            (52, "HTTP 502"),
+            (53, "HTTP 503"),
+            (54, "HTTP 504"),
+            (55, "HTTP request rejected"),
+        ] {
+            assert_eq!(
+                inference_probe_result(exit).unwrap_err().to_string(),
+                format!("inference through the sandbox failed: {category}; resources retained")
+            );
+        }
+        for unknown in [-1, 1, 2, 42, 127, 256] {
+            assert_eq!(
+                inference_probe_result(unknown).unwrap_err().to_string(),
+                "inference through the sandbox failed; resources retained"
+            );
+        }
+    }
 
     #[test]
     fn openclaw_response_targets_the_declared_agent_instead_of_the_hosted_runtime() {

@@ -11,6 +11,9 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes
 
+For the complete local kind test, use the [single-command runner](kubernetes-kind.md#run-the-complete-test) with `NVIDIA_INFERENCE_API_KEY`.
+The following procedure supplies deployment inputs manually for an existing test cluster.
+
 The [Kubernetes lifecycle test](../../crates/nemoclaw-e2e/tests/kubernetes_live.rs) accepts an external gateway or the explicit managed development gateway on a cluster owned by the test operator.
 It does not create a cluster.
 The external path requires no local Kubernetes tools; the managed path requires the explicit kubeconfig and client tools in the [managed gateway procedure](../kubernetes.md#provision-a-managed-development-gateway).

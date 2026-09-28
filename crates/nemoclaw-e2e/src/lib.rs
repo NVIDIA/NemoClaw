@@ -265,8 +265,15 @@ async fn verify_bound_agents(
     };
     let mut responses = std::collections::BTreeMap::new();
     for (name, binding) in bindings {
-        client.inference_ready(&binding).await.unwrap();
-        responses.insert(name, client.agent_response(&binding).await.unwrap());
+        client
+            .inference_ready(&binding)
+            .await
+            .unwrap_or_else(|error| panic!("sandbox {name}: inference readiness failed: {error}"));
+        let response = client
+            .agent_response(&binding)
+            .await
+            .unwrap_or_else(|error| panic!("sandbox {name}: agent response failed: {error}"));
+        responses.insert(name, response);
     }
     responses
 }

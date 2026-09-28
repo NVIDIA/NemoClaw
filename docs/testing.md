@@ -126,7 +126,7 @@ python3 -B -m unittest discover -s tools/kubernetes -p 'test_*.py'
 These tests use temporary files and isolated local subprocesses; they do not contact Kubernetes or Docker.
 They check cluster identity, retained credentials, interrupted provisioning and removal, API defaulting, development authentication, and child-process cancellation.
 Native CI runs them on Linux alongside the Rust lifecycle tests.
-Use the separate [kind procedure](testing/kubernetes-kind.md#test-the-managed-yaml-path) for a live managed deployment.
+Use the separate [kind procedure](testing/kubernetes-kind.md#run-the-complete-test) for a live managed deployment.
 
 ## CLI Tests
 
