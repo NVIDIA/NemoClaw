@@ -52,8 +52,8 @@ NemoClaw then checks the Hermes health endpoint and host-side forwards.
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger recovery of the observed gateway child.
 
-Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
-Stop and start the sandbox to reset the supervisor.
+A fifth status-75 service-managed restart request within 60 seconds starts a cooldown.
+The supervisor waits until the rolling window permits another restart, then relaunches the gateway automatically.
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Rebuild only if the sandbox still cannot start.
 

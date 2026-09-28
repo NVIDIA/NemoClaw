@@ -66,6 +66,15 @@ export const portableAgentLifecycle = requireDist(
 );
 export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
+export const portableReceiptReadiness = requireDist(
+  "../../onboard/experimental/portable-runtime-receipt-readiness.js",
+) as typeof import("../../src/lib/onboard/experimental/portable-runtime-receipt-readiness");
+export const pairingSettlement = requireDist(
+  "../../onboard/machine/finalization-deps.js",
+) as typeof import("../../src/lib/onboard/machine/finalization-deps");
+export const launchReadiness = requireDist(
+  "./launch-readiness.js",
+) as typeof import("../../src/lib/actions/sandbox/launch-readiness");
 export const openClawLifecycle = requireDist(
   "./runtime/openclaw-lifecycle.js",
 ) as typeof import("../../src/lib/actions/sandbox/runtime/openclaw-lifecycle");

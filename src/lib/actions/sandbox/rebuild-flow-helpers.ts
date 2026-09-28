@@ -64,7 +64,10 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
-export { delegateRebuildToOwningRegistry } from "./rebuild/owning-registry";
+export {
+  delegateRebuildToOwningRegistry,
+  restoreRecordedRebuildGatewayStateDir,
+} from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -75,20 +78,24 @@ export type RebuildLiveState = {
 };
 
 /** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
-export async function prepareRebuildStoppedOpenClawState(
+export async function prepareRebuildStoppedAgentState(
   entry: RebuildSandboxEntry,
   liveState: RebuildLiveState,
   hasRecoveryManifest: boolean,
-  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
-): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
+): Promise<snapshotBackup.PreparedStoppedAgentState | null> {
   if (
     !liveState.terminalPhase ||
     liveState.staleRecovery ||
     hasRecoveryManifest ||
-    (entry.agent ?? "openclaw") !== "openclaw"
+    !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
   )
     return null;
-  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+  return snapshotBackup.prepareStoppedAgentState(
+    entry.name,
+    getSandbox,
+    loadAgent(entry.agent ?? "openclaw"),
+  );
 }
 
 export type RebuildLiveStateOptions = {
@@ -521,7 +528,7 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
+  capturedAgentState?: sandboxState.BackupOptions["capturedAgentState"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -532,7 +539,7 @@ export async function backupSandboxStateForRebuild(
     sandboxName,
     {
       deadlineMs: startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs),
-      ...(capturedOpenClawState ? { capturedOpenClawState } : {}),
+      ...(capturedAgentState ? { capturedAgentState } : {}),
     },
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
@@ -546,7 +553,7 @@ export async function backupSandboxStateForRebuild(
   // already recovers a stopped container (#6500): start it, retry, then return
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
-  if (!backup.success && backup.unreachable) {
+  if (!capturedAgentState && !backup.success && backup.unreachable) {
     const started = await startStoppedSandboxContainerForBackup(sandboxName, {
       deadlineMs: initialTransactionDeadlineMs,
     });

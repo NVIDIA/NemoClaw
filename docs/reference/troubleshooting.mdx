@@ -1289,6 +1289,31 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
+### Onboarding fails because the inference route served no model catalog
+
+Onboarding verifies the sandbox inference route before it reports the deployment healthy.
+When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
+Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+
+Re-check the route and the recorded provider and model:
+
+```bash
+$$nemoclaw <name> status
+```
+
+`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+
+Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
+This result is resumable, so correct the endpoint and continue the recorded session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+</AgentOnly>
+
 ## Runtime
 
 <AgentOnly variant="openclaw">
@@ -1905,22 +1930,48 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending. If one is, it appends the review path to stderr after the command's own output:
+Record the `requestId` from this native failure.
+Open the prepared shell. During setup, `connect` makes a bounded, best-effort
+attempt to settle pending requests from the `cli`, `openclaw-cli`, and
+`openclaw-control-ui` clients when the requested scopes are limited to pairing,
+read, and write. This pass uses the client ID and scopes recorded in the pending
+request; it does not authenticate that client metadata. OpenClaw's gateway and
+canonical approval operation remain the authorization boundary. If the pass
+times out or an approval operation fails, an eligible request can remain
+pending:
 
-```text
-$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
-  The OpenClaw gateway refused the command until the requested scopes are approved.
-  Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
-  Approve the one you recognize, after checking its device and requested scopes:
-                           $$nemoclaw my-assistant exec -- openclaw devices approve <requestId>
-  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```bash
+$$nemoclaw <name> connect
 ```
 
-Read `openclaw devices list`, confirm the requesting device and the requested scopes, approve that request by id, then re-run the original command unchanged.
+Replace `<name>` with the sandbox name from the failed command.
 
-The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
+First rerun the original command unchanged. If it succeeds, no manual approval
+is required. If the command still reports a pending approval, such as a request
+for `operator.admin`, list the remaining requests in the prepared shell:
 
-The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. If the probe fails, or nothing is pending, no hint is added. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+```bash
+openclaw devices list --json
+```
+
+Find the pending entry whose `requestId` exactly matches the native failure.
+Confirm that entry's requesting client, device, and requested scopes, then
+approve only that same `requestId`:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Then rerun the original command again.
+The `exec` command streams the native command output and normally returns its
+native exit status. If required post-command OpenClaw permission cleanup fails,
+`exec` returns 1 and prints `OpenClaw permission cleanup failed (command exit
+<code>; cleanup exit 1)` with the cleanup detail. After `exec` fails, NemoClaw
+does not inspect pending requests automatically. The `connect` flow attempts
+automatic settlement only for allowlisted client IDs requesting pairing, read,
+and write scopes. Its helper does not authenticate client metadata; requests
+that remain pending are available for manual review of the client, device,
+scopes, and matching request ID.
 
 </AgentOnly>
 
@@ -1996,6 +2047,10 @@ On non-WSL hosts that front Ollama with the auth proxy, run `$$nemoclaw <name> c
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection. Then verify the credential and base URL for the provider you selected during onboarding.
 
 If you entered an AWS Bedrock Runtime URL such as `https://bedrock-runtime.us-east-1.amazonaws.com` in the **Other Anthropic-compatible endpoint** flow, NemoClaw auto-detects it and routes sandbox traffic through a host-local adapter. Use the raw Bedrock Runtime host, not an Anthropic `/v1/messages` path, and verify that the model ID or inference profile ID is valid for that region. For auth, export `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, or standard IAM environment credentials before onboarding; if you paste a key at the `COMPATIBLE_ANTHROPIC_API_KEY` prompt, NemoClaw uses it only as the adapter's Bedrock bearer token. Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAULT_REGION`, or the model/inference profile ID do not match.
+
+The adapter advertises model IDs to readiness checks only after that running adapter completes a successful inference request for them.
+Onboarding performs this request before checking sandbox readiness; failed requests do not add a model to the catalog.
+This uses the existing Bedrock Runtime inference permissions and does not query the Bedrock control-plane catalog.
 
 For Ollama, vLLM, NIM, and compatible-endpoint inference validation, the default timeout is 180 seconds. The managed NIM startup health wait uses a separate 15-minute (900-second) default and still exits early if the container stops before it becomes healthy. On Docker 29.x or hosts using the containerd image store, managed NIM onboarding resolves and pulls the host-platform image digest when NGC exposes a multi-architecture image index. If you still see NGC repository-format or attestation errors, confirm Docker can run `docker manifest inspect` for the selected image and that you are logged in to `nvcr.io`. If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
 
@@ -3085,10 +3140,13 @@ nemohermes <name> rebuild --yes
 
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
-Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
+A fifth status-75 service-managed restart request within 60 seconds starts a cooldown.
+The supervisor waits until the rolling window permits another restart, then relaunches the gateway automatically.
 The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
-### Hermes Stops Repeated Service-Managed Restarts
+<a id="hermes-stops-repeated-service-managed-restarts"></a>
+
+### Repeated Hermes Service-Managed Restarts
 
 Valid Hermes config changes alone do not stop relaunch.
 The supervisor adopts a stable, secret-boundary-safe config snapshot before launching a replacement gateway. If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging input still failed after five bounded preparation attempts. Correct that input through its supported host-side configuration or credential flow, then restart the sandbox:
@@ -3099,8 +3157,7 @@ nemohermes <name> stop
 nemohermes <name> start
 ```
 
-The supervisor stops before a sixth gateway launch after five status-75 service-managed restart requests within 60 seconds.
-Run `nemohermes <name> stop` followed by `nemohermes <name> start` to reset the supervisor.
+During a restart-rate cooldown, wait for the supervisor to relaunch the gateway automatically.
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 

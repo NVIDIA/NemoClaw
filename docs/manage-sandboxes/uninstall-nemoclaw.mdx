@@ -195,8 +195,11 @@ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
 
 Onboarding records port-bound state-root ownership; uninstall validates that ownership plus generated configuration, sandbox namespace, PID file, runtime marker, and live process identity before cleanup.
 Valid gateways created before the state-root marker existed retain the same recovery path through their owner-private generated configuration and live process proof; stopped-gateway recovery requires the port-bound marker.
-The whole-host sweep applies an ambient state-directory override only to the port selected by `NEMOCLAW_GATEWAY_PORT`; other port passes use their default per-port directories.
-If another port with a custom directory fails during the sweep, rerun:
+The whole-host sweep restores each port's custom state directory from its sandbox registry or verified incomplete-create checkpoint.
+An explicit `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` overrides the recorded directory only for the port selected by `NEMOCLAW_GATEWAY_PORT`.
+If recorded directories are invalid or conflict, the sweep exits before any port cleanup.
+Ports without recorded directories use their per-port defaults, except when the selected port has an explicit override.
+For an older custom gateway whose directory was not recorded, rerun its failed pass with the original directory:
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=<failed-port> \

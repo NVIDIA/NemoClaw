@@ -63,8 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
-  copyCapturedOpenClawState,
-  type CapturedOpenClawState,
+  copyCapturedAgentState,
+  type CapturedAgentState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -190,8 +190,8 @@ export interface RebuildMcpHandoffEntry {
 export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
-  /** Private, provider-verified source for OpenClaw recovery without container execution. */
-  capturedOpenClawState?: CapturedOpenClawState;
+  /** Private, provider-verified source for agent recovery without container execution. */
+  capturedAgentState?: CapturedAgentState;
   name?: string | null;
   /** Absolute wall-clock deadline for all backup subprocesses and publication. */
   deadlineMs?: number;
@@ -1778,14 +1778,14 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   };
 }
 
-interface CapturedOpenClawBackupRequest {
-  readonly captured: CapturedOpenClawState;
+interface CapturedAgentBackupRequest {
+  readonly captured: CapturedAgentState;
   readonly sandboxName: string;
   readonly agentName: string;
   readonly backupPath: string;
   readonly stateDirs: readonly string[];
   readonly stateDirPrefixes: readonly string[];
-  readonly stateFiles: Parameters<typeof copyCapturedOpenClawState>[4];
+  readonly stateFiles: Parameters<typeof copyCapturedAgentState>[4];
   readonly deadlineMs?: number;
   readonly deferIncompleteBackupCleanup?: boolean;
   readonly manifest: RebuildManifest;
@@ -1794,12 +1794,18 @@ interface CapturedOpenClawBackupRequest {
   readonly finish: () => BackupResult;
 }
 
-function backupCapturedOpenClawState(request: CapturedOpenClawBackupRequest): BackupResult {
+function backupCapturedAgentState(request: CapturedAgentBackupRequest): BackupResult {
   try {
-    if (request.agentName !== "openclaw" || request.captured.sandboxName !== request.sandboxName) {
-      throw new Error("Stopped state capture only supports OpenClaw.");
+    if (
+      request.agentName !== request.captured.agentName ||
+      request.captured.sandboxName !== request.sandboxName
+    ) {
+      throw new Error("Stopped state capture does not match the registered agent.");
     }
-    const captured = copyCapturedOpenClawState(
+    if (request.deadlineMs !== undefined && Date.now() >= request.deadlineMs) {
+      throw new Error("sandbox backup deadline expired");
+    }
+    const captured = copyCapturedAgentState(
       request.captured,
       request.backupPath,
       request.stateDirs,
@@ -1808,6 +1814,9 @@ function backupCapturedOpenClawState(request: CapturedOpenClawBackupRequest): Ba
     );
     request.backedUpDirs.push(...captured.directories);
     request.backedUpFiles.push(...captured.files);
+    if (request.deadlineMs !== undefined && Date.now() >= request.deadlineMs) {
+      throw new Error("sandbox backup deadline expired");
+    }
     return request.finish();
   } catch {
     const removed = removeBackupEntryWithinDeadline(request.backupPath, request.deadlineMs);
@@ -1818,7 +1827,7 @@ function backupCapturedOpenClawState(request: CapturedOpenClawBackupRequest): Ba
       backedUpFiles: [],
       failedFiles: request.stateFiles.map((file) => file.path),
       error:
-        "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved." +
+        "Stopped agent state capture could not be published safely. The source sandbox was preserved." +
         (removed ? "" : ` The unpublished backup at '${request.backupPath}' requires cleanup.`),
       ...(!removed && request.deferIncompleteBackupCleanup ? { manifest: request.manifest } : {}),
     };
@@ -2151,9 +2160,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   };
 
-  if (options.capturedOpenClawState) {
-    return backupCapturedOpenClawState({
-      captured: options.capturedOpenClawState,
+  if (options.capturedAgentState) {
+    return backupCapturedAgentState({
+      captured: options.capturedAgentState,
       sandboxName,
       agentName,
       backupPath,

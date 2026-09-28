@@ -49,7 +49,7 @@ import {
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
-  prepareRebuildStoppedOpenClawState,
+  prepareRebuildStoppedAgentState,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
@@ -159,6 +159,7 @@ export async function rebuildSandbox(
           TAVILY_API_KEY_ENV,
           MESSAGING_SETUP_APPLIER_ENV_KEY,
           DOCKER_GPU_PATCH_NETWORK_ENV,
+          "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];
@@ -249,16 +250,18 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedOpenClawState>> = null;
+  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedAgentState>> =
+    preflight.stoppedSource ?? null;
   try {
-    stoppedSource = await prepareRebuildStoppedOpenClawState(
+    stoppedSource ??= await prepareRebuildStoppedAgentState(
       sandboxEntry,
       liveState,
       recoveryManifest !== null,
       registry.getSandbox,
     );
     if (stoppedSource)
-      log("Captured the identified stopped OpenClaw source without starting its container.");
+      log("Captured the identified stopped agent source without starting its container.");
+    const skipLiveDcodeRoute = recoveryRecreate || stoppedSource !== null;
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
@@ -513,7 +516,7 @@ async function rebuildSandboxUnlocked(
       }
 
       const backup = await runRebuildBackupPhase({
-        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
+        ...(stoppedSource ? { capturedAgentState: stoppedSource } : {}),
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -659,12 +662,13 @@ async function rebuildSandboxUnlocked(
       // DCode's retained replacement and live inference route must still match at
       // the last safe point. This check intentionally precedes MCP adapter scrub,
       // provider detach, NIM stop, and sandbox deletion in the destroy phase.
+      stoppedSource?.assertCurrent();
       if (
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
           durableConfig.toolDisclosure,
           durableConfig.dcodeAutoApprovalMode,
-          recoveryRecreate,
+          skipLiveDcodeRoute,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
         ))
@@ -836,7 +840,7 @@ async function rebuildSandboxUnlocked(
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
-        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
+        ...(stoppedSource ? { capturedAgentState: stoppedSource } : {}),
         sandboxName,
         sandboxEntry,
         recheckMessagingConflicts,
@@ -906,11 +910,12 @@ async function rebuildSandboxUnlocked(
                   : `Gateway provider '${providerReconfigure.provider}' could not be verified before sandbox deletion.`,
             };
           }
+          stoppedSource?.assertCurrent();
           return dcodePreflight.checkAtDeleteEdge(
             resumeConfig,
             durableConfig.toolDisclosure,
             durableConfig.dcodeAutoApprovalMode,
-            recoveryRecreate,
+            skipLiveDcodeRoute,
             recreateOptions.targetGatewayPort,
             preparation.runtimeSelection,
           );

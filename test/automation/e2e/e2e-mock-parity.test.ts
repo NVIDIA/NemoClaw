@@ -18,10 +18,17 @@ import {
 const live = "test/e2e/live/example.test.ts";
 const liveHelper = "test/e2e/live/example-helper.ts";
 const pythonLiveHelper = "test/e2e/live/example-helper.py";
+const sharedShellFixture = "test/e2e/fixtures/example-helper.sh";
+const sharedPythonLibrary = "test/e2e/lib/example-helper.py";
 const fast = "test/e2e/support/example.test.ts";
 const TAGGED_NEW_SOURCE = "// @module-tag e2e/credential-free\n";
 const exists = (file: string) =>
-  file === live || file === liveHelper || file === pythonLiveHelper || file === fast;
+  file === live ||
+  file === liveHelper ||
+  file === pythonLiveHelper ||
+  file === sharedShellFixture ||
+  file === sharedPythonLibrary ||
+  file === fast;
 
 function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
   return { version: 1, entries };
@@ -298,6 +305,28 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
+  it.each([sharedShellFixture, sharedPythonLibrary])(
+    "requires mapped fast coverage when shared source %s changes",
+    (sharedSource) => {
+      const parityManifest = manifest([{ live, liveSources: [sharedSource], fast: [fast] }]);
+
+      expect(
+        validateMockParity({
+          manifest: parityManifest,
+          changedFiles: [sharedSource],
+          fileExists: exists,
+        }),
+      ).toEqual([`${sharedSource}: change at least one fast PR test mapped from ${live}`]);
+      expect(
+        validateMockParity({
+          manifest: parityManifest,
+          changedFiles: [sharedSource, fast],
+          fileExists: exists,
+        }),
+      ).toEqual([]);
+    },
+  );
+
   it("retains indentation-only Python helper changes for mapped fast coverage", () => {
     const relevantFiles = filterMockParityRelevantChangedFiles(
       [pythonLiveHelper],
@@ -469,7 +498,7 @@ it.each([
   }
 });
 
-it("describes both supported liveSources kinds in invalid-entry diagnostics", () => {
+it("describes supported liveSources in invalid-entry diagnostics", () => {
   const shared = "test/e2e/fixtures/missing.ts";
   expect(
     validateMockParity({
@@ -477,14 +506,14 @@ it("describes both supported liveSources kinds in invalid-entry diagnostics", ()
       changedFiles: [],
       fileExists: exists,
     }),
-  ).toEqual([`${live}: live E2E helper or shared fixture does not exist: ${shared}`]);
+  ).toEqual([`${live}: live E2E helper or shared source does not exist: ${shared}`]);
   expect(
     validateMockParity({
       manifest: manifest([{ live, fast: [fast], liveSources: 1 as unknown as string[] }]),
       changedFiles: [],
       fileExists: exists,
     }),
-  ).toEqual([`${live}: liveSources must be an array of live E2E helper or shared fixture paths`]);
+  ).toEqual([`${live}: liveSources must be an array of live E2E helper or shared source paths`]);
 });
 
 const renameFixture = "test/e2e/fixtures/owned.ts";
