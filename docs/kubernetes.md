@@ -7,8 +7,8 @@ Select `runtime.provider: kubernetes` to deploy agents on an explicitly selected
 Use a managed development gateway to provision the platform and agents with one YAML and `nemoclaw apply`, or supply an existing external OpenShell gateway.
 Both paths use the SDK’s plan, apply, export, recovery, and destroy lifecycle and have no kind dependency.
 The [branch scope decision](design/scope.md#kubernetes-development-branch) separates this deployment path from the optional [local kind test fixture](testing/kubernetes-kind.md).
-The [managed lifecycle validation](validation/kubernetes-managed-kind-linux-amd64.md) and [external gateway validation](validation/kubernetes-kind-linux-amd64.md) cover their earlier Linux AMD64 kind revisions, before integration with the current Fabric runtime.
-Those live results do not qualify the integrated revision or other cluster environments.
+The [Fabric lifecycle validation](validation/kubernetes-fabric-live-linux-amd64.md) records the managed path on Linux AMD64 kind after integration with the current Fabric runtime.
+That result covers its named revision and environment; it does not qualify other cluster environments.
 
 ## Ownership and Boundaries
 

@@ -54,7 +54,7 @@ The response test uses OpenShell exec to invoke every agent through its installe
 It checks the retained Fabric configuration before invocation and validates an OpenClaw response of `FOUR`; this response check belongs to the explicit test, not ordinary SDK apply or readiness.
 For a managed gateway, the SDK holds one authenticated tunnel across the sequential agent requests and closes it afterward.
 Do not run another command using the same managed loopback port concurrently.
-The recorded [three-agent managed](../validation/kubernetes-managed-three-agents-linux-amd64.md) and [external gateway](../validation/kubernetes-kind-linux-amd64.md) results cover their earlier Linux AMD64 kind revisions; they do not qualify the integration with the current Fabric runtime.
+The [Kubernetes Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful three-agent managed run on Linux AMD64 kind after integration with the current Fabric runtime.
 
 ## Dependency Upgrade Test
 

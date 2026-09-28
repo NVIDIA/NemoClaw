@@ -71,8 +71,8 @@ The inference-only retry does not perform that update.
 If the direct check passes but a fresh deployment's agent invocation fails, retain that deployment for investigation of the sandbox credential and runtime path; do not assume the key is invalid.
 The failed cluster remains until its printed ownership-checked cleanup command is run.
 
-The recorded [Linux AMD64 runner result](../validation/kubernetes-script-linux-amd64.md) predates the integration with the current Fabric runtime.
-Rebuild the bundle and agent image together; the earlier live result does not qualify this integration.
+The [Linux AMD64 Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful run after integration with the current Fabric runtime.
+Rebuild the bundle and agent image together when testing another revision.
 
 ## Test the Managed YAML Path
 

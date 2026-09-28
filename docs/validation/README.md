@@ -30,7 +30,8 @@ The [managed Kubernetes validation](kubernetes-managed-kind-linux-amd64.md) reco
 The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-linux-amd64.md) records a full managed lifecycle with a real hosted response from every agent.
 The [single-command Kubernetes validation](kubernetes-script-linux-amd64.md) records automatic builds, fresh kind setup, the three-agent lifecycle, and ownership-checked cluster cleanup.
 The [inference authentication preflight](kubernetes-inference-preflight-linux-amd64.md) records the direct host check that now runs before local setup.
-The [current v1 integration](kubernetes-v1-integration-linux-amd64.md) records regression and real OpenTofu fixture checks after adopting upstream Fabric ownership; live inference on that merged revision remains untested.
+The [v1 integration checks](kubernetes-v1-integration-linux-amd64.md) record regression and real OpenTofu fixture results after adopting upstream Fabric ownership.
+The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-amd64.md) records a fresh Linux AMD64 run with three hosted agent responses, export/reapply, destroy, and owned-cluster cleanup.
 
 | Behavior | Tests and Results |
 |---|---|
