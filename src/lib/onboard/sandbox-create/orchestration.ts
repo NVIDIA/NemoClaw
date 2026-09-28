@@ -3167,6 +3167,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                               console.log("  ✓ Committed managed startup shared state");
                           },
                         },
+                        managedWorkloadOnboard,
                       );
                   } catch (error) {
                     const prefix = {
