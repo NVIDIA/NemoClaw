@@ -20,6 +20,7 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  applyProtectedManagedStartupProfile,
   assertOpenClawHeartbeatStart,
   createBootstrapCompletionFailureInjection,
   managedOpenClawHeartbeatLogProbe,
@@ -35,7 +36,11 @@ import {
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
-import { validateManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import {
+  encodeManagedStartupProfile,
+  validateManagedStartupProfile,
+} from "../../../src/lib/onboard/managed-startup/profile.ts";
+import { createManagedStartupRootApplyRequest } from "../../../src/lib/onboard/managed-startup/root-apply.ts";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
@@ -70,7 +75,79 @@ function runManagedOpenClawHeartbeatProbe(
   }
 }
 
+function managedProfileApplyFixture(failure: Error | null = null) {
+  const input = {
+    runtimeProvider: {} as RuntimeProviderBundle,
+    sandboxName: VALID_SANDBOX,
+    sandboxId: "fixture-sandbox-id",
+    bootstrapIdentity: "b".repeat(64),
+    expectedContainerId: "c".repeat(64),
+    request: createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(
+        withManagedImageLocalInferenceProfile(
+          managedStartupE2eProfile("openclaw"),
+          resolveManagedImageLocalInferenceRoute("ollama"),
+          "qwen3.5:9b",
+        ),
+      ),
+    }),
+  };
+  const transaction = {
+    agent: "openclaw" as const,
+    bootstrapIdentity: input.bootstrapIdentity,
+    containerId: input.expectedContainerId,
+    image: `sha256:${"a".repeat(64)}`,
+    protocol: "identity-bound" as const,
+    providerId: "docker" as const,
+  };
+  const events: string[] = [];
+  const operations = {
+    applyProviderManagedStartupRootRequest: vi.fn(() => {
+      events.push("apply");
+      return transaction;
+    }),
+    finalizeProviderManagedStartupSharedState: vi.fn(() => {
+      events.push("commit");
+      return { supervisorReady: !failure, failure };
+    }),
+    releaseProviderManagedStartupHold: vi.fn(() => {
+      events.push("release");
+    }),
+  };
+  const owner = {
+    runtimeProvider: input.runtimeProvider,
+    sandboxName: input.sandboxName,
+    sandboxId: input.sandboxId,
+    transaction,
+  };
+  return { input, operations, owner, events };
+}
+
 describe("protected managed-image runtime contract", () => {
+  it("applies the selected profile and commits before releasing the exact workload", () => {
+    const { input, operations, owner, events } = managedProfileApplyFixture();
+    applyProtectedManagedStartupProfile(operations, input);
+    expect(operations.applyProviderManagedStartupRootRequest).toHaveBeenCalledWith(input);
+    expect(operations.finalizeProviderManagedStartupSharedState).toHaveBeenCalledWith({
+      ...owner,
+      supervisorReady: true,
+    });
+    expect(operations.releaseProviderManagedStartupHold).toHaveBeenCalledWith({
+      ...owner,
+      profileFingerprint: input.request.profileFingerprint,
+    });
+    expect(events).toEqual(["apply", "commit", "release"]);
+  });
+
+  it("keeps the workload held when profile commit fails", () => {
+    const failure = new Error("shared-state commit failed");
+    const { input, operations, events } = managedProfileApplyFixture(failure);
+    expect(() => applyProtectedManagedStartupProfile(operations, input)).toThrow(failure);
+    expect(operations.releaseProviderManagedStartupHold).not.toHaveBeenCalled();
+    expect(events).toEqual(["apply", "commit"]);
+  });
+
   it("retains redacted create-client failure evidence without authorizing a retry", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "managed-create-diagnostic-"));
     const executable = path.join(directory, "openshell-fixture");
@@ -286,13 +363,22 @@ describe("protected managed-image runtime contract", () => {
     expect(diagnostic).toHaveLength(8_000);
   });
 
-  it("loads managed state-volume operations through the existing onboard boundary", () => {
+  it("loads managed workload operations through the existing onboard boundary", () => {
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
       "function",
     );
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.removeManagedStateVolumes).toBeTypeOf(
       "function",
     );
+    expect(
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.applyProviderManagedStartupRootRequest,
+    ).toBeTypeOf("function");
+    expect(
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.finalizeProviderManagedStartupSharedState,
+    ).toBeTypeOf("function");
+    expect(
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseProviderManagedStartupHold,
+    ).toBeTypeOf("function");
   });
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
