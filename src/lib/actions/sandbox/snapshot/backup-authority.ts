@@ -286,7 +286,9 @@ export async function prepareStoppedAgentState(
   try {
     const descriptor = fs.openSync(archivePath, "wx", 0o600);
     try {
-      const maxBytes = sandboxState.nativeStateCaptureMaxBytes(temporary);
+      // The provider archive and its extracted private tree coexist until the
+      // archive is validated and removed. Reserve capacity for both copies.
+      const maxBytes = sandboxState.nativeStateCaptureMaxBytes(temporary, undefined, 2);
       if (maxBytes === 0) {
         rejectStoppedState("Stopped state capture has no backup-disk space available.");
       }

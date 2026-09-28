@@ -50,7 +50,11 @@ export type {
 export function textContainsHighConfidenceCredential(value: string): boolean {
   const withoutPlaceholders = value
     .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-    .replace(/xox[bx]-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+/gu, "unused")
+    // Strip the reserved prefix, not only a complete placeholder. Generated
+    // bundles contain the placeholder matcher itself (for example the source
+    // text `xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+`); leaving that prefix in
+    // place makes the credential scanner flag its own trusted boundary code.
+    .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
     .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,

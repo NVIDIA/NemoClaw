@@ -240,7 +240,7 @@ if (command.includes("printf '%s\\\\0%s\\\\0'")) {
   process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
   process.exit(0);
 }
-if (command.includes('find "$root" -mindepth 1')) {
+if (command.includes('restore_dir "$stage" "$root"')) {
   for (const entry of fs.readdirSync(${JSON.stringify(liveRoot)})) {
     fs.rmSync(require("node:path").join(${JSON.stringify(liveRoot)}, entry), { recursive: true, force: true });
   }

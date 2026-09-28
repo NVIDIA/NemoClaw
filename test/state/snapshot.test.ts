@@ -48,7 +48,7 @@ function tarHeader(
   header.write("0000644\0", 100, 8, "utf8");
   header.write("0001000\0", 108, 8, "utf8");
   header.write("0001000\0", 116, 8, "utf8");
-  const size = type === "0" ? content.length : 0;
+  const size = ["0", "S", "x", "g"].includes(type) ? content.length : 0;
   header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
   header.write(
     `${Math.floor(Date.now() / 1000)
@@ -69,6 +69,39 @@ function tarHeader(
   for (const byte of header) checksum += byte;
   header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
   return header;
+}
+
+function paddedTarPayload(content: Buffer): Buffer {
+  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
+  content.copy(padded);
+  return padded;
+}
+
+function paxRecord(key: string, value: string): Buffer {
+  const body = ` ${key}=${value}\n`;
+  let length = Buffer.byteLength(body) + 1;
+  while (Buffer.byteLength(`${length}${body}`) !== length) {
+    length = Buffer.byteLength(`${length}${body}`);
+  }
+  return Buffer.from(`${length}${body}`, "utf8");
+}
+
+function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
+  if (kind === "old-gnu") {
+    return Buffer.concat([
+      tarHeader("sparse.bin", Buffer.alloc(0), { type: "S" }),
+      Buffer.alloc(1024, 0),
+    ]);
+  }
+  const metadata = paxRecord("GNU.sparse.size", "1048576");
+  const file = Buffer.from("ordinary payload", "utf8");
+  return Buffer.concat([
+    tarHeader("PaxHeaders/sparse.bin", metadata, { type: kind === "pax" ? "x" : "g" }),
+    paddedTarPayload(metadata),
+    tarHeader("sparse.bin", file),
+    paddedTarPayload(file),
+    Buffer.alloc(1024, 0),
+  ]);
 }
 
 function buildSymlinkTraversalTar(): Buffer {
@@ -240,6 +273,17 @@ describe("complete native home persistence", () => {
         path.join(nativeRoot, "schemas", "config.schema.json"),
         JSON.stringify({ apiKey: { type: "string" } }),
       );
+      const bundledCredentialBoundary = path.join(
+        import.meta.dirname,
+        "../..",
+        "nemoclaw/dist/shared/credential-filter-boundary.cjs",
+      );
+      const bundledCredentialBoundaryCopy = path.join(
+        nativeRoot,
+        ".openclaw/extensions/nemoclaw/dist/shared/credential-filter-boundary.cjs",
+      );
+      fs.mkdirSync(path.dirname(bundledCredentialBoundaryCopy), { recursive: true });
+      fs.copyFileSync(bundledCredentialBoundary, bundledCredentialBoundaryCopy);
       fs.writeFileSync(path.join(nativeRoot, inspectionMarker), "unrelated");
       fs.writeFileSync(
         path.join(nativeRoot, ".openclaw", "unknown-state.json"),
@@ -472,6 +516,13 @@ describe("complete native home persistence", () => {
     }
   });
 
+  it("reserves capacity for every concurrent stopped-state copy", () => {
+    expect(sandboxState.nativeStateCaptureMaxBytes(TMP_HOME, 1024, 2)).toBe(512);
+    expect(() => sandboxState.nativeStateCaptureMaxBytes(TMP_HOME, 1024, 0)).toThrow(
+      "concurrent-copy count must be a positive integer",
+    );
+  });
+
   it.each([
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
@@ -603,8 +654,9 @@ describe("complete native home persistence", () => {
       expect(commands).toContain("trap resume EXIT HUP INT TERM");
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
-      expect(commands).toContain('! -path "$stage"');
-      expect(commands).toContain('mv -- {} "$root"/');
+      expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
+      expect(commands).toContain('restore_dir "$source_item" "$target_item"');
+      expect(commands).toContain('mv -- "$source_item" "$target_dir"/');
       expect(commands).not.toContain("native restore symlink escapes root");
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
@@ -614,6 +666,66 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it.each(["old-gnu", "pax", "global-pax"] as const)(
+    "rejects a %s sparse archive before inspection or publication",
+    (kind) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sparse-"));
+      const oldPath = process.env.PATH;
+      const oldCraftedArchive = process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE;
+      const oldTarLog = process.env.NEMOCLAW_TEST_TAR_LOG;
+      try {
+        const binDir = path.join(fixture, "bin");
+        const nativeRoot = path.join(fixture, "native-home");
+        const craftedArchive = path.join(fixture, "crafted.tar");
+        const tarLog = path.join(fixture, "tar.log");
+        const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+          encoding: "utf8",
+        }).stdout.trim();
+        expect(systemTar).not.toBe("");
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.mkdirSync(nativeRoot, { recursive: true });
+        fs.writeFileSync(craftedArchive, buildSparseTar(kind));
+        writeExecutable(
+          path.join(binDir, "tar"),
+          `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
+if (args.includes("-C")) {
+  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
+  process.exit(0);
+}
+const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 90);
+`,
+        );
+        process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
+        process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
+        process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+        writeOpenClawRegistry("alpha");
+
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: () => undefined,
+          },
+        });
+
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain("native state sparse archive entry");
+        const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
+        expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
+      } finally {
+        restoreEnv("NEMOCLAW_TEST_CRAFTED_ARCHIVE", oldCraftedArchive);
+        restoreEnv("NEMOCLAW_TEST_TAR_LOG", oldTarLog);
+        restoreEnv("PATH", oldPath);
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects symlink write-through before credential-scan extraction", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-scan-traversal-"));

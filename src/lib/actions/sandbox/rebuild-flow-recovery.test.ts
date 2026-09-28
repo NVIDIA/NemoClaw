@@ -19,6 +19,7 @@ import {
 } from "../../../../test/helpers/rebuild-flow-harness";
 import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
+import { textContainsHighConfidenceCredential } from "../../security/credential-filter";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,
@@ -165,6 +166,37 @@ describe("rebuildSandbox flow: recovery", () => {
       expect(warning).toHaveBeenCalledWith(
         expect.stringContaining(JSON.stringify(captured.cleanupDirectory)),
       );
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects credentials from the prepared stopped source before deleting the sandbox", async () => {
+    const { captured, harness } = stoppedRecoveryHarness();
+    const credentialPath = path.join(captured.nativeDirectory, "unknown-agent-state.txt");
+    fs.writeFileSync(credentialPath, `ghp_${"0123456789abcdef"}`);
+    harness.backupSandboxStateSpy.mockImplementation((_sandboxName, options) => {
+      expect(options?.nativeStateSource?.directory).toBe(captured.nativeDirectory);
+      expect(textContainsHighConfidenceCredential(fs.readFileSync(credentialPath, "utf8"))).toBe(
+        true,
+      );
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: "Native state archive contains credential-bearing content",
+      };
+    });
+
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to back up sandbox state");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
     } finally {
       fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
     }

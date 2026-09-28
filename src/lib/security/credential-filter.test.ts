@@ -24,6 +24,7 @@ import {
   sanitizeYamlConfigFile,
   shouldScanSnapshotFileForCredentials,
   stripCredentials,
+  textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
 
@@ -198,6 +199,21 @@ describe("valueLooksLikeSecret", () => {
     expect(valueLooksLikeSecret("https://integrate.api.nvidia.com/v1")).toBe(false);
     expect(valueLooksLikeSecret("moonshotai/kimi-k2")).toBe(false);
     expect(valueLooksLikeSecret("production")).toBe(false);
+  });
+});
+
+describe("textContainsHighConfidenceCredential", () => {
+  it("does not flag generated placeholder matcher source as a Slack credential", () => {
+    expect(
+      textContainsHighConfidenceCredential(
+        String.raw`const bot = /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u; const app = /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u;`,
+      ),
+    ).toBe(false);
+  });
+
+  it("continues to flag real Slack credentials", () => {
+    expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
+    expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
   });
 });
 

@@ -1047,9 +1047,12 @@ function readArchiveRange(descriptor: number, position: number, length: number):
   return result;
 }
 
-function paxPath(payload: Buffer): string | null | undefined {
+function paxMetadata(
+  payload: Buffer,
+): { readonly path: string | null; readonly sparse: boolean } | undefined {
   let cursor = 0;
-  let result: string | null = null;
+  let archivePath: string | null = null;
+  let sparse = false;
   while (cursor < payload.byteLength) {
     const separator = payload.indexOf(0x20, cursor);
     if (separator < 0) return undefined;
@@ -1059,10 +1062,14 @@ function paxPath(payload: Buffer): string | null | undefined {
     }
     const record = payload.subarray(separator + 1, cursor + length - 1).toString("utf8");
     const equals = record.indexOf("=");
-    if (equals > 0 && record.slice(0, equals) === "path") result = record.slice(equals + 1);
+    if (equals > 0) {
+      const key = record.slice(0, equals);
+      if (key === "path") archivePath = record.slice(equals + 1);
+      if (key.startsWith("GNU.sparse.")) sparse = true;
+    }
     cursor += length;
   }
-  return result;
+  return { path: archivePath, sparse };
 }
 
 function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boolean {
@@ -1079,7 +1086,7 @@ function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boo
 function nativeRawChunkContainsCredential(raw: string, contextual: boolean): boolean {
   const withoutPlaceholders = raw
     .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
-    .replace(/xox[bx]-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+/gu, "unused")
+    .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-/gu, "unused-")
     .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
   if (contextual) return valueLooksLikeSecret(withoutPlaceholders);
   return textContainsHighConfidenceCredential(withoutPlaceholders);
@@ -1128,22 +1135,26 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         return "native state credential scan";
       }
       const type = String.fromCharCode(header[156] ?? 0);
+      // Sparse formats can expand a small archive payload into an arbitrarily
+      // large logical file and bypass the bounded raw-byte credential scan.
+      if (type === "S") return "native state sparse archive entry";
       const name = tarHeaderString(header, 0, 100);
       const prefix = tarHeaderString(header, 345, 155);
       const headerPath = prefix ? `${prefix}/${name}` : name;
-      if (type === "x" || type === "L") {
+      if (type === "x" || type === "g" || type === "L") {
         if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "native state credential scan";
         const metadata = readArchiveRange(descriptor, dataOffset, size);
         if (!metadata) return "native state credential scan";
-        if (type === "x") {
-          const pathOverride = paxPath(metadata);
-          if (pathOverride === undefined) return "native state credential scan";
-          if (pathOverride !== null) nextPath = pathOverride;
+        if (type === "x" || type === "g") {
+          const parsed = paxMetadata(metadata);
+          if (parsed === undefined) return "native state credential scan";
+          if (parsed.sparse) return "native state sparse archive entry";
+          if (type === "x" && parsed.path !== null) nextPath = parsed.path;
         } else {
           nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
           if (!nextPath) return "native state credential scan";
         }
-      } else if (type !== "g") {
+      } else {
         const entry = nextPath ?? headerPath;
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
@@ -1465,7 +1476,14 @@ export function inspectNativeSandboxState<T>(
   }
 }
 
-export function nativeStateCaptureMaxBytes(backupPath: string, override?: number): number {
+export function nativeStateCaptureMaxBytes(
+  backupPath: string,
+  override?: number,
+  concurrentCopies = 1,
+): number {
+  if (!Number.isSafeInteger(concurrentCopies) || concurrentCopies <= 0) {
+    throw new Error("Native state capture concurrent-copy count must be a positive integer");
+  }
   if (override !== undefined) {
     if (
       !Number.isSafeInteger(override) ||
@@ -1476,15 +1494,15 @@ export function nativeStateCaptureMaxBytes(backupPath: string, override?: number
         `Native state capture limit must be an integer between 1 and ${NATIVE_STATE_CAPTURE_MAX_BYTES}`,
       );
     }
-    return override;
   }
   const stats = statfsSync(backupPath, { bigint: true });
   const available = stats.bavail * stats.bsize;
   const reserve = BigInt(NATIVE_STATE_CAPTURE_RESERVE_BYTES);
   const bounded = available > reserve ? available - reserve : 0n;
-  return Number(
-    bounded > BigInt(NATIVE_STATE_CAPTURE_MAX_BYTES) ? NATIVE_STATE_CAPTURE_MAX_BYTES : bounded,
-  );
+  const configuredMaximum = BigInt(override ?? NATIVE_STATE_CAPTURE_MAX_BYTES);
+  const maximumPerCopy = configuredMaximum / BigInt(concurrentCopies);
+  const availablePerCopy = bounded / BigInt(concurrentCopies);
+  return Number(availablePerCopy > maximumPerCopy ? maximumPerCopy : availablePerCopy);
 }
 
 function capturePreparedNativeState(
@@ -2015,18 +2033,47 @@ async function restoreNativeSandboxState(
       const mutationError = await validateSnapshotRestoreMutation(backupPath, options);
       if (mutationError) return failure(mutationError);
 
-      const root = shellQuote(rootResult.root);
-      const command = [
-        "set -eu",
-        `root=${root}`,
+      const restoreScript = [
+        "root=$1",
         '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
         'stage="$(mktemp -d "$root/.nemoclaw-native-restore.XXXXXX")"',
         "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
-        'find "$root" -mindepth 1 -maxdepth 1 ! -path "$stage" -exec rm -rf -- {} +',
-        'find "$stage" -mindepth 1 -maxdepth 1 -exec mv -- {} "$root"/ \\;',
-      ].join("; ");
+        'uid="$(id -u)"',
+        "restore_dir() {",
+        '  local source_dir="$1" target_dir="$2" target_item source_item name owner',
+        '  for target_item in "$target_dir"/* "$target_dir"/.[!.]* "$target_dir"/..?*; do',
+        '    { [ -e "$target_item" ] || [ -L "$target_item" ]; } || continue',
+        '    [ "$target_item" = "$stage" ] && continue',
+        '    name="${target_item##*/}"',
+        '    source_item="$source_dir/$name"',
+        '    owner="$(stat -c %u -- "$target_item")"',
+        '    if [ "$owner" = "$uid" ]; then',
+        '      rm -rf -- "$target_item"',
+        '    elif [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
+        '      restore_dir "$source_item" "$target_item"',
+        '      rmdir -- "$source_item"',
+        "    else",
+        '      rm -rf -- "$source_item"',
+        "    fi",
+        "  done",
+        '  for source_item in "$source_dir"/* "$source_dir"/.[!.]* "$source_dir"/..?*; do',
+        '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
+        '    if [ -w "$target_dir" ]; then',
+        '      mv -- "$source_item" "$target_dir"/',
+        "    else",
+        '      rm -rf -- "$source_item"',
+        "    fi",
+        "  done",
+        "}",
+        'restore_dir "$stage" "$root"',
+      ].join("\n");
+      // The target image's non-agent-owned entries remain authoritative. The
+      // recursive ownership merge replaces every agent-owned path without a
+      // path allowlist, while retaining root-owned trust scaffolding that the
+      // SSH sandbox identity cannot and must not overwrite.
+      const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),
         stdio: [archiveFd, "pipe", "pipe"],
