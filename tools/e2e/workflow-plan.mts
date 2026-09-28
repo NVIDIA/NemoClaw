@@ -27,10 +27,12 @@ import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
+  catalogueHostPackages,
   catalogueMatrix,
   catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
+  E2E_HOST_PACKAGES,
   E2E_OPTIONAL_CREDENTIALS,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
@@ -324,7 +326,10 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     Number.isInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     typeof value.host_packages === "string" &&
-    /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
+    (value.host_packages === "" ||
+      value.host_packages
+        .split(" ")
+        .every((name) => E2E_HOST_PACKAGES.some((packageName) => packageName === name))) &&
     typeof value.install_non_interactive === "boolean" &&
     typeof value.cloudflared === "boolean" &&
     typeof value.runner_comparison === "boolean" &&
@@ -406,7 +411,7 @@ function isCatalogueMatrixRowForProfile(
     target.installNonInteractive === value.install_non_interactive &&
     target.restoreCli === value.restore_cli &&
     target.cloudflared === value.cloudflared &&
-    target.hostPackages.join(" ") === value.host_packages &&
+    catalogueHostPackages(target, value.runtime_provider) === value.host_packages &&
     target.hostPreparation === value.host_preparation &&
     target.runnerComparison === value.runner_comparison &&
     target.runnerPressure === value.runner_pressure &&

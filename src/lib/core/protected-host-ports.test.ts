@@ -133,6 +133,74 @@ describe("protected NemoClaw host ports", () => {
     ).toBe(false);
   });
 
+  it.each(["NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT", "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT"])(
+    "rejects a legacy proxy route when %s now owns its port",
+    async (owner) => {
+      vi.stubEnv("HOME", tempHome());
+      vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+      vi.stubEnv(owner, "11435");
+      vi.resetModules();
+      const { assertLoopbackNoAuthCompatibleEndpointUrl } =
+        await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+      expect(() =>
+        assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost:11435/v1", {
+          allowLegacyRecordedEndpoint: true,
+        }),
+      ).toThrow(/no longer eligible/);
+    },
+  );
+
+  it("retains registry-owned router ports after the onboarding session is cleared", async () => {
+    const home = tempHome();
+    const root = path.join(home, ".nemoclaw");
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            provider: "nvidia-router",
+            endpointUrl: "http://host.openshell.internal:23007/v1",
+          },
+        },
+      }),
+    );
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_VLLM_PORT", "23007");
+    vi.resetModules();
+    const { isLoopbackNoAuthCompatibleEndpointUrl } =
+      await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:23007/v1"),
+    ).toBe(false);
+  });
+
+  it("releases a session router port after its cleanup receipt is cleared", async () => {
+    const home = tempHome();
+    const root = path.join(home, ".nemoclaw");
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "onboard-session.json"),
+      JSON.stringify({
+        provider: "nvidia-router",
+        endpointUrl: "http://host.openshell.internal:23007/v1",
+        routerPort: null,
+        routerPid: null,
+        routerCredentialHash: null,
+      }),
+    );
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_VLLM_PORT", "23007");
+    vi.resetModules();
+    const { isLoopbackNoAuthCompatibleEndpointUrl } =
+      await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:23007/v1"),
+    ).toBe(true);
+  });
+
   it("keeps the default and automatic gateway ports reserved under an override", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     vi.resetModules();

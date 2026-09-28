@@ -9,7 +9,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { proveKilledDockerOpenClawRecovery } from "./openclaw-stopped-recovery.ts";
+import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
 const DASHBOARD_PORT = 18_792;
@@ -168,7 +168,7 @@ test(
     await verifyRestoredState("rebuild-openclaw");
 
     progress.phase("recover a killed Docker source");
-    await proveKilledDockerOpenClawRecovery(
+    await proveStoppedDockerAgentRecovery(
       sandbox,
       runtimeProvider,
       artifacts,

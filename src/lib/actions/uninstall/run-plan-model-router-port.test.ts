@@ -110,64 +110,82 @@ it("uses the recorded router port when the current blueprint changed", async () 
   }
 });
 
-it("reports incomplete cleanup instead of guessing when a legacy router session has no port", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-no-port-"));
-  const stateDir = path.join(root, ".nemoclaw");
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(stateDir, "onboard-session.json"),
-    JSON.stringify({ provider: "nvidia-router", routerPid: 55681 }),
-  );
-  const errors: string[] = [];
-  const killed: number[] = [];
-  const logs: string[] = [];
-  const run = vi.fn((command: string, args: string[]): RunResult => {
-    return command === "openshell" && args[0] === "gateway" && args[1] === "list"
-      ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-      : args[0] === "-c"
-        ? ok("/fake/bin/tool\n")
-        : ok();
-  });
-
-  try {
-    const result = await runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: { HOME: root, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
-        error: (message) => errors.push(message),
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          return true;
-        },
-        log: (message) => logs.push(message),
-        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-          endpoint: null,
-          gatewayName,
-          gatewayPort,
-          mode: "nemoclaw-managed",
-          requiredCapabilities: [],
-          source: "packaged-service",
-          stateDir: null,
-          supervisor: null,
-        }),
-        rmSync: fs.rmSync,
-        run,
-        runDocker: () => ok(),
-      },
+it.each([false, true])(
+  "uninstalls a router session without a port only after its receipt is cleared (cleared=%s)",
+  async (cleared) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-no-port-"));
+    const stateDir = path.join(root, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify(
+        cleared
+          ? {
+              provider: "nvidia-router",
+              routerPid: null,
+              routerPort: null,
+              routerCredentialHash: null,
+            }
+          : { provider: "nvidia-router", routerPid: 55681 },
+      ),
     );
+    const errors: string[] = [];
+    const killed: number[] = [];
+    const logs: string[] = [];
+    const run = vi.fn((command: string, args: string[]): RunResult => {
+      return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+        ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+        : args[0] === "-c"
+          ? ok("/fake/bin/tool\n")
+          : ok();
+    });
 
-    expect(result.exitCode).toBe(1);
-    expect(errors).toContainEqual(expect.stringContaining("recorded port is missing"));
-    expect(errors).toContainEqual(expect.stringContaining("PID 55681"));
-    expect(errors).toContainEqual(expect.stringContaining("rerun nemoclaw uninstall"));
-    expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
-    expect(killed).toEqual([]);
-    expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
-    expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
+    try {
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: root, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          error: (message) => errors.push(message),
+          existsSync: () => false,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: (message) => logs.push(message),
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            endpoint: null,
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            requiredCapabilities: [],
+            source: "packaged-service",
+            stateDir: null,
+            supervisor: null,
+          }),
+          rmSync: fs.rmSync,
+          run,
+          runDocker: () => ok(),
+        },
+      );
+
+      expect(result.exitCode).toBe(cleared ? 0 : 1);
+      expect(errors.filter((message) => message.includes("Model Router cleanup"))).toEqual(
+        cleared
+          ? []
+          : [
+              expect.stringMatching(
+                /recorded port is missing.*PID 55681.*rerun nemoclaw uninstall/,
+              ),
+            ],
+      );
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
+      expect(killed).toEqual([]);
+      expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(cleared);
+      expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

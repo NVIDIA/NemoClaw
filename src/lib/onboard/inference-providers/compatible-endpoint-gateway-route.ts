@@ -31,10 +31,7 @@ const NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR =
   "The no-authentication endpoint is no longer eligible for proxy routing.";
 
 /**
- * Validate the source identity of a compatible endpoint onboarded through the
- * protected no-auth proxy. The proxy may forward to an explicit unprivileged
- * loopback port that is not reserved for NemoClaw's control plane, even though
- * direct sandbox bridge routes use a fixed port set.
+ * Parse the loopback source identity before checking supported and protected ports.
  */
 function loopbackNoAuthCompatibleEndpointPort(
   provider: string,
@@ -105,9 +102,14 @@ export function isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
 ): boolean {
+  const home = resolveHome();
   return (
     OLLAMA_PROXY_PORT !== DEFAULT_OLLAMA_PROXY_PORT &&
-    loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT
+    loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT &&
+    !isProtectedNemoClawHostPort(DEFAULT_OLLAMA_PROXY_PORT, listRecordedModelRouterPorts(home), {
+      allowLegacyProxyDefault: true,
+    }) &&
+    !listRecordedGatewayPorts(home).includes(DEFAULT_OLLAMA_PROXY_PORT)
   );
 }
 

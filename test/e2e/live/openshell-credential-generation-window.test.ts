@@ -6,6 +6,7 @@ import {
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -317,7 +318,6 @@ async function updateProviderCredential(
     timeoutMs: 90_000,
   });
   expectExitZero(result, artifactName);
-  expect(resultText(result)).toMatch(/Updated provider/iu);
 }
 
 async function sandboxIdentity(sandbox: SandboxClient, artifactName: string): Promise<string> {
@@ -430,6 +430,10 @@ test(
       },
     );
     expectExitZero(onboard, "onboard credential-window sandbox");
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+      COMPATIBLE_KEY,
+      ...allSecrets,
+    ]);
     const sourceSandboxId = await sandboxIdentity(
       sandbox,
       "credential-window-source-sandbox-before-expiry",

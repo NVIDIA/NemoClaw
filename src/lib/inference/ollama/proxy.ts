@@ -671,6 +671,24 @@ function sharedProxyBackendConflict(): Error {
   );
 }
 
+/** A retained backend remains owned even when its credential cannot be recovered. */
+function assertSharedProxyBackend(
+  establishedBackendUrl: string | null,
+  requestedBackendUrl: string,
+  token: string | null,
+): void {
+  if (establishedBackendUrl !== null && establishedBackendUrl !== requestedBackendUrl) {
+    throw sharedProxyBackendConflict();
+  }
+  if (establishedBackendUrl !== null && !token) {
+    throw new Error(
+      "The shared protected loopback route credential is missing. " +
+        "Restore the existing proxy credential from backup before retrying. " +
+        "NemoClaw preserved the recorded backend and proxy process.",
+    );
+  }
+}
+
 function startOllamaAuthProxy(backendUrl?: string): boolean {
   return withOllamaProxyLifecycleLock(() => {
     // Re-onboarding the committed local Ollama route must keep the credential
@@ -684,9 +702,7 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     // evidence and must never be replaced with a different route.
     const establishedBackendUrl =
       persistedBackend.url ?? (proxyToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
-    if (proxyToken && establishedBackendUrl !== requestedBackendUrl) {
-      throw sharedProxyBackendConflict();
-    }
+    assertSharedProxyBackend(establishedBackendUrl, requestedBackendUrl, proxyToken);
     const reservedNewToken = !proxyToken;
     if (!proxyToken) {
       proxyToken = generateProxyToken();
@@ -717,9 +733,7 @@ function noAuthProxy(endpointUrl: string, options: { allowLegacyRecordedEndpoint
     const persistedBackend = readProxyBackendIdentity();
     const establishedBackendUrl =
       persistedBackend.url ?? (persistedToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
-    if (persistedToken && establishedBackendUrl !== endpoint.origin) {
-      throw sharedProxyBackendConflict();
-    }
+    assertSharedProxyBackend(establishedBackendUrl, endpoint.origin, persistedToken);
     assertNoAuthProxyEndpointEligible(endpointUrl, options);
 
     const proxyToken = persistedToken ?? generateProxyToken();

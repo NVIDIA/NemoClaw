@@ -10,6 +10,67 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 describe("ollama auth proxy route ownership", () => {
+  it("preserves a recorded backend and process when its credential is missing", () => {
+    const repoRoot = path.join(import.meta.dirname, "../../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proxy-missing-token-"));
+    const scriptPath = path.join(tmpDir, "missing-token.js");
+    const proxyPath = JSON.stringify(path.join(repoRoot, "src/lib/inference/ollama/proxy.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src/lib/runner.ts"));
+    fs.writeFileSync(
+      scriptPath,
+      String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+const mutations = [];
+childProcess.spawn = () => { mutations.push("spawn"); throw new Error("unexpected spawn"); };
+runner.run = () => { mutations.push("run"); return { status: 0 }; };
+runner.runCapture = () => "";
+require("node:module").syncBuiltinESMExports();
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n");
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n");
+const proxy = require(${proxyPath});
+const errors = [];
+for (const start of [
+  () => proxy.noAuthProxy("http://127.0.0.1:8000/v1"),
+  () => proxy.noAuthProxy("http://127.0.0.1:11434/v1"),
+  () => proxy.startOllamaAuthProxy("http://127.0.0.1:8000"),
+  () => proxy.startOllamaAuthProxy("http://127.0.0.1:11434"),
+]) {
+  try { start(); errors.push(null); } catch (error) { errors.push(error.message); }
+}
+console.log(JSON.stringify({ errors, mutations,
+  backend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8"),
+  pid: fs.readFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "utf8"),
+  tokenExists: fs.existsSync(path.join(stateDir, "ollama-proxy-token")),
+}));
+`,
+    );
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, HOME: tmpDir },
+        timeout: 15000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+      assert.match(payload.errors[0], /already serves another inference backend/);
+      assert.match(payload.errors[1], /credential is missing/);
+      assert.match(payload.errors[2], /already serves another inference backend/);
+      assert.match(payload.errors[3], /credential is missing/);
+      assert.deepEqual(payload.mutations, []);
+      assert.equal(payload.backend, "http://127.0.0.1:11434\n");
+      assert.equal(payload.pid, "4242\n");
+      assert.equal(payload.tokenExists, false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("reuses an identical committed route and rejects a different backend before mutation", () => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-rollback-"));

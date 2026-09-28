@@ -482,7 +482,7 @@ describe("fetch-guard patch regression guard", () => {
       const patch = runDockerfilePatchBlock(
         dist,
         tmp,
-        "# Patch OpenClaw chat.send gateway behavior",
+        "# Native OpenClaw restart must reload",
         CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
       );
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);

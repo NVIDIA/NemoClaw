@@ -1294,9 +1294,6 @@ console.log(JSON.stringify({
       const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
 
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", {
-        mode: 0o600,
-      });
 
       const script = String.raw`
 const fs = require("node:fs");
