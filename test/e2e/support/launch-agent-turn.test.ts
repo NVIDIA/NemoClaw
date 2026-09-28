@@ -121,6 +121,11 @@ async function runLaunchSessionFixture(
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
+  const logoutMarker = join(fixtureRoot, "logout-observed");
+  writeFileSync(
+    join(fixtureRoot, ".bash_logout"),
+    ': > "$NEMOCLAW_FIXTURE_BIN_ROOT/logout-observed"\nfalse\n',
+  );
   const earlyInputMarker = join(fixtureRoot, "early-input");
   const fakeLaunch = join(fixtureRoot, "openclaw");
   const fakeOpenshell = join(fixtureRoot, "openshell");
@@ -531,6 +536,7 @@ exec "$@"
     return {
       baselineRemoved: !existsSync(baselinePath),
       canonicalRestored: existsSync(canonicalRestoredMarker),
+      logoutObserved: existsSync(logoutMarker),
       earlyInputObserved: existsSync(earlyInputMarker),
       hostSessionResidue: readdirSync(fixtureRoot).filter((name) =>
         name.startsWith("nemoclaw-launch-host."),
@@ -1080,7 +1086,7 @@ it.runIf(process.platform === "linux").each([
   ["503", "generic-http-error", "valid"],
   ["503", "generic-http-error", "provider-empty-message"],
 ] as const)(
-  "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
+  "executes the real $1 HTTP $0 launch producer through $2 without a failing logout hook (#10978)",
   async (providerCode, providerError, secondMode) => {
     const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
     const secondTerminal = secondMode === "valid" ? "absent" : "provider";
@@ -1089,6 +1095,7 @@ it.runIf(process.platform === "linux").each([
       firstInput?: string;
       runId?: string;
       stderr: string;
+      logoutObserved: boolean;
     }> = [];
     let markFirstCallFinished: () => void = () => undefined;
     const firstCallFinished = new Promise<void>((resolve) => {
@@ -1100,7 +1107,7 @@ it.runIf(process.platform === "linux").each([
         args: string[],
         options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
       ) => {
-        const { result: fixture } = await runLaunchSessionFixture(
+        const { result: fixture, logoutObserved } = await runLaunchSessionFixture(
           calls.length === 0 ? "provider-exit-after-recording" : secondMode,
           calls.length === 0 ? "provider" : secondTerminal,
           {
@@ -1121,6 +1128,7 @@ it.runIf(process.platform === "linux").each([
           firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
           runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
           stderr: fixture.stderr,
+          logoutObserved,
         });
         calls.length === 1 ? markFirstCallFinished() : undefined;
         return {
@@ -1155,6 +1163,7 @@ it.runIf(process.platform === "linux").each([
       ]);
       expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
       expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
+      expect(calls.map((call) => call.logoutObserved)).toEqual([false, false]);
       expect(calls[0]?.stderr).toContain(
         `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[0]?.runId}`,
       );

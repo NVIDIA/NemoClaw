@@ -1763,7 +1763,8 @@ export async function runOpenClawLaunchSession(
   for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
     const inputs = uniqueTurnInputs();
     const runId = randomUUID().replaceAll("-", "");
-    const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
+    // A failing logout file can break Bash 5.1's function context during EXIT cleanup.
+    const result = await options.host.command("bash", ["-c", LAUNCH_TURN_SCRIPT], {
       artifactName:
         attempt === 1
           ? options.artifactName

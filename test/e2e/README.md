@@ -781,6 +781,8 @@ existing final provider marker authorizes a retry after successful cleanup.
 Baseline and PTY cleanup calls run independently so a fatal shell error in one
 cannot skip the other. Failed calls retain their last 2 KiB of error output through
 the fixture's normal redaction boundary, and any cleanup failure prevents retry.
+The host launch harness uses a non-login Bash shell with its supplied environment.
+It does not source user login or logout files. A failing logout file can disrupt Bash 5.1 exit-trap cleanup.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
