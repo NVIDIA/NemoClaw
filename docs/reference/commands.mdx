@@ -2957,6 +2957,13 @@ Relative host destinations resolve against the caller's working directory.
 Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.
 
+For a relative sandbox path that begins with `-`, place the standard outer `--` before the path.
+NemoClaw anchors the source so OpenShell treats it as a path.
+
+```bash
+$$nemoclaw my-assistant download -- -report.txt ./
+```
+
 <AgentOnly variant="openclaw">
 
 ```bash

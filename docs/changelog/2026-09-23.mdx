@@ -150,3 +150,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
 - The installer limits a curl connection to 10 seconds and retries a failed OpenShell release-asset download up to three times.
   It stops a transfer that remains below 1 KiB/s for 60 seconds.
   Related change: [PR #12374](https://github.com/NVIDIA/NemoClaw/pull/12374).
+- Sandbox download accepts a relative source path that begins with `-` when you place the standard outer `--` before the path.
+  NemoClaw anchors that path before it checks and transfers the source, so OpenShell treats it as a path rather than an option.
+  Related change: [PR #12391](https://github.com/NVIDIA/NemoClaw/pull/12391).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-download-sandbox-path-host-dest).
