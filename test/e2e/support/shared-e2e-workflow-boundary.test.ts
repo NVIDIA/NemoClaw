@@ -441,6 +441,31 @@ describe("shared E2E workflow boundary", () => {
   });
 });
 
+describe("Tavily pre-candidate matrix contract", () => {
+  it("keeps planning limited to Tavily availability and complete matrix output (#12138)", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+    const credentialErrors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs["generate-matrix"]!.steps!.find(
+        (candidate) => candidate.name === "Generate E2E target matrix",
+      )!;
+      (step.env as Record<string, string>).NEMOCLAW_E2E_TAVILY_API_KEY_AVAILABLE =
+        "${{ secrets.TAVILY_API_KEY }}";
+    });
+    expect(credentialErrors).toContain(
+      "trusted pre-candidate step Generate E2E target matrix must preserve its exact reviewed environment",
+    );
+    const matrixErrors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs["generate-matrix"]!.steps!.find(
+        (candidate) => candidate.name === "Generate E2E target matrix",
+      )!;
+      step.run = step.run!.replace("    echo 'catalogue_tavily_nvidia_inference_matrix=[]'\n", "");
+    });
+    expect(matrixErrors).toContain(
+      "trusted pre-candidate step Generate E2E target matrix must preserve its exact reviewed command body",
+    );
+  });
+});
+
 describe("approved pre-candidate shell body integrity", () => {
   const owners = [
     "Authenticate manual PR dispatch",

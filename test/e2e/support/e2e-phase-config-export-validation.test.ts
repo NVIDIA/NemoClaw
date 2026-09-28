@@ -421,97 +421,109 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-  it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
-    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
-    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
-      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
-    });
-    const raw = `${JSON.stringify(exported)}\n`;
-    const publishedExport = {
-      bytes: raw,
-      byteLength: Buffer.byteLength(raw, "utf8"),
-      sha256: sha256(raw),
-    };
-    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
-    artifactDirectories.push(artifactRoot);
-    const independentDependencies = dependencies();
-    independentDependencies.parseConfig = parseConfigExport;
-    const test = fixture({
-      artifacts: new ArtifactSink(artifactRoot),
-      dependencies: independentDependencies,
-      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
-    });
+  it.each([
+    { name: "default", effectivePolicy: POLICY, exportedPolicy: POLICY },
+    {
+      name: "strict Landlock",
+      effectivePolicy: { ...POLICY, landlock: { compatibility: "strict" } },
+      exportedPolicy: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    },
+  ])(
+    "publishes exact bytes for $name policy only when pinned native settings match (#11485)",
+    async ({ effectivePolicy, exportedPolicy }) => {
+      const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+      Object.assign(exported.spec.sandboxes[0]!.network.policy, {
+        explicit: exportedPolicy,
+      });
+      const raw = `${JSON.stringify(exported)}\n`;
+      const publishedExport = {
+        bytes: raw,
+        byteLength: Buffer.byteLength(raw, "utf8"),
+        sha256: sha256(raw),
+      };
+      const artifactRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"),
+      );
+      artifactDirectories.push(artifactRoot);
+      const independentDependencies = dependencies();
+      independentDependencies.parseConfig = parseConfigExport;
+      const test = fixture({
+        artifacts: new ArtifactSink(artifactRoot),
+        dependencies: independentDependencies,
+        host: successfulHost(raw, effectivePolicy),
+      });
 
-    const evidence = await test.phase.from(target("required"), instance());
-    const persistedEvidence = JSON.parse(
-      fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
-    ) as ConfigExportEvidenceEnvelope;
-    expect(evidence).toMatchObject({
-      contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
-      classification: "success",
-      passed: true,
-      command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
-      cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: publishedExport,
-      security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
-      consumer: {
+      const evidence = await test.phase.from(target("required"), instance());
+      const persistedEvidence = JSON.parse(
+        fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
+      ) as ConfigExportEvidenceEnvelope;
+      expect(evidence).toMatchObject({
+        contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
+        classification: "success",
         passed: true,
-        expected: PINNED_CONSUMER_EVIDENCE,
-        actual: PINNED_CONSUMER_EVIDENCE,
-      },
-    });
-    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
-    expect(persistedEvidence.export).toEqual(publishedExport);
-    expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining([
-        "sandboxName",
-        "agent",
-        "runtimeProvider",
-        "imageRef",
-        "inferenceProvider",
-        "inferenceApi",
-        "inferenceEndpoint",
-        "model",
-        "credentialReference",
-        "routeName",
-        "policySha256",
-        "enabledFeatures",
-        "routeProviderReference",
-        "sourceRegistryUnchanged",
-      ]),
-    );
-    expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
-    expect(evidence.producer).toEqual({
-      sourceRevision: SOURCE_REVISION,
-      cliVersion: "0.1.0",
-      cliArtifactSha256: "d".repeat(64),
-    });
-    expect(evidence.elapsedMs).toBe(25);
-    expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
-    expect((await test.cleanup.runAll()).failures).toEqual([]);
-    const mismatched = dependencies();
-    mismatched.validateWithPinnedV1 = () => ({
-      ...PINNED_CONSUMER_EVIDENCE,
-      compiledSandboxes: 2,
-      openclawNativeSettings: {
-        sandbox: {
-          ...EXPECTED_NATIVE_SETTINGS,
-          model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
+        command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
+        cleanup: { registeredBeforeExport: true, succeeded: true },
+        export: publishedExport,
+        security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
+        consumer: {
+          passed: true,
+          expected: PINNED_CONSUMER_EVIDENCE,
+          actual: PINNED_CONSUMER_EVIDENCE,
         },
-      },
-      openclawNativeSettingsVerified: 0,
-    });
-    const rejected = fixture({ dependencies: mismatched });
-    await captureFailure(rejected.phase.from(target("required"), instance()));
-    expect(rejected.writes.at(-1)).toMatchObject({
-      failureStage: "verification",
-      consumer: { passed: false },
-    });
-    expect(rejected.writes.at(-1)?.verifications).toContainEqual(
-      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
-    );
-    expect(rejected.writes.at(-1)).not.toHaveProperty("export");
-  });
+      });
+      expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
+      expect(persistedEvidence.export).toEqual(publishedExport);
+      expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
+        expect.arrayContaining([
+          "sandboxName",
+          "agent",
+          "runtimeProvider",
+          "imageRef",
+          "inferenceProvider",
+          "inferenceApi",
+          "inferenceEndpoint",
+          "model",
+          "credentialReference",
+          "routeName",
+          "policySha256",
+          "enabledFeatures",
+          "routeProviderReference",
+          "sourceRegistryUnchanged",
+        ]),
+      );
+      expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
+      expect(evidence.producer).toEqual({
+        sourceRevision: SOURCE_REVISION,
+        cliVersion: "0.1.0",
+        cliArtifactSha256: "d".repeat(64),
+      });
+      expect(evidence.elapsedMs).toBe(25);
+      expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
+      expect((await test.cleanup.runAll()).failures).toEqual([]);
+      const mismatched = dependencies();
+      mismatched.validateWithPinnedV1 = () => ({
+        ...PINNED_CONSUMER_EVIDENCE,
+        compiledSandboxes: 2,
+        openclawNativeSettings: {
+          sandbox: {
+            ...EXPECTED_NATIVE_SETTINGS,
+            model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
+          },
+        },
+        openclawNativeSettingsVerified: 0,
+      });
+      const rejected = fixture({ dependencies: mismatched });
+      await captureFailure(rejected.phase.from(target("required"), instance()));
+      expect(rejected.writes.at(-1)).toMatchObject({
+        failureStage: "verification",
+        consumer: { passed: false },
+      });
+      expect(rejected.writes.at(-1)?.verifications).toContainEqual(
+        expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
+      );
+      expect(rejected.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
     const test = fixture();
     const evidence = await test.phase.from(target("required"), instance());

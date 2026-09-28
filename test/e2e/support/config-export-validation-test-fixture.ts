@@ -363,7 +363,7 @@ export function dependencies(
   };
 }
 
-export function successfulHost(raw: string) {
+export function successfulHost(raw: string, effectivePolicy: unknown = POLICY) {
   return {
     command: vi.fn(
       async (): Promise<
@@ -372,7 +372,7 @@ export function successfulHost(raw: string) {
         exitCode: 0,
         signal: null,
         timedOut: false,
-        stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+        stdout: `Version: 1\n---\n${JSON.stringify(effectivePolicy)}`,
         stderr: "",
       }),
     ),
