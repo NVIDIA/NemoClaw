@@ -112,6 +112,68 @@ function inspectStorage(
 }
 
 describe("stopped Docker recovery capture", () => {
+  it.each([
+    { directories: ["agent/../workspace"] },
+    { files: ["/etc/passwd"] },
+    { prefixes: ["workspace/child"] },
+  ])("rejects unsafe declared capture paths before runtime access: %j (#11165)", (unsafe) => {
+    const inspect = vi.fn();
+    expect(() =>
+      prepareStoppedDockerStateCapture(sandbox, runtime, { ...projection, ...unsafe }, { inspect }),
+    ).toThrow("invalid declared path");
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("captures stopped Deep Agents state and native MCP without copying unrelated files (#11165)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-dcode-test-"));
+    const archive = path.join(root, "archive");
+    const source = path.join(root, ".deepagents");
+    fs.mkdirSync(path.join(source, ".state"), { recursive: true });
+    fs.mkdirSync(path.join(source, "agent", "skills"), { recursive: true });
+    fs.writeFileSync(path.join(source, ".state", "retained.txt"), "conversation state");
+    fs.writeFileSync(path.join(source, "agent", "skills", "retained.md"), "user skill");
+    fs.writeFileSync(path.join(source, "agent", "private.txt"), "UNDECLARED-AGENT-DATA");
+    fs.writeFileSync(path.join(source, "config.toml"), "[ui]\nshow_scrollbar = true\n");
+    fs.writeFileSync(path.join(source, ".mcp.json"), '{"mcpServers":{}}');
+    fs.writeFileSync(path.join(source, ".env"), "PRIVATE-CREDENTIAL-CANARY");
+    const descriptor = fs.openSync(archive, "wx+", 0o600);
+    const read = vi.fn(() =>
+      spawn("tar", ["-cf", "-", "-C", root, ".deepagents"], {
+        env: { ...process.env, COPYFILE_DISABLE: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+    try {
+      const capture = prepareStoppedDockerStateCapture(
+        { ...sandbox, agent: "langchain-deepagents-code" },
+        runtime,
+        {
+          directories: [".state", "agent/skills"],
+          prefixes: [],
+          files: ["config.toml", ".mcp.json"],
+        },
+        { inspect: () => inspectResult(observation()), spawn: read },
+      );
+      await capture.capture(descriptor);
+      const names = execFileSync("tar", ["-tf", archive], { encoding: "utf8" });
+      expect(names).toContain(".state/retained.txt");
+      expect(names).toContain("agent/skills/retained.md");
+      expect(names).toContain("config.toml");
+      expect(names).toContain(".mcp.json");
+      expect(names).not.toContain("private.txt");
+      expect(names).not.toContain(".env");
+      expect(
+        execFileSync("tar", ["-xOf", archive, ".state/retained.txt"], { encoding: "utf8" }),
+      ).toBe("conversation state");
+      expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox/.deepagents`, "-"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } finally {
+      fs.closeSync(descriptor);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([false, true])(
     "captures immutable stopped state with managed volume=%s",
     async (mounted) => {

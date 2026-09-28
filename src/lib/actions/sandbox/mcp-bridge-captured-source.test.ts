@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { inspectCapturedOpenClawMcpSources } from "./mcp-bridge-source";
+import { inspectCapturedAgentMcpSources } from "./mcp-bridge-source";
 
 describe("captured OpenClaw MCP configuration", () => {
   let directory: string;
@@ -19,6 +19,7 @@ describe("captured OpenClaw MCP configuration", () => {
   function source() {
     return {
       sandboxName: "alpha",
+      agentName: "openclaw" as const,
       directory,
       cleanupDirectory: directory,
       assertCurrent: vi.fn(),
@@ -51,7 +52,7 @@ describe("captured OpenClaw MCP configuration", () => {
     );
     const captured = source();
 
-    const result = inspectCapturedOpenClawMcpSources(captured);
+    const result = inspectCapturedAgentMcpSources(captured);
 
     expect(result.native.github).toMatchObject({
       agent: "openclaw",
@@ -70,7 +71,7 @@ describe("captured OpenClaw MCP configuration", () => {
   });
 
   it("returns no registrations when captured configuration is absent", () => {
-    expect(inspectCapturedOpenClawMcpSources(source())).toEqual({ native: {}, legacy: {} });
+    expect(inspectCapturedAgentMcpSources(source())).toEqual({ native: {}, legacy: {} });
   });
 
   it.each([
@@ -83,8 +84,8 @@ describe("captured OpenClaw MCP configuration", () => {
     fs.writeFileSync(target, contents);
     link(target, config);
     const captured = source();
-    expect(() => inspectCapturedOpenClawMcpSources(captured)).toThrowError(
-      /^Could not inspect the captured OpenClaw MCP configuration\.$/u,
+    expect(() => inspectCapturedAgentMcpSources(captured)).toThrowError(
+      /^Could not inspect the captured agent MCP configuration\.$/u,
     );
     expect(captured.assertCurrent).toHaveBeenCalledOnce();
     expect(fs.readFileSync(config, "utf8")).toBe(contents);
@@ -100,8 +101,8 @@ describe("captured OpenClaw MCP configuration", () => {
     const config = path.join(directory, "openclaw.json");
     fs.writeFileSync(config, contents);
     const captured = source();
-    expect(() => inspectCapturedOpenClawMcpSources(captured)).toThrowError(
-      /^Could not inspect the captured OpenClaw MCP configuration\.$/u,
+    expect(() => inspectCapturedAgentMcpSources(captured)).toThrowError(
+      /^Could not inspect the captured agent MCP configuration\.$/u,
     );
     expect(captured.assertCurrent).toHaveBeenCalledOnce();
     expect(fs.readFileSync(config, "utf8")).toBe(contents);
@@ -115,6 +116,6 @@ describe("captured OpenClaw MCP configuration", () => {
       .mockImplementationOnce(() => {
         throw new Error("captured source changed");
       });
-    expect(() => inspectCapturedOpenClawMcpSources(captured)).toThrow("captured source changed");
+    expect(() => inspectCapturedAgentMcpSources(captured)).toThrow("captured source changed");
   });
 });

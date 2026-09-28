@@ -9,8 +9,8 @@ import path from "node:path";
 import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { AgentDefinition } from "../../../agent/definition-types";
 import {
-  copyCapturedOpenClawState,
-  type CapturedOpenClawState,
+  copyCapturedAgentState,
+  type CapturedAgentState,
 } from "../../../state/state-directory-restore";
 import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
@@ -566,11 +566,11 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "captureStateFile" | "captureStateDirectories" | "capturedOpenClawState"
+    "name" | "captureStateFile" | "captureStateDirectories" | "capturedAgentState"
   >,
 ): sandboxState.BackupResult {
   return options.name === undefined &&
-    options.capturedOpenClawState === undefined &&
+    options.capturedAgentState === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)
@@ -706,7 +706,7 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "capturedOpenClawState"> = {},
+  options: Pick<sandboxState.BackupOptions, "name" | "capturedAgentState"> = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {
@@ -744,20 +744,37 @@ export function backupSandboxStateWithManagedAuthority(
     : backupStateOnly(dependencies, sandboxName, backupOptions);
 }
 
-export interface PreparedStoppedOpenClawState extends CapturedOpenClawState {
+export interface PreparedStoppedAgentState extends CapturedAgentState {
   readonly cleanupDirectory: string;
   dispose(): void;
 }
 
 /** Prepare a private, declared-state copy before inspecting MCP or deleting an Error source. */
-export async function prepareStoppedOpenClawState(
+export async function prepareStoppedAgentState(
   sandboxName: string,
   getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
   agent: AgentDefinition,
-): Promise<PreparedStoppedOpenClawState | null> {
+): Promise<PreparedStoppedAgentState | null> {
   const dependencies = { ...defaultDependencies, getSandbox };
   const entry = getSandbox(sandboxName);
-  if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
+  const agentName = entry?.agent ?? "openclaw";
+  if (!entry || (agentName !== "openclaw" && agentName !== "langchain-deepagents-code"))
+    return null;
+  const stateFiles = agent.stateFiles.map((file) =>
+    typeof file === "string"
+      ? { path: file, strategy: "copy" }
+      : { path: file.path, strategy: file.strategy ?? "copy" },
+  );
+  // Native MCP inputs are private recovery inputs, not additional snapshot state.
+  // The ordinary backup projection below continues to use only the manifest.
+  const captureFiles =
+    agentName === "langchain-deepagents-code"
+      ? [
+          ...stateFiles,
+          { path: ".mcp.json", strategy: "copy" },
+          { path: ".nemoclaw-mcp.json", strategy: "copy" },
+        ]
+      : stateFiles;
   const authority = captureSnapshotAuthority(entry, dependencies);
   const runtime = authority?.runtimeSnapshot;
   if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
@@ -768,10 +785,10 @@ export async function prepareStoppedOpenClawState(
     {
       directories: agent.backupStateDirs,
       prefixes: agent.backupStateDirPrefixes,
-      files: agent.stateFiles.map((file) => (typeof file === "string" ? file : file.path)),
+      files: captureFiles.map((file) => file.path),
       managedStateRoots:
         authority.workload.kind === "managed-image"
-          ? managedStartupStateRootOwnership({ agent: "openclaw", sandboxName })
+          ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
           : [],
     },
   );
@@ -830,24 +847,27 @@ export async function prepareStoppedOpenClawState(
     const sourceDirectory = raw;
     const sourceRoot = fs.lstatSync(sourceDirectory);
     if (!sourceRoot.isDirectory() || sourceRoot.isSymbolicLink())
-      throw new Error("Stopped OpenClaw state root is not a directory.");
+      throw new Error("Stopped agent state root is not a directory.");
     fs.chmodSync(sourceDirectory, 0o700);
     fs.mkdirSync(directory, { mode: 0o700 });
-    copyCapturedOpenClawState(
-      { sandboxName, directory: sourceDirectory, assertCurrent },
+    copyCapturedAgentState(
+      { sandboxName, agentName, directory: sourceDirectory, assertCurrent },
       directory,
       agent.backupStateDirs,
       agent.backupStateDirPrefixes,
-      agent.stateFiles.map((file) =>
-        typeof file === "string"
-          ? { path: file, strategy: "copy" }
-          : { path: file.path, strategy: file.strategy ?? "copy" },
-      ),
+      captureFiles,
     );
     fs.rmSync(raw, { recursive: true, force: true });
     fs.unlinkSync(archivePath);
     assertCurrent();
-    return { sandboxName, directory, cleanupDirectory: temporary, assertCurrent, dispose };
+    return {
+      sandboxName,
+      agentName,
+      directory,
+      cleanupDirectory: temporary,
+      assertCurrent,
+      dispose,
+    };
   } catch (error) {
     dispose();
     throw error;
