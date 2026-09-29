@@ -630,6 +630,13 @@ function buildProviderConfig(
   );
   const selectedModel = cloneConfigObject(existingModels[selectedIndex] ?? existingModels[0]);
   delete selectedModel.compat;
+  if (selectedIndex < 0) {
+    // A different model's limits are not evidence for the selected model. Let
+    // OpenClaw use its own defaults unless this route has an authoritative
+    // value below.
+    delete selectedModel.contextWindow;
+    delete selectedModel.maxTokens;
+  }
   selectedModel.id = model;
   selectedModel.name = route.primaryModelRef;
   // Recompute for the new model rather than inheriting the prior model's window.
@@ -693,12 +700,12 @@ export function patchOpenClawInferenceConfig(
   return { changed: before !== JSON.stringify(config), route };
 }
 
-function writeOpenClawInferenceConfigNatively(
+export function writeOpenClawInferenceConfigNatively(
   sandboxName: string,
   config: ConfigObject,
   route: SandboxInferenceConfig,
   writeValues: InferenceSetDeps["setOpenClawConfigValues"],
-  gatewayName: string,
+  gatewayName?: string,
 ): void {
   const agents = config.agents;
   const models = config.models;
@@ -1528,8 +1535,9 @@ async function runInferenceSetWithoutHostLock(
         deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
       } else {
         deps.log(
-          `  Warning: could not determine the context window for '${model}'; keeping the ` +
-            `existing value. Run '${CLI_NAME} ${sandboxName} rebuild' to re-probe it.`,
+          `  Warning: could not determine the context window for '${model}'; preserving a ` +
+            `matching model value when present, otherwise letting OpenClaw use its default. ` +
+            `Run '${CLI_NAME} ${sandboxName} rebuild' to re-probe it.`,
         );
       }
       patched = patchOpenClawInferenceConfig(

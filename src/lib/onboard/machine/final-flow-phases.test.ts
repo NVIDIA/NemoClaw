@@ -8,10 +8,61 @@ import {
   createProviderlessComponentFlow,
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
-import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+import {
+  runFinalOnboardFlowSlice,
+  shouldInitializeNativeOpenclawInferenceRoute,
+} from "./final-flow-phases";
 import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
+  it.each([
+    {
+      name: "fresh custom image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "failed custom-image resume",
+      sessionStatus: "failed" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "completed custom-image reuse",
+      sessionStatus: "complete" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      rebuild: false,
+      expected: false,
+    },
+    {
+      name: "custom-image rebuild",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      rebuild: true,
+      expected: false,
+    },
+    {
+      name: "standard image onboarding",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      rebuild: false,
+      expected: false,
+    },
+  ])("initializes the native route only for $name (#12033)", (testCase) => {
+    const session = createSession();
+    session.steps.openclaw.status = testCase.sessionStatus;
+
+    expect(
+      shouldInitializeNativeOpenclawInferenceRoute(
+        context({ session, fromDockerfile: testCase.fromDockerfile }),
+        testCase.rebuild,
+      ),
+    ).toBe(testCase.expected);
+  });
+
   describe.each(["openclaw", "hermes"])("%s providerless component lifecycle", (agentName) => {
     it("completes providerless onboarding only after verified component activation (#11486)", async () => {
       const flow = createProviderlessComponentFlow(agentName);

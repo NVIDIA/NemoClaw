@@ -57,6 +57,18 @@ export interface FinalOnboardFlowPhaseOptions<
   >["deps"];
 }
 
+export function shouldInitializeNativeOpenclawInferenceRoute(
+  context: Pick<OnboardFlowContext, "agent" | "fromDockerfile" | "session">,
+  preserveRebuildLivePolicy: boolean,
+): boolean {
+  return (
+    context.agent === null &&
+    context.fromDockerfile !== null &&
+    !preserveRebuildLivePolicy &&
+    context.session?.steps.openclaw?.status !== "complete"
+  );
+}
+
 export function createFinalOnboardFlowPhases<
   Context extends OnboardFlowContext,
   VerifyChain = unknown,
@@ -83,11 +95,16 @@ export function createFinalOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      preferredInferenceApi: context.preferredInferenceApi,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
+      initializeNativeInferenceRoute: shouldInitializeNativeOpenclawInferenceRoute(
+        context,
+        options.preserveRebuildLivePolicy === true,
+      ),
       deps: options.agentSetupDeps,
     });
     return {
