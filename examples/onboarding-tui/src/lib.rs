@@ -140,7 +140,7 @@ mod tests {
         let capabilities = Capabilities::available();
         let state = load_journey(Source::Defaults, &capabilities).unwrap();
         let mut wizard = journey_tui::JourneyWizard::new(capabilities, state);
-        assert_eq!(wizard.question().unwrap().id(), "/metadata/name");
+        assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
         wizard
             .submit(Some(serde_json::json!("guided-deployment")))
             .unwrap();

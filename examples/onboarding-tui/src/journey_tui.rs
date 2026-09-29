@@ -66,12 +66,12 @@ impl JourneyWizard {
         &self.state
     }
 
-    pub(crate) fn question(&self) -> Option<JourneyQuestion> {
-        self.state
-            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())
-            .ok()?
+    pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
+        Ok(self
+            .state
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
             .next_question()
-            .cloned()
+            .cloned())
     }
 
     fn choice_index(&self, question: &JourneyQuestion) -> usize {
@@ -96,7 +96,9 @@ impl JourneyWizard {
     }
 
     pub(crate) fn submit(&mut self, answer: Option<Value>) -> Result<(), Diagnostics> {
-        let question = self.question().expect("submit requires an active question");
+        let question = self
+            .question()?
+            .expect("submit requires an active question");
         let previous = self.state.clone();
         self.state
             .answer(&self.capabilities, question.id(), answer)?;
@@ -165,31 +167,36 @@ impl JourneyWizard {
             self.started = true;
             return;
         }
-        let Some(question) = self.question() else {
-            match self.state.resolve_with_evidence(
-                &self.capabilities,
-                &self.facts,
-                self.discovery.as_ref(),
-            ) {
-                Ok(resolution) if resolution.ready_document().is_some() => self.accepted = true,
-                Ok(resolution) => {
-                    let issues = resolution
-                        .assessment()
-                        .issues()
-                        .iter()
-                        .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
-                        .collect::<Vec<_>>();
-                    self.error = Some(format!(
-                        "Cannot save yet: {} {} {}",
-                        resolution.unverified().join("; "),
-                        issues.join("; "),
-                        resolution
-                            .target_assessment()
-                            .map(|assessment| assessment.reasons.join("; "))
-                            .unwrap_or_default()
-                    ));
-                }
-                Err(error) => self.error = Some(error.to_string()),
+        let resolution = match self.state.resolve_with_evidence(
+            &self.capabilities,
+            &self.facts,
+            self.discovery.as_ref(),
+        ) {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let Some(question) = resolution.next_question().cloned() else {
+            if resolution.ready_document().is_some() {
+                self.accepted = true;
+            } else {
+                let issues = resolution
+                    .assessment()
+                    .issues()
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
+                    .collect::<Vec<_>>();
+                self.error = Some(format!(
+                    "Cannot save yet: {} {} {}",
+                    resolution.unverified().join("; "),
+                    issues.join("; "),
+                    resolution
+                        .target_assessment()
+                        .map(|assessment| assessment.reasons.join("; "))
+                        .unwrap_or_default()
+                ));
             }
             return;
         };
@@ -237,10 +244,16 @@ impl JourneyWizard {
             rows[0],
         );
         let mut lines = Vec::new();
+        let current = self.question();
         if !self.started {
             lines.push(Line::from("Create desired state from a guided journey."));
             lines.push(Line::from("Press Enter to begin."));
-        } else if let Some(question) = self.question() {
+        } else if let Err(error) = &current {
+            lines.push(Line::from(error.to_string()));
+            lines.push(Line::from(
+                "The questionnaire cannot continue. Press Esc to cancel.",
+            ));
+        } else if let Ok(Some(question)) = current {
             lines.push(Line::from(Span::styled(
                 label(&question),
                 Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -451,7 +464,7 @@ pub(crate) async fn run(
         }
         if let Some(bundle) = bundle
             && wizard
-                .question()
+                .question()?
                 .as_ref()
                 .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
             && let Some(document) = wizard
@@ -496,7 +509,7 @@ pub(crate) async fn run(
             return Err(Error::Cancelled.into());
         }
         if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if let Some(question) = wizard.question() {
+            if let Some(question) = wizard.question()? {
                 if question.required() {
                     wizard.error = Some("This question is required.".into());
                 } else if let Err(error) = wizard.submit(None) {
@@ -557,7 +570,7 @@ pub(crate) async fn run(
             KeyCode::Esc => return Ok(None),
             KeyCode::Enter => {
                 if wizard.started
-                    && wizard.question().is_none()
+                    && wizard.question()?.is_none()
                     && let Some(bundle) = bundle
                     && let Some(document) = wizard
                         .state
@@ -584,7 +597,7 @@ pub(crate) async fn run(
             }
             KeyCode::Left => wizard.back(),
             KeyCode::Up => {
-                if let Some(question) = wizard.question()
+                if let Some(question) = wizard.question()?
                     && !question.choices().is_empty()
                 {
                     wizard.selected = wizard.choice_index(&question).saturating_sub(1);
@@ -592,7 +605,7 @@ pub(crate) async fn run(
                 }
             }
             KeyCode::Down => {
-                if let Some(question) = wizard.question()
+                if let Some(question) = wizard.question()?
                     && !question.choices().is_empty()
                 {
                     wizard.selected = (wizard.choice_index(&question) + 1).min(
@@ -748,6 +761,42 @@ mod tests {
     use nemoclaw_authoring::{JourneyDefinition, PartialDocument, TargetPrerequisite};
 
     #[test]
+    fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
+        use nemoclaw_sdk::fabric_catalog::FabricCatalog;
+
+        let mut catalog = FabricCatalog::bundled();
+        let mut first = catalog.adapters[0].clone();
+        first.descriptor["adapter_id"] = serde_json::json!("fixture-schema-agent");
+        first.descriptor["settings_schema"] =
+            serde_json::json!({"type":"object","properties":{"a":{"type":"string"}}});
+        let mut second = first.clone();
+        second.descriptor["settings_schema"] =
+            serde_json::json!({"type":"object","properties":{"b":{"type":"boolean"}}});
+        catalog.adapters = vec![first, second];
+        let capabilities = Capabilities::from_catalog(&catalog);
+        let mut values: Value =
+            serde_saphyr::from_slice(include_bytes!("../../onboarding/openclaw.yaml")).unwrap();
+        values["spec"]["sandboxes"][0]["harness"]["kind"] =
+            serde_json::json!("fixture-schema-agent");
+        let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+        let state = JourneyDefinition::new("conflicting-descriptors", base)
+            .start(&capabilities)
+            .unwrap();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        assert!(wizard.question().is_err());
+        wizard.started = true;
+        wizard.advance();
+        assert!(!wizard.accepted);
+        assert!(
+            wizard
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("ambiguous setting schemas")
+        );
+    }
+
+    #[test]
     fn configured_target_prerequisite_blocks_save_until_observed() {
         let capabilities = Capabilities::available();
         let base =
@@ -765,7 +814,7 @@ mod tests {
             .unwrap();
         let mut wizard = JourneyWizard::new(capabilities, state);
         wizard.started = true;
-        assert!(wizard.question().is_none());
+        assert!(wizard.question().unwrap().is_none());
         wizard.advance();
         assert!(!wizard.accepted);
         assert!(
@@ -791,14 +840,14 @@ mod tests {
             .start(&capabilities)
             .unwrap();
         let mut wizard = JourneyWizard::new(capabilities, state);
-        let question = wizard.question().unwrap();
+        let question = wizard.question().unwrap().unwrap();
         assert_eq!(question.id(), "form:/spec/sandboxes/0/agent");
         assert_eq!(label(&question), "Choose agent form");
         wizard
             .submit(Some(serde_json::json!("inferenceRef")))
             .unwrap();
         assert_eq!(
-            wizard.question().unwrap().id(),
+            wizard.question().unwrap().unwrap().id(),
             "/spec/sandboxes/0/agent/inferenceRef"
         );
     }
@@ -811,7 +860,7 @@ mod tests {
         wizard.advance();
         wizard.advance();
         assert_eq!(
-            wizard.question().unwrap().id(),
+            wizard.question().unwrap().unwrap().id(),
             "/spec/sandboxes/0/harness/kind"
         );
         wizard.advance();
@@ -834,11 +883,11 @@ mod tests {
             .submit(Some(serde_json::json!("chosen-name")))
             .unwrap();
         assert_eq!(
-            wizard.question().unwrap().id(),
+            wizard.question().unwrap().unwrap().id(),
             "/spec/sandboxes/0/harness/kind"
         );
         wizard.back();
-        assert_eq!(wizard.question().unwrap().id(), "/metadata/name");
+        assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
         assert_eq!(
             wizard.state.values().pointer("/metadata/name"),
             original_name.as_ref()
@@ -853,9 +902,10 @@ mod tests {
         for _ in 0..30 {
             if wizard
                 .question()
+                .unwrap()
                 .is_some_and(|question| !question.required())
             {
-                let id = wizard.question().unwrap().id().to_owned();
+                let id = wizard.question().unwrap().unwrap().id().to_owned();
                 wizard.submit(None).unwrap();
                 assert!(
                     wizard
@@ -886,14 +936,20 @@ mod tests {
             assert!(
                 wizard.error.is_none(),
                 "question={:?} error={:?}",
-                wizard.question().map(|question| question.id().to_owned()),
+                wizard
+                    .question()
+                    .unwrap()
+                    .map(|question| question.id().to_owned()),
                 wizard.error
             );
         }
         assert!(
             wizard.accepted,
             "remaining={:?}",
-            wizard.question().map(|question| question.id().to_owned())
+            wizard
+                .question()
+                .unwrap()
+                .map(|question| question.id().to_owned())
         );
         assert!(wizard.document().is_ok());
     }
@@ -913,14 +969,20 @@ mod tests {
             assert!(
                 wizard.error.is_none(),
                 "question={:?} error={:?}",
-                wizard.question().map(|question| question.id().to_owned()),
+                wizard
+                    .question()
+                    .unwrap()
+                    .map(|question| question.id().to_owned()),
                 wizard.error
             );
         }
         assert!(
             wizard.accepted,
             "remaining={:?}",
-            wizard.question().map(|question| question.id().to_owned())
+            wizard
+                .question()
+                .unwrap()
+                .map(|question| question.id().to_owned())
         );
         let document = wizard.document().unwrap();
         assert_eq!(
@@ -978,7 +1040,10 @@ mod tests {
                 wizard.accepted,
                 "{}: question={:?} error={:?}",
                 path.display(),
-                wizard.question().map(|question| question.id().to_owned()),
+                wizard
+                    .question()
+                    .unwrap()
+                    .map(|question| question.id().to_owned()),
                 wizard.error
             );
         }
@@ -993,11 +1058,17 @@ mod tests {
         for _ in 0..40 {
             if wizard
                 .question()
+                .unwrap()
                 .is_some_and(|question| question.id() == "model:/model_metadata")
             {
                 return;
             }
-            seen.push(wizard.question().map(|question| question.id().to_owned()));
+            seen.push(
+                wizard
+                    .question()
+                    .unwrap()
+                    .map(|question| question.id().to_owned()),
+            );
             wizard.advance();
             assert!(wizard.error.is_none(), "{:?}", wizard.error);
         }
@@ -1016,6 +1087,7 @@ mod tests {
         for _ in 0..12 {
             if wizard
                 .question()
+                .unwrap()
                 .as_ref()
                 .is_some_and(|question| question.allows_custom_answer())
             {
@@ -1044,7 +1116,7 @@ mod tests {
                 api_verified: false,
             },
         });
-        let question = wizard.question().unwrap();
+        let question = wizard.question().unwrap().unwrap();
         assert!(
             question
                 .choices()
@@ -1070,13 +1142,14 @@ mod tests {
         for _ in 0..5 {
             if wizard
                 .question()
+                .unwrap()
                 .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
             {
                 break;
             }
             wizard.advance();
         }
-        let question = wizard.question().unwrap();
+        let question = wizard.question().unwrap().unwrap();
         wizard.selected = question
             .choices()
             .iter()
