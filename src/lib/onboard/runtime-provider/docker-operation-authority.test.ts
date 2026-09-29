@@ -627,6 +627,88 @@ describe("managed llama.cpp operation probe strategy", () => {
     now.mockRestore();
   });
 
+  it("includes Docker context qualification in the shared operation deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    deadlineCapture.mockReset().mockImplementationOnce(() => {
+      now.mockReturnValue(1_600);
+      return inspection;
+    });
+
+    try {
+      expect(() =>
+        createDockerLlamaCppHostLocalOperation(env, deadlineCapture, undefined, undefined, 1_500),
+      ).toThrow("Managed llama.cpp deadline expired.");
+      expect(deadlineCapture.mock.calls[0]?.[2]).toBe(500);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("recomputes the Docker command budget after the context authority guard", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    const success = { status: 0, stdout: "", stderr: "" };
+    deadlineCapture
+      .mockReset()
+      .mockImplementationOnce(() => inspection)
+      .mockImplementationOnce(() => {
+        now.mockReturnValue(1_400);
+        return inspection;
+      })
+      .mockImplementationOnce(() => success)
+      .mockImplementationOnce(() => inspection);
+
+    try {
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        deadlineCapture,
+        undefined,
+        undefined,
+        1_500,
+      );
+
+      expect(operation.engine.capture(["info"], 5_000).status).toBe(0);
+      expect(deadlineCapture.mock.calls[2]?.[1].at(-1)).toBe("info");
+      expect(deadlineCapture.mock.calls[2]?.[2]).toBe(100);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not start a Docker command after its context guard exhausts the deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const deadlineCapture = contextCapture("ssh://nvidia@spark.example.test");
+    const inspection = deadlineCapture("docker", ["inspect"], 1);
+    deadlineCapture
+      .mockReset()
+      .mockImplementationOnce(() => inspection)
+      .mockImplementationOnce(() => {
+        now.mockReturnValue(1_500);
+        return inspection;
+      });
+
+    try {
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        deadlineCapture,
+        undefined,
+        undefined,
+        1_500,
+      );
+
+      expect(() => operation.engine.capture(["info"], 5_000)).toThrow(
+        "Managed llama.cpp deadline expired.",
+      );
+      expect(deadlineCapture).toHaveBeenCalledTimes(2);
+      expect(deadlineCapture.mock.calls.some(([, args]) => args.at(-1) === "info")).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("bounds streamed Docker commands to the same operation deadline", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const spawn = vi.fn(() => ({}) as never);

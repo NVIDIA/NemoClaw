@@ -64,6 +64,7 @@ export function createDockerLlamaCppOperationAuthority(
   env: NodeJS.ProcessEnv = process.env,
   capture?: ContainerEngineCommandCapture,
   spawnCommand?: HostLocalInferenceCommandSpawner,
+  deadlineMs?: number,
 ): DockerLlamaCppOperationAuthority {
   const operationEnv = { ...env };
   prependInstalledUserLocalOpenshellPath({
@@ -71,16 +72,20 @@ export function createDockerLlamaCppOperationAuthority(
     getFutureShellPathHint,
   });
   const authority = withManagedLlamaCppError(() =>
-    createDockerOperationAuthority("host-local-inference", operationEnv, capture),
+    createDockerOperationAuthority("host-local-inference", operationEnv, capture, deadlineMs),
   );
   const assertAuthority = () => withManagedLlamaCppError(authority.assertAuthority);
+  const boundedSpawnCommand =
+    spawnCommand === undefined
+      ? undefined
+      : deadlineBoundHostLocalInferenceSpawner(spawnCommand, deadlineMs);
   return Object.freeze({
     assertAuthority,
     engine: managedLlamaCppEngine(authority.engine),
     spawn: (args: readonly string[], options?: Parameters<HostLocalInferenceCommandSpawner>[1]) => {
       assertAuthority();
-      return spawnCommand
-        ? spawnCommand([...dockerOperationCommandArguments(authority, args)], options)
+      return boundedSpawnCommand
+        ? boundedSpawnCommand([...dockerOperationCommandArguments(authority, args)], options)
         : authority.spawn(args, options);
     },
   });
@@ -99,7 +104,7 @@ export function createDockerLlamaCppHostLocalOperation(
   ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
   deadlineMs?: number,
 ): HostLocalInferenceOperation {
-  const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand);
+  const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand, deadlineMs);
   const engine = deadlineBoundHostLocalInferenceEngine(authority.engine, deadlineMs);
   const spawn = deadlineBoundHostLocalInferenceSpawner(authority.spawn, deadlineMs);
   return Object.freeze({

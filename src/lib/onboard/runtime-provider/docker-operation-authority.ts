@@ -95,6 +95,29 @@ const DOCKER_STREAMED_CREDENTIAL_ENV_NAMES = new Set(["HF_TOKEN", "HUGGING_FACE_
 const MAX_DOCKER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_DOCKER_ARGUMENTS = 512;
 
+function remainingDockerOperationBudget(deadlineMs: number): number {
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  if (remainingMs <= 0) {
+    throw new Error("Docker operation deadline expired.");
+  }
+  return remainingMs;
+}
+
+function deadlineBoundDockerCapture(
+  capture: ContainerEngineCommandCapture,
+  deadlineMs?: number,
+): ContainerEngineCommandCapture {
+  if (deadlineMs === undefined) return capture;
+  return (executable, args, timeoutMs, input, environment) =>
+    capture(
+      executable,
+      args,
+      Math.min(timeoutMs, remainingDockerOperationBudget(deadlineMs)),
+      input,
+      environment,
+    );
+}
+
 function exactDockerValue(value: string | undefined, label: string): string | undefined {
   if (value === undefined || value === "") return undefined;
   if (
@@ -644,11 +667,25 @@ export function createDockerOperationAuthority(
   operation: ContainerEngineOperationScope,
   env: NodeJS.ProcessEnv = process.env,
   capture?: ContainerEngineCommandCapture,
+  deadlineMs?: number,
 ): DockerOperationAuthority {
+  if (deadlineMs !== undefined) remainingDockerOperationBudget(deadlineMs);
   const executable = qualifyDockerExecutable(env);
-  const commandCapture = capture ?? fixedDockerCapture(executable);
+  if (deadlineMs !== undefined) remainingDockerOperationBudget(deadlineMs);
+  const commandCapture = deadlineBoundDockerCapture(
+    capture ?? fixedDockerCapture(executable),
+    deadlineMs,
+  );
   const binding = dockerClientBinding(operation, env, executable, commandCapture);
-  const assertAuthority = () => binding.guard?.();
+  if (deadlineMs !== undefined) remainingDockerOperationBudget(deadlineMs);
+  const assertDeadline = () => {
+    if (deadlineMs !== undefined) remainingDockerOperationBudget(deadlineMs);
+  };
+  const assertAuthority = () => {
+    assertDeadline();
+    binding.guard?.();
+    assertDeadline();
+  };
   const engine = createContainerEngineCommand({
     operation,
     engineId: "docker",
@@ -657,7 +694,7 @@ export function createDockerOperationAuthority(
     executable: binding.executable,
     endpointArgs: binding.endpointArgs,
     capture: commandCapture,
-    ...(binding.guard ? { guard: binding.guard } : {}),
+    guard: () => assertAuthority(),
   });
   const authority = Object.freeze({
     assertAuthority,
@@ -665,8 +702,19 @@ export function createDockerOperationAuthority(
     spawn: (args: readonly string[], options?: Parameters<typeof spawn>[2]) => {
       assertAuthority();
       const normalized = fixedDockerSpawnArguments(args);
+      const remainingMs =
+        deadlineMs === undefined ? undefined : remainingDockerOperationBudget(deadlineMs);
+      const requestedMs = options?.timeout;
+      const timeout =
+        remainingMs === undefined
+          ? requestedMs
+          : requestedMs === undefined || requestedMs <= 0
+            ? remainingMs
+            : Math.min(requestedMs, remainingMs);
       return spawn(binding.executable, [...binding.endpointArgs, ...normalized], {
         ...options,
+        ...(timeout === undefined ? {} : { timeout }),
+        ...(remainingMs === undefined ? {} : { killSignal: options?.killSignal ?? "SIGKILL" }),
         cwd: binding.cwd,
         env: fixedDockerSpawnEnvironment(normalized, binding.commandEnvironment, options?.env),
         shell: false,
