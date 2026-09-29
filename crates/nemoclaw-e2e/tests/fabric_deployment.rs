@@ -5,6 +5,7 @@ use nemoclaw_sdk::config::InferenceProviderKind;
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{fs, path::PathBuf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 macro_rules! harness_test {
     ($name:ident, $harness:literal) => {
@@ -36,12 +37,28 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    // Reserve an unserved loopback port so passive discovery consistently
-    // reports unavailable instead of depending on routes to the example host.
-    let inference = tokio::net::TcpSocket::new_v4().unwrap();
-    inference.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    // Keep passive discovery deterministic across apply and export. Connection
+    // failures can otherwise vary between transport errors and timeouts.
+    let inference = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     document.spec.inference_providers[0].endpoint =
         format!("http://{}/v1", inference.local_addr().unwrap());
+    let mut catalog_server = tokio::task::JoinSet::<()>::new();
+    catalog_server.spawn(async move {
+        loop {
+            let (mut stream, _) = inference.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"GET /v1/models HTTP/1.1\r\n"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        }
+    });
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "pi" {
         let pi = Document::parse(
