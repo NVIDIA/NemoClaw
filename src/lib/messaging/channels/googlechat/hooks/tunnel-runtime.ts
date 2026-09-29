@@ -54,6 +54,17 @@ export function createDefaultGooglechatTunnelGateOptions(
     googlechatWebhookTunnelPidDir(
       loadServices().resolveServicePidDir({ sandboxName: resolveSandboxName() }),
     );
+  const stopTunnel = (pidDir: string): void => {
+    const { stopCloudflared } = loadServices();
+    const { stopGooglechatWebhookProxy } = loadWebhookProxy();
+    const stopOutcome = stopCloudflared({ pidDir });
+    if (stopOutcome.kind === "unverified-pid-process") {
+      throw new Error(
+        `Cannot stop cloudflared PID ${String(stopOutcome.pid)} while its process identity is unavailable. Restore process inspection access, then retry cleanup.`,
+      );
+    }
+    stopGooglechatWebhookProxy(pidDir);
+  };
   return {
     hasCloudflared:
       deps.hasCloudflared ??
@@ -81,7 +92,7 @@ export function createDefaultGooglechatTunnelGateOptions(
     },
     startTunnel: async () => {
       const { readCloudflaredState, startAll, stopCloudflared } = loadServices();
-      const { startGooglechatWebhookProxy, stopGooglechatWebhookProxy } = loadWebhookProxy();
+      const { startGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
       const stopOutcome = stopCloudflared({ pidDir });
       if (stopOutcome.kind === "unverified-pid-process") {
@@ -107,17 +118,11 @@ export function createDefaultGooglechatTunnelGateOptions(
           throw new Error("Cloudflared did not reach a verified running state.");
         }
       } catch (error) {
-        stopGooglechatWebhookProxy(pidDir);
+        stopTunnel(pidDir);
         throw error;
       }
     },
-    stopTunnel: () => {
-      const { stopCloudflared } = loadServices();
-      const { stopGooglechatWebhookProxy } = loadWebhookProxy();
-      const pidDir = resolveGooglechatPidDir();
-      stopCloudflared({ pidDir });
-      stopGooglechatWebhookProxy(pidDir);
-    },
+    stopTunnel: () => stopTunnel(resolveGooglechatPidDir()),
     getTunnelUrl: () => {
       const { getTunnelUrl: getServiceTunnelUrl } = loadServices();
       const { readGooglechatWebhookProxyState } = loadWebhookProxy();
