@@ -655,6 +655,52 @@ describe("stopAll", () => {
     },
   );
 
+  it("does not signal a live PID when process identity cannot be read", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: [null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("cloudflared PID 4242 was not stopped");
+    expect(output).toContain("Host service cleanup remains incomplete");
+  });
+
+  it("preserves the PID when identity becomes unreadable before SIGKILL", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, true],
+      cmdlines: ["cloudflared tunnel run", null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("was not force-stopped because its process identity is unavailable");
+    expect(output).toContain("Host service cleanup remains incomplete");
+  });
+
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({
       // Alive pre-SIGTERM; the poll observes exit; a live PID reappears at the

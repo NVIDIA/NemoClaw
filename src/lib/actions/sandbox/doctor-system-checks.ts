@@ -167,8 +167,11 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+export function cloudflaredDoctorCheck(
+  sandboxName: string,
+  readState: typeof readCloudflaredState = readCloudflaredState,
+): DoctorCheck {
+  const state = readState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();
