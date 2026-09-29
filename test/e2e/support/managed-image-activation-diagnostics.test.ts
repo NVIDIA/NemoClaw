@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
+import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
@@ -259,7 +260,7 @@ describe("managed image activation failure diagnostics", () => {
     const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const commandLog = fixture.path("commands.log");
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -304,7 +305,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "feature-cron", requ
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const secret = "approval-diagnostic-secret-value";
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -349,7 +350,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requ
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-selection-");
     const outputRequestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const canonicalRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh

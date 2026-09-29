@@ -38,7 +38,7 @@ Onboarding does not display this degraded result.
 Before you continue, inspect the configured backend port:
 
 ```bash
-backend_port=8000 # Replace with the port from NEMOCLAW_ENDPOINT_URL.
+backend_port=8000 # Replace with the port in the endpoint URL entered during onboarding.
 lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN
 ```
 
