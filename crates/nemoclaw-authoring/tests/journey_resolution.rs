@@ -59,6 +59,64 @@ fn empty_sandbox_asks_for_harness_form_before_inline_harness_kind() {
 }
 
 #[test]
+fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
+    let capabilities = Capabilities::available();
+    let mut supplied: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    supplied["spec"]["inferenceProviders"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("api");
+    let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
+    let path = "/spec/inferenceProviders/0/api";
+    let state = JourneyDefinition::new("omit-sdk-api", base)
+        .ask([JourneyScope::InferenceApi])
+        .omit([
+            path,
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.question(path).is_none());
+    assert!(resolution.omitted().iter().any(|field| field == path));
+    assert!(
+        resolution.materialized_document().is_some(),
+        "questions={:?} unverified={:?} issues={:?}",
+        resolution.questions(),
+        resolution.unverified(),
+        resolution.assessment().issues()
+    );
+    assert!(state.values().pointer(path).is_none());
+}
+
+#[test]
+fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    assert!(
+        JourneyDefinition::new("required", base.clone())
+            .omit(["/metadata/name"])
+            .start(&capabilities)
+            .is_err()
+    );
+    assert!(
+        JourneyDefinition::new("supplied", base)
+            .omit(["/spec/inferenceProviders/0/api"])
+            .start(&capabilities)
+            .is_err()
+    );
+}
+
+#[test]
 fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
     let capabilities = Capabilities::available();
     let mut values: serde_json::Value =

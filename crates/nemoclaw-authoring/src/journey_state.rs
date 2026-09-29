@@ -443,6 +443,16 @@ impl JourneyState {
     /// settings. Unasked SDK requirements and conditional Fabric branches remain explicit.
     pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
         self.definition.validate_guidance(capabilities)?;
+        for field in &self.definition.omit {
+            if field.starts_with('/')
+                && sdk_field_schema_for(&self.values, field).is_some_and(|(_, required)| required)
+            {
+                return Err(diagnostic(
+                    "journey",
+                    &format!("required SDK field '{field}' cannot be omitted"),
+                ));
+            }
+        }
         let assessment = PartialDocument::from_value(self.values.clone()).assess();
         let mut questions = Vec::new();
         let mut omitted = Vec::new();
@@ -953,11 +963,19 @@ impl JourneyState {
     fn resolution(
         &self,
         mut questions: Vec<JourneyQuestion>,
-        omitted: Vec<String>,
+        mut omitted: Vec<String>,
         warnings: Vec<String>,
         unverified: Vec<String>,
         assessment: PartialAssessment,
     ) -> JourneyResolution {
+        for field in &self.definition.omit {
+            if field.starts_with('/') && sdk_field_schema_for(&self.values, field).is_some() {
+                omitted.push(field.clone());
+            }
+        }
+        questions.retain(|question| !self.definition.omit.contains(question.id()));
+        omitted.sort();
+        omitted.dedup();
         if self.definition.ask.contains(INFERENCE_PRESET)
             && self.route_provider().is_some()
             && !self

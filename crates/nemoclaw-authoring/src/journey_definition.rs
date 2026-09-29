@@ -167,6 +167,27 @@ impl JourneyDefinition {
             }
         }
         for field in &self.omit {
+            if field.starts_with('/') {
+                let Some((_, required)) = sdk_field_schema_for(self.base.supplied(), field) else {
+                    return Err(diagnostic(
+                        "journey",
+                        &format!("cannot omit '{field}' in this preview"),
+                    ));
+                };
+                if required {
+                    return Err(diagnostic(
+                        "journey",
+                        &format!("required SDK field '{field}' cannot be omitted"),
+                    ));
+                }
+                if self.base.supplied().pointer(field).is_some() {
+                    return Err(diagnostic(
+                        "journey",
+                        &format!("supplied SDK field '{field}' cannot be omitted"),
+                    ));
+                }
+                continue;
+            }
             let Some((adapter, pointer)) = adapter_field(field) else {
                 return Err(diagnostic(
                     "journey",
