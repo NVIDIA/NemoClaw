@@ -507,7 +507,6 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") = require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./onboard/openshell-pin");
-
 import type { AgentDefinition } from "./agent/defs";
 import { isWebSearchEnabled } from "./inference/web-search";
 import {
@@ -2968,6 +2967,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
+            withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
             setupNim: (
@@ -2994,14 +2994,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 revalidateSandboxIdentity,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection:
-              setupNimFlow.createHermesPortableOllamaInferenceResolver({
-                runtimeContext: lockedRuntime.portableRuntimeContext,
-                gatewayName: GATEWAY_NAME,
-                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
-                getReservationSessionId: () => session?.sessionId,
-                runGatewayOpenshell: runCoreGatewayOpenshell,
-              }),
+            ...setupNimFlow.createHermesPortableOllamaInferenceBindings({
+              runtimeContext: lockedRuntime.portableRuntimeContext,
+              gatewayName: GATEWAY_NAME,
+              credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+              getReservationSessionId: () => session?.sessionId,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+            }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3027,6 +3026,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               hydrateCredentialEnv,
             }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+            hasSandboxLifecycleAuthority: registry.hasSandboxLifecycleAuthority,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
             promptValidatedSandboxName,
