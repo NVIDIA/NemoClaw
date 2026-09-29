@@ -357,9 +357,13 @@ describe("bounded direct execution proof process ownership", () => {
       );
       const descendantPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
       const statPath = `/proc/${String(descendantPid)}/stat`;
-      const processState = fs.existsSync(statPath)
-        ? fs.readFileSync(statPath, "utf8").split(" ")[2]
-        : "";
+      let processState = "";
+      try {
+        processState = fs.readFileSync(statPath, "utf8").split(" ")[2];
+      } catch (error) {
+        // The descendant may already have been reaped when /proc is read.
+        expect(error).toHaveProperty("code", "ENOENT");
+      }
 
       expect(result.status).not.toBe(0);
       expect(["", "Z"]).toContain(processState);
