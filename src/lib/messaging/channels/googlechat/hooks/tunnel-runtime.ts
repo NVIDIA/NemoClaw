@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT } from "../../../../core/ports";
+import { stopGooglechatWebhookTunnelAtPidDir } from "../tunnel/lifecycle";
 import { googlechatWebhookTunnelPidDir } from "../tunnel/pid-dir";
 import type { GooglechatTunnelAudienceGateHookOptions } from "./tunnel-audience-gate";
 
@@ -55,15 +56,10 @@ export function createDefaultGooglechatTunnelGateOptions(
       loadServices().resolveServicePidDir({ sandboxName: resolveSandboxName() }),
     );
   const stopTunnel = (pidDir: string): void => {
-    const { stopCloudflared } = loadServices();
-    const { stopGooglechatWebhookProxy } = loadWebhookProxy();
-    const stopOutcome = stopCloudflared({ pidDir });
-    if (stopOutcome.kind === "unverified-pid-process") {
-      throw new Error(
-        `Cannot stop cloudflared PID ${String(stopOutcome.pid)} while its process identity is unavailable. Restore process inspection access, then retry cleanup.`,
-      );
-    }
-    stopGooglechatWebhookProxy(pidDir);
+    stopGooglechatWebhookTunnelAtPidDir(pidDir, {
+      services: loadServices(),
+      webhookProxy: loadWebhookProxy(),
+    });
   };
   return {
     hasCloudflared:

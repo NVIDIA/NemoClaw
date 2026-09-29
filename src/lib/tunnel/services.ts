@@ -326,6 +326,10 @@ export type CloudflaredStopOutcome =
   | { kind: "complete" }
   | { kind: "unverified-pid-process"; pid: number };
 
+type CloudflaredStartOutcome =
+  | { kind: "complete" }
+  | { kind: "unverified-pid-process"; pid: number };
+
 function startService(
   pidDir: string,
   name: ServiceName,
@@ -333,17 +337,17 @@ function startService(
   args: string[],
   env?: Record<string, string>,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): void {
+): CloudflaredStartOutcome {
   const state = readCloudflaredState(pidDir, pc);
   if (state.kind === "running") {
     info(`${name} already running (PID ${String(state.pid)})`);
-    return;
+    return { kind: "complete" };
   }
   if (state.kind === "unverified-pid-process") {
     warn(
       `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to start another tunnel`,
     );
-    return;
+    return state;
   }
 
   // Open a single fd for the log file — mirrors bash `>log 2>&1`.
@@ -366,12 +370,13 @@ function startService(
   const pid = subprocess.pid;
   if (pid === undefined) {
     warn(`${name} failed to start`);
-    return;
+    return { kind: "complete" };
   }
 
   subprocess.unref();
   writePid(pidDir, name, pid);
   info(`${name} started (PID ${String(pid)})`);
+  return { kind: "complete" };
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
@@ -397,6 +402,23 @@ function stopService(
     return state;
   }
   const pid = state.pid;
+
+  // Bind the identity decision as closely as possible to SIGTERM. A process
+  // can exit after the first state read and its PID can be recycled before the
+  // signal; a second fail-closed read keeps that bystander out of the signal
+  // path and preserves uninspectable state for operator recovery.
+  const preTermState = readCloudflaredState(pidDir, pc);
+  if (preTermState.kind === "unverified-pid-process") {
+    warn(
+      `${name} process identity became unavailable for PID ${String(pid)}; refusing to send SIGTERM. Restore process inspection access, then retry this command`,
+    );
+    return preTermState;
+  }
+  if (preTermState.kind !== "running") {
+    info(`${name} was not running`);
+    removePid(pidDir, name);
+    return { kind: "complete" };
+  }
 
   // Send SIGTERM
   try {
@@ -709,12 +731,19 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     process.env.CLOUDFLARE_TUNNEL_TOKEN ??
     ""
   ).trim();
+  let cloudflaredAvailable = true;
   try {
     execSync("command -v cloudflared", {
       stdio: ["ignore", "ignore", "ignore"],
     });
+  } catch {
+    cloudflaredAvailable = false;
+    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
+  }
+  if (cloudflaredAvailable) {
+    let startOutcome: CloudflaredStartOutcome;
     if (tunnelToken) {
-      startService(
+      startOutcome = startService(
         pidDir,
         "cloudflared",
         "cloudflared",
@@ -725,7 +754,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         processControl,
       );
     } else {
-      startService(
+      startOutcome = startService(
         pidDir,
         "cloudflared",
         "cloudflared",
@@ -734,8 +763,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         processControl,
       );
     }
-  } catch {
-    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
+    if (startOutcome.kind === "unverified-pid-process") {
+      throw new Error(
+        `Cannot start cloudflared while PID ${String(startOutcome.pid)} is live and its process identity is unavailable. Restore process inspection access, then retry.`,
+      );
+    }
   }
 
   // Wait for cloudflared URL

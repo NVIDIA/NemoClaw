@@ -54,8 +54,8 @@ Install `cloudflared` on the host before enrollment when you do not already have
 When the dedicated Google Chat tunnel is not running, NemoClaw starts it and prints the HTTPS endpoint ending in `/googlechat`.
 Copy that complete URL into the Google Chat API HTTP endpoint field without adding a trailing slash, then confirm the prompt.
 If you do not confirm the endpoint or enrollment fails before confirmation, NemoClaw stops the webhook proxy and attempts to stop the dedicated tunnel.
-When the host cannot verify the live tunnel process, NemoClaw preserves its PID and reports the cleanup failure instead of signaling it.
-Restore host process-inspection access, then retry cleanup or enrollment.
+When the host cannot verify the live tunnel process, NemoClaw preserves its PID and keeps the webhook proxy running so it does not claim that endpoint teardown completed.
+Restore host process-inspection access, then retry channel removal or enrollment cleanup.
 
 If a later enrollment step fails after you confirm the endpoint, stop the public endpoint from the host:
 

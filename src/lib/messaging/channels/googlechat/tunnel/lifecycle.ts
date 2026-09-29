@@ -16,18 +16,25 @@ export type GooglechatWebhookLifecycleDeps = {
   readonly webhookProxy: WebhookProxy;
 };
 
-export function stopGooglechatWebhookTunnel(
-  sandboxName: string,
+export function stopGooglechatWebhookTunnelAtPidDir(
+  pidDir: string,
   deps: GooglechatWebhookLifecycleDeps,
 ): string {
   const { services, webhookProxy } = deps;
-  const pidDir = googlechatWebhookTunnelPidDir(services.resolveServicePidDir({ sandboxName }));
   const stopOutcome = services.stopCloudflared({ pidDir });
   if (stopOutcome.kind === "unverified-pid-process") {
     throw new Error(
-      `Cannot stop cloudflared PID ${String(stopOutcome.pid)} while its process identity is unavailable. Restore process inspection access, then retry.`,
+      `Cannot stop cloudflared PID ${String(stopOutcome.pid)} while its process identity is unavailable. Restore process inspection access, then retry cleanup.`,
     );
   }
   webhookProxy.stopGooglechatWebhookProxy(pidDir);
   return pidDir;
+}
+
+export function stopGooglechatWebhookTunnel(
+  sandboxName: string,
+  deps: GooglechatWebhookLifecycleDeps,
+): string {
+  const pidDir = googlechatWebhookTunnelPidDir(deps.services.resolveServicePidDir({ sandboxName }));
+  return stopGooglechatWebhookTunnelAtPidDir(pidDir, deps);
 }
