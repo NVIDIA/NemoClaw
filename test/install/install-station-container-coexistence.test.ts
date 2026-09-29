@@ -33,6 +33,15 @@ function runStationPreparation(body: string, extraEnv: Record<string, string> = 
 }
 
 describe("DGX Station Docker container coexistence", () => {
+  it("rejects a leading-zero vLLM port before inspecting host processes", () => {
+    const { result, output } = runStationPreparation("check_agent_and_inference_conflicts", {
+      NEMOCLAW_VLLM_PORT: "08000",
+    });
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535");
+  });
+
   it("uses sudo to inspect containers during apply until Docker group access is active", () => {
     const { result, output } = runStationPreparation(
       `

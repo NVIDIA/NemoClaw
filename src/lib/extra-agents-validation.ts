@@ -59,11 +59,8 @@ export function assertNoPerAgentMaxSpawnDepthJson(raw: string | undefined): void
   assertNoPerAgentMaxSpawnDepth(parsed);
 }
 
-// Canonical primary-agent entry. Always written first into agents.list, always
-// flagged default: true. Pinning the slot here prevents the extra-agents env
-// from displacing the primary agent: OpenClaw's resolveDefaultAgentId falls
-// back to agents[0] when no entry carries default: true, so a wholesale list
-// replacement would silently re-elect the first extra agent.
+// Canonical primary-agent entry. OpenClaw 2026.9.1 persists the roster under
+// agents.entries, keyed by id; the entry itself therefore omits the id.
 //
 // The entry intentionally omits workspace/agentDir so OpenClaw applies its
 // built-in defaults (and so the host-side migration-state collector does not
@@ -112,7 +109,7 @@ const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
   "model",
 ]);
 const ALLOWED_TOOLS_KEYS = new Set<string>(["profile", "allow", "deny"]);
-// Mirrors the OpenClaw per-agent `agents.list[].subagents` zod schema (see
+// Mirrors the OpenClaw per-agent `agents.entries.*.subagents` zod schema (see
 // openclaw/src/config/zod-schema.agent-runtime.ts). OpenClaw uses
 // .strict() on that object, so any field we do not list here would be
 // rejected by the runtime parser at boot. `maxSpawnDepth` is intentionally
@@ -446,10 +443,10 @@ export function validateExtraAgents(value: unknown, primaryProvider: string): Ex
   };
 }
 
-export function buildAgentsList(
+export function buildAgentEntries(
   extras: NormalizedExtraAgent[],
   mainOverrides: { tools?: ExtraAgentTools; subagents?: JsonObject },
-): Array<JsonObject | NormalizedExtraAgent> {
+): Record<string, JsonObject> {
   const main: JsonObject = { ...MAIN_AGENT_ENTRY };
   if (mainOverrides.tools !== undefined) {
     main.tools = mainOverrides.tools;
@@ -457,5 +454,10 @@ export function buildAgentsList(
   if (mainOverrides.subagents !== undefined) {
     main.subagents = mainOverrides.subagents;
   }
-  return [main, ...extras];
+  return Object.fromEntries(
+    [main, ...extras].map((entry) => {
+      const { id, ...config } = entry;
+      return [String(id), config];
+    }),
+  );
 }

@@ -15,7 +15,7 @@ export type ModelRouterProcessOwnershipDeps = {
 };
 
 export type StopModelRouterProcessDeps = ModelRouterProcessOwnershipDeps & {
-  isHealthy?: (port: number, timeoutMs?: number) => Promise<boolean>;
+  isResponsive?: (port: number, timeoutMs?: number) => Promise<boolean>;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   sleep?: (delayMs: number) => Promise<void>;
 };
@@ -35,81 +35,104 @@ export type ModelRouterProcessLookup =
 export type RouterHealthSnapshot = {
   healthy: boolean;
   body: string | null;
+  capturedBodyBytes: number;
+  elapsedMs: number;
+  outcome: "complete" | "timeout" | "transport_error" | "body_limit" | "aborted";
+  statusCode: number | null;
 };
 
 const ROUTER_HEALTH_BODY_MAX_BYTES = 64 * 1024;
 
 /**
- * Fetch /health and keep the response body for diagnosis (#8962). Unlike
- * `isRouterHealthy`, this waits for the body, so a caller that must read it
- * budgets for it; the final startup snapshot uses 30 seconds. LiteLLM's /health probes
- * every upstream endpoint per request and can answer well after the
- * 3-second liveness budget. The timeout is a wall-clock deadline, not a
- * socket idle timeout, so a responder that trickles bytes cannot hold the
- * caller past it; whatever body arrived by then is returned.
+ * Fetch semantic /health and keep a bounded body for diagnosis. LiteLLM
+ * probes every upstream endpoint for this request, so callers must allow the
+ * upstream checks to finish and must not overlap observations. The timeout is
+ * a wall-clock deadline, not a socket idle timeout.
  */
 export async function getRouterHealthSnapshot(
   port: number,
   timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RouterHealthSnapshot> {
   return new Promise<RouterHealthSnapshot>((resolve) => {
+    const startedAt = performance.now();
     let settled = false;
     const chunks: Buffer[] = [];
     let size = 0;
-    let responseHealthy = false;
+    let bodyLimitExceeded = false;
+    let statusCode: number | null = null;
     const bufferedBody = () => (chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null);
-    const settle = (snapshot: RouterHealthSnapshot) => {
+    const settle = (outcome: RouterHealthSnapshot["outcome"]) => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      resolve(snapshot);
+      signal?.removeEventListener("abort", abortRequest);
+      resolve({
+        healthy:
+          outcome === "complete" && statusCode !== null && statusCode >= 200 && statusCode < 300,
+        body: bufferedBody(),
+        capturedBodyBytes: size,
+        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        outcome,
+        statusCode,
+      });
     };
     const request = http
       .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
-        responseHealthy = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300;
+        statusCode = res.statusCode ?? null;
         res.on("data", (chunk: Buffer) => {
           const remaining = ROUTER_HEALTH_BODY_MAX_BYTES - size;
           const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
-          chunks.push(kept);
-          size += kept.length;
-          if (size >= ROUTER_HEALTH_BODY_MAX_BYTES) {
-            res.destroy();
-            settle({ healthy: responseHealthy, body: bufferedBody() });
+          if (kept.length > 0) {
+            chunks.push(kept);
+            size += kept.length;
           }
+          if (chunk.length > remaining) bodyLimitExceeded = true;
         });
-        res.on("end", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
-        res.on("error", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
+        res.on("end", () => settle(bodyLimitExceeded ? "body_limit" : "complete"));
+        res.on("error", () => settle("transport_error"));
       })
-      .on("error", () => settle({ healthy: responseHealthy, body: bufferedBody() }));
+      .on("error", () => settle("transport_error"));
     const deadline = setTimeout(() => {
       request.destroy();
-      settle({ healthy: responseHealthy, body: bufferedBody() });
+      settle("timeout");
     }, timeoutMs);
     deadline.unref?.();
+    const abortRequest = () => {
+      request.destroy();
+      settle("aborted");
+    };
+    if (signal?.aborted) abortRequest();
+    else signal?.addEventListener("abort", abortRequest, { once: true });
   });
 }
 
-export async function isRouterHealthy(
+/** Check the cheap LiteLLM liveness route without running upstream model probes. */
+export async function isRouterResponsive(
   port: number,
   timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const settle = (healthy: boolean) => {
       if (settled) return;
       settled = true;
+      if (deadline) clearTimeout(deadline);
       resolve(healthy);
     };
     const request = http
-      .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
+      .get(`http://127.0.0.1:${port}/health/liveliness`, (res: http.IncomingMessage) => {
         res.resume();
         settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
+        request.destroy();
       })
       .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
+    deadline = setTimeout(() => {
       request.destroy();
       settle(false);
-    });
+    }, timeoutMs);
+    deadline.unref?.();
   });
 }
 
@@ -188,7 +211,7 @@ export function doesModelRouterProcessOwnPort(
 
 /**
  * Stop the recorded Model Router process and return only after its PID no
- * longer reports as running and its health endpoint is not healthy. The
+ * longer reports as running and its liveness endpoint does not respond. The
  * session stores a numeric PID, not a PID-stable OS handle. Ownership
  * validation and SIGTERM delivery are separate OS operations, so PID reuse can
  * still redirect SIGTERM. Never send SIGKILL without a PID-stable handle.
@@ -200,15 +223,15 @@ export async function stopModelRouterProcess(
 ): Promise<void> {
   const isRunning = deps.isRunning ?? isProcessRunning;
   const readCommandLine = deps.readCommandLine ?? readModelRouterProcessCommandLine;
-  const isHealthy = deps.isHealthy ?? isRouterHealthy;
+  const isResponsive = deps.isResponsive ?? isRouterResponsive;
   const kill = deps.kill ?? ((targetPid, signal) => process.kill(targetPid, signal));
   const sleep =
     deps.sleep ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
 
   if (!isRunning(pid)) {
-    if (!(await isHealthy(port, 1000))) return;
+    if (!(await isResponsive(port, 1000))) return;
     throw new Error(
-      `NemoClaw refuses to replace the Model Router: recorded PID ${pid} no longer reports as running but port ${port} remains healthy.`,
+      `NemoClaw refuses to replace the Model Router: recorded PID ${pid} no longer reports as running but port ${port} remains responsive.`,
     );
   }
   if (
@@ -225,7 +248,7 @@ export async function stopModelRouterProcess(
   try {
     kill(pid, "SIGTERM");
   } catch (error) {
-    if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
+    if (!isRunning(pid) && !(await isResponsive(port, 1000))) return;
     throw new Error(
       `NemoClaw could not send SIGTERM to Model Router PID ${pid}: ${
         error instanceof Error ? error.message : String(error)
@@ -234,12 +257,12 @@ export async function stopModelRouterProcess(
   }
   for (let _attempt = 0; _attempt < 10; _attempt++) {
     await sleep(500);
-    if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
+    if (!isRunning(pid) && !(await isResponsive(port, 1000))) return;
   }
 
   if (!isRunning(pid)) {
     throw new Error(
-      `Model Router PID ${pid} no longer reports as running after SIGTERM, but port ${port} remains healthy.`,
+      `Model Router PID ${pid} no longer reports as running after SIGTERM, but port ${port} remains responsive.`,
     );
   }
   if (

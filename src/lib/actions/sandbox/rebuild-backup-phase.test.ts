@@ -8,7 +8,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  abortOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
+  finishOpenClawBackupQuiesce: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -25,16 +29,34 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
+  finishOpenClawBackupQuiesce: mocks.finishOpenClawBackupQuiesce,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
+}));
 
-import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  type RebuildBackupPhaseInput,
+  releaseRebuildSourceOpenClawWindow,
+  retireRebuildSourceOpenClawWindowForDelete,
+  runRebuildBackupPhase,
+} from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "alpha", kind: "backup" },
+  });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
+  mocks.finishOpenClawBackupQuiesce.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -66,6 +88,51 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
+  it("retires the retained source window before the delete edge", async () => {
+    const window = { sandboxName: "alpha" };
+
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
+  it("releases an unchanged source backup without requesting doctor", async () => {
+    const window = { sandboxName: "alpha", kind: "backup" as const };
+
+    await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual({ ok: true });
+
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    "identifies retained source and verified stop state on release failure (%s)",
+    async (stopped) => {
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const window = { sandboxName: "retained-alpha", kind: "backup" as const };
+      const failure = { ok: false, stage: "restart", detail: "gateway not healthy" };
+      mocks.finishOpenClawBackupQuiesce.mockResolvedValue(failure);
+      mocks.abortOpenClawPostRestoreDoctor.mockResolvedValue(
+        stopped ? { ok: true } : { ok: false, stage: "abort", detail: "stop not verified" },
+      );
+
+      await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual(failure);
+
+      expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(window);
+      expect(mocks.retireOpenClawPostRestoreDoctorForDelete).not.toHaveBeenCalled();
+      const text = warning.mock.calls.flat().join(" ");
+      expect(text).toContain("retained-alpha");
+      expect(text).toContain("recorded gateway");
+      expect(text).toContain("Preserve this sandbox and its backup");
+      expect(text).toContain(stopped ? "was stopped" : "not fully verified");
+      expect(text.includes("was stopped")).toBe(stopped);
+    },
+  );
+
   it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
@@ -88,6 +155,35 @@ describe("rebuild policy handoff", () => {
       "capture the live policy before sandbox replacement",
       undefined,
     );
+    expect(mocks.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
+  });
+
+  it("reports the retained source when backup fails before the pipeline takes ownership", async () => {
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.finishOpenClawBackupQuiesce.mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "gateway not healthy",
+    });
+    const backup = vi.fn(async () => {
+      throw new Error("backup transfer failed");
+    });
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow("backup transfer failed");
+
+    expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("retained sandbox 'alpha'"));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("was stopped"));
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {

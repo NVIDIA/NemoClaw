@@ -21,6 +21,7 @@ import {
   type DashboardPortReservationScope,
   findAvailableDashboardPortFromObservations,
   getRegistryOccupiedDashboardPorts,
+  hasExplicitDashboardPortOverride,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
@@ -29,6 +30,18 @@ import {
   withDashboardPortReservationLock,
   withDashboardPortReservationScope,
 } from "./dashboard-port";
+
+describe("dashboard-port override intent", () => {
+  it.each([
+    [undefined, false],
+    ["", false],
+    [" \t ", false],
+    ["18789", true],
+    [" 18789 ", true],
+  ] as const)("classifies %j as explicit=%s", (value, expected) => {
+    expect(hasExplicitDashboardPortOverride(value)).toBe(expected);
+  });
+});
 
 function forwardObservation(
   sandboxName: string,
@@ -96,12 +109,17 @@ async function unusedLoopbackPort(): Promise<number> {
 }
 
 describe("typed OpenShell dashboard-port observation", () => {
-  it("binds an exact identity factory to one read-only adapter request", async () => {
+  it("checks gateway authority once for each multi-port batch (#11963)", async () => {
     const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
-      async ({ forwards }) => forwards.map((forward) => ({ state: "absent" as const, forward })),
+      async ({ assertCurrent, forwards }) => {
+        expect(assertCurrent).toBeUndefined();
+        return forwards.map((forward) => ({ state: "absent" as const, forward }));
+      },
     );
+    const assertCurrent = vi.fn(async () => undefined);
     const observer = createOpenShellForwardPortObserver({
       adapter: { observeForwards },
+      assertCurrent,
       forwardForPort: (port) => ({
         gatewayEndpoint: "https://127.0.0.1:9090",
         gatewayName: "nemoclaw-9090",
@@ -137,6 +155,65 @@ describe("typed OpenShell dashboard-port observation", () => {
       },
     ]);
     expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+
+    await observer([18789, 18790]);
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a batch when gateway authority is stale before collection (#11963)", async () => {
+    const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+      async ({ forwards }) => forwards.map((forward) => ({ state: "absent" as const, forward })),
+    );
+    const assertCurrent = vi.fn(async () => {
+      throw new Error("gateway authority changed");
+    });
+    const observer = createOpenShellForwardPortObserver({
+      adapter: { observeForwards },
+      assertCurrent,
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "127.0.0.1",
+        port,
+      }),
+    });
+
+    await expect(observer([18789, 18790])).rejects.toThrow(/gateway authority changed/);
+    expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a batch when gateway authority changes during collection (#11963)", async () => {
+    let observationComplete = false;
+    const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+      async ({ forwards }) => {
+        observationComplete = true;
+        return forwards.map((forward) => ({ state: "absent" as const, forward }));
+      },
+    );
+    const assertCurrent = vi.fn(async () => {
+      expect(observationComplete).toBe(true);
+      throw new Error("gateway authority changed");
+    });
+    const observer = createOpenShellForwardPortObserver({
+      adapter: { observeForwards },
+      assertCurrent,
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "127.0.0.1",
+        port,
+      }),
+    });
+
+    await expect(observer([18789, 18790])).rejects.toThrow(/gateway authority changed/);
+    expect(observeForwards).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
   });
 
   it.each(["owned", "stale"] as const)("reuses an exact %s forward", (state) => {
@@ -172,10 +249,12 @@ describe("typed OpenShell dashboard-port observation", () => {
   });
 
   it("rejects an adapter response that does not match its requested identities", async () => {
+    const assertCurrent = vi.fn(async () => undefined);
     const observer = createOpenShellForwardPortObserver({
       adapter: {
         observeForwards: async () => [forwardObservation("other", 18789, "absent")],
       },
+      assertCurrent,
       forwardForPort: (port) => ({
         gatewayEndpoint: "https://127.0.0.1:9090",
         gatewayName: "nemoclaw-9090",
@@ -187,6 +266,7 @@ describe("typed OpenShell dashboard-port observation", () => {
     });
 
     await expect(observer([18789])).rejects.toThrow(/incomplete forward ownership evidence/);
+    expect(assertCurrent).not.toHaveBeenCalled();
   });
 });
 

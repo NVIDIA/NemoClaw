@@ -36,6 +36,14 @@ _nemoclaw_bootstrap_identity="$6"
 [ "$7" = "--" ] || fail "startup argument delimiter is missing"
 shift 7
 
+# Keep the inspected OpenShell workload command anchored to the canonical
+# image entrypoint while the hold owns the pre-start transaction. The hold
+# itself already execs that fixed path, so consume the exact marker instead of
+# forwarding it as an argument to the entrypoint.
+if [ "$#" -gt 0 ] && [ "$1" = "/usr/local/bin/nemoclaw-start" ]; then
+  shift
+fi
+
 case "$_nemoclaw_agent" in
   openclaw | hermes | langchain-deepagents-code | pi) ;;
   *) fail "agent is unsupported" ;;
@@ -52,7 +60,6 @@ esac
   || fail "bootstrap identity must be lowercase SHA-256"
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
-_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
 [ -f "$_nemoclaw_runtime" ] || fail "managed startup runtime is missing"
 
 /usr/local/bin/node "$_nemoclaw_runtime" \
@@ -60,6 +67,15 @@ _nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
   --agent "$_nemoclaw_agent" \
   --profile-fingerprint "$_nemoclaw_fingerprint" \
   --bootstrap-identity "$_nemoclaw_bootstrap_identity"
+
+_nemoclaw_runtime_env="/tmp/nemoclaw-managed-startup-runtime.env"
+_nemoclaw_legacy_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
+if [ -e "$_nemoclaw_runtime_env" ] && [ -e "$_nemoclaw_legacy_runtime_env" ]; then
+  fail "managed startup published ambiguous runtime environments"
+fi
+if [ ! -e "$_nemoclaw_runtime_env" ]; then
+  _nemoclaw_runtime_env="$_nemoclaw_legacy_runtime_env"
+fi
 
 if [ -L "$_nemoclaw_runtime_env" ] \
   || [ ! -f "$_nemoclaw_runtime_env" ] \
@@ -97,7 +113,8 @@ while IFS='=' read -r _nemoclaw_environment_name _; do
 done < <(/usr/bin/env)
 
 unset _nemoclaw_agent _nemoclaw_fingerprint _nemoclaw_bootstrap_identity
-unset _nemoclaw_runtime _nemoclaw_runtime_env _nemoclaw_sandbox_uid _nemoclaw_sandbox_gid
+unset _nemoclaw_runtime _nemoclaw_runtime_env _nemoclaw_legacy_runtime_env
+unset _nemoclaw_sandbox_uid _nemoclaw_sandbox_gid
 unset _nemoclaw_environment_name
 unset -f fail
 exec "${_nemoclaw_scrubbed_env[@]}" /usr/local/bin/nemoclaw-start "$@"

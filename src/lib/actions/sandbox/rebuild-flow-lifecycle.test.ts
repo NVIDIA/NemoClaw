@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
@@ -18,6 +19,7 @@ import {
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
+import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
@@ -40,6 +42,83 @@ function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSn
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
 
+  it.each([undefined, "/srv/nemoclaw/recreated-gateway"])(
+    "uses the recorded gateway directory during rebuild unless explicitly overridden (%s)",
+    async (explicitStateDir) => {
+      const originalStateDir = "/srv/nemoclaw/original-gateway";
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      try {
+        process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = explicitStateDir ?? "";
+        const observed: (string | undefined)[] = [];
+        const harness = createRebuildFlowHarness({
+          sandboxEntry: { openshellGatewayStateDir: originalStateDir },
+          preflightAuthoritativeRebuildTarget: () => {
+            observed.push(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR);
+          },
+          onboard: () => {
+            const actualStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+            observed.push(actualStateDir);
+            registry.updateSandbox("alpha", { openshellGatewayStateDir: actualStateDir });
+          },
+        });
+        await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+        expect(observed).toEqual([
+          explicitStateDir ?? originalStateDir,
+          explicitStateDir ?? originalStateDir,
+        ]);
+        expect(harness.getSandboxEntry().openshellGatewayStateDir).toBe(
+          explicitStateDir ?? originalStateDir,
+        );
+        expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(explicitStateDir ?? "");
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
+  it("restores the caller gateway directory after rebuild preflight fails", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    try {
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = "";
+      let observed: string | undefined;
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { openshellGatewayStateDir: "/srv/nemoclaw/original-gateway" },
+        preflightAuthoritativeRebuildTarget: () => {
+          observed = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+          throw new Error("injected preflight failure");
+        },
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Replacement onboarding preflight failed");
+      expect(observed).toBe("/srv/nemoclaw/original-gateway");
+      expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it.each(["relative/gateway", "/"])(
+    "rejects an unsafe recorded gateway directory before rebuild effects (%s)",
+    async (openshellGatewayStateDir) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      try {
+        delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+        const harness = createRebuildFlowHarness({ sandboxEntry: { openshellGatewayStateDir } });
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow(/gateway state directory|shared NemoClaw state root/u);
+        expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+        expectNoSandboxDelete(harness.runOpenshellSpy);
+        expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
   it("rejects schema-5 before rebuild effects and rechecks under the lifecycle lock (#9203)", async () => {
     const guard = vi
       .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
@@ -58,6 +137,64 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
+  it("carries the messaging recheck through backup and refuses deletion after port drift", async () => {
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams port ownership changed"));
+    const harness = createRebuildFlowHarness({ preflightMessagingConflicts: check });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams port ownership changed");
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains replacement recovery when Teams forwarding fails after the source is deleted", async () => {
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams webhook port 3978 is occupied by nc (PID 4321)"));
+    const harness = createRebuildFlowHarness({
+      preflightMessagingConflicts: check,
+      buildMessagingRebuildPlan: () =>
+        makePlan("alpha", {
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "teams",
+              displayName: "Microsoft Teams",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+              hostForward: { channelId: "teams", port: 3978, label: "Microsoft Teams webhook" },
+            },
+          ],
+        }),
+    });
+    harness.ensureMessagingHostForwardAfterRebuildSpy.mockResolvedValue(false);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams webhook port 3978 is occupied by nc (PID 4321)");
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.backupPath)).toBe(true);
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
   });
 
   it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
@@ -308,15 +445,14 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      {
-        localDockerFallbackPolicy: "never",
-        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      kind: "backup",
+      runtimeSelection: {
+        gatewayName: "nemoclaw",
+        workspace: "default",
       },
-    );
+    });
     expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
       "alpha",
       "mutable-rebuild",
@@ -346,27 +482,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(harness.getSandboxEntry().stopped).toBe(true);
-  });
-
-  it("retains removed immutability state when mutable config verification fails", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["permission verification failed"],
-      }),
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
-      stateRecord: "/tmp/shields-alpha.json",
-      recoveryArtifacts: [],
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/state was retained.*mutable config posture was not verified/u);
-
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
   });
 
   it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {
@@ -582,7 +697,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -606,7 +721,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -630,7 +745,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -708,6 +823,29 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("stops a legacy-only MCP rebuild before teardown or sandbox deletion", async () => {
+    const harness = createRebuildFlowHarness({
+      mcpLegacySources: [
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+        },
+      ],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Legacy MCP agent configuration requires explicit migration for 'github'");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("keeps the journaled row when replacement creation fails (#7734)", async () => {

@@ -274,9 +274,7 @@ Use these details when your first-run path needs more control.
     NemoClaw registers inference, prompts for optional web search and messaging channels, prepares the managed startup profile, starts the sandbox from the managed image, sets up OpenClaw, and applies the selected network policy tier and presets.
 
     <Note>
-    Onboarding includes a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting in the startup profile so the dashboard is usable during setup.
-    NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
-    This setting is fixed when the sandbox is created; setting it in the host environment afterward does not affect that sandbox.
+    OpenClaw requires device pairing during onboarding. The managed startup profile still carries `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance only as legacy compatibility inputs while managed callers transition. OpenClaw 2026.9.1 retired the bypass, so NemoClaw does not emit a device-auth bypass key and changing this input does not skip pairing.
     </Note>
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.

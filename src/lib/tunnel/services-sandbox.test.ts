@@ -58,6 +58,20 @@ describe("stopAll with sandbox channels", () => {
     expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("All services stopped");
   });
 
+  it("uses the runtime provider's channel-stop transport", () => {
+    stopAllWithoutOllama({
+      channelStopTransport: "openshell",
+      pidDir,
+      sandboxName: "test-sb",
+    });
+
+    expect(stopSandboxChannels).toHaveBeenCalledWith("test-sb", {
+      channelStopTransport: "openshell",
+      info: expect.any(Function),
+      warn: expect.any(Function),
+    });
+  });
+
   it("warns when no sandbox name is available", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 

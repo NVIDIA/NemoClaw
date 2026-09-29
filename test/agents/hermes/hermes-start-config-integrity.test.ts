@@ -58,46 +58,22 @@ function runHermesConfigIntegrityVerifierAsRoot() {
   }
 }
 
-function runHermesDashboardHomePrepAsRoot() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-seed-"));
+function runHermesDashboardLaunch() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-launch-"));
   const scriptPath = path.join(tmpDir, "run.sh");
-  const binDir = path.join(tmpDir, "bin");
-  const fakePython = path.join(tmpDir, "fake-python.sh");
-  const logPath = path.join(tmpDir, "seed.log");
+  const hermesPath = path.join(tmpDir, "hermes");
+  const capturePath = path.join(tmpDir, "launch.log");
   const hermesHome = path.join(tmpDir, ".hermes");
-  const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.mkdirSync(dashboardHome, { recursive: true });
-  fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(path.join(dashboardHome, "gateway_state.json"), "stale\n");
-  for (const [name, realCommand] of [
-    ["mkdir", "/bin/mkdir"],
-    ["chmod", "/bin/chmod"],
-    ["rm", "/bin/rm"],
-    ["chown", ""],
-  ] as const) {
-    fs.writeFileSync(
-      path.join(binDir, name),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `printf 'cmd=${name} stepped=%s args=' "\${NEMOCLAW_TEST_STEPPED_DOWN:-0}" >>${shellQuote(logPath)}`,
-        `printf '%q ' "$@" >>${shellQuote(logPath)}`,
-        `printf '\\n' >>${shellQuote(logPath)}`,
-        realCommand ? `exec ${realCommand} "$@"` : "exit 64",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-  }
+  fs.mkdirSync(hermesHome, { recursive: true });
   fs.writeFileSync(
-    fakePython,
+    hermesPath,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `printf 'cmd=python stepped=%s args=' "\${NEMOCLAW_TEST_STEPPED_DOWN:-0}" >>${shellQuote(logPath)}`,
-      `printf '%q ' "$@" >>${shellQuote(logPath)}`,
-      `printf '\\n' >>${shellQuote(logPath)}`,
-      `printf 'args=%s\\n' "$*" >>${shellQuote(logPath)}`,
+      `printf 'home=%s\\n' "$HERMES_HOME" >${shellQuote(capturePath)}`,
+      `printf 'api_env=%s\\n' "$NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV" >>${shellQuote(capturePath)}`,
+      `printf 'args=%s\\n' "$*" >>${shellQuote(capturePath)}`,
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -106,19 +82,72 @@ function runHermesDashboardHomePrepAsRoot() {
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `PATH=${shellQuote(`${binDir}:${process.env.PATH ?? ""}`)}`,
-      "export PATH",
-      'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
-      extractShellFunctionFromSource(src, "prepare_hermes_dashboard_home"),
+      extractShellFunctionFromSource(src, "launch_hermes_dashboard_process"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
-      `HERMES_DASHBOARD_HOME=${shellQuote(dashboardHome)}`,
-      `_HERMES_PYTHON=${shellQuote(fakePython)}`,
-      `_HERMES_DASHBOARD_CONFIG_SEEDER=${shellQuote(path.join(tmpDir, "seed-dashboard-config.py"))}`,
-      `_HERMES_MANAGED_POLICY=${shellQuote(path.join(tmpDir, "managed-policy.json"))}`,
-      "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
-      "prepare_hermes_dashboard_home sandbox:sandbox",
-      `if [ -e ${shellQuote(path.join(dashboardHome, "gateway_state.json"))} ]; then echo gateway_state_exists=1; else echo gateway_state_exists=0; fi`,
-      `cat ${shellQuote(logPath)}`,
+      `HERMES=${shellQuote(hermesPath)}`,
+      "INTERNAL_PORT=18642",
+      "HERMES_DASHBOARD_EXTERNAL_HOST=127.0.0.1",
+      "HERMES_DASHBOARD_ARGS=(dashboard --isolated)",
+      "STEP_DOWN_PREFIX_SANDBOX=()",
+      "launch_hermes_dashboard_process current",
+      'wait "$DASHBOARD_PID"',
+      `cat ${shellQuote(capturePath)}`,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return {
+      hermesHome,
+      result: spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: process.env,
+      }),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runRootDashboardRecovery() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-recovery-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.mkdirSync(hermesHome, { recursive: true, mode: 0o770 });
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+      'hermes_socat_bridge_healthy() { [ "$1" = api-socat ]; }',
+      "hermes_api_socat_bridge_healthy() { return 0; }",
+      "hermes_dashboard_healthy() { return 1; }",
+      "hermes_stop_tracked_role() { return 0; }",
+      `start_hermes_dashboard_sandbox_user() { chmod 0700 ${shellQuote(hermesHome)}; DASHBOARD_PID=22; DASHBOARD_SOCAT_PID=23; }`,
+      "start_hermes_dashboard_current_user() { return 99; }",
+      `ensure_hermes_config_root_mode() { chmod 3770 ${shellQuote(hermesHome)}; }`,
+      "sleep() { :; }",
+      "ensure_dashboard_log_stream() { return 0; }",
+      "ensure_gateway_log_stream() { return 0; }",
+      extractShellFunctionFromSource(
+        src,
+        "restore_hermes_config_permissions_after_dashboard_start",
+      ),
+      extractShellFunctionFromSource(src, "ensure_hermes_supervised_auxiliaries"),
+      "SOCAT_PID=11",
+      "DASHBOARD_PID=12",
+      "DASHBOARD_SOCAT_PID=13",
+      "PUBLIC_PORT=8642",
+      "INTERNAL_PORT=18642",
+      "DASHBOARD_PUBLIC_PORT=5173",
+      "DASHBOARD_INTERNAL_PORT=15173",
+      "GATEWAY_PID=10",
+      "ensure_hermes_supervised_auxiliaries",
+      `test -n "$(find ${shellQuote(hermesHome)} -prune -perm 3770 -print)"`,
+      "printf '3770\\n'",
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -126,7 +155,51 @@ function runHermesDashboardHomePrepAsRoot() {
   try {
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
-      timeout: 10_000,
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runRootDashboardLaunchReadinessFailure() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-permissions-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.mkdirSync(hermesHome, { recursive: true, mode: 0o770 });
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+      "build_hermes_dashboard_args() { return 0; }",
+      "prepare_restricted_log() { return 0; }",
+      `launch_hermes_dashboard_process() { chmod 0700 ${shellQuote(hermesHome)}; DASHBOARD_PID=22; }`,
+      "ensure_dashboard_log_stream() { return 1; }",
+      `ensure_hermes_config_root_mode() { chmod 3770 ${shellQuote(hermesHome)}; }`,
+      "sleep() { :; }",
+      extractShellFunctionFromSource(
+        src,
+        "restore_hermes_config_permissions_after_dashboard_start",
+      ),
+      extractShellFunctionFromSource(src, "start_hermes_dashboard_sandbox_user"),
+      "DASHBOARD_INTERNAL_PORT=15173",
+      "status=0",
+      "start_hermes_dashboard_sandbox_user || status=$?",
+      'test "$status" -eq 1',
+      `test -n "$(find ${shellQuote(hermesHome)} -prune -perm 3770 -print)"`,
+      "printf 'status=%s mode=3770\\n' \"$status\"",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
       env: process.env,
     });
   } finally {
@@ -143,26 +216,28 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(result.stdout).toContain("result=success failure-code=internal");
   });
 
-  it(
-    "prepares root dashboard home and seeds config through the sandbox identity",
-    {
-      timeout: 15_000,
-    },
-    () => {
-      const result = runHermesDashboardHomePrepAsRoot();
+  it("launches the isolated dashboard against the native Hermes home", () => {
+    const { hermesHome, result } = runHermesDashboardLaunch();
 
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("gateway_state_exists=0");
-      expect(result.stdout).toContain("cmd=mkdir stepped=1");
-      expect(result.stdout).toContain("cmd=chmod stepped=1");
-      expect(result.stdout).toContain("cmd=rm stepped=1");
-      expect(result.stdout).toContain("cmd=python stepped=1");
-      expect(result.stdout).not.toContain("cmd=chown");
-      expect(result.stdout).toMatch(
-        /seed-dashboard-config[.]py\s+[^\s]*managed-policy[.]json\s+[^\s]*config[.]yaml/u,
-      );
-      expect(result.stdout).toContain("/.env");
-    },
-  );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      `home=${hermesHome}`,
+      `api_env=${hermesHome}/.env`,
+      "args=dashboard --isolated",
+    ]);
+  });
+
+  it("restores shared Hermes-home access after root-mode dashboard recovery", () => {
+    const result = runRootDashboardRecovery();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("3770");
+  });
+
+  it("restores shared Hermes-home access before root-mode dashboard readiness", () => {
+    const result = runRootDashboardLaunchReadinessFailure();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("status=1 mode=3770");
+  });
 });

@@ -210,7 +210,7 @@ function receipt() {
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
       requestBodyLimit: {
-        acceptedBytes: 32768,
+        acceptedBytes: 1048576,
         acceptedHttpStatus: 200,
         continuationHealthHttpStatus: 200,
         continuationHttpStatus: 200,
@@ -373,7 +373,7 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 32768,
+          maxRequestBodyBytes: 1048576,
           maxRequestHeaderBytes: 32768,
           maxOutputTokens: 4096,
           requestTimeoutSeconds: 900,

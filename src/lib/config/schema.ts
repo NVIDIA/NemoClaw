@@ -172,7 +172,7 @@ function isPrimaryWithReadOnlyRoster(agents: readonly NemoClawAgentConfig[]): bo
   );
 }
 
-function sharesPrimaryHostedRoute(
+function sharesPrimarySupportedRoute(
   agents: readonly NemoClawAgentConfig[],
   providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
 ): boolean {
@@ -184,7 +184,7 @@ function sharesPrimaryHostedRoute(
       isDeepStrictEqual(primary.inference.routes, agent.inference.routes),
     ) &&
     provider !== undefined &&
-    !("serving" in provider)
+    (!("serving" in provider) || provider.serving.backend === "ollama")
   );
 }
 
@@ -197,11 +197,11 @@ function additionalAgentProblems(
   const valid =
     sandbox.runtime.provider === "docker" &&
     isPrimaryWithReadOnlyRoster(sandbox.agents) &&
-    sharesPrimaryHostedRoute(sandbox.agents, providers);
+    sharesPrimarySupportedRoute(sandbox.agents, providers);
   return valid
     ? []
     : [
-        `/spec/sandboxes/${sandboxIndex}/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route`,
+        `/spec/sandboxes/${sandboxIndex}/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route`,
       ];
 }
 

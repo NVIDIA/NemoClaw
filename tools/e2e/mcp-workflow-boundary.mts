@@ -17,6 +17,10 @@ import {
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
   MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
 } from "./mcp-dev-workflow-boundary-digests.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -46,6 +50,10 @@ const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
 const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const REVIEWED_SDK_ARTIFACT_JOB = "package-openshell-sdk";
+const REVIEWED_SDK_DOWNLOAD_NAME = "Download reviewed OpenShell SDK archive";
+const REVIEWED_SDK_DOWNLOAD_PATH = "${{ runner.temp }}/openshell-sdk";
+const REVIEWED_SDK_ARTIFACT_NAME = "${{ needs.package-openshell-sdk.outputs.artifact_name }}";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
@@ -207,7 +215,7 @@ function validateJobIdentity(
     JSON.stringify(
       jobName === "mcp-bridge-dev"
         ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
-        : ["base-image-publication", "generate-matrix"],
+        : ["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -498,6 +506,35 @@ function validateJobExecution(
       );
     }
   } else {
+    const sdkDownload = namedStep(job, REVIEWED_SDK_DOWNLOAD_NAME);
+    const sdkInstall = namedStep(job, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+    requireEqual(
+      errors,
+      sdkDownload.uses,
+      DEV_ARTIFACT_DOWNLOAD_ACTION,
+      "mcp-bridge must use the reviewed SDK artifact downloader",
+    );
+    if (
+      !hasExactEntries(asRecord(sdkDownload.with), {
+        name: REVIEWED_SDK_ARTIFACT_NAME,
+        path: REVIEWED_SDK_DOWNLOAD_PATH,
+      })
+    ) {
+      errors.push("mcp-bridge must restore exactly the run-scoped reviewed SDK archive");
+    }
+    if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+      errors.push("mcp-bridge must install the reviewed SDK with the shared action");
+    }
+    const restoreCli = namedStep(job, "Restore exact-commit CLI artifact");
+    if (
+      steps.indexOf(sdkDownload) < 0 ||
+      steps.indexOf(sdkInstall) <= steps.indexOf(sdkDownload) ||
+      steps.indexOf(restoreCli) <= steps.indexOf(sdkInstall)
+    ) {
+      errors.push(
+        "mcp-bridge must install the reviewed SDK before restoring candidate execution artifacts",
+      );
+    }
     requireEqual(
       errors,
       installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,

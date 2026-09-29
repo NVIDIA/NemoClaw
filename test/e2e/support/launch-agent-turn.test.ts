@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 import { wrapExecCommandWithRuntimeEnv } from "../../../src/lib/actions/sandbox/runtime-env";
@@ -27,15 +27,12 @@ import { testTimeout } from "../../helpers/timeouts";
 import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
 import {
   LAUNCH_TURN_SCRIPT,
-  OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
-  OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
   OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
   OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
-  runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
 vi.setConfig({ maxConcurrency: 3 });
@@ -67,6 +64,8 @@ type FixtureMode =
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "supervisor-timeout"
+  | "exit-requires-open-input"
+  | "user-exit-130"
   | "valid";
 
 interface LaunchFixtureInvocation {
@@ -122,6 +121,11 @@ async function runLaunchSessionFixture(
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
+  const logoutMarker = join(fixtureRoot, "logout-observed");
+  writeFileSync(
+    join(fixtureRoot, ".bash_logout"),
+    ': > "$NEMOCLAW_FIXTURE_BIN_ROOT/logout-observed"\nfalse\n',
+  );
   const earlyInputMarker = join(fixtureRoot, "early-input");
   const fakeLaunch = join(fixtureRoot, "openclaw");
   const fakeOpenshell = join(fixtureRoot, "openshell");
@@ -134,8 +138,8 @@ async function runLaunchSessionFixture(
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyPathUnreadableMarker = join(fixtureRoot, "pty-path-unreadable");
   const ptySocketReceiptPath = join(fixtureRoot, "pty-socket-receipt.json");
-  const invocationEnv = invocation?.env ?? {};
-  const runId = invocationEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
+  const inputEnv = invocation?.env ?? {};
+  const runId = inputEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
@@ -379,7 +383,11 @@ const exitWithStatus = process.exit.bind(process);
   if (mode === "late-extra") append("user", firstInput);
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
-  process.exit(mode.includes("nonzero") ? 23 : 0);
+  if (mode === "exit-requires-open-input") {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (process.stdin.readableEnded) process.exit(67);
+  }
+  process.exit(mode === "user-exit-130" ? 130 : mode.includes("nonzero") ? 23 : 0);
 })().catch(() => process.exit(66));
 `,
     );
@@ -434,6 +442,22 @@ fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "$NEMOCLAW_FIXTURE_RUN_ID" ]]; then
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "monitor-ready" ]]; then
+  # Model noisy failures followed by a deadline probe with no new diagnostic.
+  node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const sizesPath = path.join(process.env.NEMOCLAW_FIXTURE_BIN_ROOT, "retained-evidence-sizes.json");
+const sizes = fs.existsSync(sizesPath) ? JSON.parse(fs.readFileSync(sizesPath, "utf8")) : [];
+sizes.push(fs.fstatSync(2).size);
+fs.writeFileSync(sizesPath, JSON.stringify(sizes));
+if (sizes.length > 2) {
+  fs.writeFileSync(path.join(process.env.NEMOCLAW_FIXTURE_BIN_ROOT, "empty-pty-probe"), "");
+  process.exit(1);
+}
+process.stderr.write("x".repeat(16_384) + "\n");
+'
+fi
 if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MODE" == "provider-exit-after-recording" ) && "$4" == "qualify" && "$7" == "1" ]]; then
   set +e
   "$@"
@@ -467,7 +491,7 @@ exec "$@"
       });
     const result = await launch({
       ...process.env,
-      ...invocationEnv,
+      ...inputEnv,
       HOME: fixtureRoot,
       NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
       NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER: canonicalRestoredMarker,
@@ -484,16 +508,17 @@ exec "$@"
       NEMOCLAW_FIXTURE_RUN_ID: runId,
       NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
       NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-      NEMOCLAW_LAUNCH_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
-      NEMOCLAW_LAUNCH_ENTRYPOINT: invocationEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
-      NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
-      NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_COMMAND: inputEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
+      NEMOCLAW_LAUNCH_ENTRYPOINT: inputEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: inputEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
+      NEMOCLAW_LAUNCH_FIRST_INPUT: inputEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
       NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
       NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
       NEMOCLAW_LAUNCH_RUN_ID: runId,
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-      NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
+      NEMOCLAW_LAUNCH_SANDBOX: inputEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
         mode === "restored-canonical-timeout" || mode === "supervisor-timeout"
           ? "10"
@@ -501,13 +526,14 @@ exec "$@"
             ? "5"
             : mode.endsWith("-timeout")
               ? "2"
-              : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
-      NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+              : (inputEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
+      NEMOCLAW_LAUNCH_SECOND_INPUT: inputEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+      NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
       NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
       NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
       PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
-      TERM: invocationEnv.TERM ?? "xterm-256color",
+      TERM: inputEnv.TERM ?? "xterm-256color",
     });
     const tuiProcessIds = existsSync(tuiPidsPath)
       ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
@@ -526,7 +552,14 @@ exec "$@"
     return {
       baselineRemoved: !existsSync(baselinePath),
       canonicalRestored: existsSync(canonicalRestoredMarker),
+      logoutObserved: existsSync(logoutMarker),
       earlyInputObserved: existsSync(earlyInputMarker),
+      emptyPtyProbeObserved: existsSync(join(fixtureRoot, "empty-pty-probe")),
+      retainedEvidenceSizes: existsSync(join(fixtureRoot, "retained-evidence-sizes.json"))
+        ? (JSON.parse(
+            readFileSync(join(fixtureRoot, "retained-evidence-sizes.json"), "utf8"),
+          ) as number[])
+        : [],
       hostSessionResidue: readdirSync(fixtureRoot).filter((name) =>
         name.startsWith("nemoclaw-launch-host."),
       ),
@@ -888,7 +921,10 @@ it.runIf(process.platform === "linux" && process.getuid?.() !== 0).concurrent(
       ttyObserved,
     } = await runLaunchSessionFixture("pty-path-unreadable", "absent");
     expect(ttyObserved, result.stderr).toBe(true);
-    expect(ptyPathQueryResult, result.stderr).toEqual({ errorCode: null, status: 1 });
+    expect(ptyPathQueryResult, result.stderr).toEqual({
+      errorCode: null,
+      status: 1,
+    });
     expect(baselineRemoved, result.stderr).toBe(true);
     expect(ptyMonitorRemoved, result.stderr).toBe(true);
     expect(hostSessionResidue, result.stderr).toEqual([]);
@@ -1028,11 +1064,19 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "fails when the PTY monitor socket remains missing until the session deadline (#9160)",
+  "bounds repeated PTY errors and retains the diagnostic across a silent deadline probe (#9160)",
   async ({ expect }) => {
-    const { baselineRemoved, ptyMonitorRemoved, result, ttyObserved } =
-      await runLaunchSessionFixture("pty-socket-timeout", "absent");
+    const {
+      baselineRemoved,
+      emptyPtyProbeObserved,
+      ptyMonitorRemoved,
+      result,
+      retainedEvidenceSizes,
+      ttyObserved,
+    } = await runLaunchSessionFixture("pty-socket-timeout", "absent");
     expect(ttyObserved).toBe(false);
+    expect(emptyPtyProbeObserved).toBe(true);
+    expect(Math.max(...retainedEvidenceSizes)).toBe(2048);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
     expect(result.signal).toBeNull();
@@ -1053,6 +1097,11 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(result.stderr).toContain(
+      "nemoclaw.e2e.launch-cleanup=started evidence-status=3 provider-unavailable=1",
+    );
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-cleanup=child-reaped");
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=0");
   },
 );
 
@@ -1064,8 +1113,10 @@ it.runIf(process.platform === "linux").each([
   ["529", "ServiceUnavailableError", "valid"],
   ["500", "InternalServerError", "valid"],
   ["503", "ServiceUnavailableError", "provider-empty-message"],
+  ["503", "generic-http-error", "valid"],
+  ["503", "generic-http-error", "provider-empty-message"],
 ] as const)(
-  "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
+  "executes the real $1 HTTP $0 launch producer through $2 without a failing logout hook (#10978)",
   async (providerCode, providerError, secondMode) => {
     const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
     const secondTerminal = secondMode === "valid" ? "absent" : "provider";
@@ -1074,6 +1125,7 @@ it.runIf(process.platform === "linux").each([
       firstInput?: string;
       runId?: string;
       stderr: string;
+      logoutObserved: boolean;
     }> = [];
     let markFirstCallFinished: () => void = () => undefined;
     const firstCallFinished = new Promise<void>((resolve) => {
@@ -1085,7 +1137,7 @@ it.runIf(process.platform === "linux").each([
         args: string[],
         options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
       ) => {
-        const { result: fixture } = await runLaunchSessionFixture(
+        const { result: fixture, logoutObserved } = await runLaunchSessionFixture(
           calls.length === 0 ? "provider-exit-after-recording" : secondMode,
           calls.length === 0 ? "provider" : secondTerminal,
           {
@@ -1094,7 +1146,10 @@ it.runIf(process.platform === "linux").each([
             env: {
               ...options?.env,
               NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
-              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE:
+                providerError === "generic-http-error"
+                  ? "503 upstream temporarily unavailable"
+                  : `litellm.${providerError}: ${providerError}: upstream unavailable`,
             },
           },
         );
@@ -1103,6 +1158,7 @@ it.runIf(process.platform === "linux").each([
           firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
           runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
           stderr: fixture.stderr,
+          logoutObserved,
         });
         calls.length === 1 ? markFirstCallFinished() : undefined;
         return {
@@ -1137,6 +1193,7 @@ it.runIf(process.platform === "linux").each([
       ]);
       expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
       expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
+      expect(calls.map((call) => call.logoutObserved)).toEqual([false, false]);
       expect(calls[0]?.stderr).toContain(
         `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[0]?.runId}`,
       );
@@ -1171,6 +1228,7 @@ it.runIf(process.platform === "linux").concurrent(
     };
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     expect(produced.stderr).toContain("structured session baseline cleanup failed");
+    expect(produced.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=1");
     await expect(
       runOpenClawLaunchSession({
         artifactName: "provider-cleanup-handoff",
@@ -1182,6 +1240,30 @@ it.runIf(process.platform === "linux").concurrent(
       }),
     ).rejects.toThrow("launch session failed");
     expect(calls).toBe(1);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux").concurrent(
+  "continues PTY cleanup after a fatal baseline shell error",
+  async ({ expect }) => {
+    // Inject a shell failure inside the cleanup call, after normal qualification.
+    const script = LAUNCH_TURN_SCRIPT.replace(
+      "session_evidence cleanup-baseline",
+      "unset NEMOCLAW_LAUNCH_RUN_ID\n  session_evidence cleanup-baseline",
+    );
+    const fixture = await runLaunchSessionFixture("provider-empty-message", "provider", {
+      args: ["-c", script],
+    });
+    expect(fixture.result.status).toBe(1);
+    expect(fixture.result.stderr).toContain("structured session baseline cleanup failed");
+    expect(fixture.result.stderr).toContain("NEMOCLAW_LAUNCH_RUN_ID: unbound variable");
+    expect(fixture.result.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=1");
+    expect(fixture.result.stderr).not.toContain(OPENCLAW_PROVIDER_UNAVAILABLE_MARKER);
+    expect(fixture.ptyMonitorRemoved).toBe(true);
+    expect(fixture.hostSessionResidue).toEqual([]);
+    expect(fixture.orphanedMonitorProcessIds).toEqual([]);
+    expect(fixture.orphanedTuiProcessIds).toEqual([]);
   },
   testTimeout(30_000),
 );
@@ -1299,7 +1381,7 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "propagates a nonzero TUI exit after two structured turns (#9160)",
+  "keeps input open through clean /exit and rejects nonzero launch status (#9160, #11105)",
   async ({ expect }) => {
     const { baselineRemoved, result, ttyObserved } = await runLaunchSessionFixture(
       "nonzero",
@@ -1309,6 +1391,11 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(23);
+    const cleanExit = await runLaunchSessionFixture("exit-requires-open-input", "absent");
+    expect(cleanExit.result.status, cleanExit.result.stderr).toBe(0);
+    const userExit = await runLaunchSessionFixture("user-exit-130", "absent");
+    expect(userExit.result.status, userExit.result.stderr).toBe(130);
+    expect(userExit.result.stderr).toContain("launch exited with status 130");
   },
 );
 
@@ -1366,130 +1453,5 @@ it.runIf(process.platform === "linux").concurrent(
     expect(ptyMonitorRemoved).toBe(false);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(23);
-  },
-);
-
-it.runIf(process.platform === "linux")(
-  "rejects a relative OpenShell command before launching a host command (#9160)",
-  async () => {
-    let commandCallCount = 0;
-    const host = {
-      command: async () => {
-        commandCallCount += 1;
-        return { exitCode: 0, signal: null, stderr: "", stdout: "" };
-      },
-      openshellCommandPath: "openshell",
-    };
-    await expect(
-      runOpenClawLaunchSession({
-        artifactName: "relative-openshell-command",
-        cliCommand: "node",
-        env: {},
-        host: host as never,
-        redactionValues: [],
-        sandboxName: "alpha",
-      }),
-    ).rejects.toThrow("launch session coverage requires an absolute OpenShell command path");
-    expect(commandCallCount).toBe(0);
-  },
-);
-
-it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
-  "passes an absolute host temporary root for empty, relative, or absolute TMPDIR input [%s] (#9160)",
-  async (root) => {
-    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const roots: Array<string | undefined> = [];
-    const host = {
-      command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-        roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
-        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
-      },
-      openshellCommandPath: "/usr/bin/openshell",
-    };
-    try {
-      await runOpenClawLaunchSession({
-        artifactName: "host-temporary-root",
-        cliCommand: "node",
-        env: { TMPDIR: root },
-        host: host as never,
-        redactionValues: [],
-        sandboxName: "alpha",
-      });
-      expect(roots).toEqual([root === "" ? resolve("/tmp") : resolve(root)]);
-    } finally {
-      platform.mockRestore();
-    }
-  },
-);
-
-it.runIf(process.platform === "linux")(
-  "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",
-  async () => {
-    const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
-    let launchPhaseStartedAtCallCount = -1;
-    const host = {
-      command: async (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-        calls.push({ command, args, env: options?.env });
-        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
-      },
-      openshellCommandPath: "/usr/bin/openshell",
-    };
-    await runOpenClawLaunchReadinessLeaseTurns({
-      artifactName: "lease-turn",
-      cliCommand: "node",
-      cliEntrypoint: "/repo/bin/nemoclaw.js",
-      env: {},
-      exitCommand: "/exit",
-      host: host as never,
-      redactionValues: [],
-      sandboxName: "alpha",
-      beforeLaunchTurns: () => {
-        launchPhaseStartedAtCallCount = calls.length;
-      },
-    });
-    expect(
-      launchPhaseStartedAtCallCount === 1 &&
-        OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS >=
-          OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS + 5 * 60_000,
-    ).toBe(true);
-    expect(calls).toHaveLength(3);
-    expect(calls[0]).toMatchObject({
-      command: "node",
-      args: ["/repo/bin/nemoclaw.js", "alpha", "connect", "--probe-only"],
-    });
-    expect(calls.slice(1).map((call) => call.command)).toEqual(["bash", "bash"]);
-    expect(calls.slice(1).map((call) => call.args)).toEqual([
-      ["-lc", LAUNCH_TURN_SCRIPT],
-      ["-lc", LAUNCH_TURN_SCRIPT],
-    ]);
-    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_EXIT_COMMAND)).toEqual([
-      "/exit",
-      "/exit",
-    ]);
-    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_OPENSHELL_COMMAND)).toEqual([
-      "/usr/bin/openshell",
-      "/usr/bin/openshell",
-    ]);
-    calls.slice(1).forEach((call) => {
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_PROMPT");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_READY_TEXT");
-      expect(typeof call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).toBe("string");
-      expect(typeof call.env?.NEMOCLAW_LAUNCH_SECOND_INPUT).toBe("string");
-      expect(call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).not.toBe(
-        call.env?.NEMOCLAW_LAUNCH_SECOND_INPUT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT).toBe(
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT).toBe(
-        OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT).toBe(
-        OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT).toBe(OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT);
-    });
   },
 );

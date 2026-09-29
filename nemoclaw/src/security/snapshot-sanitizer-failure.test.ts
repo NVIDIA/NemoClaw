@@ -340,6 +340,24 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
+  it("preserves helper timeouts as deadline failures", () => {
+    const rootPath = makeRoot();
+    writePythonWrapper(["sleep 5"]);
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+
+    expect(() => scanDescriptorSnapshot(root, new Set(), undefined, 10)).toThrow(
+      "snapshot sanitization deadline expired",
+    );
+    expect(() =>
+      applyDescriptorSnapshotActions(
+        root,
+        { root: root.identity, directories: {}, files: [] },
+        [{ kind: "remove", path: "config.json", metadata: root.identity }],
+        10,
+      ),
+    ).toThrow("snapshot sanitization deadline expired");
+  });
+
   it("rejects unsafe roots and non-canonical helper payloads", () => {
     const root = makeRoot();
     const filePath = path.join(root, "not-a-directory");

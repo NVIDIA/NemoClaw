@@ -45,6 +45,11 @@ type SandboxRegistryEntry = {
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
 
+/** Blank environment values deliberately request automatic dashboard-port allocation. */
+export function hasExplicitDashboardPortOverride(value: string | undefined): boolean {
+  return Boolean(value?.trim());
+}
+
 /**
  * Read-only OpenShell forward observation bound to one authoritative runtime
  * scope by the caller. Keeping identity construction outside the allocator
@@ -62,10 +67,7 @@ export function createOpenShellForwardPortObserver(input: {
 }): OpenShellForwardPortObserver {
   return async (ports) => {
     const forwards = ports.map((port) => input.forwardForPort(port));
-    const observations = await input.adapter.observeForwards({
-      forwards,
-      ...(input.assertCurrent ? { assertCurrent: input.assertCurrent } : {}),
-    });
+    const observations = await input.adapter.observeForwards({ forwards });
     if (
       observations.length !== forwards.length ||
       observations.some((observation, index) => {
@@ -75,6 +77,9 @@ export function createOpenShellForwardPortObserver(input: {
     ) {
       throw new Error("OpenShell returned incomplete forward ownership evidence.");
     }
+    // This batch is read-only. Mutations use their own strict fences, while
+    // one final check rejects all valid evidence if gateway authority changed.
+    await input.assertCurrent?.();
     return observations;
   };
 }

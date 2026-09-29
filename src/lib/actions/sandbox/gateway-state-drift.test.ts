@@ -14,7 +14,6 @@ const requireDist = createRequire(import.meta.url);
 const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
 const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-const dockerDriverRecovery = requireDist("../../onboard/docker-driver-sandbox-recovery.js");
 const registry = requireDist("../../state/registry.js");
 const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
 const gatewaySelect = requireDist("./gateway-select.js");
@@ -122,9 +121,6 @@ describe("sandbox gateway state drift guard", () => {
       findSandboxAcrossGatewayRootsSpy,
       gatewaySelectSpy,
       recoverNamedGatewayRuntimeSpy,
-      vi
-        .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
-        .mockReturnValue({ recovered: false, via: null }),
       removeSandboxSpy,
     );
   });

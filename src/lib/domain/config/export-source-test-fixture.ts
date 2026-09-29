@@ -22,6 +22,8 @@ export const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 export const endpoint = "https://api.openai.com/v1";
 export const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 export const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
+export const dcodeImageRef =
+  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:" + "d".repeat(64);
 export const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
 export const canonicalPolicy = {
@@ -89,6 +91,35 @@ export function hermesProfileInput(): ManagedStartupProfileBuilderInput {
       internalPort: null,
       tuiEnabled: false,
     },
+  };
+}
+
+export function dcodeProfileInput(
+  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
+): ManagedStartupProfileBuilderInput {
+  const route = resolveManagedStartupInferenceRoute(
+    "langchain-deepagents-code",
+    "openai-api",
+    "gpt-5",
+    "openai-completions",
+  );
+  return {
+    ...profileInput(),
+    agent: "langchain-deepagents-code",
+    inference: {
+      routeProvider: route.providerKey,
+      upstreamProvider: "openai-api",
+      model: "gpt-5",
+      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamEndpointUrl: endpoint,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
+    dcodeAutoApprovalMode: "disabled",
+    observabilityEnabled: false,
+    ...overrides,
   };
 }
 
@@ -237,6 +268,36 @@ export function hermesSnapshot(
       ...registryOverrides,
     }),
     sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
+  });
+}
+
+export function dcodeSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const base = snapshot();
+  const workload = managedWorkload(dcodeProfileInput(), dcodeImageRef);
+  return snapshot({
+    registry: entry({
+      agent: "langchain-deepagents-code",
+      preferredInferenceApi: "openai-completions",
+      imageTag: dcodeImageRef,
+      workload,
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+      toolDisclosure: "progressive",
+      webSearchEnabled: false,
+      webSearchProvider: null,
+      ...registryOverrides,
+    }),
+    sandbox: { ...base.sandbox, imageRef: dcodeImageRef },
+    inference: {
+      ...base.inference,
+      api: "openai-completions",
+      endpointEvidence: {
+        ...base.inference.endpointEvidence!,
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+      },
+    },
   });
 }
 

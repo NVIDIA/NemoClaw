@@ -25,9 +25,8 @@ const SANDBOX_RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 //     (buildGatewayAdminRpcShell) that sources the same file and legitimately
 //     needs the token; it does not use this wrapper, so no reinjection is
 //     required here.
-//   - Regression coverage: runtime-env.test.ts, passthrough-json.test.ts, and
-//     nemoclaw-start-perms.test.ts cover exec, JSON-agent, and PID-1 one-shot
-//     command boundaries respectively.
+//   - Regression coverage: runtime-env.test.ts and passthrough-json.test.ts
+//     cover exec and JSON-agent command boundaries respectively.
 //   - Removal condition: if nemoclaw-start.sh emits the gateway token into a
 //     separate owner-only env file that arbitrary commands never source, this
 //     unset becomes redundant and can be removed.

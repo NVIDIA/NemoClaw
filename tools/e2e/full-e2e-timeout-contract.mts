@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const FULL_E2E_TEST_TIMEOUT_MINUTES = 70;
+// Preserve the original 70-minute path plus 30 minutes for native configuration and plugin work.
+export const FULL_E2E_TEST_TIMEOUT_MINUTES = 100;
 
 export const FULL_E2E_STANDARD_PROFILE_PRE_TEST_MINUTES = 30;
 export const FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES = 15;

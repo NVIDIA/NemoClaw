@@ -38,6 +38,7 @@ function runRecoveryBeforeOnboard(
   options: {
     detectedExpressPlatform?: string;
     dockerContext?: string;
+    dockerContextEndpoint?: string;
     dockerHost?: string;
     hostPreflightExitCode?: number;
     includeNodeOnPath?: boolean;
@@ -185,6 +186,14 @@ exit 0
       [[ "$*" == "info --format {{.Host.RemoteSocket.Path}}" ]] || return 99
       printf '%s\n' "$PODMAN_SOCKET"
     }
+    docker() {
+      if [[ "\${1:-}" == "context" && "\${2:-}" == "inspect" ]]; then
+        [[ -n "$DOCKER_CONTEXT_ENDPOINT" ]] || return 1
+        printf '%s\n' "$DOCKER_CONTEXT_ENDPOINT"
+        return 0
+      fi
+      return 99
+    }
     sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
     install_nodejs() {
@@ -221,6 +230,7 @@ exit 0
     extraEnv: {
       DETECTED_EXPRESS_PLATFORM: options.detectedExpressPlatform ?? "",
       ...(options.dockerContext !== undefined ? { DOCKER_CONTEXT: options.dockerContext } : {}),
+      DOCKER_CONTEXT_ENDPOINT: options.dockerContextEndpoint ?? "",
       ...(dockerConfig === undefined ? {} : { DOCKER_CONFIG: dockerConfig }),
       ...(options.dockerHost !== undefined ? { DOCKER_HOST: options.dockerHost } : {}),
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
@@ -277,6 +287,19 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
   });
 
+  it("resolves a persisted local Colima context to its Unix socket", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerContextEndpoint: "unix:///Users/test/.colima/default/docker.sock",
+      persistedDockerContext: "colima",
+      recordRuntimeTarget: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toContain(
+      "cli-target=host:unix:///Users/test/.colima/default/docker.sock,context:unset argv=upgrade-sandboxes --auto",
+    );
+  });
+
   it("treats a whitespace-only Docker host as unset", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       dockerHost: " \t ",
@@ -312,6 +335,20 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).not.toContain("Docker context does not select the local default target");
   });
 
+  it("keeps a deferred persisted Colima socket authoritative during recovery", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerContextEndpoint: "unix:///Users/test/.colima/default/docker.sock",
+      includeNodeOnPath: false,
+      persistedDockerContext: "colima",
+      recordRuntimeTarget: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toContain(
+      "cli-target=host:unix:///Users/test/.colima/default/docker.sock,context:unset argv=upgrade-sandboxes --auto",
+    );
+  });
+
   it("rejects a deferred remote Docker context before recovery", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       includeNodeOnPath: false,
@@ -329,7 +366,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.calls).not.toContain(
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     );
-    expect(result.output).toContain("Docker context does not select the local default target");
+    expect(result.output).toContain("Docker context does not select a supported local Unix socket");
   });
 
   it.each([
@@ -388,8 +425,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
     expect(result.status).toBe(1);
     expect(result.calls).toEqual([]);
-    expect(result.output).toContain("Docker context does not select the local default target");
-    expect(result.output).toContain("docker context use default");
+    expect(result.output).toContain("Docker context does not select a supported local Unix socket");
   });
 
   it("rejects a non-local Podman socket before sandbox recovery", () => {

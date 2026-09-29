@@ -48,9 +48,11 @@ Live execution happens through shared fixtures:
 - `environment` checks CLI/install/runtime readiness.
 - `onboard` performs supported onboarding profiles.
 - `lifecycle` performs supported post-onboard mutations.
-- `stateValidation` probes host-observable expected state.
-- `configExportValidation` runs after state validation. Each typed target declares
-  one config export expectation:
+- `stateValidation` normally probes host-observable expected state before
+  configuration export. Targets with ordered cloud checks run it after export
+  so those checks can first restore any export-relevant settings they change.
+- `configExportValidation` runs against the retained state. Each typed target
+  declares one config export expectation:
   - `required` must match the target manifest, live sandbox registry, and
     effective network policy.
   - `expected-refusal` must complete with its declared category without
@@ -98,12 +100,14 @@ rejects a replacement or an added hard link. It
 creates the export in a private temporary directory, registers cleanup before
 it invokes the CLI, and removes the directory before it writes retained evidence.
 
-For `required` coverage, the canonical `NemoClawConfig` validator checks the
-complete exported document. Semantic expectations remain independent of the
-exporter. The fixture reads the target manifest and host registry directly,
-then queries the effective policy through the OpenShell CLI. It captures these
-expectations before it invokes config export, so exporter-side mutations cannot
-redefine the expected deployment state. It rejects an unsafe registry inference
+For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
+and all fields used in its semantic comparison. Cross-branch import
+compatibility remains a separate contract. Semantic expectations remain
+independent of the exporter. The fixture reads the target manifest and host
+registry directly, then queries the effective policy through the OpenShell CLI.
+It captures these expectations before it invokes config export, so exporter-side
+mutations cannot redefine the expected deployment state. It also compares the
+registry before and after the command. It rejects an unsafe registry inference
 endpoint before invoking export or publishing endpoint data in evidence.
 Policy reads and config export use the same filtered host environment as
 onboarding and state validation, preserving configuration paths and runtime
@@ -114,11 +118,13 @@ references must still be declared by the manifest.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
-a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
-ceiling because it does not invoke config export. The
-`dcode-rebuild-invalid-credential` lifecycle adds a 20-minute budget. With its
-expected refusal, its default test timeout is 52 minutes and its job ceiling is
-72 minutes. `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
+a one-minute effective-policy read and 10 minutes for the pinned v1 consumer.
+A `no-usable-sandbox` target adds none of those ceilings because it does not
+invoke config export. The
+`dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
+lifecycle and ordered cloud checks. With required export, its default test
+timeout is 143 minutes and its job ceiling is 163 minutes.
+`NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
 lower the derived test timeout. The derived job ceiling keeps at least 20
 minutes of headroom and rounds up to a whole minute.
 
@@ -128,7 +134,10 @@ elapsed time and a structured command outcome when the fixture invokes the
 CLI. A timed-out, signaled, or otherwise incomplete command fails as a
 transport error before refusal classification. Successful `required` evidence
 includes the exact validated export bytes, byte count, and SHA-256 hash after
-the security checks and cleanup pass. Failure evidence omits export metadata.
+the security checks and cleanup pass. It also publishes those exact bytes as
+`config-export.yaml` so reviewers can inspect and parse the exported document
+directly. Refusal and failure evidence do not publish the YAML file or export
+metadata.
 Its failure stage distinguishes transport errors from export failures, while
 cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
@@ -137,10 +146,33 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
+OpenClaw failure probes read only regular, single-link log files without following symlinks.
+They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
+Oversized files retain size and permission metadata for diagnosis.
+
+When the missing-custom-presets target fails before its expected policy rejection, it captures these bounded, redacted failure probes before cleanup.
+The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
+Container probes use a resolved full container ID and never delete resources or retry onboarding.
+
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
+After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
+The probe removes its temporary native entries before the launch checks.
+The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
+
+The restart probe no longer rereads native configuration to clone and validate a provider.
+The preceding inference turn already verifies the selected model and route.
+Native `config validate` and the post-restart gateway turn retain the live configuration and inference checks.
+UUID-scoped names replace the fixed-name collision checks; the fixture does not copy existing aliases or credentials.
+Patch construction and unique names are tested in `full-e2e-native-model.test.ts` in `e2e-support`.
+The removed config-reader and child-error-redaction checks belonged to the deleted cloning command.
+Native CLI output still uses the fixture's redaction path.
+The live credential scan, launch-readiness checks, restoration, and temporary-entry cleanup remain unchanged.
+
 After a live target succeeds, the E2E workflow requires
-`config-export-evidence.v1.json` before artifact upload. A missing file fails
-the target job. The workflow uploads the file with the target's retained
-artifacts.
+`config-export-evidence.v1.json`. It also requires `config-export.yaml` when
+the evidence classification is `success`; `expected-refusal` and
+`no-usable-sandbox` do not publish YAML. A missing required file fails the
+target job.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
@@ -401,7 +433,12 @@ The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
 When you add or make a non-comment source change to a live E2E test or a
 `test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
-helper under `liveSources` for its owning live test. If the entry has mapped
+helper under `liveSources` for its owning live test. Also list each explicitly
+owned `test/e2e/fixtures/` source under `liveSources` for every owning live test.
+The same mapped fast-test rule applies to changes in those shared fixtures.
+Removing an owner in the same PR does not remove its base-manifest fast-test
+requirement for a changed or deleted fixture.
+Unrelated fixtures do not need an owner. If the entry has mapped
 fast tests, make a non-comment source change to at least one mapped fast test
 in the same PR. Use
 `liveOnlyReason` only when no fast test can reproduce the contract. The PR and

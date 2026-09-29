@@ -36,9 +36,10 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
-const HERMES_CRON_RESTORE_FILES = [
+const HERMES_REBUILD_RESTORE_FILES = [
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-restore-phase.ts",
   "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
   "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ];
@@ -113,7 +114,6 @@ const HERMES_MANAGED_POLICY_FILES = [
   "agents/hermes/image-build-probes.py",
   "agents/hermes/managed_policy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
-  "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ];
@@ -142,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(25);
+    expect(first.version).toBe(26);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -292,13 +292,14 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
   });
 
-  it.each(HERMES_CRON_RESTORE_FILES)(
-    "selects Hermes rebuild E2E for cron restore and drain changes in %s (#7806)",
+  it.each(HERMES_REBUILD_RESTORE_FILES)(
+    "selects Hermes rebuild E2E for rebuild restore changes in %s (#7806)",
     (changedFile) => {
       const result = plan(changedFile);
       const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
         ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
-        : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts"
+        : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts" ||
+            changedFile === "src/lib/actions/sandbox/rebuild-restore-phase.ts"
           ? [
               "managed-image-multiarch-startup",
               "managed-image-protected-runtime",
@@ -595,7 +596,7 @@ describe("deterministic PR risk plan", () => {
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",
-    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    "src/lib/onboard/managed-startup/transport.ts",
     "src/lib/onboard/managed-startup/image-runtime.ts",
     "src/lib/security/credential-hash.ts",
     "src/lib/state/paths.ts",
@@ -622,7 +623,7 @@ describe("deterministic PR risk plan", () => {
     const result = plan(activation);
     const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
-      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
       "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
@@ -833,7 +834,7 @@ describe("deterministic PR risk plan", () => {
 
   it.each([
     "src/lib/actions/sandbox/status-snapshot.ts",
-    "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+    "src/lib/onboard/docker-driver-container-observation.ts",
     "src/lib/onboard/docker-startup-command-agent.ts",
     "src/lib/onboard/sandbox-create-step.ts",
   ])("selects sandbox survival for Docker delivery changes in %s (#7824)", (changedFile) => {
@@ -995,7 +996,6 @@ describe("deterministic PR risk plan", () => {
     "test/e2e/fixtures/runtime-input.txt",
     "test/e2e/e2e-cloud-experimental/full-e2e",
     "test/e2e/live/registry-targets.test.ts",
-    "test/e2e/live/runtime-overrides.test.ts",
     "test/e2e/live/dashboard-remote-bind.test.ts",
   ])("keeps the E2E control plane in a fail-closed runtime floor: %s", (file) => {
     const result = plan(file);
