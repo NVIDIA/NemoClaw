@@ -25,7 +25,6 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
-  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
   sandboxDeleteAbsentMessage,
@@ -92,7 +91,6 @@ import {
 import {
   assertGatewayStatePathSafe,
   GATEWAYS_SUBDIR,
-  type GatewayRegistryDocument,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
   readGatewayRegistryFile,
@@ -129,11 +127,13 @@ import {
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
 import {
+  deleteAllSelectedGatewaySandboxes,
   deleteSelectedGatewaySandbox,
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
   removeForceFreshReceiptVolumes,
+  selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
 import {
   buildUninstallPlan,
@@ -1453,13 +1453,9 @@ function selectedRegistrySandboxState(
   };
 }
 
-function writeRegistryAtomic(
-  home: string,
-  registryFile: string,
-  registry: GatewayRegistryDocument,
-): void {
-  assertGatewayStatePathSafe(home, path.dirname(registryFile));
-  const tempFile = `${registryFile}.uninstall.${String(process.pid)}.${String(Date.now())}`;
+function writeUninstallStateAtomic(home: string, filePath: string, value: unknown): void {
+  assertGatewayStatePathSafe(home, path.dirname(filePath));
+  const tempFile = `${filePath}.uninstall.${String(process.pid)}.${String(Date.now())}`;
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -1467,11 +1463,11 @@ function writeRegistryAtomic(
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
       0o600,
     );
-    fs.writeFileSync(fd, `${JSON.stringify(registry, null, 2)}\n`);
+    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = null;
-    fs.renameSync(tempFile, registryFile);
+    fs.renameSync(tempFile, filePath);
   } finally {
     if (fd !== null) fs.closeSync(fd);
     try {
@@ -1516,7 +1512,7 @@ function pruneSelectedRowsFromRegistry(
         registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
           ? registry.defaultSandbox
           : (Object.keys(remainingSandboxes).sort()[0] ?? null);
-      writeRegistryAtomic(home, registryFile, {
+      writeUninstallStateAtomic(home, registryFile, {
         ...registry,
         defaultSandbox,
         sandboxes: remainingSandboxes,
@@ -1553,6 +1549,88 @@ async function finishScopedOpenShellCleanup(
   );
 }
 
+// Legacy gateway destruction must precede Docker volume removal. Keep proof of
+// completed sandbox cleanup so a later failure can resume after deregistration
+// without changing the preserved registry or accepting an unrelated gateway.
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
+  action: "read",
+): "absent" | "invalid" | "matching" | "unknown";
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
+  action: "clear" | "complete",
+): boolean;
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
+  action: "read" | "clear" | "complete",
+): boolean | "absent" | "invalid" | "matching" | "unknown" {
+  const home = runtime.env.HOME || os.homedir();
+  const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
+  const progressFile = path.join(paths.nemoclawStateDir, "uninstall-bulk-cleanup.json");
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 1,
+        gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        gatewayPort: GATEWAY_PORT,
+        gatewayStateDir: paths.selectedGatewayLocalStateDir,
+        registrations,
+      }),
+    )
+    .digest("hex");
+  try {
+    assertGatewayStatePathSafe(home, registryFile);
+    assertGatewayStatePathSafe(home, progressFile);
+    assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+    if (action !== "complete" && !fs.existsSync(progressFile))
+      return action === "read" ? "absent" : true;
+    if (action === "complete")
+      fs.mkdirSync(paths.nemoclawStateDir, { recursive: true, mode: 0o700 });
+    return withRegistryLockAt(registryFile, () => {
+      const registry = readGatewayRegistryFile(home, registryFile);
+      const selected = Object.fromEntries(
+        Object.entries(registry?.sandboxes ?? {}).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT,
+        ),
+      );
+      if (!isDeepStrictEqual(selected, registrations)) return action === "read" ? "invalid" : false;
+      if (action === "read") {
+        const opened = openRegularFileNoFollow(progressFile);
+        try {
+          try {
+            return JSON.parse(opened.readBytes(128).toString("utf8")) === fingerprint
+              ? "matching"
+              : "invalid";
+          } catch (error) {
+            if (error instanceof SyntaxError) return "invalid";
+            throw error;
+          }
+        } finally {
+          opened.close();
+        }
+      }
+      if (action === "clear") {
+        fs.rmSync(progressFile, { force: true });
+      } else {
+        writeUninstallStateAtomic(home, progressFile, fingerprint);
+      }
+      return true;
+    });
+  } catch (error) {
+    runtime.warn(`Could not verify uninstall cleanup progress: ${formatError(error)}`);
+    return action === "read" ? "unknown" : false;
+  }
+}
+
 async function removeOpenShellResources(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -1568,6 +1646,7 @@ async function removeOpenShellResources(
   }
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   const externallySupervised = isExternallySupervised(teardownAuthority);
+  let runtimeSelection: ReturnType<typeof selectedGatewayCleanupRuntimeSelection> = null;
   if (scopedToSelectedGateway) {
     let removedSelectedResources = true;
     for (const sandboxName of sandboxNames) {
@@ -1592,14 +1671,56 @@ async function removeOpenShellResources(
       return false;
     }
   } else {
-    // #6520: a no-op delete must not print `Deleted … skipped`.
-    runOptional(
-      runtime,
-      "Deleted all OpenShell sandboxes",
-      "openshell",
-      ["sandbox", "delete", "--all"],
-      { onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE },
+    if (externallySupervised) {
+      runtime.warn(
+        "Refusing bulk sandbox cleanup for an externally supervised gateway; preserving its state for retry.",
+      );
+      return false;
+    }
+    if (
+      !canRemoveScopedOpenShellResources(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        teardownAuthority,
+        Boolean(runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()),
+      )
+    ) {
+      return false;
+    }
+    runtimeSelection = selectedGatewayCleanupRuntimeSelection(
+      gatewayLabel,
+      paths.selectedGatewayLocalStateDir,
     );
+    const progress = bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
+    if (progress === "unknown" || (progress === "matching" && !runtimeSelection)) {
+      runtime.warn("Could not verify cleanup retry authority; preserving progress for retry.");
+      return false;
+    }
+    if (runtimeSelection && progress === "matching") {
+      const gatewayNames = await collectLiveOpenShellGatewayNames(
+        {
+          ...runtime,
+          gatewayLifecycle: createUninstallGatewayLifecycle(
+            runtime.run,
+            runtime.env,
+            runtimeSelection,
+          ),
+        },
+        gatewayLabel,
+      );
+      if (gatewayNames === null) {
+        runtime.warn("Could not verify gateway inventory; preserving cleanup progress for retry.");
+        return false;
+      }
+      if (!gatewayNames.has(gatewayLabel)) {
+        runtime.log("Resuming verified sandbox cleanup for the removed gateway.");
+        return verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations);
+      }
+    }
+    if (!bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "clear")) return false;
+    if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) return false;
   }
   // Retain connection and provider state until runtime cleanup is confirmed.
   if (
@@ -1611,7 +1732,12 @@ async function removeOpenShellResources(
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
+  if (!runtimeSelection) return false;
+  const providerAdapter = createUninstallProviderAdapter(
+    runtime.run,
+    runtime.env,
+    runtimeSelection,
+  );
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
       target: { kind: "selected" },
@@ -1620,8 +1746,26 @@ async function removeOpenShellResources(
     if (result.ok) runtime.log(`Deleted provider '${providerName}'`);
     else runtime.warn(providerDeleteSkipMessage(providerName));
   }
+  return true;
+}
+
+async function finishBulkOpenShellCleanup(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  externallySupervised: boolean,
+): Promise<boolean> {
+  const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
+  const runtimeSelection = selectedGatewayCleanupRuntimeSelection(
+    gatewayLabel,
+    paths.selectedGatewayLocalStateDir,
+  );
+  if (!runtimeSelection) return false;
   return removeGatewayRegistration(
-    runtime,
+    {
+      ...runtime,
+      gatewayLifecycle: createUninstallGatewayLifecycle(runtime.run, runtime.env, runtimeSelection),
+    },
     gatewayLabel,
     !externallySupervised,
     resolveGatewayPortFromName(gatewayLabel) ?? GATEWAY_PORT,
@@ -1760,9 +1904,11 @@ function canRemoveScopedOpenShellResources(
   teardownAuthority: GatewayOwner,
   requireLiveManagedProcess = false,
 ): boolean {
+  const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   if (
     !scopedToSelectedGateway &&
-    (isExternallySupervised(teardownAuthority) || selectedGatewayStateDirIsWithinDefaultRoot(paths))
+    (isExternallySupervised(teardownAuthority) ||
+      (!configuredStateDir && selectedGatewayStateDirIsWithinDefaultRoot(paths)))
   ) {
     return true;
   }
@@ -1822,7 +1968,6 @@ function canRemoveScopedOpenShellResources(
         ? "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven."
         : "Refusing gateway cleanup because the configured state directory's sandbox namespace cannot be proven.",
     );
-    const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
     runtime.warn(
       configuredStateDir
         ? `Gateway port ${String(GATEWAY_PORT)} is using OpenShell state directory ${JSON.stringify(configuredStateDir)}. Verify that it is the original resolved onboarding directory, then rerun uninstall.`
@@ -3150,6 +3295,14 @@ async function executeOpenShellResourceCleanup(
     return false;
   }
   if (
+    !portableRuntimeCleanup &&
+    !scopedToSelectedGateway &&
+    (!bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "complete") ||
+      !(await finishBulkOpenShellCleanup(paths, options, runtime, externallySupervised)))
+  ) {
+    return false;
+  }
+  if (
     scopedToSelectedGateway &&
     !(await finishScopedOpenShellCleanup(
       paths,
@@ -4246,6 +4399,7 @@ async function executePreparedPlan(
   let scopedToSelectedGateway = initialScopedToSelectedGateway;
   let sharedRegistryMustBePreserved = initialSharedRegistryMustBePreserved;
   let otherGatewayPorts = initialOtherGatewayPorts;
+  let bulkCleanupProgressPending = false;
   const failedManagedLlamaStateDirs: string[] = [];
   const branding = runtimeBranding(runtime);
   const preserveSharedOpenShell =
@@ -4369,6 +4523,12 @@ async function executePreparedPlan(
               },
         );
       }
+      const progress = bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
+      bulkCleanupProgressPending =
+        ok &&
+        !portableRuntimeCleanup &&
+        !scopedToSelectedGateway &&
+        (progress === "matching" || progress === "unknown");
     } else if (step.name === "NemoClaw CLI") {
       const completion = await completePortablePlan(
         ok,
@@ -4472,6 +4632,9 @@ async function executePreparedPlan(
         continue;
       }
       if (
+        // Keep the fingerprinted checkpoint and its registry together until
+        // every later cleanup action has succeeded.
+        !bulkCleanupProgressPending &&
         !removeStateRootBeforeFinalCleanup(
           openShellCleanup,
           paths,
@@ -4530,6 +4693,17 @@ async function executePreparedPlan(
           interruptedOnboardLock,
           preservedStateRootEntries,
         ))
+      )
+        ok = false;
+      if (
+        bulkCleanupProgressPending &&
+        ok &&
+        !removeStateRootBeforeFinalCleanup(
+          openShellCleanup,
+          paths,
+          preservedStateRootEntries,
+          runtime,
+        )
       )
         ok = false;
     }
