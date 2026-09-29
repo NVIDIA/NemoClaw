@@ -4726,13 +4726,16 @@ EOF
     doctor_command=("$OPENCLAW" doctor --fix --yes --non-interactive)
   fi
   if ! "${doctor_command[@]}"; then
-    # OpenClaw intentionally repairs the shared SQLite schema before it
-    # discovers dependent plugin and agent migrations. Older native homes can
-    # therefore require one bounded second pass after the first pass commits
-    # its shared-schema repair.
     echo "[setup] OpenClaw doctor requested a follow-up migration pass; retrying once" >&2
-    "${doctor_command[@]}" || return 1
+  else
+    echo "[setup] OpenClaw doctor completed its first migration pass; checking dependent migrations once" >&2
   fi
+  # OpenClaw intentionally repairs the shared SQLite schema before it
+  # discovers dependent plugin, agent, and device-identity migrations. Some
+  # older native homes report success for that first pass while still asking
+  # the next startup to run doctor again, so always perform exactly one
+  # bounded follow-up pass before releasing the gateway.
+  "${doctor_command[@]}" || return 1
   wait_for_openclaw_startup_migration_lease || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"

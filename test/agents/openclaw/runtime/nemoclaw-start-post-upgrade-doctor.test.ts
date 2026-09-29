@@ -259,7 +259,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(f.calls, "utf8")).toBe(
-        "restored-before-doctor\ndoctor --fix --yes --non-interactive\n",
+        "restored-before-doctor\ndoctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
       );
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
@@ -324,7 +324,10 @@ describe("nemoclaw-start post-upgrade doctor", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.existsSync(f.marker)).toBe(false);
-      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
+      expect(result.stderr).toContain("checking dependent migrations once");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -460,7 +463,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.status).toBe(1);
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
-      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
