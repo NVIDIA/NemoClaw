@@ -24,6 +24,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .omit(["adapter:nvidia.fabric.openclaw:/cli"]);
     println!("{}", minimum.print_tree(&capabilities)?);
 
+    let inline =
+        PartialDocument::from_yaml(include_bytes!("../tests/fixtures/minimum-inline.yaml"))?;
+    let inline = JourneyDefinition::new("minimum inline scaffold", inline).omit([
+        "adapter:nvidia.fabric.openclaw:/agent_name",
+        "adapter:nvidia.fabric.openclaw:/cli",
+        "adapter:nvidia.fabric.openclaw:/home",
+        "adapter:nvidia.fabric.openclaw:/native_config",
+        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+    ]);
+    println!();
+    println!("{}", inline.print_tree(&capabilities)?);
+
     let express =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))?;
     let express = JourneyDefinition::new("express", express).omit([

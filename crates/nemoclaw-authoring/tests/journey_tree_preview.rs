@@ -301,3 +301,21 @@ fn tree_exposes_schema_derived_gateway_branches_without_supplied_values() {
     assert!(tree.contains("├─ external"), "{tree}");
     assert!(tree.contains("/spec/gateway/endpoint"), "{tree}");
 }
+
+#[test]
+fn minimum_inline_fixture_prints_the_questions_it_can_materialize() {
+    let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
+    let tree = JourneyDefinition::new("minimum-inline", base)
+        .print_tree(&Capabilities::available())
+        .unwrap();
+    for field in [
+        "/metadata/name",
+        "/spec/gateway/management",
+        "/spec/sandboxes/0/harness/kind",
+        "/spec/sandboxes/0/agent/inference/routes/0/name",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+    ] {
+        assert!(tree.contains(field), "missing {field}: {tree}");
+    }
+    assert!(tree.contains("/spec/gateway/endpoint"), "{tree}");
+}

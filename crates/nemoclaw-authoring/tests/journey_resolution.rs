@@ -2285,3 +2285,59 @@ fn accepted_implicit_gateway_choice_can_be_revisited() {
             .is_some()
     );
 }
+
+#[test]
+fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
+    let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("minimum-inline", base)
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let answers = [
+        ("/metadata/name", json!("minimum-inline")),
+        (
+            "/metadata/uid",
+            json!("12345678-1234-4234-9234-123456789abc"),
+        ),
+        ("/spec/gateway/management", json!("managed")),
+        ("/spec/inferenceProviders/0/provider", json!("openai")),
+        ("/spec/sandboxes/0/name", json!("assistant")),
+        (
+            "/spec/sandboxes/0/harness/kind",
+            json!("nvidia.fabric.openclaw"),
+        ),
+        ("/spec/sandboxes/0/agent/name", json!("primary")),
+        (
+            "/spec/sandboxes/0/agent/inference/routes/0/name",
+            json!("primary"),
+        ),
+        (
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            json!("nvidia/nemotron-3-super-120b-a12b"),
+        ),
+    ];
+    for (id, answer) in answers {
+        let resolution = journey.resolve(&capabilities).unwrap();
+        assert!(
+            resolution.question(id).is_some(),
+            "missing question {id}: {:?}",
+            resolution.assessment().issues()
+        );
+        journey.answer(&capabilities, id, Some(answer)).unwrap();
+    }
+    let resolution = journey.resolve(&capabilities).unwrap();
+    assert!(
+        resolution.materialized_document().is_some(),
+        "questions={:?} issues={:?} unverified={:?}",
+        resolution.questions(),
+        resolution.assessment().issues(),
+        resolution.unverified(),
+    );
+}

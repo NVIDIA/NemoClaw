@@ -70,7 +70,14 @@ The driver prints a `tmux attach-session -r` command.
 Run it in another terminal to watch; replay waits for that viewer before answering.
 It checks each expected screen, saves YAML to a new temporary path, checks selected fields, and writes a JSONL screen transcript beside the YAML.
 Omit `--wait-for-viewer` and use `--delay 0` for a fast unattended replay.
-The scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
+The default scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
+To replay the more sparse inline template through the same TUI, run:
+
+```sh
+python3 examples/onboarding-tui/scripts/replay_guided.py --template crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml --wait-for-viewer --keep-session --delay 2
+```
+
+This template supplies the inline forms and one route, then asks for missing names, gateway management, harness, provider preset, and model. The replay selects OpenClaw and checks the saved desired state. It does not probe or apply a target.
 If a question changes, replay stops and prints the unexpected screen; inspect the transcript and rerun with new output paths after updating the expected steps.
 
 Both entrypoints treat input YAML only as defaults for a new deployment.

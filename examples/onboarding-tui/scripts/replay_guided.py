@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Replay the sparse journey onboarding flow in a watchable tmux pane."""
+"""Replay the built-in or minimum-inline journey in a watchable tmux pane."""
 
 import argparse
 import fcntl
@@ -34,6 +34,9 @@ def main() -> int:
     parser.add_argument("--wait-for-viewer", action="store_true", help="wait for a read-only tmux client")
     parser.add_argument("--keep-session", action="store_true", help="leave tmux open after replay")
     args = parser.parse_args()
+    minimum_inline = args.template is not None and args.template.resolve() == (
+        ROOT / "crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml"
+    )
     output = args.output or Path(tempfile.gettempdir()) / f"nemoclaw-onboarding-replay-{os.getpid()}.yaml"
     socket = args.socket or Path(tempfile.gettempdir()) / f"nemoclaw-onboarding-replay-{os.getpid()}.sock"
     transcript = output.with_suffix(".jsonl")
@@ -114,9 +117,32 @@ def main() -> int:
                 log.write("\n")
                 print(f"{number:02} {marker}", flush=True)
                 time.sleep(args.delay)
+                answer = None
                 if "/metadata/name" in current:
-                    send(NAME, literal=True)
-                    await_text(NAME)
+                    answer = NAME
+                elif minimum_inline:
+                    for field, value in {
+                        "/spec/sandboxes/0/agent/inference/routes/0/name": "primary",
+                        "/spec/sandboxes/0/name": "assistant",
+                        "/spec/sandboxes/0/agent/name": "primary",
+                    }.items():
+                        if field in current:
+                            answer = value
+                            break
+                    if "/spec/sandboxes/0/harness/kind" in current:
+                        desired = "nvidia.fabric.openclaw"
+                        if desired not in current:
+                            raise RuntimeError(f"harness choice {desired!r} is unavailable")
+                        for _ in range(32):
+                            if f"❯ {desired}" in screen():
+                                break
+                            send("Down")
+                            time.sleep(0.05)
+                        else:
+                            raise RuntimeError(f"could not select {desired!r}:\n{screen()}")
+                if answer is not None:
+                    send(answer, literal=True)
+                    await_text(answer)
                 send("Enter")
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:

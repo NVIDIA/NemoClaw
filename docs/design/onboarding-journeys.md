@@ -24,6 +24,7 @@ No separate journey YAML format is needed for this prototype.
 | Validation result | Invalid supplied value, pending decision, SDK-valid document, or target compatibility still unverified. |
 
 `JourneyDefinition` owns the sparse template and its question guidance.
+The minimum-inline fixture fixes topology in the partial document; the definition's guidance decides which supplied values to revisit, and `JourneyState` derives missing leaf questions from the SDK and Fabric schemas.
 The example TUI and tree preview start the same `JourneyState` resolver from it.
 The SDK owns complete document validation; Fabric owns adapter compatibility; target probes supply evidence without changing authored intent.
 
@@ -88,8 +89,9 @@ Keep each commit small and green.
 First inspect these outputs manually to find omissions or misleading branches.
 Add assertions for agreed behavior before relying on the printer as a regression check.
 
-Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repository root to print the offline minimum-values, express, and guided previews.
+Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repository root to print the offline structural-frontier, minimum-inline, express, and guided previews.
 The first preview shows an unresolved SDK frontier rather than claiming to enumerate all questions.
+The checked-in `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml` supplies inline harness and inference forms, one route, and an external endpoint while leaving identity, gateway management, harness, provider kind, route name, and model unanswered. It materializes through one resolver after those answers and explicit optional omissions; the example TUI also completes it through the watchable replay.
 The express preview reports zero questions only in its inspected surface; model settings, deployment fields, and target compatibility still need coverage.
 
 The prototype now also exposes `JourneyDefinition::start`, `JourneyState::answer`, and `JourneyState::resolve`.
@@ -125,7 +127,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance | Reopened questions identify their state, but do not yet explain which earlier answer changed them. |
 | Visual inspection uses the same resolver | The tree prints current questions and branches over finite choices returned by the resolver | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
 
-The direct suite covers the default replay, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
+The direct suite covers the default and minimum-inline replays, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
 
 ## Decisions to revisit after the prototype
 
