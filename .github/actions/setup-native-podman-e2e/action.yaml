@@ -9,6 +9,14 @@ inputs:
     description: Prepare Podman when the E2E dispatch selected the native Podman gateway runtime.
     required: false
     default: "false"
+  toolchain:
+    description: Select the reviewed Podman toolchain contract.
+    required: false
+    default: native-6.1
+  isolate-docker-cli:
+    description: Remove the Docker client after disabling the Docker daemon.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -19,6 +27,7 @@ runs:
       shell: bash
       env:
         RUNNER_ARCH_KIND: ${{ runner.arch }}
+        TOOLCHAIN_PROFILE: ${{ inputs.toolchain }}
       run: |
         set -euo pipefail
         case "$RUNNER_ARCH_KIND" in
@@ -29,8 +38,26 @@ runs:
             exit 1
             ;;
         esac
+        case "$TOOLCHAIN_PROFILE" in
+          native-6.1)
+            artifact_prefix=native-podman-e2e-toolchain
+            podman_version=6.1.0
+            podman_source_sha=cade97a52ebdf9dbf9e81de8009015776837a074
+            ;;
+          portable-5.7)
+            artifact_prefix=portable-podman-e2e-toolchain
+            podman_version=5.7.0
+            podman_source_sha=0370128fc8dcae93533334324ef838db8f8da8cb
+            ;;
+          *)
+            echo "::error::Unsupported reviewed Podman toolchain: $TOOLCHAIN_PROFILE" >&2
+            exit 1
+            ;;
+        esac
         printf 'architecture=%s\n' "$architecture" >>"$GITHUB_OUTPUT"
-        printf 'name=native-podman-e2e-toolchain-%s\n' "$architecture" >>"$GITHUB_OUTPUT"
+        printf 'name=%s-%s\n' "$artifact_prefix" "$architecture" >>"$GITHUB_OUTPUT"
+        printf 'podman_version=%s\n' "$podman_version" >>"$GITHUB_OUTPUT"
+        printf 'podman_source_sha=%s\n' "$podman_source_sha" >>"$GITHUB_OUTPUT"
 
     - name: Download native Podman toolchain
       if: ${{ inputs.enabled == 'true' }}
@@ -44,6 +71,8 @@ runs:
       shell: bash
       env:
         EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
+        EXPECTED_PODMAN_SOURCE_SHA: ${{ steps.artifact.outputs.podman_source_sha }}
+        EXPECTED_PODMAN_VERSION: ${{ steps.artifact.outputs.podman_version }}
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
         set -euo pipefail
@@ -69,12 +98,15 @@ runs:
           cd "$TOOLCHAIN_DIRECTORY"
           sha256sum --check --strict SHA256SUMS
         )
-        jq -e --arg architecture "$EXPECTED_ARCHITECTURE" '
+        jq -e \
+          --arg architecture "$EXPECTED_ARCHITECTURE" \
+          --arg podmanSourceSha "$EXPECTED_PODMAN_SOURCE_SHA" \
+          --arg podmanVersion "$EXPECTED_PODMAN_VERSION" '
           .schemaVersion == 1 and
           .kind == "nemoclaw-native-podman-toolchain-v1" and
           .architecture == $architecture and
-          .podmanVersion == "6.1.0" and
-          .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+          .podmanVersion == $podmanVersion and
+          .podmanSourceSha == $podmanSourceSha and
           .netavarkVersion == "2.1.0" and
           .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
           .aardvarkDnsVersion == "2.1.0" and
@@ -223,7 +255,7 @@ runs:
             "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
             "$helper_install_root/$helper"
         done
-        [[ "$("$podman_executable" --version)" == "podman version 6.1.0" ]]
+        [[ "$("$podman_executable" --version)" == "podman version $EXPECTED_PODMAN_VERSION" ]]
 
         [[ -z "$subuid_range" ]] || sudo usermod --add-subuids "$subuid_range" "$execution_user"
         [[ -z "$subgid_range" ]] || sudo usermod --add-subgids "$subgid_range" "$execution_user"
@@ -423,7 +455,7 @@ runs:
         } >>"$GITHUB_ENV"
 
     - name: Remove Docker CLI from native Podman execution
-      if: ${{ inputs.enabled == 'true' }}
+      if: ${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}
       shell: bash
       run: |
         set -euo pipefail

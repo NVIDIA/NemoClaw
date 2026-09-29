@@ -3622,7 +3622,9 @@ export function validateNativePodmanSetupAction(
 ): string[] {
   const actionSource = readFileSync(actionPath, "utf8");
   const action = asRecord(YAML.parse(actionSource));
+  const inputs = asRecord(action.inputs);
   const steps = asSteps(asRecord(action.runs).steps);
+  const artifact = steps.find((step) => step.name === "Resolve native Podman toolchain artifact");
   const start = steps.find((step) => step.name === "Start native Podman runtime");
   const isolate = steps.find(
     (step) => step.name === "Remove Docker CLI from native Podman execution",
@@ -3638,6 +3640,21 @@ export function validateNativePodmanSetupAction(
   }
 
   if (!start) return ["native Podman setup action must start the runtime"];
+  if (
+    asRecord(inputs.toolchain).default !== "native-6.1" ||
+    asRecord(inputs["isolate-docker-cli"]).default !== "true" ||
+    asRecord(artifact?.env).TOOLCHAIN_PROFILE !== "${{ inputs.toolchain }}" ||
+    !stringValue(artifact?.run).includes("native-6.1)") ||
+    !stringValue(artifact?.run).includes("portable-5.7)") ||
+    !stringValue(artifact?.run).includes(
+      "podman_source_sha=0370128fc8dcae93533334324ef838db8f8da8cb",
+    ) ||
+    !stringValue(artifact?.run).includes(
+      'echo "::error::Unsupported reviewed Podman toolchain: $TOOLCHAIN_PROFILE"',
+    )
+  ) {
+    errors.push("native Podman setup must select only reviewed toolchain contracts");
+  }
   if (!run.includes('systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"')) {
     errors.push("native Podman setup must start the runner user manager");
   }
@@ -3719,7 +3736,7 @@ export function validateNativePodmanSetupAction(
   }
   const isolationRun = stringValue(isolate?.run);
   if (
-    isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
+    isolate?.if !== "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}" ||
     steps.at(-1) !== isolate ||
     !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
     !isolationRun.includes('runtime_state_path="$restore_root/runtime.json"') ||
