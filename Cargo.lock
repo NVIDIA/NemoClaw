@@ -2180,6 +2180,7 @@ dependencies = [
  "openshell-core",
  "openshell-policy",
  "openshell-sdk",
+ "prost",
  "regex",
  "reqwest 0.13.5",
  "rustix",

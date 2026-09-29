@@ -336,17 +336,16 @@ impl Spec {
         } else {
             format!("grpc_endpoint = {:?}\n", self.gateway.endpoint)
         };
-        let host_gateway_ip = if self.compute_driver == ComputeDriver::Docker {
-            format!(
-                "host_gateway_ip = {:?}\n",
-                self.gateway_address()
-                    .expect("validated managed gateway network")
-            )
+        // Docker supervisors use host networking and derive the loopback callback
+        // from the runtime listen port. Storage normalizes that port separately.
+        // Scope startup cleanup by gateway instead of using the shared default.
+        let namespace = if self.compute_driver == ComputeDriver::Docker {
+            format!("sandbox_label = {:?}\n", self.name)
         } else {
-            String::new()
+            format!("network_name = {:?}\n", self.network())
         };
         format!(
-            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.compute_driver.as_str(),
             self.compute_driver,
             if self.compute_driver == ComputeDriver::Podman {
@@ -354,8 +353,7 @@ impl Spec {
             } else {
                 ""
             },
-            self.network(),
-            host_gateway_ip,
+            namespace,
             SANDBOX_RUNTIME_IMAGE,
             SUPERVISOR_IMAGE,
             grpc_endpoint,

@@ -3,6 +3,20 @@
 use super::*;
 use nemoclaw_sdk::config::SearchProvider;
 
+const PROFILE_METADATA: &str = "nemoclaw.nvidia.com/profile-v1";
+
+fn annotations(fields: Row) -> std::collections::HashMap<String, String> {
+    // OpenShell v0.1.2 hashes protobuf map iteration order when computing profile
+    // revisions. One annotation containing canonical JSON keeps those bytes stable
+    // while retaining all ownership and definition fields. Revisit when the pinned
+    // gateway canonicalizes profile hashes: NVIDIA/NemoClaw#12458.
+    [(
+        PROFILE_METADATA.into(),
+        serde_json::to_string(&fields).expect("string map"),
+    )]
+    .into()
+}
+
 fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto::ProviderProfile {
     let rule = nemoclaw_sdk::config::search_policy(provider);
     let name = provider.profile();
@@ -34,11 +48,13 @@ fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto:
         }],
         endpoints: network.endpoints.clone(),
         binaries: network.binaries.clone(),
-        annotations: [
-            (OWNER.into(), owner.into()),
-            (GENERATION.into(), generation.into()),
-        ]
-        .into(),
+        annotations: annotations(
+            [
+                ("owner".into(), owner.into()),
+                ("generation".into(), generation.into()),
+            ]
+            .into(),
+        ),
         ..Default::default()
     }
 }
@@ -61,24 +77,17 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         },
         authenticated,
     )?;
-    for key in [
-        "owner",
-        "generation",
-        "endpoint",
-        "provider_type",
-        "authenticated",
-    ] {
-        profile.annotations.insert(
-            format!("nemoclaw.nvidia.com/{key}"),
-            want.get(key).cloned().unwrap_or_default(),
-        );
-    }
-    profile
-        .annotations
-        .insert(OWNER.into(), want["owner"].clone());
-    profile
-        .annotations
-        .insert(GENERATION.into(), want["generation"].clone());
+    profile.annotations = annotations(
+        [
+            "owner",
+            "generation",
+            "endpoint",
+            "provider_type",
+            "authenticated",
+        ]
+        .map(|key| (key.into(), want.get(key).cloned().unwrap_or_default()))
+        .into(),
+    );
     Ok(profile)
 }
 
@@ -88,12 +97,15 @@ fn row(
     name: &str,
     catalog_entry: bool,
 ) -> Result<Row, ObservationError> {
-    let owner = profile.annotations.get(OWNER).cloned().unwrap_or_default();
-    let generation = profile
-        .annotations
-        .get(GENERATION)
-        .cloned()
-        .unwrap_or_default();
+    let metadata: Row = serde_json::from_str(
+        profile
+            .annotations
+            .get(PROFILE_METADATA)
+            .ok_or(ObservationError::Incomplete)?,
+    )
+    .map_err(|_| ObservationError::BindingMismatch)?;
+    let owner = metadata.get("owner").cloned().unwrap_or_default();
+    let generation = metadata.get("generation").cloned().unwrap_or_default();
     let search = SearchProvider::from_profile(name);
     if (!name.starts_with("nemoclaw-inference-") && search.is_none())
         || profile.id != name
@@ -124,9 +136,8 @@ fn row(
         for key in ["endpoint", "provider_type", "authenticated"] {
             fields.insert(
                 key.into(),
-                profile
-                    .annotations
-                    .get(&format!("nemoclaw.nvidia.com/{key}"))
+                metadata
+                    .get(key)
                     .cloned()
                     .ok_or(ObservationError::Incomplete)?,
             );
@@ -251,6 +262,119 @@ impl ConnectedOpenShellGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prost::Message;
+
+    fn native_fields(kind: &str, authenticated: bool) -> Row {
+        [
+            ("name", "nemoclaw-inference-test"),
+            ("owner", "deployment"),
+            ("generation", "generation"),
+            ("endpoint", "https://inference.example.com/v1"),
+            ("provider_type", kind),
+            (
+                "authenticated",
+                if authenticated { "true" } else { "false" },
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect()
+    }
+
+    #[test]
+    fn imported_profiles_have_stable_revision_bytes_after_wire_round_trips() {
+        let mut profiles = vec![
+            definition(SearchProvider::Brave, "deployment", "generation"),
+            definition(SearchProvider::Tavily, "deployment", "generation"),
+        ];
+        for kind in ["", "anthropic"] {
+            for authenticated in [false, true] {
+                profiles.push(native_definition(&native_fields(kind, authenticated)).unwrap());
+            }
+        }
+        for mut profile in profiles {
+            profile.resource_version = 1;
+            profile.source = "user".into();
+            profile.scope = "workspace".into();
+            let bytes = profile.encode_to_vec();
+            for _ in 0..64 {
+                // The pinned gateway hashes these bytes after rebuilding its catalog.
+                let decoded = proto::ProviderProfile::decode(bytes.as_slice()).unwrap();
+                assert!(
+                    decoded.encode_to_vec() == bytes,
+                    "unstable profile: {}",
+                    profile.id
+                );
+                let observed = row(decoded, "workspace", &profile.id, true).unwrap();
+                assert_eq!(observed["owner"], "deployment");
+                assert_eq!(observed["generation"], "generation");
+                assert_eq!(observed["id"], format!("workspace/{}/1", profile.id));
+            }
+        }
+    }
+
+    #[test]
+    fn profile_observation_rejects_missing_ambiguous_or_foreign_metadata() {
+        let want = native_fields("", true);
+        let mut profile = native_definition(&want).unwrap();
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        let observed = row(profile.clone(), "workspace", &profile.id, true).unwrap();
+        verify_identity(&want, &observed).unwrap();
+        for key in [
+            "owner",
+            "generation",
+            "endpoint",
+            "provider_type",
+            "authenticated",
+        ] {
+            let mut missing = profile.clone();
+            let mut metadata: Row =
+                serde_json::from_str(&missing.annotations[PROFILE_METADATA]).unwrap();
+            metadata.remove(key);
+            missing.annotations = annotations(metadata);
+            assert!(
+                row(missing, "workspace", &profile.id, true).is_err(),
+                "missing {key}"
+            );
+        }
+        for value in ["{}", "null", "not JSON", "{\"owner\":7}"] {
+            let mut malformed = profile.clone();
+            malformed
+                .annotations
+                .insert(PROFILE_METADATA.into(), value.into());
+            assert!(row(malformed, "workspace", &profile.id, true).is_err());
+        }
+        let mut extra = profile.clone();
+        extra.annotations.insert(OWNER.into(), "deployment".into());
+        assert!(row(extra, "workspace", &profile.id, true).is_err());
+        let mut unknown = profile.clone();
+        let mut metadata: Row =
+            serde_json::from_str(&unknown.annotations[PROFILE_METADATA]).unwrap();
+        metadata.insert("unexpected".into(), "value".into());
+        unknown.annotations = annotations(metadata);
+        assert!(row(unknown, "workspace", &profile.id, true).is_err());
+        let mut legacy = profile.clone();
+        legacy.annotations = [
+            (OWNER.into(), "deployment".into()),
+            (GENERATION.into(), "generation".into()),
+        ]
+        .into();
+        assert!(row(legacy, "workspace", &profile.id, true).is_err());
+        for key in ["owner", "generation"] {
+            let mut foreign = profile.clone();
+            let mut metadata: Row =
+                serde_json::from_str(&foreign.annotations[PROFILE_METADATA]).unwrap();
+            metadata.insert(key.into(), "someone-else".into());
+            foreign.annotations = annotations(metadata);
+            let observed = row(foreign, "workspace", &profile.id, true).unwrap();
+            assert_eq!(
+                verify_identity(&want, &observed),
+                Err(ObservationError::BindingMismatch)
+            );
+        }
+    }
 
     #[test]
     fn search_profiles_define_provider_auth_and_reject_endpoint_or_credential_drift() {

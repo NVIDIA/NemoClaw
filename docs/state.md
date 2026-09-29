@@ -17,6 +17,31 @@ Intent versions 1 through 6 are rejected without rewriting state or adopting res
 Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
 Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
 
+## Managed Docker Gateway Configuration
+
+OpenShell v0.1.2 removed the Docker driver's `network_name` and `host_gateway_ip` settings.
+The corrected bundle uses a per-gateway `sandbox_label`; supervisors reach the published loopback port through host networking.
+The gateway bridge remains retained for gateway placement and local service publication.
+
+Gateway storage initialized by the earlier renderer retains incompatible `gateway.toml` bytes, even when the gateway never started.
+The corrected bundle refuses that configuration without rewriting it or regenerating credentials.
+A missing configuration file is reported separately from a configuration that differs from the bundle.
+
+Keep the original bundle, desired configuration, state directory, and retained resources for inspection.
+To create a replacement, use a fresh deployment UUID, a separate state directory, an unused loopback port, and an unused private `/24` subnet with the corrected bundle.
+This creates separate resources; it does not migrate sandbox files or repair the original deployment.
+An unfinished original apply can also block destroy, as tracked in [issue #12459](https://github.com/NVIDIA/NemoClaw/issues/12459); do not edit state or regenerate keys to bypass it.
+
+## Imported Provider Profiles
+
+Profiles created by the fix for [issue #12458](https://github.com/NVIDIA/NemoClaw/issues/12458) store their ownership, generation, and inference definition in one canonical annotation.
+This avoids unstable provider revisions in the pinned OpenShell v0.1.2 gateway while preserving ownership and definition checks.
+
+The corrected bundle refuses profiles with the earlier separate annotations; it does not rewrite or adopt them.
+Keep their original bundle, configuration, state directory, and gateway storage for recovery or teardown.
+Use a fresh deployment UUID and state directory for the corrected format; for a managed gateway, also choose an unused loopback port and private `/24` subnet.
+This creates a separate deployment and does not migrate sandbox files or repair a failed first apply.
+
 ## Named Sandbox Resources
 
 Intent version 3 introduced sandboxes and providers identified by name rather than their position in the document.

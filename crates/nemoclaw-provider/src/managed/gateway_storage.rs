@@ -235,9 +235,12 @@ impl Engine {
         if config.is_none() && id.is_empty() {
             return Err(Error::PartialRuntime);
         }
-        if config.as_deref() != Some(spec.gateway_config(data_path).as_bytes()) {
+        let config = config.ok_or(Error::Conflict(
+            "gateway storage configuration is missing; resources retained",
+        ))?;
+        if config != spec.gateway_config(data_path).as_bytes() {
             return Err(Error::Conflict(
-                "gateway storage configuration changed or is unobservable",
+                "gateway storage configuration differs from this bundle; retain the original bundle and state, and use a fresh deployment UID and state directory",
             ));
         }
         let public = self

@@ -33,6 +33,8 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 | Independent OpenShell HCL composition, lifecycle guards, recovery, and bootstrap limits | [Linux ARM64 provider qualification](openshell-provider-composition-linux-arm64.md) |
 | Independent Docker cache recovery and retained credential guards without SDK orchestration | [Linux ARM64 resource composition](docker-cache-credentials-linux-arm64.md) |
 | Docker gateway process recovery, independent credential identity, and retained namespace | [Linux ARM64 gateway lifecycle](docker-gateway-linux-arm64.md) |
+| OpenShell v0.1.2 managed Docker startup, supervisor callbacks, and isolation between gateways | [Linux ARM64 migration qualification](managed-docker-openshell-v012-linux-arm64.md) |
+| Stable imported provider revisions, sandbox readiness, and bundled Pi apply/export/destroy | [Linux ARM64 profile qualification](provider-profile-revisions-linux-arm64.md) |
 | Docker-provider service compute, image replacement, recovery, and retained data | [Linux ARM64 lifecycle fixtures](docker-provider-linux-arm64.md) |
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |
 | Strict schema, defaults, resource addresses, digests and agent launch contracts | Checked-in fixtures in `crates/nemoclaw-sdk/tests/fixtures` and behavioral tests for maintained YAML examples |
