@@ -35,7 +35,8 @@ Use this guide when editing files under `fern/`.
 - Run `npm run docs:live` when layout, component, CSS, or asset changes need visual review.
 - Run `npm run docs:preview:watch` only when you need to verify branch preview publication behavior.
 - For doc-only or Fern-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
-- If hooks were skipped or unavailable, follow `nemoclaw-contributor-create-pr`. Run
-  `npm run validate:pr` only after its canonical-base validation-surface check passes; otherwise use
-  its guarded draft-publication procedure instead of executing candidate-controlled validation.
+- If hooks were skipped or unavailable, follow `nemoclaw-contributor-create-pr` and repair the
+  trusted hook path when possible. Run `npm run validate:pr` only after its canonical-base
+  validation-surface check passes. Use guarded draft publication only when the candidate changes that
+  surface and local validation cannot be trusted; do not execute candidate-controlled validation.
 - Do not run `npm run check` or an all-files hook baseline routinely for focused docs changes.

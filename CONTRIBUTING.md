@@ -110,13 +110,14 @@ npm run test:changed
 ```
 
 Normal Git hooks validate committed changes. Route PR publication through
-`nemoclaw-contributor-create-pr`. Run `npm run validate:pr` locally only after that workflow confirms
-that the local validation surface matches the canonical base. If hooks were skipped or unavailable,
-or the candidate changes validators, hooks, helper scripts, dependency inputs, or resolved
-executables, follow the skill's guarded draft-publication procedure instead of executing the
-candidate-controlled validator. `npm run validate:pr` compares committed changes with `origin/main`
-and requires a clean worktree. It checks formatting without applying fixes. Complete formatting and
-generated-file updates before the final commit.
+`nemoclaw-contributor-create-pr`. If hooks were skipped or unavailable, repair the trusted hook path
+when possible. Run `npm run validate:pr` locally only after the workflow confirms that the local
+validation surface matches the canonical base. Use the guarded draft-publication procedure only when
+the candidate changes validators, hooks, helper scripts, dependency inputs, or resolved executables
+and local validation therefore cannot be trusted. Do not execute the candidate-controlled validator.
+`npm run validate:pr` compares committed changes with `origin/main` and requires a clean worktree. It
+checks formatting without applying fixes. Complete formatting and generated-file updates before the
+final commit.
 When adding or renaming a hook, classify its read-only behavior in
 `scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
 
