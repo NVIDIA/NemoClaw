@@ -1016,7 +1016,7 @@ The image publisher owns its content and compatibility with your NemoClaw releas
 $$nemoclaw onboard --name my-agent --from-image <repository>@sha256:<digest>
 ```
 
-The image must match the runtime platform and declare a non-root user, `/sandbox` working directory, and startup command.
+The image must match the runtime platform and declare a non-root user, `/sandbox` working directory, and usable entrypoint or command.
 It must contain `NEMOCLAW_TOOL_DISCLOSURE=progressive` or `NEMOCLAW_TOOL_DISCLOSURE=direct`.
 Onboarding adopts that mode when you have not selected one; an explicit conflicting mode fails before creation.
 Configure registry credentials through Docker before onboarding a private image.
