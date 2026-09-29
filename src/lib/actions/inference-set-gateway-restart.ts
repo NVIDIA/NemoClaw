@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../adapters/openshell/sandbox-ssh-host";
 import type { OperationalAuditEntry } from "../state/audit/operational";
 import { InferenceSetError } from "./inference-set-error";
 import {
@@ -110,7 +111,10 @@ export function settleInferenceSetOpenClawPairing(
 export interface InferenceGatewayRestartDeps {
   appendAuditEntry: (entry: OperationalAuditEntry) => void;
   log: (message: string) => void;
-  restartSandboxGateway: (sandboxName: string) => Promise<GatewayRestartResult>;
+  restartSandboxGateway: (
+    sandboxName: string,
+    gatewayName?: string,
+  ) => Promise<GatewayRestartResult>;
   settleOpenClawPairing: (
     target: InferenceSetOpenClawPairingTarget,
   ) => InferenceSetOpenClawPairingResult;
@@ -122,14 +126,6 @@ interface InferenceResultForGateway {
   model: string;
   primaryModelRef: string;
   inSandboxConfigSynced: boolean;
-  /**
-   * Hermes only: whether the isolated Web Dashboard profile converged onto the
-   * switched model (#6893). `undefined` for agents/switches with no Dashboard to
-   * converge (treated as converged). When explicitly `false` the "Inference route
-   * synced" line is withheld and the caller raises a post-commit failure so the
-   * command cannot claim a route it did not fully apply.
-   */
-  dashboardConverged?: boolean;
 }
 
 export interface InferenceMutation<T extends InferenceResultForGateway> {
@@ -161,9 +157,24 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 
 export async function defaultInferenceGatewayRestart(
   sandboxName: string,
+  gatewayName?: string,
 ): Promise<GatewayRestartResult> {
   const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
-  return recovery.restartSandboxGateway(sandboxName, { quiet: true });
+  return recovery.restartSandboxGateway(sandboxName, {
+    quiet: true,
+    ...(gatewayName
+      ? {
+          runtimeSelection: {
+            gatewayName,
+            // Preserve the workspace and TLS context used by the named inference route mutation.
+            workspace: process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE,
+            ...(process.env.OPENSHELL_LOCAL_TLS_DIR
+              ? { localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR }
+              : {}),
+          },
+        }
+      : {}),
+  });
 }
 
 function appendPostCommitInferenceAudit(
@@ -217,14 +228,10 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
     deps.appendAuditEntry(auditEntry);
   }
 
-  // A Hermes switch whose Web Dashboard profile did not converge is not fully
-  // applied, so withhold the success line (the caller already warned) (#6893).
-  const hermesDashboardStale = agentName === "hermes" && result.dashboardConverged === false;
   if (
     result.inSandboxConfigSynced &&
     !openClawGatewayRestartRequired &&
-    !openClawPairingConvergenceRequired &&
-    !hermesDashboardStale
+    !openClawPairingConvergenceRequired
   ) {
     deps.log(
       agentName === "hermes"
@@ -255,7 +262,12 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
     );
     let restartFailure: string | null = null;
     try {
-      const restart = await deps.restartSandboxGateway(result.sandboxName);
+      const restart = await deps.restartSandboxGateway(
+        result.sandboxName,
+        mutation.openClawPairing.state === "required"
+          ? mutation.openClawPairing.target.gatewayName
+          : undefined,
+      );
       if (!restart.ok) restartFailure = restart.failureLayer;
     } catch {
       restartFailure = "restart exception";

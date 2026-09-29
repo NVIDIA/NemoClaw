@@ -2436,7 +2436,6 @@ const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: san
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
-  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
@@ -3413,7 +3412,7 @@ module.exports = {
   startDockerDriverGateway,
   startGatewayForRecovery,
   managedWorkloadOnboard,
-  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
+  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds, createForwardPortObserver },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

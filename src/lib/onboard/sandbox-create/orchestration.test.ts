@@ -11,6 +11,7 @@ import * as processRecovery from "../../actions/sandbox/process-recovery";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
+import { releaseManagedStartupHoldWithRetry } from "../managed-startup/provider-root-apply";
 import {
   assertApfCreateIntent,
   activateManagedStartupCorporateCaTrustAfterSandboxCreate,
@@ -24,7 +25,6 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
-  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
