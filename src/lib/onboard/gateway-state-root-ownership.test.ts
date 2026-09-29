@@ -83,6 +83,26 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
+  it("does not suggest chmod for /tmp when running as root", () => {
+    const real = fs.lstatSync;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(0);
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : Object.assign(real(p), { uid: 0 })) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+      getuid.mockRestore();
+    }
+  });
+
   it("names the mode and the chmod remedy when an owned ancestor is group-writable", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-group-writable-parent-"));
     const stateDir = path.join(root, "gateway");
