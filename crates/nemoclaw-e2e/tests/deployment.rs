@@ -284,6 +284,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().lose_create = true;
     assert!(deployment.apply(&document, &cancel).await.is_err());
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(deployment.plan_destroy(&cancel).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(record["pending"], true);
@@ -1439,4 +1442,123 @@ async fn successful_apply_checkpoints_mutations_before_reading_health() {
         .unwrap();
     assert!(result.changes.is_empty());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapply() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    for sandbox_error in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let fixture = Fixture::start().await;
+        let mut document = Document::parse(
+            include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        )
+        .unwrap();
+        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        if sandbox_error {
+            fixture.state.lock().unwrap().sandbox_phase =
+                Some(openshell_core::proto::SandboxPhase::Error);
+        } else {
+            fixture.state.lock().unwrap().exec_exit = 1;
+        }
+        let deployment = Deployment::new(directory.path(), &bundle);
+        let cancel = CancellationToken::new();
+        assert!(deployment.apply(&document, &cancel).await.is_err());
+        let intent_path = directory.path().join("intent.json");
+        let intent = fs::read(&intent_path).unwrap();
+        let state_path = directory.path().join("terraform.tfstate");
+        let saved = fs::read(&state_path).unwrap();
+        let effects = fixture.state.lock().unwrap().effects;
+        assert_eq!(effects, 4);
+        fixture.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::PermissionDenied));
+        assert!(deployment.plan_destroy(&cancel).await.is_err());
+        assert_eq!(fs::read(&intent_path).unwrap(), intent);
+        assert_eq!(fs::read(&state_path).unwrap(), saved);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        fixture.state.lock().unwrap().fail_read = None;
+        let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+        for field in ["owner", "id"] {
+            for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
+                let metadata = sandbox.metadata.as_mut().unwrap();
+                if field == "owner" {
+                    metadata
+                        .labels
+                        .insert("nemoclaw.nvidia.com/uid".into(), "foreign".into());
+                } else {
+                    metadata.id = "replacement".into();
+                }
+            }
+            assert!(deployment.plan_destroy(&cancel).await.is_err());
+            assert_eq!(fs::read(&intent_path).unwrap(), intent);
+            assert_eq!(fs::read(&state_path).unwrap(), saved);
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+            fixture.state.lock().unwrap().sandboxes = sandboxes.clone();
+        }
+        let preview = deployment
+            .plan_destroy(&cancel)
+            .await
+            .expect("identified failed creations must have a teardown path");
+        assert!(
+            preview
+                .changes
+                .iter()
+                .any(|change| change.resource == "nemoclaw_sandbox.assistant")
+        );
+        assert_eq!(fs::read(&intent_path).unwrap(), intent);
+        assert_eq!(fs::read(&state_path).unwrap(), saved);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        let destroyed = deployment.destroy(&cancel).await.unwrap();
+        assert_eq!(destroyed.outcome, Outcome::Destroyed);
+        let state = fixture.state.lock().unwrap();
+        assert!(state.sandboxes.is_empty());
+        assert!(state.providers.is_empty());
+        assert!(state.profiles.is_empty());
+        assert_eq!(state.workspaces.len(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn failed_first_configuration_accepts_corrected_intent_without_recreating_sandbox() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().exec_exit = 1;
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    let effects = fixture.state.lock().unwrap().effects;
+    document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "corrected-model".into();
+    fixture.state.lock().unwrap().exec_exit = 0;
+    deployment
+        .apply(&document, &cancel)
+        .await
+        .expect("configuration recovery uses the bound parent sandbox");
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+    let exported = deployment.export(&cancel).await.unwrap();
+    assert_eq!(exported, document);
+    assert!(
+        deployment
+            .apply(&exported, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    deployment.destroy(&cancel).await.unwrap();
 }

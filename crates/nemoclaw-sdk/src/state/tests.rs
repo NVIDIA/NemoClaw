@@ -436,3 +436,92 @@ fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoin
     store.save(&record).unwrap();
     assert_eq!(store.load().unwrap().unwrap(), record);
 }
+
+#[test]
+fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creations() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let pending: BTreeMap<_, _> = targets
+        .iter()
+        .map(|target| (target.address.clone(), target.values.clone()))
+        .collect();
+    record.begin_apply(&document, pending);
+    let mut bindings: BTreeMap<_, _> = targets
+        .iter()
+        .filter(|target| target.kind != "agent_configuration")
+        .map(|target| {
+            let get = |key: &str| target.values.get(key).cloned().unwrap_or_default();
+            (
+                target.address.clone(),
+                StateBinding {
+                    id: format!("id-{}", target.address),
+                    name: get("name"),
+                    workspace: get("workspace"),
+                    owner: get("owner"),
+                    generation: get("generation"),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    let sandbox = "nemoclaw_sandbox.assistant";
+    for field in ["id", "name", "workspace", "owner", "generation"] {
+        let mut mismatched = bindings.clone();
+        let binding = mismatched.get_mut(sandbox).unwrap();
+        match field {
+            "id" => {
+                binding.deposed.insert("old".into(), binding.id.clone());
+                binding.id.clear();
+            }
+            "name" => binding.name = "other".into(),
+            "workspace" => binding.workspace = "other".into(),
+            "owner" => binding.owner = "other".into(),
+            "generation" => binding.generation = "other".into(),
+            _ => unreachable!(),
+        }
+        let mut retained = record.clone();
+        retained.reconcile_pending_creations(&mismatched);
+        assert!(retained.pending(), "{field}");
+        let unresolved = retained.pending_creations.unwrap();
+        assert!(unresolved.contains_key(sandbox));
+        assert!(unresolved.contains_key("nemoclaw_agent_configuration.assistant"));
+    }
+    let missing = bindings
+        .keys()
+        .find(|address| address.starts_with("nemoclaw_provider_profile."))
+        .unwrap()
+        .clone();
+    bindings.remove(&missing);
+    record.reconcile_pending_creations(&bindings);
+    assert_eq!(
+        record
+            .pending_creations
+            .as_ref()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        [&missing]
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+    let desired = &record.pending_creations.as_ref().unwrap()[&missing];
+    bindings.insert(
+        missing.clone(),
+        StateBinding {
+            id: "saved-profile".into(),
+            name: desired["name"].clone(),
+            workspace: desired["workspace"].clone(),
+            owner: desired["owner"].clone(),
+            generation: desired["generation"].clone(),
+            ..Default::default()
+        },
+    );
+    record.reconcile_pending_creations(&bindings);
+    assert!(!record.pending());
+    assert!(record.pending_creations.is_none());
+}

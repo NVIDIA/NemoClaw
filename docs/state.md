@@ -30,7 +30,8 @@ A missing configuration file is reported separately from a configuration that di
 Keep the original bundle, desired configuration, state directory, and retained resources for inspection.
 To create a replacement, use a fresh deployment UUID, a separate state directory, an unused loopback port, and an unused private `/24` subnet with the corrected bundle.
 This creates separate resources; it does not migrate sandbox files or repair the original deployment.
-An unfinished original apply can also block destroy, as tracked in [issue #12459](https://github.com/NVIDIA/NemoClaw/issues/12459); do not edit state or regenerate keys to bypass it.
+Earlier bundles can also block destroy after an unfinished apply; see the current [bound-creation recovery conditions](usage.md#recover-an-interrupted-operation).
+Those conditions do not migrate incompatible gateway storage; do not edit state or regenerate keys to bypass it.
 
 ## Imported Provider Profiles
 

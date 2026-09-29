@@ -265,8 +265,15 @@ Changing an established gateway endpoint is rejected.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
-If the error reports an unfinished creation, preserve that resource's original configuration while correcting unrelated settings.
-Reapply successfully before removing or changing that pending resource or requesting teardown; the server may have created it without returning its identity.
+For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
+A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
+A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
+Correct the model or agent settings and explicitly apply the revised YAML when the sandbox remains available and its launch specification is unchanged.
+A sandbox in `Error` can still block ordinary apply, but its saved identity permits [explicit teardown](#destroy) without a successful reapply.
+Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
+
+If the error still reports an unfinished creation, preserve that resource's original configuration while correcting unrelated settings.
+Reapply successfully before removing or changing that unresolved resource or requesting teardown; the server may have created it without returning its identity.
 Older unfinished records without per-resource recovery evidence still require the exact configuration from the unfinished operation.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
@@ -279,6 +286,8 @@ Authentication, transport, and incomplete observations remain failures; missing 
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover after an interrupted apply, first run `nemoclaw plan --destroy` with the same state directory.
+A failed first OpenShell apply can be destroyed when every pending creation has a matching saved binding, including agent configuration accounted for by its parent sandbox.
+The preview leaves retained intent and resource state unchanged; unavailable or foreign observations still stop teardown.
 After unfinished managed-runtime apply, this path requires nonempty validated runtime bindings and fresh teardown plans; it does not require the failed apply's plan file.
 An OpenShell-stage apply that planned no non-disposable resource creations leaves reconciliation of its established bindings to OpenTofu; it does not add a pending-creation guard.
 OpenShell bindings established before a failed runtime stage may remain; every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.

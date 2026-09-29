@@ -67,6 +67,39 @@ impl Record {
             ..Default::default()
         })
     }
+    pub fn reconcile_pending_creations(&mut self, bindings: &BTreeMap<String, StateBinding>) {
+        if !self.pending || self.runtime_pending {
+            return;
+        }
+        let Some(pending) = &mut self.pending_creations else {
+            // Older records lack per-resource evidence; retain their full guard.
+            return;
+        };
+        pending.retain(|address, desired| {
+            // Fabric configuration has no independent runtime: its sandbox owns
+            // any partial effects, and its configuration binding uses that ID.
+            let address = address
+                .strip_prefix("nemoclaw_agent_configuration.")
+                .map(|name| format!("nemoclaw_sandbox.{name}"))
+                .unwrap_or_else(|| address.clone());
+            !bindings.get(&address).is_some_and(|binding| {
+                !binding.id.is_empty()
+                    && [
+                        ("name", &binding.name),
+                        ("workspace", &binding.workspace),
+                        ("owner", &binding.owner),
+                        ("generation", &binding.generation),
+                    ]
+                    .iter()
+                    .all(|(key, value)| desired.get(*key).is_none_or(|want| want == *value))
+            })
+        });
+        if pending.is_empty() {
+            self.finish_apply();
+        }
+        // This only resolves lost-ID uncertainty. A fresh provider refresh and
+        // validated plan must still verify live ownership before any mutation.
+    }
     pub fn validate_pending_intent(&self, document: &Document) -> Result<(), Error> {
         if !self.pending || self.runtime_pending {
             return Ok(());
@@ -220,6 +253,14 @@ impl Record {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct StateBinding {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub workspace: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub generation: String,
     #[serde(default)]
     pub spec: String,
     #[serde(skip)]
@@ -395,6 +436,10 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             } else {
                 binding.id = attributes.id;
                 binding.spec = attributes.spec;
+                binding.name = attributes.name;
+                binding.workspace = attributes.workspace;
+                binding.owner = attributes.owner;
+                binding.generation = attributes.generation;
             }
         }
     }

@@ -317,6 +317,8 @@ pub(super) fn decode_sandbox_phase(status: proto::SandboxStatus) -> Result<Sandb
                     match condition.reason.as_str() {
                         "ControlSupervisorExited" => Some("ControlSupervisorExited"),
                         "ContainerExited" => Some("ContainerExited"),
+                        "ControlSupervisorStartFailed" => Some("ControlSupervisorStartFailed"),
+                        "IdentityResolutionFailed" => Some("IdentityResolutionFailed"),
                         _ => None,
                     }
                 })
@@ -571,6 +573,18 @@ mod tests {
                 "ControlSupervisorExited",
             ),
             ("Ready", "False", "ContainerExited", "ContainerExited"),
+            (
+                "Ready",
+                "False",
+                "ControlSupervisorStartFailed",
+                "ControlSupervisorStartFailed",
+            ),
+            (
+                "Ready",
+                "False",
+                "IdentityResolutionFailed",
+                "IdentityResolutionFailed",
+            ),
             ("Ready", "False", "secret-sentinel", "unknown"),
             ("Ready", "True", "ControlSupervisorExited", "unknown"),
             ("Other", "False", "ControlSupervisorExited", "unknown"),

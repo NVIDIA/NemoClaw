@@ -204,6 +204,19 @@ impl Deployment {
                 );
             }
         }
+        if record.pending() && !record.runtime_pending() {
+            let bindings = self
+                .state_bindings(
+                    &bundle,
+                    &store,
+                    &record.document,
+                    &record.generations,
+                    false,
+                    cancel,
+                )
+                .await?;
+            record.reconcile_pending_creations(&bindings);
+        }
         record.validate_pending_intent(&document)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),

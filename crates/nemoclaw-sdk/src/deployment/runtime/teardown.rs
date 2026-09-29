@@ -57,6 +57,7 @@ impl Deployment {
         } else {
             BTreeMap::new()
         };
+        record.reconcile_pending_creations(&bindings);
         validate_teardown_state(&record, &bindings, &runtime_bindings)?;
         let root_graph = compile::compile_teardown(
             &record.document,
