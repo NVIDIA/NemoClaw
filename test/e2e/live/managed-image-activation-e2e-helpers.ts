@@ -282,10 +282,23 @@ interface ExternalImageRegistryDocument {
   >;
 }
 
+function externalImageRegistryPath(): string {
+  return path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+}
+
 function registryDocument(): ExternalImageRegistryDocument {
-  const registryPath = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+  const registryPath = externalImageRegistryPath();
   if (!fs.existsSync(registryPath)) return {};
   return JSON.parse(fs.readFileSync(registryPath, "utf8")) as ExternalImageRegistryDocument;
+}
+
+function replaceExternalImageReceipt(sandboxName: string, workload: Record<string, unknown>): void {
+  const registryPath = externalImageRegistryPath();
+  const registry = registryDocument();
+  const entry = registry.sandboxes?.[sandboxName];
+  if (!entry) return;
+  entry.workload = workload;
+  fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
 }
 
 async function inspectDockerImageId(
@@ -299,6 +312,19 @@ async function inspectDockerImageId(
     env,
     timeoutMs: 30_000,
   });
+}
+
+async function inspectDockerSandboxContainerId(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<Awaited<ReturnType<HostCliClient["command"]>>> {
+  return await host.command(
+    "docker",
+    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
+    { artifactName, env, timeoutMs: 30_000 },
+  );
 }
 
 function expectManagedReceipt(sandboxName: string, contract: ManagedImageContractV1): void {
@@ -936,6 +962,7 @@ async function qualifyExternalImage(
   readonly runtimeImageContentId: string;
   readonly ready: true;
   readonly retainedAfterDestroy: boolean;
+  readonly rebuilt: boolean;
   readonly verified: boolean;
 }> {
   const { artifacts, cleanup, host, lifecycle, sandbox } = fixtures;
@@ -972,11 +999,68 @@ async function qualifyExternalImage(
   const beforeInspection = await inspectDockerImageId(
     host,
     contract.reference,
-    `external-image-${agent}-identity-before-destroy`,
+    `external-image-${agent}-identity-before-lifecycle`,
     env,
   );
-  const registryEntry = registryDocument().sandboxes?.[sandboxName];
-  const receipt = registryEntry?.workload;
+  let registryEntry = registryDocument().sandboxes?.[sandboxName];
+  let receipt = registryEntry?.workload;
+  let rebuilt = false;
+  let identityDriftRejected = false;
+
+  if (agent === "openclaw" && receipt) {
+    const sourceContainer = await inspectDockerSandboxContainerId(
+      host,
+      sandboxName,
+      "external-image-openclaw-container-before-drifted-rebuild",
+      env,
+    );
+    replaceExternalImageReceipt(sandboxName, {
+      ...receipt,
+      runtimeImageContentId: `sha256:${"0".repeat(64)}`,
+    });
+    try {
+      const rejectedRebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+        artifactName: "external-image-openclaw-rebuild-rejects-identity-drift",
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 10 * 60_000,
+      });
+      const retainedContainer = await inspectDockerSandboxContainerId(
+        host,
+        sandboxName,
+        "external-image-openclaw-container-after-drifted-rebuild",
+        env,
+      );
+      identityDriftRejected =
+        rejectedRebuild.exitCode !== 0 &&
+        resultText(rejectedRebuild).includes(
+          "the inspected image identity does not match the durable external-image receipt",
+        ) &&
+        sourceContainer.exitCode === 0 &&
+        retainedContainer.exitCode === 0 &&
+        /^[a-f0-9]{12,64}$/u.test(sourceContainer.stdout.trim()) &&
+        retainedContainer.stdout.trim() === sourceContainer.stdout.trim();
+    } finally {
+      replaceExternalImageReceipt(sandboxName, receipt);
+    }
+
+    const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+      artifactName: "external-image-openclaw-rebuild",
+      env,
+      redactionValues: [API_KEY],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    });
+    if (rebuild.exitCode === 0) {
+      await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
+        artifactNamePrefix: "external-image-openclaw-ready-after-rebuild",
+        env,
+      });
+      await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+      rebuilt = true;
+    }
+    registryEntry = registryDocument().sandboxes?.[sandboxName];
+    receipt = registryEntry?.workload;
+  }
 
   const destroy = await host.destroySandbox(sandboxName, {
     artifactName: `external-image-destroy-${agent}`,
@@ -1015,7 +1099,8 @@ async function qualifyExternalImage(
     ready: true,
     retainedAfterDestroy:
       afterInspection.exitCode === 0 && retainedImageId !== "" && retainedImageId === imageId,
-    verified,
+    rebuilt,
+    verified: verified && (agent !== "openclaw" || (identityDriftRejected && rebuilt)),
   };
 }
 
@@ -1073,7 +1158,9 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     );
   }
 
-  progress.phase("prove buildless activation and Docker external-image retention");
+  progress.phase(
+    "prove buildless Docker external-image onboarding, drift rejection, rebuild, and retention",
+  );
   const externalImages = [];
   for (const agent of externalImageActivationAgents(containerEngine)) {
     externalImages.push(
@@ -1126,6 +1213,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       "durable-marker",
       "agent-turn",
       "openshell-delete",
+      "external-image-onboard",
+      "external-image-identity-drift-rejection",
+      "external-image-rebuild",
+      "external-image-agent-turn",
+      "external-image-destroy",
     ],
   });
   await artifacts.target.complete({
