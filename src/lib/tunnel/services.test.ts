@@ -774,11 +774,15 @@ describe("stopAll", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      stopAll({ pidDir, processControl: control });
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "cloudflared could not be stopped",
+      );
     } finally {
       nowSpy.mockRestore();
-      logSpy.mockRestore();
     }
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
 
     expect(signals).toEqual([
       { pid: 4242, sig: "SIGTERM" },
@@ -786,6 +790,8 @@ describe("stopAll", () => {
     ]);
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
     expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("12345");
+    expect(output).toContain("Cloudflared remains running; service stop was not confirmed");
+    expect(output).not.toContain("All services stopped");
   });
 
   it("removes stale PID files", () => {

@@ -622,8 +622,14 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       warn(ollamaCleanupError.message);
     }
   }
+  let hostServicesStopped = true;
   const finishOllamaCleanup = (): OllamaUnloadResult | void => {
     if (ollamaCleanupError) throw ollamaCleanupError;
+    if (!hostServicesStopped) {
+      throw new Error(
+        "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
+      );
+    }
     return ollamaCleanup;
   };
 
@@ -631,7 +637,11 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
   if (pidDir) {
-    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+    hostServicesStopped = stopService(
+      pidDir,
+      "cloudflared",
+      opts.processControl ?? REAL_PROCESS_CONTROL,
+    );
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
@@ -656,16 +666,26 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn(
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
-    info("Host services stopped; managed gateway not released.");
+    info(
+      hostServicesStopped
+        ? "Host services stopped; managed gateway not released."
+        : "Cloudflared remains running; managed gateway not released.",
+    );
     return finishOllamaCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
-    info("Host services stopped; managed gateway release was not confirmed.");
+    info(
+      hostServicesStopped
+        ? "Host services stopped; managed gateway release was not confirmed."
+        : "Cloudflared remains running; managed gateway release was not confirmed.",
+    );
     return finishOllamaCleanup();
   }
 
-  if (ollamaCleanupIncomplete) {
+  if (!hostServicesStopped) {
+    info("Cloudflared remains running; service stop was not confirmed.");
+  } else if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
   } else {
     info("All services stopped.");
