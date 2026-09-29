@@ -85,13 +85,13 @@ were reviewed for the trigger, effective permissions, action sources, and creden
 caller assertion cannot add an eligible job. The operation verifies the receipt bindings and updates
 the exact source ref with an atomic lease for the expected prior commit, or an absent-ref lease for
 its first publication. It also proves that an existing expected commit is an ancestor of the
-candidate. Reconcile the remote branch and commit verification after the write. If an initial write
-reached the exact candidate but commit verification was incomplete, a later invocation may reconcile
-that unchanged branch without writing again, re-read verification, and create exactly one draft PR
-only after every commit is verified. Keep the PR in draft until the base-controlled job validates the
-published commit. Disclose the skipped local validation, the differing machinery, and the canonical
-base SHA in `Verification`. This fallback needs no additional publication approval. Stop when no
-base-controlled job meets these conditions or when another publication gate independently fails.
+candidate. Reconcile the remote branch and commit verification after the write. A later invocation
+may recover only after independently observing the exact matching draft PR; an unchanged branch by
+itself cannot prove the absent-ref lease. Keep the PR in draft until the base-controlled job validates
+the published commit. Disclose the skipped local validation, the differing machinery, and the
+canonical base SHA in `Verification`. This fallback needs no additional publication approval. Stop
+when no base-controlled job meets these conditions or when another publication gate independently
+fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal
 `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication

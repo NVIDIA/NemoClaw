@@ -114,6 +114,7 @@ export default async function create_nemoclaw_pr(input: {
   )
     throw new Error("Every candidate commit must contain a Signed-off-by trailer");
   let assignee = null;
+  let expectedAssigneeLogin = null;
   if (input.assignee !== false) {
     const permission = (
       await tools.run_github_cli({
@@ -121,8 +122,16 @@ export default async function create_nemoclaw_pr(input: {
         args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
       })
     ).stdout.trim();
-    if (["TRIAGE", "WRITE", "MAINTAIN", "ADMIN"].includes(permission)) assignee = "@me";
-    else if (input.assignee === "@me")
+    if (["TRIAGE", "WRITE", "MAINTAIN", "ADMIN"].includes(permission)) {
+      assignee = "@me";
+      expectedAssigneeLogin = (
+        await tools.run_github_cli({
+          workdir: input.workdir,
+          args: ["api", "user", "--jq", ".login"],
+        })
+      ).stdout.trim();
+      if (!expectedAssigneeLogin) throw new Error("Could not resolve the prepared assignee");
+    } else if (input.assignee === "@me")
       throw new Error("Repository permission does not allow self-assignment");
   }
   const publication = await tools.publish_nemoclaw_pr_branch({
@@ -214,46 +223,118 @@ export default async function create_nemoclaw_pr(input: {
   ];
   if (input.draft) createArgs.push("--draft");
   if (assignee) createArgs.push("--assignee", "@me");
-  const created = await tools.run_github_cli({
-    workdir: input.workdir,
-    args: createArgs,
-    acceptedExitCodes: [0, 1],
-    timeoutMs: 120000,
+  const listPreparedPulls = async () => {
+    const lookup = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "url,isDraft,title,body,assignees,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner",
+        "--limit",
+        "2",
+      ],
+    });
+    return JSON.parse(lookup.stdout || "[]");
+  };
+  const exactPreparedPull = (pulls) => {
+    if (pulls.length !== 1) return null;
+    const pull = pulls[0];
+    const pullRepo =
+      pull?.headRepository?.nameWithOwner ??
+      (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
+        ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
+        : "");
+    const observedAssignees = Array.isArray(pull?.assignees)
+      ? pull.assignees
+          .map((entry) => entry?.login)
+          .filter(Boolean)
+          .sort()
+      : [];
+    const expectedAssignees = expectedAssigneeLogin ? [expectedAssigneeLogin] : [];
+    return pull?.isDraft === (input.draft === true) &&
+      pull?.title === input.title &&
+      pull?.body === input.body &&
+      JSON.stringify(observedAssignees) === JSON.stringify(expectedAssignees) &&
+      pull?.headRefName === branch &&
+      pull?.headRefOid === input.expectedHeadSha &&
+      pull?.baseRefName === baseBranch &&
+      pullRepo.toLowerCase() === repo.toLowerCase() &&
+      typeof pull?.url === "string"
+      ? pull
+      : null;
+  };
+  const completed = (pull, mutated) => ({
+    ok: true,
     apply: true,
+    mutated,
+    repo,
+    remote,
+    baseBranch,
+    headBranch: branch,
+    title: input.title,
+    draft: input.draft === true,
+    assignee,
+    commitCount,
+    verificationPending: false,
+    url: pull.url,
+    unverified: [],
   });
-  const lookup = await tools.run_github_cli({
-    workdir: input.workdir,
-    args: [
-      "pr",
-      "list",
-      "--repo",
-      repo,
-      "--head",
-      branch,
-      "--state",
-      "open",
-      "--json",
-      "url,isDraft,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner",
-      "--limit",
-      "2",
-    ],
-  });
-  const pulls = JSON.parse(lookup.stdout || "[]");
-  const pull = pulls.length === 1 ? pulls[0] : null;
-  const pullRepo =
-    pull?.headRepository?.nameWithOwner ??
-    (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
-      ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
-      : "");
-  const exactPull =
-    pull?.isDraft === (input.draft === true) &&
-    pull?.headRefName === branch &&
-    pull?.headRefOid === input.expectedHeadSha &&
-    pull?.baseRefName === baseBranch &&
-    pullRepo.toLowerCase() === repo.toLowerCase() &&
-    typeof pull?.url === "string" &&
-    pull.url;
-  if (!exactPull) {
+  if (publication.recoveredPullUrl) {
+    const recoveredPull = exactPreparedPull(await listPreparedPulls());
+    if (!recoveredPull || recoveredPull.url !== publication.recoveredPullUrl)
+      throw new Error("Recovered pull request does not match every prepared publication field");
+    return completed(recoveredPull, publication.mutated);
+  }
+  const readRemoteBranch = async (description) => {
+    const result = await tools.bash({
+      command: "git ls-remote --heads " + q(remote) + " " + q("refs/heads/" + branch),
+      workdir: input.workdir,
+      description,
+      timeoutMs: 120000,
+    });
+    if (result.kind !== "foreground" || result.exitCode !== 0)
+      throw new Error("Could not read the publication branch before pull request creation");
+    return result.stdout.text.trim().split(/\s+/u)[0];
+  };
+  const requireUnchangedCreationState = async (description) => {
+    const remoteSha = await readRemoteBranch(description);
+    const pulls = await listPreparedPulls();
+    if (remoteSha !== input.expectedHeadSha || pulls.length !== 0)
+      throw new Error("Pull request creation state changed before the guarded write");
+  };
+  const create = () =>
+    tools.run_github_cli({
+      workdir: input.workdir,
+      args: createArgs,
+      acceptedExitCodes: [0, 1],
+      timeoutMs: 120000,
+      apply: true,
+    });
+  await requireUnchangedCreationState("Read publication branch before pull request creation");
+  let created = await create();
+  let pulls = await listPreparedPulls();
+  let pull = exactPreparedPull(pulls);
+  if (!pull && created.code !== 0 && pulls.length === 0) {
+    const remoteSha = await readRemoteBranch(
+      "Re-read publication branch before pull request retry",
+    );
+    const freshPulls = await listPreparedPulls();
+    const freshPull = exactPreparedPull(freshPulls);
+    if (remoteSha === input.expectedHeadSha && freshPull) return completed(freshPull, true);
+    if (remoteSha !== input.expectedHeadSha || freshPulls.length !== 0)
+      throw new Error("Pull request creation state changed before the guarded write");
+    created = await create();
+    pulls = await listPreparedPulls();
+    pull = exactPreparedPull(pulls);
+  }
+  if (!pull) {
     if (created.code === 0)
       throw new Error(
         "Pull request creation reported success, but the observed pull request does not match the prepared publication",
@@ -268,35 +349,11 @@ export default async function create_nemoclaw_pr(input: {
       maxCharacters: 4000,
     });
     throw new Error(
-      "Pull request creation failed; no pull request exists for the branch.\n" + diagnostic.text,
+      "Pull request creation failed after one guarded retry; no pull request exists for the branch.\n" +
+        diagnostic.text,
     );
   }
   if (created.code === 0 && created.stdout.trim() && created.stdout.trim() !== pull.url)
     throw new Error("Pull request creation response does not match the observed pull request");
-  if (publication.initialPublicationReceiptKey) {
-    const consumed = await tools.bash({
-      command: "git config --local --unset-all " + q(publication.initialPublicationReceiptKey),
-      workdir: input.workdir,
-      description: "Consume guarded initial publication receipt",
-      timeoutMs: 30000,
-    });
-    if (consumed.kind !== "foreground" || (consumed.exitCode !== 0 && consumed.exitCode !== 5))
-      throw new Error("Could not consume the guarded initial publication receipt");
-  }
-  return {
-    ok: true,
-    apply: true,
-    mutated: created.code === 0 || publication.mutated,
-    repo,
-    remote,
-    baseBranch,
-    headBranch: branch,
-    title: input.title,
-    draft: input.draft === true,
-    assignee,
-    commitCount,
-    verificationPending: false,
-    url: pull.url,
-    unverified: [],
-  };
+  return completed(pull, true);
 }
