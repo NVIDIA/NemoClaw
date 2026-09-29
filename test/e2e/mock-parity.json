@@ -604,7 +604,14 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts"
+        "test/helpers/e2e-answer-assertions.test.ts",
+        "src/lib/actions/sandbox/connect-route-repair.test.ts",
+        "src/lib/actions/sandbox/destroy-managed-vllm-flow.test.ts",
+        "src/lib/actions/sandbox/destroy-managed-vllm.test.ts",
+        "src/lib/actions/sandbox/doctor-inference.test.ts",
+        "src/lib/actions/sandbox/status.test.ts",
+        "src/lib/inference/local.test.ts",
+        "src/lib/inference/local-model-profile/cleanup-vllm-absence.test.ts"
       ]
     },
     {
