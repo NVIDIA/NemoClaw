@@ -130,6 +130,7 @@ interface InferenceResultForGateway {
 
 export interface InferenceMutation<T extends InferenceResultForGateway> {
   result: T;
+  openClawConfigSyncPending?: boolean;
   openClawGatewayRestartRequired: boolean;
   openClawPairing:
     | { readonly state: "not-required" }
