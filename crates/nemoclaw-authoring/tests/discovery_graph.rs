@@ -3,7 +3,7 @@
 
 use nemoclaw_authoring::{
     Capabilities, CompatibilityStatus, DiscoveryEvidence, DiscoveryQuery, JourneyDefinition,
-    PartialDocument, discovery_key_for_document,
+    PartialDocument, discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, HarnessKind},
@@ -250,4 +250,16 @@ fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
         observed.assessment_for_document(&document).unwrap().status,
         CompatibilityStatus::Conflict
     );
+}
+
+#[test]
+fn managed_provider_discovery_uses_sdk_publication_without_rewriting_service() {
+    let document =
+        Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
+    let before = document.clone();
+    let expected = document.inference_connection().unwrap();
+    let request = inference_request_for_document(&document, None).unwrap();
+    assert_eq!(request.endpoint, expected.endpoint);
+    request.validate().unwrap();
+    assert_eq!(document, before);
 }

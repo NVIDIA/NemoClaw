@@ -599,6 +599,7 @@ fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey(
     state
         .answer(&capabilities, "route:selection", Some(json!("fast")))
         .unwrap();
+    assert_eq!(state.current_route(), Some("fast"));
     assert!(
         state
             .resolve(&capabilities)
@@ -618,6 +619,30 @@ fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey(
             .values()
             .pointer("/spec/inferences/smart-and-fast/routes/0"),
         original.pointer("/spec/inferences/smart-and-fast/routes/0")
+    );
+    let before_invalid = state.values().clone();
+    assert!(
+        state
+            .answer(&capabilities, "route:selection", Some(json!("absent")))
+            .is_err()
+    );
+    assert_eq!(state.values(), &before_invalid);
+    document
+        .spec
+        .inferences
+        .get_mut("smart-and-fast")
+        .unwrap()
+        .routes[1]
+        .overrides
+        .model = "new-local-model".into();
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .unwrap(),
+        &document
     );
 }
 
@@ -783,6 +808,92 @@ fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
             .values()
             .pointer("/spec/sandboxes/0/harness")
             .is_none()
+    );
+}
+
+#[test]
+fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() {
+    let capabilities = Capabilities::available();
+    let bytes = include_bytes!("../../../examples/explicit-policy.yaml");
+    let original = nemoclaw_sdk::config::Document::parse(&bytes[..]).unwrap();
+    let base = PartialDocument::from_yaml(bytes).unwrap();
+    let mut state = JourneyDefinition::new("implicit-api", base)
+        .ask([JourneyScope::InferenceApi])
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/inferenceProviders/0/api";
+    let question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(path)
+        .cloned()
+        .unwrap();
+    assert!(!question.required());
+    assert!(question.suggestion().is_none());
+    state.answer(&capabilities, path, None).unwrap();
+    assert!(state.values().pointer(path).is_none());
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .unwrap(),
+        &original
+    );
+}
+
+#[test]
+fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/explicit-policy.yaml"))
+        .unwrap();
+    let mut state = JourneyDefinition::new("optional-adapter", base)
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap();
+    let field = "adapter:nvidia.fabric.openclaw:/cli";
+    let question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(field)
+        .cloned()
+        .unwrap();
+    assert!(!question.required());
+    assert!(question.suggestion().is_none());
+    state.answer(&capabilities, field, None).unwrap();
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness/settings/cli")
+            .is_none()
+    );
+}
+
+#[test]
+fn editing_a_route_model_preserves_explicit_credential_references() {
+    let capabilities = Capabilities::available();
+    let yaml = include_str!("../../../examples/onboarding/openclaw.yaml")
+        .replace("NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY");
+    let base = PartialDocument::from_yaml(yaml.as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("credential-reference", base)
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    state
+        .answer(
+            &capabilities,
+            model,
+            Some(json!("organization/selected-model")),
+        )
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let document = resolution.assessment().document().unwrap();
+    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert_eq!(
+        document.inference_provider().unwrap().endpoint,
+        "https://integrate.api.nvidia.com/v1"
     );
 }
 
