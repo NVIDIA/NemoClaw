@@ -8,6 +8,8 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedNativeHomeCleanupInput,
+  RuntimeProviderStoppedSandboxStateCleanupInput,
 } from "./contract";
 import { observePodmanManagedContainer } from "./podman-lifecycle";
 import {
@@ -16,9 +18,12 @@ import {
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
 import {
+  clearStoppedNativeHomeWithEngine,
   clearStoppedSandboxStateWithEngine,
+  sandboxNativeHomeResourceFromMounts,
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
+  type StoppedSandboxStateTarget,
 } from "./stopped-sandbox-state-cleanup";
 
 function resolveTarget(
@@ -84,9 +89,10 @@ function execute(
 
 function observeStoppedTarget(
   engine: PodmanContainerEngine,
-  input: Parameters<
-    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
-  >[0],
+  input:
+    | RuntimeProviderStoppedSandboxStateCleanupInput
+    | RuntimeProviderStoppedNativeHomeCleanupInput,
+  stateResourceFromMounts: (mounts: unknown) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let container: ReturnType<typeof observePodmanManagedContainer>;
   try {
@@ -95,7 +101,14 @@ function observeStoppedTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (!container) return { failure: "no-eligible-stopped-runtime" };
-  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts, input.paths);
+  if (
+    "expectedResourceHandle" in input &&
+    input.expectedResourceHandle !== undefined &&
+    input.expectedResourceHandle !== container.containerId
+  ) {
+    return { failure: "runtime-ownership-invalid" };
+  }
+  const stateResource = stateResourceFromMounts(container.inspect.Mounts);
   return stateResource
     ? {
         target: {
@@ -137,7 +150,18 @@ export function createPodmanPrivilegedSandboxControl(
           ) =>
             clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
               capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
-              observe: () => observeStoppedTarget(engine, input),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts) =>
+                  sandboxStateResourceFromMounts(mounts, input.paths),
+                ),
+            }),
+          clearStoppedNativeHome: (input: RuntimeProviderStoppedNativeHomeCleanupInput) =>
+            clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
+              capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts) =>
+                  sandboxNativeHomeResourceFromMounts(mounts, input.root),
+                ),
             }),
         }
       : {}),

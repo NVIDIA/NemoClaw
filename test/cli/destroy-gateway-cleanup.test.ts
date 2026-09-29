@@ -46,7 +46,7 @@ function confirmSandboxMissingAfterDelete(markerPath: string, logPath: string): 
 }
 
 function isPersistentStateWipeExec(line: string): boolean {
-  return line.startsWith("sandbox exec --name alpha") && line.includes("rm -rf --");
+  return line.includes("nemoclaw-native-home-cleanup");
 }
 
 describe("CLI dispatch", () => {
@@ -182,8 +182,12 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
 
       const r = runWithEnv(
         "alpha destroy -y --cleanup-gateway",
@@ -262,8 +266,12 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
 
       const r = runWithEnv(
         "alpha destroy -y",
@@ -346,9 +354,15 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
 
       const r = runWithEnv(
         "alpha destroy -y --cleanup-gateway",
@@ -432,9 +446,15 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
 
       const r = runWithEnv(
         "alpha destroy -y --cleanup-gateway",
@@ -697,7 +717,9 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, {
+      mode: 0o755,
+    });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
@@ -708,16 +730,16 @@ describe("CLI dispatch", () => {
     expect(r.code, r.out).toBe(0);
     const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
     const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
+    const wipeIndex = lines.findIndex(isPersistentStateWipeExec);
     const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
     expect(selectIndex).toBeGreaterThanOrEqual(0);
-    expect(deleteIndex).toBeGreaterThan(selectIndex);
+    expect(wipeIndex).toBeGreaterThan(selectIndex);
+    expect(deleteIndex).toBeGreaterThan(wipeIndex);
     expect(lines.slice(deleteIndex + 1)).toContain("sandbox get -g nemoclaw-8081 alpha");
-
-    expect(lines.some(isPersistentStateWipeExec)).toBe(false);
   });
 
-  // OpenShell owns native storage deletion together with sandbox deletion.
-  // Gateway teardown still follows the completed delete.
+  // NemoClaw clears the native home before OpenShell deletes storage. Gateway
+  // teardown still follows the completed delete.
   it(
     "destroys with --cleanup-gateway and runs gateway-select -> delete -> gateway-destroy in order",
     testTimeoutOptions(30_000),
@@ -760,9 +782,15 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
 
       const r = runWithEnv(
         "alpha destroy -y --cleanup-gateway",
@@ -773,6 +801,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
       const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
+      const wipeIndex = lines.findIndex(isPersistentStateWipeExec);
       const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
       const gatewayDestroyIndex = lines.findIndex(
         (line) =>
@@ -780,9 +809,9 @@ describe("CLI dispatch", () => {
       );
 
       expect(selectIndex, "gateway select did not run").toBeGreaterThanOrEqual(0);
-      expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(selectIndex);
+      expect(wipeIndex, "native-home cleanup did not run").toBeGreaterThan(selectIndex);
+      expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(wipeIndex);
       expect(gatewayDestroyIndex, "gateway teardown did not run").toBeGreaterThan(deleteIndex);
-      expect(lines.some(isPersistentStateWipeExec)).toBe(false);
     },
   );
 
@@ -827,7 +856,9 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, {
+      mode: 0o755,
+    });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,

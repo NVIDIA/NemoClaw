@@ -431,6 +431,15 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly paths: readonly string[];
 }
 
+export interface RuntimeProviderStoppedNativeHomeCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly expectedResourceHandle?: string;
+  readonly root: string;
+  readonly protectedPaths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
@@ -443,6 +452,9 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  clearStoppedNativeHome?(
+    input: RuntimeProviderStoppedNativeHomeCleanupInput,
   ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(

@@ -60,6 +60,9 @@ describe("native agent destroy state cleanup", { timeout: 15_000 }, () => {
     expect(wipeScript).toContain('clean_dir "$root" "$@"');
     expect(wipeScript).toContain('verify_dir "$root" "$@"');
     expect(wipeScript).toContain("agent native root retains sandbox-owned state");
+    expect(wipeScript).toContain(
+      'echo "agent native root retains sandbox-owned state" >&2\n  exit 22',
+    );
     expect(wipeScript).not.toContain('find "$entry"');
     expect(wipeArgs.slice(wipeArgs.indexOf("-c") + 3)).toEqual([
       "/sandbox/.deepagents/.env",

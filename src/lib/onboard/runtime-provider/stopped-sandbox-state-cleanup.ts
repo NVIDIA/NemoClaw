@@ -88,6 +88,56 @@ for (const target of targets) {
 
 const CLEANUP_SCRIPT = buildStoppedSandboxChannelCleanupScript();
 
+export function buildStoppedSandboxNativeHomeCleanupScript(): string {
+  return String.raw`
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[1];
+const protectedPaths = JSON.parse(process.argv[2]);
+function lstat(candidate) {
+  try { return fs.lstatSync(candidate); }
+  catch (error) { if (error && error.code === "ENOENT") return null; throw error; }
+}
+if (typeof root !== "string" || !path.posix.isAbsolute(root) || path.posix.normalize(root) !== root) process.exit(40);
+if (!Array.isArray(protectedPaths) || new Set(protectedPaths).size !== protectedPaths.length) process.exit(41);
+for (const target of protectedPaths) {
+  if (typeof target !== "string" || !target.startsWith(root + "/") || path.posix.normalize(target) !== target) process.exit(42);
+}
+const rootMetadata = lstat(root);
+if (!rootMetadata || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) process.exit(43);
+function isProtected(candidate) { return protectedPaths.includes(candidate); }
+function isProtectedParent(candidate) { return protectedPaths.some((target) => target.startsWith(candidate + "/")); }
+function clean(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const entry = path.posix.join(directory, name);
+    if (isProtected(entry)) continue;
+    if (isProtectedParent(entry)) {
+      const metadata = lstat(entry);
+      if (!metadata || metadata.isSymbolicLink() || !metadata.isDirectory()) process.exit(44);
+      clean(entry);
+    } else {
+      fs.rmSync(entry, { force: false, maxRetries: 0, recursive: true });
+    }
+  }
+}
+function verify(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const entry = path.posix.join(directory, name);
+    if (isProtected(entry)) continue;
+    if (!isProtectedParent(entry)) return false;
+    const metadata = lstat(entry);
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isDirectory() || !verify(entry)) return false;
+  }
+  return true;
+}
+clean(root);
+if (!verify(root)) process.exit(45);
+`;
+}
+
+const NATIVE_HOME_CLEANUP_SCRIPT = buildStoppedSandboxNativeHomeCleanupScript();
+
 function failure(
   code: RuntimeProviderStoppedSandboxStateCleanupFailure,
   cleanupHelperName?: string,
@@ -111,6 +161,42 @@ export function sandboxStateResourceFromMounts(
   paths: readonly string[],
 ): StoppedSandboxStateTarget["stateResource"] | null {
   if (!Array.isArray(value) || !validateStoppedSandboxStatePaths(paths)) return null;
+  return stateResourceFromMounts(value, (target) =>
+    paths.every((statePath) => statePath.startsWith(`${target}/`)),
+  );
+}
+
+export function validateStoppedNativeHomeCleanup(
+  root: string,
+  protectedPaths: readonly string[],
+): boolean {
+  return (
+    /^\/sandbox(?:\/\.(?:hermes|openclaw))?$/u.test(root) &&
+    new Set(protectedPaths).size === protectedPaths.length &&
+    protectedPaths.every(
+      (candidate) =>
+        path.posix.isAbsolute(candidate) &&
+        path.posix.normalize(candidate) === candidate &&
+        candidate.startsWith(`${root}/`),
+    )
+  );
+}
+
+export function sandboxNativeHomeResourceFromMounts(
+  value: unknown,
+  root: string,
+): StoppedSandboxStateTarget["stateResource"] | null {
+  if (!Array.isArray(value) || !validateStoppedNativeHomeCleanup(root, [])) return null;
+  return stateResourceFromMounts(
+    value,
+    (target) => root === target || root.startsWith(`${target}/`),
+  );
+}
+
+function stateResourceFromMounts(
+  value: readonly unknown[],
+  acceptsTarget: (target: string) => boolean,
+): StoppedSandboxStateTarget["stateResource"] | null {
   const mounts = value
     .filter((entry): entry is Record<string, unknown> => {
       if (typeof entry !== "object" || entry === null) return false;
@@ -121,7 +207,7 @@ export function sandboxStateResourceFromMounts(
         path.posix.isAbsolute(target) &&
         path.posix.normalize(target) === target &&
         (target === "/sandbox" || /^\/sandbox\/\.(?:openclaw|hermes)$/u.test(target)) &&
-        paths.every((statePath) => statePath.startsWith(`${target}/`))
+        acceptsTarget(target)
       );
     })
     .sort((left, right) => String(right.Destination).length - String(left.Destination).length);
@@ -234,12 +320,11 @@ function classifyStartFailure(result: ContainerEngineCommandResult | null) {
   return "cleanup-helper-failed" as const;
 }
 
-export function clearStoppedSandboxStateWithEngine(
+function clearStoppedSandboxResourceWithEngine(
   sandboxName: string,
-  paths: readonly string[],
   engine: StoppedSandboxStateCleanupEngine,
+  helperArguments: (target: StoppedSandboxStateTarget) => readonly string[],
 ): RuntimeProviderStoppedSandboxStateCleanupResult {
-  if (!validateStoppedSandboxStatePaths(paths)) return failure("state-paths-invalid");
   const observed = engine.observe();
   if ("failure" in observed) return failure(observed.failure);
   const target = observed.target;
@@ -300,10 +385,7 @@ export function clearStoppedSandboxStateWithEngine(
     "--entrypoint",
     "/usr/local/bin/node",
     CLEANUP_IMAGE,
-    "-e",
-    CLEANUP_SCRIPT,
-    JSON.stringify(paths),
-    target.stateResource.target,
+    ...helperArguments(target),
   ]);
   const helperId = created.stdout.trim();
   if (created.status !== 0 || created.error || !FULL_CONTAINER_ID_RE.test(helperId)) {
@@ -324,4 +406,35 @@ export function clearStoppedSandboxStateWithEngine(
     return failure("runtime-revalidation-failed");
   }
   return { cleared: true };
+}
+
+export function clearStoppedSandboxStateWithEngine(
+  sandboxName: string,
+  paths: readonly string[],
+  engine: StoppedSandboxStateCleanupEngine,
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedSandboxStatePaths(paths)) return failure("state-paths-invalid");
+  return clearStoppedSandboxResourceWithEngine(sandboxName, engine, (target) => [
+    "-e",
+    CLEANUP_SCRIPT,
+    JSON.stringify(paths),
+    target.stateResource.target,
+  ]);
+}
+
+export function clearStoppedNativeHomeWithEngine(
+  sandboxName: string,
+  root: string,
+  protectedPaths: readonly string[],
+  engine: StoppedSandboxStateCleanupEngine,
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedNativeHomeCleanup(root, protectedPaths)) {
+    return failure("state-paths-invalid");
+  }
+  return clearStoppedSandboxResourceWithEngine(sandboxName, engine, () => [
+    "-e",
+    NATIVE_HOME_CLEANUP_SCRIPT,
+    root,
+    JSON.stringify(protectedPaths),
+  ]);
 }

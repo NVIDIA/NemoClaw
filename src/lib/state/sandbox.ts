@@ -87,6 +87,7 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
+  "--exclude='./.pi/agent/trust.json'",
 ].join(" ");
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
@@ -1362,9 +1363,19 @@ function isNativeDependencySourceEntry(entry: string): boolean {
   );
 }
 
-function isBundledNemoclawRuntimeCodeEntry(entry: string): boolean {
+function shouldScanNativeOpaqueAssignments(
+  entry: string,
+  fileName: string,
+  providerProfileSchema: boolean,
+): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  return normalized.startsWith(".openclaw/extensions/nemoclaw/dist/");
+  return (
+    providerProfileSchema ||
+    nativeStructuredAuthorityKind(normalized, fileName) !== null ||
+    fileName === ".env" ||
+    fileName.endsWith(".env") ||
+    /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
+  );
 }
 
 function scanNativeTarFilePayload(
@@ -1469,9 +1480,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               descriptor,
               dataOffset,
               size,
-              fileName !== "package.json" &&
-                !dependencyTree &&
-                !isBundledNemoclawRuntimeCodeEntry(entry),
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
               dependencyTree,
@@ -1857,6 +1866,7 @@ function capturePreparedNativeState(
         "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         '  cp -RpP "$source/." "$stage/"',
         '  rm -f -- "$stage/.nemoclaw/config.json"',
+        '  rm -f -- "$stage/.pi/agent/trust.json"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
         '  tar -C "$stage" -cf - -- .',
         "fi",

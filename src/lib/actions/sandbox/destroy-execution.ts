@@ -30,6 +30,7 @@ import {
 import type {
   RuntimeProviderDestroyIdentityReceipt,
   RuntimeProviderPrivilegedSandboxCommandResult,
+  RuntimeProviderStoppedSandboxStateCleanupResult,
 } from "../../onboard/runtime-provider/contract";
 import {
   type HostLocalInferenceLifecycleOptions,
@@ -128,12 +129,16 @@ function protectedNativeHomeEntries(
   return [...protectedEntries].sort();
 }
 
-function wipeAgentNativeHome(
+export function wipeAgentNativeHome(
   sandboxName: string,
   agentName: string,
   runOpenshell: DestroyRunOpenshell,
   hostMounts: SandboxEntry["hostMounts"],
   runPrivileged?: (command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult,
+  clearStoppedNativeHome?: (
+    root: string,
+    protectedPaths: readonly string[],
+  ) => RuntimeProviderStoppedSandboxStateCleanupResult,
 ): void {
   if (!COMPLETE_NATIVE_HOME_AGENTS.has(agentName)) return;
   const agent = resolveRegisteredAgentDefinition({ agent: agentName });
@@ -201,7 +206,7 @@ function wipeAgentNativeHome(
     'clean_dir "$root" "$@"',
     'if ! verify_dir "$root" "$@"; then',
     '  echo "agent native root retains sandbox-owned state" >&2',
-    "  exit 21",
+    "  exit 22",
     "fi",
   ].join("\n");
   const command = ["sh", "-c", script, "nemoclaw-native-home-cleanup", ...protectedEntries];
@@ -222,7 +227,21 @@ function wipeAgentNativeHome(
     );
   }
   if (result.status !== 0 && result.status !== 20 && result.status !== 21 && runPrivileged) {
-    result = runPrivileged(command);
+    try {
+      result = runPrivileged(command);
+    } catch (error) {
+      if (clearStoppedNativeHome?.(nativeRoot, protectedEntries).cleared) return;
+      throw error;
+    }
+  }
+  if (
+    result.status !== 0 &&
+    result.status !== 20 &&
+    result.status !== 21 &&
+    clearStoppedNativeHome
+  ) {
+    const stoppedCleanup = clearStoppedNativeHome(nativeRoot, protectedEntries);
+    if (stoppedCleanup.cleared) return;
   }
   if (result.status !== 0 || result.error) {
     const detail = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`
@@ -738,6 +757,12 @@ export async function executeSandboxDestroy({
         let runPrivileged:
           | ((command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult)
           | undefined;
+        let clearStoppedNativeHome:
+          | ((
+              root: string,
+              protectedPaths: readonly string[],
+            ) => RuntimeProviderStoppedSandboxStateCleanupResult)
+          | undefined;
         if (runtimeProvider?.lifecycle.supported === true) {
           const control = runtimeProvider.lifecycle.privilegedSandboxControl;
           runPrivileged = (command) =>
@@ -753,6 +778,19 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
+          if (control.clearStoppedNativeHome) {
+            clearStoppedNativeHome = (root, protectedPaths) =>
+              control.clearStoppedNativeHome!({
+                sandbox,
+                sandboxName,
+                registeredSandboxNames: [...registeredSandboxNames],
+                ...(expectedRuntimeProviderIdentity?.resourceHandle
+                  ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
+                  : {}),
+                root,
+                protectedPaths,
+              });
+          }
         }
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
@@ -760,6 +798,7 @@ export async function executeSandboxDestroy({
           selectedRunOpenshell,
           sandbox.hostMounts,
           runPrivileged,
+          clearStoppedNativeHome,
         );
       } catch (error) {
         const mcpRecoveryFailure = await restoreMcpForAbort();

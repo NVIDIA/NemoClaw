@@ -242,6 +242,10 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  // A stopped source has no live DCode route to probe. Keep the replacement,
+  // registry, image, and gateway-schema checks, but use the same route-probe
+  // exemption at every destructive-boundary revalidation that preflight used.
+  const skipLiveDcodeRouteProbe = recoveryRecreate || stoppedSource !== null;
   try {
     if (stoppedSource)
       log("Captured the identified stopped agent source without starting its container.");
@@ -580,7 +584,7 @@ async function rebuildSandboxUnlocked(
           resumeConfig,
           durableConfig.toolDisclosure,
           durableConfig.dcodeAutoApprovalMode,
-          recoveryRecreate,
+          skipLiveDcodeRouteProbe,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
         ))
@@ -809,7 +813,7 @@ async function rebuildSandboxUnlocked(
             resumeConfig,
             durableConfig.toolDisclosure,
             durableConfig.dcodeAutoApprovalMode,
-            recoveryRecreate,
+            skipLiveDcodeRouteProbe,
             recreateOptions.targetGatewayPort,
             preparation.runtimeSelection,
           );

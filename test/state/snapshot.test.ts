@@ -229,6 +229,7 @@ if (command.includes("tar -C")) {
       copyTree(path.join(root, name), path.join(copyRoot, name));
     }
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "config.json"), { force: true });
+    fs.rmSync(path.join(copyRoot, ".pi", "agent", "trust.json"), { force: true });
     const sessionDirectory = path.join(copyRoot, ".openclaw", "agents", "main", "sessions");
     if (fs.existsSync(sessionDirectory)) {
       for (const name of fs.readdirSync(sessionDirectory)) {
@@ -417,6 +418,8 @@ describe("complete native home persistence", () => {
           },
         }),
       );
+      const piTrust = path.join(nativeRoot, ".pi", "agent", "trust.json");
+      fs.writeFileSync(piTrust, '{"project":"trusted-before-rebuild"}');
       const bundledCredentialBoundary = path.join(
         import.meta.dirname,
         "../..",
@@ -472,6 +475,7 @@ describe("complete native home persistence", () => {
       ]).stdout.toString();
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
+      expect(archivedPaths).not.toContain(".pi/agent/trust.json");
       expect(archivedPaths).toContain(".nemoclaw/blueprints/0.1.0/provider-profiles");
       expect(assertCurrent).toHaveBeenCalledTimes(2);
       expect(fs.statSync(payloadPath)).toMatchObject({
@@ -981,7 +985,57 @@ describe("complete native home persistence", () => {
   });
 
   it.each([
-    ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
+    ["a short assignment in an ordinary note", "workspace/notes.txt", "password=abc"],
+    [
+      "an assignment-like compiler option",
+      "workspace/project/tsconfig.json",
+      JSON.stringify({ compilerOptions: { sessionToken: "opaqueCredentialPayloadZ1234567890" } }),
+    ],
+    [
+      "OpenClaw session metadata",
+      ".openclaw/agents/main/sessions/sessions.json",
+      '{"sessions":{"main":{"sessionToken":"opaqueSessionIdentifierZ1234567890"}}}',
+    ],
+    [
+      "a dependency runtime symbol",
+      "node_modules/example/dist/adapter.runtime.cjs",
+      'const sessionToken = "opaqueRuntimeFixtureZ1234567890";',
+    ],
+  ])(
+    "preserves %s without treating it as credential configuration",
+    (_case, relativePath, content) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-noncredential-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
+        fs.writeFileSync(path.join(nativeRoot, relativePath), content);
+        writeOpenClawRegistry("alpha");
+
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: vi.fn(),
+          },
+        });
+
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          (root: string) => {
+            if (fs.readFileSync(path.join(root, relativePath), "utf8") !== content) {
+              throw new Error("ordinary native state was not preserved exactly");
+            }
+          },
+          relativePath,
+        );
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
     [
       "an opaque bearer credential in a history file",
@@ -993,7 +1047,6 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/child/session.log",
       "sessionToken=opaqueCredentialPayloadZ1234567890",
     ],
-    ["a short opaque credential assignment", "workspace/notes.txt", "password=abc"],
     [
       "a malformed Slack placeholder-shaped credential",
       "workspace/slack.txt",
@@ -1008,11 +1061,6 @@ describe("complete native home persistence", () => {
       "an opaque credential in a JSON schema",
       "schemas/config.schema.json",
       JSON.stringify({ default: { authorization: "Bearer opaqueCredentialPayloadZ1234567890" } }),
-    ],
-    [
-      "an opaque credential in TypeScript configuration",
-      "workspace/project/tsconfig.json",
-      JSON.stringify({ compilerOptions: { sessionToken: "opaqueCredentialPayloadZ1234567890" } }),
     ],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
     [

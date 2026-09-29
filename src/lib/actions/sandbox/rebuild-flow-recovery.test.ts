@@ -83,10 +83,14 @@ describe("rebuildSandbox flow: recovery", () => {
         ? {
             agentName,
             sandboxEntry: makeDcodeSandboxEntry(),
-            dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+            // A terminal source has no live inference route. Any attempted
+            // probe would consume this failure and abort the rebuild.
+            dcodeRouteResults: [{ ok: false, detail: "stopped source has no live route" }],
           }
         : {}),
-      sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
     });
     const configureSession: typeof configureDcodeSession =
       agentName === "langchain-deepagents-code" ? configureDcodeSession : () => undefined;
@@ -141,6 +145,7 @@ describe("rebuildSandbox flow: recovery", () => {
       expect(
         harness.runOpenshellSpy.mock.calls.some(([args]) => (args as string[]).includes("start")),
       ).toBe(false);
+      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
       expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
       expect(captured.dispose).toHaveBeenCalledOnce();
     } finally {
@@ -310,7 +315,9 @@ describe("rebuildSandbox flow: recovery", () => {
     });
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
+        throwOnError: true,
+      }),
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
@@ -362,7 +369,12 @@ describe("rebuildSandbox flow: recovery", () => {
       captureOpenshell: (argv) =>
         argv[0] === "sandbox" && argv[1] === "get"
           ? { status: 0, output: probe, stdout: probe, stderr: "" }
-          : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" },
+          : {
+              status: 1,
+              output: "",
+              stdout: "",
+              stderr: "Error: sandbox alpha not found",
+            },
     });
     restarted.session.checkpoint = checkpoint;
     // Both harnesses share one spy per mocked module function, so the
@@ -615,7 +627,10 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
-    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
       sandboxEntry: { toolDisclosure: "progressive" },
@@ -641,7 +656,13 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }), {}],
+      [
+        expect.objectContaining({
+          name: "alpha",
+          toolDisclosure: "progressive",
+        }),
+        {},
+      ],
     ]);
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("rebuild --yes --tool-disclosure direct"),
@@ -695,7 +716,10 @@ describe("rebuildSandbox flow: recovery", () => {
   it.each(LIVE_SOURCE_PHASES)(
     "recaptures MCP state before deleting from a '%s' recovery journal without its handoff (#10394)",
     async (phase) => {
-      const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+      const mcpEntry = {
+        server: "github",
+        providerName: "nemoclaw-mcp-alpha-github",
+      };
       const interrupted = createRebuildFlowHarness({
         mcpPreparation: {
           entries: [mcpEntry],
@@ -718,7 +742,9 @@ describe("rebuildSandbox flow: recovery", () => {
       const checkpoint = interrupted.session.checkpoint as {
         sandboxRecreate?: { phase?: string };
       };
-      const recreateCheckpoint = checkpoint.sandboxRecreate as { phase?: string };
+      const recreateCheckpoint = checkpoint.sandboxRecreate as {
+        phase?: string;
+      };
       expect(recreateCheckpoint).toBeDefined();
       expect(recreateCheckpoint.phase).toBe("planned");
       recreateCheckpoint.phase = phase;
@@ -766,7 +792,10 @@ describe("rebuildSandbox flow: recovery", () => {
   it.each(LIVE_SOURCE_PHASES)(
     "refuses foreign MCP state after preflight from a '%s' recovery journal without its handoff (#10394)",
     async (phase) => {
-      const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+      const mcpEntry = {
+        server: "github",
+        providerName: "nemoclaw-mcp-alpha-github",
+      };
       const interrupted = createRebuildFlowHarness({
         mcpPreparation: {
           entries: [mcpEntry],
@@ -789,7 +818,9 @@ describe("rebuildSandbox flow: recovery", () => {
       const checkpoint = interrupted.session.checkpoint as {
         sandboxRecreate?: { phase?: string };
       };
-      const recreateCheckpoint = checkpoint.sandboxRecreate as { phase?: string };
+      const recreateCheckpoint = checkpoint.sandboxRecreate as {
+        phase?: string;
+      };
       expect(recreateCheckpoint).toBeDefined();
       expect(recreateCheckpoint.phase).toBe("planned");
       recreateCheckpoint.phase = phase;
@@ -851,7 +882,10 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("blocks installer recovery when MCP post-restore verification is incomplete", async () => {
-    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
     const harness = createRebuildFlowHarness({
       mcpPreparation: {
         entries: [mcpEntry],
@@ -908,13 +942,22 @@ describe("rebuildSandbox flow: recovery", () => {
         detachedProviderEntries: [attached],
       },
       runOpenshell: (args) => {
-        const deleteFailure = { status: 7, output: "delete failed", stderr: "delete failed" };
+        const deleteFailure = {
+          status: 7,
+          output: "delete failed",
+          stderr: "delete failed",
+        };
         return args.join(" ") === "sandbox delete -g nemoclaw alpha" ? deleteFailure : undefined;
       },
       captureOpenshell: (args) => {
         vi.setSystemTime(Date.now() + 20_000);
         return args[0] === "sandbox" && args[1] === "get"
-          ? { status: 0, output: SOURCE_PROBE, stdout: SOURCE_PROBE, stderr: "" }
+          ? {
+              status: 0,
+              output: SOURCE_PROBE,
+              stdout: SOURCE_PROBE,
+              stderr: "",
+            }
           : MISSING_SOURCE;
       },
     });
@@ -931,7 +974,10 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
-      { gatewayName: "nemoclaw", workspace: "default" },
+      {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });

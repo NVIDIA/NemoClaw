@@ -40,7 +40,7 @@ graph LR
             direction TB
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
-            MIGRATE["State Management<br/><small>Whole-home rebuild transfer<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+            MIGRATE["State Management<br/><small>Whole-home rebuild transfer<br/>Fail-closed credential checks<br/>Integrity verification</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]

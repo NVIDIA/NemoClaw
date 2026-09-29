@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { dockerSpawn, dockerSpawnSync } from "../../adapters/docker/exec";
 import { fingerprintOpenShellSandboxId } from "../../domain/sandbox/openshell-identity";
+import { NATIVE_STATE_CAPTURE_TIMEOUT_MS } from "../../state/sandbox";
 import type { SandboxEntry } from "../../state/registry/types";
 import type {
   RuntimeProviderSnapshotRestoreSource,
@@ -15,7 +16,6 @@ import type {
   RuntimeProviderStoppedStateProjection,
 } from "./contract";
 
-const CAPTURE_TIMEOUT_MS = 120_000;
 const TAR_BLOCK_BYTES = 512;
 const TAR_METADATA_MAX_BYTES = 1024 * 1024;
 const INSPECT_FORMAT =
@@ -575,7 +575,7 @@ export function prepareStoppedDockerStateCapture(
           fail("Could not read and filter the stopped source container.");
         const timer = setTimeout(
           () => fail("Stopped state capture timed out."),
-          CAPTURE_TIMEOUT_MS,
+          NATIVE_STATE_CAPTURE_TIMEOUT_MS,
         );
         child.stdout?.on("data", (chunk: Buffer) => {
           inputBytes += chunk.length;
