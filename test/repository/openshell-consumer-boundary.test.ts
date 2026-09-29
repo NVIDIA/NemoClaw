@@ -123,6 +123,46 @@ describe("OpenShell consumer boundary (#9813)", () => {
     ]);
   });
 
+  test("finds variable-backed executables and aliased child-process imports", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-openshell-executable-bindings-");
+    writeModule(
+      root,
+      "src/variable.ts",
+      'import { spawnSync } from "node:child_process";\n' +
+        'function probe(openshellBinary = "openshell"): void {\n' +
+        '  spawnSync(openshellBinary, ["sandbox", "create", "--help"]);\n' +
+        "}\n",
+    );
+    writeModule(
+      root,
+      "src/alias.ts",
+      'import { spawnSync as launch } from "node:child_process";\n' +
+        'launch("openshell", ["gateway", "info"]);\n',
+    );
+    writeModule(root, "src/wrapper.ts", 'collect("capture", "openshell", ["sandbox", "list"]);\n');
+
+    expect(scanOpenShellConsumers(root)).toEqual([
+      {
+        id: "consumer:src/alias.ts",
+        kinds: ["direct-executable"],
+        operations: ["gateway info"],
+        path: "src/alias.ts",
+      },
+      {
+        id: "consumer:src/variable.ts",
+        kinds: ["direct-executable"],
+        operations: ["sandbox create"],
+        path: "src/variable.ts",
+      },
+      {
+        id: "consumer:src/wrapper.ts",
+        kinds: ["direct-executable"],
+        operations: ["sandbox list"],
+        path: "src/wrapper.ts",
+      },
+    ]);
+  });
+
   test("rejects unknown consumers and allowances whose source signal disappeared", () => {
     const current: ConsumerFinding = {
       id: "consumer:src/new.ts",

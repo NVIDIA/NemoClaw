@@ -4,6 +4,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSandboxMock = vi.fn();
+const findSandboxAcrossGatewayRootsMock = vi.fn((...args: unknown[]) => {
+  const entry = getSandboxMock(...args);
+  return entry
+    ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+    : null;
+});
 
 vi.mock("../../state/registry", () => ({
   getSandbox: (...args: unknown[]) => getSandboxMock(...args),
@@ -11,12 +17,7 @@ vi.mock("../../state/registry", () => ({
 }));
 
 vi.mock("../../state/registry/cross-port", () => ({
-  findSandboxAcrossGatewayRoots: (...args: unknown[]) => {
-    const entry = getSandboxMock(...args);
-    return entry
-      ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
-      : null;
-  },
+  findSandboxAcrossGatewayRoots: (...args: unknown[]) => findSandboxAcrossGatewayRootsMock(...args),
 }));
 
 import {
@@ -25,6 +26,17 @@ import {
   type GatewayFailureRunners,
   isDockerRuntimeDown,
 } from "./gateway-failure-classifier";
+
+beforeEach(() => {
+  getSandboxMock.mockReset();
+  findSandboxAcrossGatewayRootsMock.mockReset();
+  findSandboxAcrossGatewayRootsMock.mockImplementation((...args: unknown[]) => {
+    const entry = getSandboxMock(...args);
+    return entry
+      ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+      : null;
+  });
+});
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -37,9 +49,6 @@ function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailure
 }
 
 describe("classifyGatewayFailure (#7348)", () => {
-  beforeEach(() => {
-    getSandboxMock.mockReset();
-  });
   it("classifies an exited per-port gateway container as container_exited, not container_missing", async () => {
     getSandboxMock.mockReturnValue({ name: "sb-1", gatewayPort: 8081 });
     const portProbe = vi.fn(async () => false);
@@ -122,6 +131,34 @@ describe("classifyGatewayFailure (#7348)", () => {
       layer: "gateway_unreachable",
       detail: "The OpenShell gateway for sandbox 'sb-1' is unreachable.",
     });
+    expect(dockerInfo).not.toHaveBeenCalled();
+    expect(dockerIsRunning).not.toHaveBeenCalled();
+    expect(dockerExists).not.toHaveBeenCalled();
+    expect(portProbe).not.toHaveBeenCalled();
+  });
+
+  it("classifies a cross-root native gateway without invoking Docker", async () => {
+    getSandboxMock.mockReturnValue(null);
+    findSandboxAcrossGatewayRootsMock.mockReturnValue({
+      entry: { name: "sb-1", gatewayPort: 8081, openshellDriver: "mxc" },
+      gatewayPort: 8081,
+      registryFile: "/test/.nemoclaw/gateways/8081/sandboxes.json",
+    });
+    const dockerInfo = vi.fn(() => false);
+    const dockerIsRunning = vi.fn(() => false);
+    const dockerExists = vi.fn(() => false);
+    const portProbe = vi.fn(async () => false);
+
+    await expect(
+      classifyGatewayFailure("sb-1", {
+        runners: { dockerInfo, dockerIsRunning, dockerExists, portProbe },
+      }),
+    ).resolves.toEqual({
+      layer: "gateway_unreachable",
+      detail: "The OpenShell gateway for sandbox 'sb-1' is unreachable.",
+    });
+    expect(isDockerRuntimeDown("sb-1", { runners: { dockerInfo } })).toBe(false);
+    expect(getSandboxMock).not.toHaveBeenCalled();
     expect(dockerInfo).not.toHaveBeenCalled();
     expect(dockerIsRunning).not.toHaveBeenCalled();
     expect(dockerExists).not.toHaveBeenCalled();

@@ -160,6 +160,29 @@ async function importProofModules(slackDir) {
 }
 `;
 
+export const SLACK_SQLITE_TMPDIR_SETUP_SOURCE = String.raw`
+function prepareSqliteTmpdir(openclawStateDir = "/sandbox/.openclaw") {
+  const sqliteTmpdir = path.join(openclawStateDir, "tmp");
+  let metadata;
+  try {
+    metadata = fs.lstatSync(sqliteTmpdir);
+  } catch (error) {
+    invariant(error?.code === "ENOENT", "unable to inspect OpenClaw SQLite temporary directory");
+    fs.mkdirSync(sqliteTmpdir, { mode: 0o700 });
+    metadata = fs.lstatSync(sqliteTmpdir);
+  }
+  invariant(
+    metadata.isDirectory() &&
+      !metadata.isSymbolicLink() &&
+      (typeof process.getuid !== "function" || metadata.uid === process.getuid()),
+    "unsafe OpenClaw SQLite temporary directory",
+  );
+  fs.chmodSync(sqliteTmpdir, 0o700);
+  process.env.SQLITE_TMPDIR = sqliteTmpdir;
+  return sqliteTmpdir;
+}
+`;
+
 export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -173,6 +196,10 @@ ${SLACK_RUNTIME_DISCOVERY_SOURCE}
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+${SLACK_SQLITE_TMPDIR_SETUP_SOURCE}
+
+prepareSqliteTmpdir();
 
 function postForm(pathname, fields, authorization) {
   const body = new URLSearchParams(fields).toString();

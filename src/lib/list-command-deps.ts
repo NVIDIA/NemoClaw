@@ -4,8 +4,7 @@
 import * as onboardSession from "./state/onboard-session";
 import { getSelectedGatewayName } from "./actions/sandbox/gateway-target";
 import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
-import { getLiveGatewayInference } from "./inference/live";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "./adapters/openshell/inference-route-cli";
 import { parseSshProcesses, createSystemDeps } from "./state/sandbox-session";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { captureOpenshell } from "./adapters/openshell/runtime";
@@ -54,6 +53,8 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
   // Cache the SSH process probe once for all sandboxes — avoids spawning ps
   // per sandbox row. The getSshProcesses() call is the expensive part (5s timeout).
   let cachedSshOutput: string | null | undefined;
+  const inferenceRouteObserver =
+    createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell);
 
   // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
   // process list actually contains a proxied connection that needs one (#9316).
@@ -81,12 +82,12 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
         () => recoverRegistryEntries(),
         () => registry.listSandboxes(),
       ),
-    getLiveInference: () => {
+    getLiveInference: async () => {
       try {
-        return getLiveGatewayInference(captureOpenshell, {
-          gatewayName: getSelectedGatewayName(),
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).inference;
+        const result = await inferenceRouteObserver.observeInferenceRoute({
+          target: { kind: "named", gatewayName: getSelectedGatewayName() },
+        });
+        return result.ok && result.value.state === "configured" ? result.value.route : null;
       } catch {
         return null;
       }

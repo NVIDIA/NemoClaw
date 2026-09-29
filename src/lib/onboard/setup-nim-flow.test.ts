@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import type { VllmProfile } from "../inference/vllm";
 import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
-import type { LocalModelProfilePlan } from "./local-model-profile/integration";
+import { resolveLocalModelProfilePlan } from "./local-model-profile/plan";
 import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
 
 afterEach(() => {
@@ -43,16 +45,19 @@ describe("withServingPortGuard", () => {
 });
 
 describe("createSetupNim", () => {
-  it("passes the Deep Agents manifest default to shared NVIDIA/OpenRouter model selection", async () => {
+  it("passes the Deep Agents default to provider-scoped model selection", async () => {
     const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
     const log = vi.fn();
-    const sharedSession = { select: async () => unexpected("featured model selection") };
-    const createNvidiaFeaturedModelSession = vi.fn<
-      SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
-    >(() => sharedSession);
+    const nvidiaSession = { select: async () => unexpected("NVIDIA model selection") };
+    const openRouterSession = { select: async () => unexpected("OpenRouter model selection") };
+    const createNvidiaFeaturedModelSession = vi
+      .fn<SetupNimFlowDeps["createNvidiaFeaturedModelSession"]>()
+      .mockReturnValueOnce(nvidiaSession)
+      .mockReturnValueOnce(openRouterSession);
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async (_args, state) => {
-        expect(state.openRouterFeaturedModels).toBe(state.nvidiaFeaturedModels);
+        expect(state.nvidiaFeaturedModels).toBe(nvidiaSession);
+        expect(state.openRouterFeaturedModels).toBe(openRouterSession);
         state.model = ultra;
         state.provider = "nvidia-prod";
         state.endpointUrl = "https://integrate.api.nvidia.com/v1";
@@ -70,9 +75,25 @@ describe("createSetupNim", () => {
 
     await setupNim(null, null, dcodeAgent);
 
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(1);
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
+    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
       defaultModel: ultra,
+      writeLine: log,
+    });
+    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
+      defaultModel: ultra,
+      fallbackModelOptions: [
+        {
+          id: "nvidia/nemotron-3-ultra-550b-a55b",
+          label: "Nemotron 3 Ultra 550B",
+        },
+        {
+          id: "nvidia/nemotron-3-super-120b-a12b",
+          label: "Nemotron 3 Super 120B",
+        },
+        { id: "minimaxai/minimax-m3", label: "Minimax M3" },
+      ],
+      retiredModelIds: [],
       writeLine: log,
     });
   });
@@ -1346,7 +1367,11 @@ describe("createSetupNim", () => {
 
   it("routes a gated local model profile through its dedicated onboarder", async () => {
     const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
-    const plan = { runtime: "vllm" } as LocalModelProfilePlan;
+    const catalog = loadServingCatalog();
+    const plan = resolveLocalModelProfilePlan(catalog, {
+      NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "1",
+      NEMOCLAW_LOCAL_MODEL_RUNTIME: "vllm",
+    })!;
     const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
       async (_plan, host, state) => {
         expect(host).toMatchObject({
@@ -1375,7 +1400,11 @@ describe("createSetupNim", () => {
 
     await expect(
       setupNim({ type: "nvidia", spark: true, platform: "spark" } as never),
-    ).resolves.toMatchObject({ provider: "vllm-local", model: "catalog/model" });
+    ).resolves.toMatchObject({
+      provider: "vllm-local",
+      model: "catalog/model",
+      servingProfileProvenance: servingProfileProvenance(catalog, plan.preset.metadata.id),
+    });
     expect(onboard).toHaveBeenCalledOnce();
   });
 

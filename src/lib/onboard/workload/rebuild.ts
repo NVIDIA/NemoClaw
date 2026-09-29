@@ -296,6 +296,9 @@ export function managedWorkloadRebuildProfileEnvironment(
     if (previous.inference?.inputModalities != null) {
       result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
     }
+    if (previous.inference?.servingPreset) {
+      result.NEMOCLAW_SERVING_PRESET = previous.inference.servingPreset;
+    }
     result.NEMOCLAW_AGENT_TIMEOUT = String(config.agentTimeoutSeconds);
     if (config.heartbeatEvery !== null) {
       result.NEMOCLAW_AGENT_HEARTBEAT_EVERY = config.heartbeatEvery;

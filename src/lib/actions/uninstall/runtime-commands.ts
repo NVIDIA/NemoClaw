@@ -1,17 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncOptions } from "node:child_process";
+
 import {
   createUninstallSandboxLifecycle,
   createUninstallSandboxObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
 } from "../../domain/uninstall/messaging";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
+import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import {
+  dockerDriverGatewayLocalTlsAuthorityIsConfigured,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
+} from "../../onboard/docker-driver-gateway-local-tls";
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -19,6 +28,69 @@ interface UninstallRuntimeCommands {
   run(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): RunResult;
   sleep?(milliseconds: number): void;
   warn(message: string): void;
+}
+
+interface ForceFreshDockerCleanupRuntime {
+  env: NodeJS.ProcessEnv;
+  error(message: string): void;
+  log(message: string): void;
+  runDocker(args: string[], options?: SpawnSyncOptions): RunResult;
+}
+
+const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
+  `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
+  "u",
+);
+const BULK_DELETE_MAX_OBSERVATIONS = 5;
+const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
+
+export function selectedGatewayCleanupRuntimeSelection(
+  gatewayName: string,
+  gatewayStateDir: string,
+): OpenShellRuntimeSelection | null {
+  const localTlsDir = resolveCompleteDockerDriverGatewayLocalTlsDir(gatewayStateDir);
+  if (!localTlsDir && dockerDriverGatewayLocalTlsAuthorityIsConfigured(gatewayStateDir))
+    return null;
+  return {
+    gatewayName,
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
+
+function nonEmptyLines(output: string): string[] {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function forceFreshReceiptVolumeMatches(runtime: ForceFreshDockerCleanupRuntime): string[] | null {
+  const inventory = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
+    env: runtime.env,
+  });
+  if (inventory.status !== 0) {
+    runtime.error(
+      "Could not inventory managed-startup receipt volumes during force-fresh cleanup.",
+    );
+    return null;
+  }
+  return nonEmptyLines(inventory.stdout).filter((name) =>
+    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
+  );
+}
+
+export function removeForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime): boolean {
+  const volumes = forceFreshReceiptVolumeMatches(runtime);
+  if (volumes === null) return false;
+  const [unverified] = volumes;
+  if (unverified) {
+    runtime.error(
+      `Preserved managed-startup receipt volume '${unverified}' because its Docker name and mutable label are not trusted ownership proof.`,
+    );
+    return false;
+  }
+  return true;
 }
 
 export async function deleteSelectedGatewaySandbox(
@@ -50,6 +122,50 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  return false;
+}
+
+export async function deleteAllSelectedGatewaySandboxes(
+  runtime: UninstallRuntimeCommands,
+  runtimeSelection: OpenShellRuntimeSelection | null,
+): Promise<boolean> {
+  if (!runtimeSelection) {
+    runtime.warn(
+      "OpenShell selected-gateway cleanup authority is incomplete; preserving its state for retry.",
+    );
+    return false;
+  }
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
+    { target: { kind: "selected" }, runtimeSelection },
+  );
+  if (result.kind !== "accepted") {
+    runtime.warn(
+      result.error.kind === "command" && result.error.reason === "invalid_request"
+        ? "OpenShell rejected the selected-gateway sandbox cleanup request."
+        : "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
+    );
+    return false;
+  }
+
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env, runtimeSelection);
+  let consecutiveEmptyObservations = 0;
+  let lastObservationError: string | null = null;
+  for (let attempt = 0; attempt < BULK_DELETE_MAX_OBSERVATIONS; attempt += 1) {
+    const observed = await observer.listSandboxes({ target: { kind: "selected" } });
+    lastObservationError = observed.ok ? null : observed.error.message;
+    consecutiveEmptyObservations =
+      observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
+    if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
+      runtime.log("Deleted all OpenShell sandboxes");
+      return true;
+    }
+    if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);
+  }
+  runtime.warn(
+    lastObservationError
+      ? `OpenShell sandbox cleanup was incomplete because inventory could not be verified: ${lastObservationError} Preserving its state for retry.`
+      : "OpenShell sandbox cleanup was incomplete; preserving its state for retry.",
+  );
   return false;
 }
 

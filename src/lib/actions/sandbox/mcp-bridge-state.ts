@@ -8,6 +8,10 @@ import {
   replaceOpenShellRuntimeSelectionEnv,
 } from "../../gateway-runtime-action";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  findAmbiguousMcpCredentialTarget,
+  type McpCredentialTarget,
+} from "../../domain/mcp-credential-target";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -92,6 +96,27 @@ export function assertNoDerivedResourceCollision(
       );
     }
   }
+}
+
+/** Reject credential-bound aliases whose requests have no distinct network selector. */
+export function assertNoAmbiguousMcpCredentialTargets(
+  entries: readonly McpCredentialTarget[],
+): void {
+  const ambiguous = findAmbiguousMcpCredentialTarget(entries);
+  if (!ambiguous) return;
+  throw new McpBridgeError(
+    `MCP servers '${ambiguous.entry.server}' and '${ambiguous.conflict.server}' target the same URL with different credential bindings. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
+    2,
+  );
+}
+
+export function assertNoAmbiguousMcpCredentialTarget(
+  bridges: Readonly<Record<string, McpSourceEntry>>,
+  server: string,
+  url: string,
+  providerName: string | undefined,
+): void {
+  assertNoAmbiguousMcpCredentialTargets([...Object.values(bridges), { server, url, providerName }]);
 }
 
 export async function ensureSandboxGatewaySelected(

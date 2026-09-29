@@ -52,6 +52,7 @@ describe("parsePort", () => {
   it.each([
     ["non-numeric input", "abc", "Invalid port"],
     ["mixed alphanumeric input", "80a80", "Invalid port"],
+    ["a leading-zero port", "08000", "Invalid port"],
     ["a port below 1024", "80", "1024 and 65535"],
     ["a port above 65535", "70000", "1024 and 65535"],
     ["special characters that could break pgrep patterns", ".*", "Invalid port"],

@@ -82,6 +82,7 @@ const RAW_HELPERS = new Set([
   "runQuietOpenshell",
 ]);
 const DIRECT_EXECUTORS = new Set(["execFile", "execFileSync", "execa", "spawn", "spawnSync"]);
+const CHILD_PROCESS_MODULES = new Set(["child_process", "node:child_process"]);
 const ROOT_OPERATIONS = new Set([
   "--version",
   "doctor",
@@ -183,6 +184,45 @@ function calledName(node: ts.CallExpression): string | null {
   return null;
 }
 
+type StaticBindings = Readonly<{
+  directExecutors: ReadonlySet<string>;
+  openShellExecutables: ReadonlySet<string>;
+}>;
+
+function collectStaticBindings(source: ts.SourceFile): StaticBindings {
+  const directExecutors = new Set(DIRECT_EXECUTORS);
+  const openShellExecutables = new Set<string>();
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportDeclaration(node) &&
+      CHILD_PROCESS_MODULES.has(stringValue(node.moduleSpecifier) ?? "")
+    ) {
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (element.isTypeOnly) continue;
+          const importedName = element.propertyName?.text ?? element.name.text;
+          if (DIRECT_EXECUTORS.has(importedName)) directExecutors.add(element.name.text);
+        }
+      }
+    }
+
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      ts.isIdentifier(node.name) &&
+      stringValue(node.initializer) === "openshell"
+    ) {
+      openShellExecutables.add(node.name.text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(source);
+  return { directExecutors, openShellExecutables };
+}
+
 function rawRuntimeSpecifier(node: ts.Node): string | null {
   if (ts.isImportDeclaration(node)) {
     if (node.importClause?.isTypeOnly) return null;
@@ -209,6 +249,7 @@ function rawRuntimeSpecifier(node: ts.Node): string | null {
 function scanSourceFile(repoPath: string, absPath: string): ConsumerFinding[] {
   if (repoPath.startsWith("src/lib/adapters/openshell/")) return [];
   const source = sourceFileFor(absPath);
+  const bindings = collectStaticBindings(source);
   const kinds = new Set<ConsumerFindingKind>();
   const operations = new Set<string>();
   const candidateOperations = new Set<string>();
@@ -249,10 +290,25 @@ function scanSourceFile(repoPath: string, absPath: string): ConsumerFinding[] {
         const operation = operationFromArray(first);
         if (operation) add("direct-argv", operation);
       }
+      const literalExecutableIndex = node.arguments.findIndex(
+        (argument) => stringValue(argument) === "openshell",
+      );
+      const forwardedArgv =
+        literalExecutableIndex >= 0
+          ? node.arguments
+              .slice(literalExecutableIndex + 1)
+              .find((argument): argument is ts.ArrayLiteralExpression =>
+                ts.isArrayLiteralExpression(argument),
+              )
+          : undefined;
+      if (forwardedArgv) {
+        add("direct-executable", operationFromArray(forwardedArgv) ?? "arbitrary argv");
+      }
       if (
         name &&
-        (DIRECT_EXECUTORS.has(name) || name === "run") &&
-        stringValue(first) === "openshell"
+        (bindings.directExecutors.has(name) || name === "run") &&
+        (stringValue(first) === "openshell" ||
+          (first && ts.isIdentifier(first) && bindings.openShellExecutables.has(first.text)))
       ) {
         const operation =
           second && ts.isArrayLiteralExpression(second)

@@ -103,6 +103,7 @@ type HarnessOverrides = Readonly<{
   hostProbe?: HostProbe;
   inspect?: InspectListener;
   inspectLegacy?: InspectLegacyListener;
+  legacyForwardWorkspaceSelection?: "explicit" | "implicit-default";
   now?: () => number;
   platform?: NodeJS.Platform;
   procRoot?: string;
@@ -110,6 +111,7 @@ type HarnessOverrides = Readonly<{
   probePort?: ProbePort;
   run?: RunCommand;
   runtimeSelection?: OpenShellRuntimeSelection;
+  signalProcess?: SignalProcess;
   sleep?: (milliseconds: number) => Promise<void>;
   spawn?: SpawnForward;
   terminate?: TerminateForward;
@@ -221,6 +223,7 @@ export function createHarness(overrides: HarnessOverrides = {}) {
   const child = {
     exitCode: null,
     off: vi.fn(),
+    on: vi.fn(),
     once: vi.fn(),
     pid: 4_321,
     signalCode: null,
@@ -248,6 +251,9 @@ export function createHarness(overrides: HarnessOverrides = {}) {
     environment: overrides.environment ?? {},
     executable: overrides.executable ?? executable,
     gatewayEndpoint: overrides.gatewayEndpoint ?? forward.gatewayEndpoint,
+    ...(overrides.legacyForwardWorkspaceSelection
+      ? { legacyForwardWorkspaceSelection: overrides.legacyForwardWorkspaceSelection }
+      : {}),
     ...(overrides.hostProbe ? { hostProbe: overrides.hostProbe } : {}),
     inspect,
     inspectLegacy,
@@ -258,6 +264,7 @@ export function createHarness(overrides: HarnessOverrides = {}) {
     probePort,
     run,
     runtimeSelection: overrides.runtimeSelection ?? runtimeSelection,
+    ...(overrides.signalProcess ? { signalProcess: overrides.signalProcess } : {}),
     sleep,
     spawn,
     terminate,

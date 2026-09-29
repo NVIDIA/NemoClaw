@@ -227,23 +227,22 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
 });
 
 describe("gateway-scoped inference route readers", () => {
-  const output = [
-    "Gateway inference:",
-    "  Provider: openai-api",
-    "  Model: gpt-test",
-    "  Version: 1",
-  ].join("\n");
-
   it("uses the explicit gateway for verification and readiness", () => {
-    const capture = vi.fn(() => output);
-    const route = createInferenceRouteHelpers(capture);
+    const observeInferenceRoute = vi.fn(() => ({
+      ok: true as const,
+      value: {
+        state: "configured" as const,
+        route: { provider: "openai-api", model: "gpt-test" },
+      },
+    }));
+    const route = createInferenceRouteHelpers({ observeInferenceRoute });
 
     route.verifyInferenceRoute(GATEWAY, "openai-api", "gpt-test");
     expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "gpt-test")).toBe(true);
     expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "other")).toBe(false);
-    expect(capture).toHaveBeenCalledTimes(3);
-    capture.mock.calls.forEach((call) => {
-      expect(call).toEqual([["inference", "get", "-g", GATEWAY], { ignoreError: true }]);
+    expect(observeInferenceRoute).toHaveBeenCalledTimes(3);
+    observeInferenceRoute.mock.calls.forEach((call) => {
+      expect(call).toEqual([{ target: { kind: "named", gatewayName: GATEWAY } }]);
     });
   });
 
@@ -262,7 +261,12 @@ describe("gateway-scoped inference route readers", () => {
       ],
     }));
     const route = createInferenceRouteHelpers(
-      vi.fn(() => null),
+      {
+        observeInferenceRoute: vi.fn(() => ({
+          ok: false as const,
+          error: { kind: "transport" as const, reason: "unreachable" as const, message: "down" },
+        })),
+      },
       listSandboxes,
     );
 

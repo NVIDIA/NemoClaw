@@ -21,9 +21,13 @@ export type FinalOnboardFlowCompositionOptions<
   VerificationResult extends VerifyDeploymentResult = VerifyDeploymentResult,
 > = Omit<
   FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>,
-  "finalizationDeps"
+  "agentSetupDeps" | "finalizationDeps"
 > & {
   readonly portableRuntimeContext?: PortableOnboardRuntimeContext | null;
+  agentSetupDeps: Omit<
+    FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["agentSetupDeps"],
+    "waitForSandboxControlPlaneReady"
+  >;
   finalizationDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["finalizationDeps"],
     keyof FinalizationHandlerDeps
@@ -40,6 +44,10 @@ export function createFinalOnboardFlowPhases<
   const portableRuntime = options.portableRuntimeContext;
   return createFinalFlowPhases<Context, VerifyChain, VerificationResult>({
     ...options,
+    agentSetupDeps: {
+      ...options.agentSetupDeps,
+      waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+    },
     finalizationDeps: {
       ...options.finalizationDeps,
       ...finalizationHandlerDeps,

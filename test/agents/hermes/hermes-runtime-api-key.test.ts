@@ -414,7 +414,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         `PPID_FILE=${shellQuote(ppidFile)}`,
         `ARGS_FILE=${shellQuote(argsFile)}`,
         "export PPID_FILE ARGS_FILE",
-        "EXPECTED_PARENT=$BASHPID",
+        "EXPECTED_PARENT=$$",
         "ensure_hermes_runtime_api_server_key strict",
         'ACTUAL_PARENT="$(cat "$PPID_FILE")"',
         'printf "expected=%s actual=%s\\n" "$EXPECTED_PARENT" "$ACTUAL_PARENT"',

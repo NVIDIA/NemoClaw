@@ -57,7 +57,7 @@ function observed(
     },
     agent: {
       name: "hermes",
-      version: "0.20.6",
+      version: HERMES_LIFECYCLE_DEFINITION.agentVersion,
       configurationFingerprint: CONFIGURATION_FINGERPRINT,
       health,
     },
@@ -94,7 +94,11 @@ describe("Hermes lifecycle observation", () => {
       value: {
         apiVersion: "v1alpha1",
         state: "present",
-        agent: { name: "hermes", version: "0.20.6", readiness: "ready" },
+        agent: {
+          name: "hermes",
+          version: HERMES_LIFECYCLE_DEFINITION.agentVersion,
+          readiness: "ready",
+        },
         target: planRequest().target,
         sandbox: {
           ...planRequest().sandbox,

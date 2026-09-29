@@ -16,7 +16,8 @@ The safeguard bounds each compaction attempt while leaving summarization behavio
 
 ## Compaction Attempt Limit
 
-Each automatic or explicitly requested compaction attempt is limited to 120 seconds.
+Each automatic or explicitly requested compaction attempt is limited to 120 seconds by default.
+The N1x managed vLLM profile allows 300 seconds because compaction with its 32,768-token context window can take longer than 120 seconds.
 OpenClaw reports progress while the attempt runs.
 
 After a successful attempt, OpenClaw rotates the active transcript while preserving the most recent turn.

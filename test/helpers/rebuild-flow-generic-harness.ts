@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { OpenShellRuntimeSelection } from "../../src/lib/adapters/openshell/runtime-selection";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -25,6 +26,7 @@ import {
   hermesProviderAuth,
   installTerminalStepFailureMock,
   listHarnessRebuildBackups,
+  launchReadiness,
   loadRebuildSandbox,
   mcpBridge,
   mcpBridgeProviderInspection,
@@ -35,12 +37,16 @@ import {
   nim,
   onboardCredentialEnv,
   onboardSession,
+  openClawLifecycle,
   openshellRuntime,
   policies,
+  pairingSettlement,
   policyGet,
   policyState,
   portableRetirementAuthority,
+  portableReceiptReadiness,
   processRecovery,
+  commandTransport,
   providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
@@ -363,6 +369,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       : ({ name: sessionAgentName } as never),
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
+  vi.spyOn(portableReceiptReadiness, "classifyPortableLifecycleReceipt").mockReturnValue({
+    kind: "absent",
+  });
+  vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
+    kind: "settled",
+  });
+  vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
+    kind: "not-portable",
+  });
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
       const gatewayName =
@@ -411,6 +426,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
     });
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "loadRebuildSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "selectRebuildSession").mockImplementation(() => undefined);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     overrides.updateSession?.();
     if (typeof mutator !== "function") {
@@ -601,7 +618,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         sandboxVersion: expectedVersion,
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       };
     }
     Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});
@@ -925,17 +942,56 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (removed) policyRemovalObserved = true;
       return removed;
     });
-  const executeSandboxCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxCommand")
-    .mockImplementation(
-      overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
-    );
   const executeSandboxExecCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation(
-      overrides.executeSandboxExecCommand ??
-        (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    .spyOn(commandTransport, "executeSandboxExecCommand")
+    .mockImplementation(async () =>
+      (
+        overrides.executeSandboxExecCommand ??
+        (() => ({ status: 0, stdout: "doctor ok", stderr: "" }))
+      )(),
     );
+  vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    async (sandboxName, runtimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          kind: "backup" as const,
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    },
+  );
+  vi.spyOn(openClawLifecycle, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        kind: "backup" as const,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  const finishOpenClawMaintenanceWindowSpy = vi
+    .spyOn(openClawLifecycle, "finishUnregisteredOpenClawPostRestoreDoctor")
+    .mockResolvedValue({ ok: true });
+  vi.spyOn(openClawLifecycle, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+  });
+  vi.spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
+    ok: true,
+  });
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(
@@ -958,9 +1014,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
-  vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(
-    overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
-  );
   vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
     verified: true,
     errors: [],
@@ -1005,9 +1058,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const nativeMcpSources = Object.fromEntries(
     mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
   );
+  const legacyMcpSources = Object.fromEntries(
+    (overrides.mcpLegacySources ?? []).map((entry) => [
+      String(entry.server),
+      structuredClone(entry),
+    ]),
+  );
   vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue({
     native: nativeMcpSources,
-    legacy: {},
+    legacy: legacyMcpSources,
   });
   vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockReturnValue(nativeMcpSources);
   const defaultMcpPreparation = (
@@ -1061,8 +1120,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     errorSpy,
-    executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
+    finishOpenClawMaintenanceWindowSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     ensureRebuildAgentBaseImageSpy,
     ensureAgentBaseImageSpy,

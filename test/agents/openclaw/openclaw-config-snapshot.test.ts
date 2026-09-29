@@ -83,16 +83,7 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
   const configPath = path.join(dir, "openclaw.json");
   const restored = readStdin();
-  // Mirror the real restore command: the OpenClaw .last-good recovery anchor is
-  // refreshed from the staged temp BEFORE the live config is swapped (#5202).
-  if (cmd.includes("last-good")) {
-    fs.writeFileSync(path.join(dir, "openclaw.json.last-good"), restored);
-  }
   fs.writeFileSync(configPath, restored);
-  if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
-    const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
-    fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
-  }
   process.exit(0);
 }
 process.exit(0);
@@ -177,7 +168,7 @@ describe("OpenClaw durable config file (#5027)", () => {
 
       // Reporter-shaped config: model/provider/MCP/agent settings plus a
       // provider apiKey sentinel, a channel resolve placeholder, a real inline
-      // secret, and a gateway block (regenerated at startup).
+      // secret, and non-secret gateway settings alongside gateway credentials.
       const original = {
         models: {
           mode: "merge",
@@ -221,8 +212,8 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(backup.backedUpFiles).toEqual(["openclaw.json"]);
       expect(backup.manifest?.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
 
-      // The local backup is sanitized: secret stripped, gateway removed,
-      // restorable references preserved.
+      // The local backup is sanitized: secrets stripped and restorable settings
+      // preserved.
       const backedUp = JSON.parse(
         fs.readFileSync(path.join(backup.manifest!.backupPath, "openclaw.json"), "utf-8"),
       );
@@ -238,7 +229,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(backedUp.channels.slack.accounts.default.botToken).toBe("[STRIPPED_BY_MIGRATION]");
       expect(backedUp.mcpServers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
       expect(backedUp.mcpServers.github.env.NODE_ENV).toBe("production");
-      expect(backedUp.gateway).toBeUndefined();
+      expect(backedUp.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
 
       fs.writeFileSync(
         path.join(openclawDir, "openclaw.json"),
@@ -264,23 +255,16 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(restore.restoredFiles).toEqual(["openclaw.json"]);
 
       const after = JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"));
-      expect(after.gateway.auth.token).toBe("fresh-runtime-token");
-      expect(after.models.providers.nvidia.models[0].id).toBe("nvidia/nemotron");
+      expect(after.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
+      expect(after.models.providers.nvidia.models[0].id).toBe("moonshotai/kimi-k2");
       expect(after.channels.discord.accounts.default.token).toBe(
-        "openshell:resolve:env:v222_TOKEN",
+        "openshell:resolve:env:DISCORD_BOT_TOKEN",
       );
-      expect(after.channels.whatsapp.accounts.default.enabled).toBe(true);
-      expect(after.channels.slack).toBeUndefined();
+      expect(after.channels.whatsapp).toBeUndefined();
+      expect(after.channels.slack.accounts.default.botToken).toBe("[STRIPPED_BY_MIGRATION]");
       expect(after.mcpServers.filesystem.command).toBe("npx");
       expect(after.customAgents.researcher.prompt).toBe("be thorough");
-      const expectedHash = await import("node:crypto").then(({ createHash }) =>
-        createHash("sha256")
-          .update(fs.readFileSync(path.join(openclawDir, "openclaw.json")))
-          .digest("hex"),
-      );
-      expect(fs.readFileSync(path.join(openclawDir, ".config-hash"), "utf-8")).toBe(
-        `${expectedHash}  openclaw.json\n`,
-      );
+      expect(fs.existsSync(path.join(openclawDir, ".config-hash"))).toBe(false);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -292,7 +276,7 @@ describe("OpenClaw durable config file (#5027)", () => {
     }
   }, 15000);
 
-  it("preserves reporter-owned model metadata and mcp.servers across rebuild (#5202)", async () => {
+  it("restores the complete sanitized native config as one state file (#11764)", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-snapshot-5202-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -358,7 +342,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(backedUp.mcp.servers.filesystem.command).toBe("npx");
       expect(backedUp.mcp.servers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
       expect(backedUp.mcp.servers.github.env.NODE_ENV).toBe("production");
-      expect(backedUp.gateway).toBeUndefined();
+      expect(backedUp.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
 
       // Fresh v0.0.63 rebuild output: same provider/model id, reset tuning, a
       // fresh runtime gateway and a fresh base URL.
@@ -405,11 +389,11 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(model.maxTokens).toBe(32768);
       expect(model.compat).toEqual({ supportsUsageInStreaming: true, toolCallStyle: "openai" });
       expect(model.input).toEqual(["text", "image"]);
-      // Fresh runtime routing/credentials win.
+      // The native file is restored as one durable unit.
       expect(model.id).toBe("moonshotai/kimi-k2");
-      expect(model.name).toBe("fresh-display-name");
-      expect(after.models.providers.inference.baseUrl).toBe("http://127.0.0.1:9999/v1");
-      expect(after.gateway.auth.token).toBe("fresh-runtime-token");
+      expect(model.name).toBe("stale-display-name");
+      expect(after.models.providers.inference.baseUrl).toBe("http://127.0.0.1:8789/v1");
+      expect(after.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
       // Durable mcp.servers survives; the raw MCP secret never returns.
       expect(after.mcp.servers.filesystem).toEqual({
         command: "npx",
@@ -417,14 +401,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       });
       expect(after.mcp.servers.github.env.GITHUB_TOKEN).toBe("[STRIPPED_BY_MIGRATION]");
 
-      // OpenClaw's .last-good recovery anchor is refreshed to the restored
-      // config so its integrity check does not revert the merge (#5202).
-      const lastGood = JSON.parse(
-        fs.readFileSync(path.join(openclawDir, "openclaw.json.last-good"), "utf-8"),
-      );
-      expect(lastGood.models.providers.inference.models[0].reasoning).toBe(true);
-      expect(lastGood.models.providers.inference.models[0].maxTokens).toBe(32768);
-      expect(lastGood.mcp.servers.filesystem.command).toBe("npx");
+      expect(fs.existsSync(path.join(openclawDir, "openclaw.json.last-good"))).toBe(false);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

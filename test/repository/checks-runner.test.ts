@@ -65,7 +65,6 @@ describe("checks runner", () => {
   it.each([
     ["src/lib/security/credential-env.ts", "direct-credential-env"],
     ["docs/resources/local-credential-form.html", "local-credential-helper-pin"],
-    ["src/lib/domain/sandbox/connect-env.ts", "hermes-light-skin-boundary"],
     ["agents/hermes/Dockerfile.base", "dependency-pins"],
     ["src/lib/onboard.ts", "onboard-entry-composition"],
     ["nemoclaw/src/blueprint/runner.ts", "openshell-consumer-boundary"],

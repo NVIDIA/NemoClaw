@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
 import {
   collectSandboxStatusSnapshot,
@@ -11,6 +15,18 @@ import {
 } from "./status";
 
 describe("sandbox status inference.local route health (#6192)", () => {
+  let testHome: string;
+
+  beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-status-inference-"));
+    vi.stubEnv("HOME", testHome);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(testHome, { force: true, recursive: true });
+  });
+
   function snapshotDeps(options: {
     agent?: string;
     confirmedStopped?: boolean;
@@ -43,9 +59,9 @@ describe("sandbox status inference.local route health (#6192)", () => {
     };
     return {
       getSandbox: () => sandbox,
-      listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
-      updateSandbox: vi.fn((_name: string, updates: { stopped?: boolean }) => {
-        sandbox = { ...sandbox, ...updates };
+      listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+      recordSandboxStopIntent: vi.fn((_name: string, stopped: boolean) => {
+        sandbox = { ...sandbox, stopped };
         return true;
       }),
       reconcile: vi.fn(async () =>
@@ -57,13 +73,18 @@ describe("sandbox status inference.local route health (#6192)", () => {
               output: `Name: alpha\nPhase: ${options.lookupPhase ?? "Ready"}\n`,
             },
       ),
-      captureOpenshellForStatusImpl: vi.fn(
-        async () =>
-          ({
-            status: 0,
-            output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
-          }) as never,
-      ),
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            state: "configured" as const,
+            route: {
+              provider: options.liveProvider ?? provider,
+              model: options.liveModel ?? "nvidia/nemotron",
+            },
+          },
+        })),
+      },
       getSandboxStatusPreflightImpl: vi.fn(async (): Promise<SandboxStatusPreflightResult> => ({
         failure: null,
         failureLayer: null,
@@ -87,6 +108,12 @@ describe("sandbox status inference.local route health (#6192)", () => {
         async (_input: Parameters<typeof buildSandboxInferenceInvocationCommand>[0]) =>
           ({ ok: true }) as const,
       ),
+      recoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      })) as never,
       probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
       reportInferenceProbeError,
     };
@@ -180,7 +207,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(report.phase).toBe("Stopped");
     expect(report.failureLayer).toBeNull();
     expect(report.inferenceHealth).toBeNull();
-    expect(deps.captureOpenshellForStatusImpl).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
     expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
     expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });
@@ -200,7 +227,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const running = await getSandboxStatusReport("alpha", deps);
 
     expect(running.phase).toBe("Running");
-    expect(deps.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(deps.recordSandboxStopIntent).toHaveBeenCalledWith("alpha", false);
     expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalled();
 
     deps.getSandboxStatusPreflightImpl.mockResolvedValue({
@@ -224,7 +251,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       stopped: true,
       routeHealth: null,
     });
-    deps.updateSandbox.mockReturnValue(false);
+    deps.recordSandboxStopIntent.mockReturnValue(false);
 
     const report = await getSandboxStatusReport("alpha", deps);
 
@@ -320,6 +347,25 @@ describe("sandbox status inference.local route health (#6192)", () => {
     });
     expect(deps.probeProviderHealthImpl).toHaveBeenCalledWith("openai-api", {
       model: "gpt-5.2",
+    });
+  });
+
+  it("uses the configured status timeout for live route observation (#9809)", async () => {
+    vi.stubEnv("NEMOCLAW_STATUS_PROBE_TIMEOUT_MS", "123");
+    const deps = snapshotDeps({
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 123,
     });
   });
 

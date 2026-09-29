@@ -15,7 +15,10 @@ import {
   buildMcpBridgePolicyYaml,
 } from "./mcp-bridge-policy-render";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+import {
+  parseMcpUrlWithValidatedTarget,
+  type McpBridgeTargetValidation,
+} from "./mcp-bridge-url-validation";
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
@@ -61,6 +64,74 @@ export async function applyGeneratedPolicy(
           entry.denyTools,
         );
   await applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
+}
+
+/** Change only an existing public endpoint's pins in the observed OpenShell policy. */
+export async function refreshMcpPublicPolicyPins(
+  sandboxName: string,
+  entry: McpSourceEntry,
+  target: McpBridgeTargetValidation,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
+  assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  if (entry.trustedPrivateHost) {
+    throw new McpBridgeError("Trusted-private pins require explicit remove-and-add approval.", 2);
+  }
+  const policyPins = [
+    ...new Set((entry.allowedIps ?? []).map((address) => address.toLowerCase())),
+  ].sort();
+  const url = parseMcpUrlWithValidatedTarget(entry.url, { addresses: policyPins });
+  assertMcpBridgePolicyTarget(entry, target);
+  parseMcpUrlWithValidatedTarget(entry.url, target);
+  const operation = `refresh public address pins for MCP server '${entry.server}'`;
+  const context = await policies.inspectPolicyMutationContext(
+    sandboxName,
+    operation,
+    runtimeSelection.gatewayName,
+    runtimeSelection,
+  );
+  const document = YAML.parseDocument(context.basePolicyDocument);
+  const endpoints = document.getIn(
+    ["network_policies", buildMcpBridgePolicyKey(entry.server), "endpoints"],
+    true,
+  );
+  const mcpEndpoints = YAML.isSeq(endpoints)
+    ? endpoints.items.filter((node) => YAML.isMap(node) && node.get("protocol") === "mcp")
+    : [];
+  const endpoint = mcpEndpoints[0];
+  if (document.errors.length > 0 || mcpEndpoints.length !== 1 || !YAML.isMap(endpoint)) {
+    throw new McpBridgeError(
+      "Public-pin refresh requires one unambiguous live MCP policy endpoint. No policy was changed.",
+    );
+  }
+  const binding = endpoint.get("credential_binding", true);
+  const pins = endpoint.get("allowed_ips", true);
+  if (
+    String(endpoint.get("host")).toLowerCase() !== url.hostname ||
+    endpoint.get("port") !== Number(url.port || 443) ||
+    endpoint.get("path") !== (url.pathname || "/") ||
+    !YAML.isMap(binding) ||
+    binding.get("provider") !== entry.providerName ||
+    !YAML.isSeq(pins) ||
+    !isDeepStrictEqual(pins.toJSON(), entry.allowedIps)
+  ) {
+    throw new McpBridgeError(
+      "The live MCP endpoint or pins changed during public-pin refresh. No policy was changed; rerun against the current sources.",
+    );
+  }
+  if (isDeepStrictEqual(policyPins, target.addresses)) return;
+  endpoint.set("allowed_ips", target.addresses);
+  if (
+    !(await policies.setPolicyDocument(sandboxName, document.toString(), {
+      nonFatal: true,
+      operation,
+      context,
+    }))
+  ) {
+    throw new McpBridgeError(
+      "Public-pin policy update was not confirmed. Inspect mcp status before retrying; no agent or credential state was changed.",
+    );
+  }
 }
 
 async function applyGeneratedPolicyContent(
