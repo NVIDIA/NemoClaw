@@ -58,12 +58,13 @@ export interface Providers {
 async function readBuiltinNvidiaEndpoint(
   client: OpenShellReadClient,
   request: ReadRequest,
+  profileWorkspace: string,
 ): Promise<string> {
   request.signal.throwIfAborted();
   readValue(
     BuiltinNvidiaProfileResponseSchema,
     await client.raw.getProviderProfile(
-      { id: "nvidia", workspace: request.workspace },
+      { id: "nvidia", workspace: profileWorkspace },
       { signal: request.signal },
     ),
   );
@@ -133,10 +134,14 @@ async function readProfileEvidence(
   let builtinInferenceEndpoint: string | undefined;
   if (
     provider.type === "nvidia" &&
-    provider.profileWorkspace === "" &&
+    (provider.profileWorkspace === "" || provider.profileWorkspace === request.workspace) &&
     Object.keys(provider.config).length === 0
   ) {
-    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(client, request);
+    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(
+      client,
+      request,
+      provider.profileWorkspace,
+    );
   }
   const managedProfile =
     request.profileContract === undefined
