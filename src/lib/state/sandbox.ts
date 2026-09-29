@@ -468,19 +468,13 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
 
 // ── Safe tar extraction ──────────────────────────────────────────
 
-/**
- * Normalize a host path for safe comparison.
- * Mirrors migration-state.ts normalizeHostPath().
- */
+/** Normalize a host path for safe comparison. */
 function normalizeHostPath(input: string): string {
   const resolved = path.resolve(input);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-/**
- * Check whether candidatePath is within rootPath after normalization.
- * Mirrors migration-state.ts isWithinRoot().
- */
+/** Check whether candidatePath is within rootPath after normalization. */
 function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const candidate = normalizeHostPath(candidatePath);
   const root = normalizeHostPath(rootPath);
@@ -493,8 +487,7 @@ function isWithinRoot(candidatePath: string, rootPath: string): boolean {
  * Prevents an attacker from planting a symlink at the target path to
  * redirect reads or writes to an attacker-controlled directory.
  *
- * Mirrors the pattern from config-io.ts (PR #2290) and
- * nemoclaw/src/blueprint/snapshot.ts.
+ * Mirrors the pattern from config-io.ts (PR #2290).
  */
 function rejectSymlinksOnPath(targetPath: string): void {
   const home = HOME_DIR;
