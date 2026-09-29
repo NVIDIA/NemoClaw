@@ -90,9 +90,10 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`, which owns access failu
 
 Follow `.agents/skills/_shared/pr-follow-up.md`.
 
-An authorized implementation or PR workflow includes synchronizing the working branch with its
-target branch. Use a merge or GitHub's Update branch operation. Resolve mechanical, in-scope
-conflicts without asking for separate approval. These actions are not destructive Git operations.
+During an authorized PR workflow, integrate the target branch only under the conditions in
+`pr-follow-up.md`'s **Integrate the base branch** section. A permitted merge or GitHub Update branch
+operation and mechanical, in-scope conflict resolution need no separate approval. These actions are
+not destructive Git operations.
 
 ### Common Patterns
 

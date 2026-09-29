@@ -69,14 +69,21 @@ below.
 
 If the trusted local validation machinery cannot be established, do not execute the changed
 validator or install its dependency graph into a credentialed contributor environment. Preserve the
-implementation's focused test evidence, publish the exact commit as a draft through the guarded
-publication method without invoking changed local hooks, and rely on a canonical-base workflow job
-that has no effective write permissions. Before publication, inspect the job's trigger, checkout
-refs, permissions, action implementations, and credential inputs at the canonical base SHA. The job
-must not use candidate-local actions. It must not pass credentials to candidate-controlled commands.
-Disclose the skipped local validation, the differing machinery, and the canonical base SHA in
-`Verification`. This fallback needs no additional publication approval. Stop when no canonical-base
-job meets these conditions or when another publication gate independently fails.
+implementation's focused test evidence. Before publication, identify a base-controlled workflow job
+that will evaluate the published candidate commit. Its workflow definition and action implementations
+must come from the canonical base. Inspect its trigger, checkout refs, effective permissions, and
+credential inputs at the canonical base SHA. The job must have no effective write permissions. It
+must not use candidate-local actions or pass credentials to candidate-controlled commands. A
+candidate-defined `pull_request` workflow is not a base-controlled path. Do not rely on its result
+when the candidate changes that workflow or an action that it invokes.
+
+After these conditions pass, publish the commit as a draft through the publication operation's
+guarded hook-free mode. Bind the write to the expected prior remote commit, or to an absent remote
+branch for its first publication. Reconcile the remote branch and commit verification after the
+write. Keep the PR in draft until the base-controlled job validates the published commit. Disclose
+the skipped local validation, the differing machinery, and the canonical base SHA in `Verification`.
+This fallback needs no additional publication approval. Stop when no base-controlled job meets these
+conditions or when another publication gate independently fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal
 `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication
@@ -85,7 +92,13 @@ stale, repair contributor setup when that can restore the trusted surface. If th
 the hook's execution surface, use the guarded draft-publication fallback above. Do not alter or
 disable the installed hook to make an ordinary push succeed.
 
-Do not push when publication validation fails or is inconclusive. Complete formatting and generation before the final commit; publication validation checks tracked files without applying fixes. If validation reports a required change, repair it, commit it, inspect the new diff, refresh the trusted base, and push again. For an open PR, preserve the completed disposition record for the unchanged remote candidate and review the local repair without recollecting that remote candidate.
+Do not push when a publication validation attempt runs and fails or is inconclusive. The guarded
+draft fallback above is the exception when untrusted local validation was skipped and its other
+conditions passed. Complete formatting and generation before the final commit; publication
+validation checks tracked files without applying fixes. If validation reports a required change,
+repair it, commit it, inspect the new diff, refresh the trusted base, and push again. For an open PR,
+preserve the completed disposition record for the unchanged remote candidate and review the local
+repair without recollecting that remote candidate.
 
 The shared compiler-check runner may reuse a successful local result only when the candidate and base commits, source bytes, installed dependency bytes, resolved executable, execution environment, and required generated outputs still match. Missing, unreadable, stale, or failed evidence must execute the check. A dirty worktree or external Node loader prevents reuse. This local optimization does not establish independent review, CI success, or publication authorization. Keep the trusted-validation comparison above.
 

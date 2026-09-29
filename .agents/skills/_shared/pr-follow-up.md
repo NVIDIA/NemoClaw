@@ -51,7 +51,7 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 | Candidate-owned valid finding or failed check that is within the accepted scope and has one mechanically supported repair | Group by cause and repair the complete group. |
 | Inherited finding or failed check | Leave the candidate unchanged. Preserve the base evidence and report the disposition. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
-| Feedback requires new product scope, a choice between materially different outcomes, unrelated work, destructive cleanup, or closing or replacing the PR | Ask the user. Do not add the new surface as a repair. |
+| Feedback requires new product scope, a choice between materially different outcomes, unrelated work, destructive cleanup outside the accepted scope, or closing or replacing the PR | Ask the user. Do not add the new surface as a repair. |
 | Required review or check is still pending | Report it. Do not classify the collection as complete. |
 | Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Keep the candidate unchanged and ask a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for that commit or defer the PR. Do not rerun before that decision. |
 | No actionable finding after collection completes | Report the remaining checks. |
@@ -68,7 +68,7 @@ original task did not provide.
 Fetching the canonical base into a local comparison ref does not change the candidate. Continue to
 fetch it when trusted validation requires current base evidence.
 
-Merge or rebase the base branch into the candidate only for one of these reasons:
+Merge the base branch or use GitHub's Update branch operation only for one of these reasons:
 
 - resolve a current merge conflict;
 - consume a required dependency that has merged;

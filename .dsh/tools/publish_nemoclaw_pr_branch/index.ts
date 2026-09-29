@@ -1,5 +1,5 @@
 /**
- * Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence.
+ * Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence. A guarded bypass requires the expected remote commit, or null for an absent branch.
  */
 export default async function publish_nemoclaw_pr_branch(input: {
   workdir: string;
@@ -9,6 +9,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
   expectedHeadSha: string;
   pullNumber?: Integer;
   expectedPullHeadSha?: string;
+  expectedRemoteSha?: string | null;
+  bypassPrePushHook?: boolean;
   requireClean?: boolean;
   apply?: true;
 }): Promise<{
@@ -37,6 +39,24 @@ export default async function publish_nemoclaw_pr_branch(input: {
     throw new Error("workdir and expectedHeadSha are required");
   if (input.expectedPullHeadSha !== undefined && !/^[0-9a-f]{40}$/.test(input.expectedPullHeadSha))
     throw new Error("expectedPullHeadSha must be a full commit SHA");
+  if (
+    input.expectedRemoteSha !== undefined &&
+    input.expectedRemoteSha !== null &&
+    !/^[0-9a-f]{40}$/.test(input.expectedRemoteSha)
+  )
+    throw new Error("expectedRemoteSha must be a full commit SHA or null");
+  if (input.bypassPrePushHook !== undefined && typeof input.bypassPrePushHook !== "boolean")
+    throw new Error("bypassPrePushHook must be boolean");
+  if (input.bypassPrePushHook === true && input.expectedRemoteSha === undefined)
+    throw new Error("A guarded pre-push hook bypass requires expectedRemoteSha");
+  if (input.bypassPrePushHook !== true && input.expectedRemoteSha !== undefined)
+    throw new Error("expectedRemoteSha applies only to a guarded pre-push hook bypass");
+  if (
+    input.bypassPrePushHook === true &&
+    input.expectedPullHeadSha !== undefined &&
+    input.expectedRemoteSha !== input.expectedPullHeadSha
+  )
+    throw new Error("The guarded remote expectation must match the pull request commit");
   if (
     input.pullNumber !== undefined &&
     (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
@@ -219,10 +239,19 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const remoteBefore = remoteBeforeReadOk
     ? remoteBeforeRead.stdout.text.trim().split(/\s+/u)[0]
     : "";
+  if (input.bypassPrePushHook === true) {
+    if (!remoteBeforeReadOk)
+      throw new Error("Could not verify the publication branch before guarded publication");
+    const expectedRemote = input.expectedRemoteSha ?? "";
+    if (remoteBefore !== expectedRemote)
+      throw new Error("Publication branch changed before guarded publication");
+  }
   let pushError = null;
   try {
     await run(
-      "git push --set-upstream " +
+      "git push " +
+        (input.bypassPrePushHook === true ? "--no-verify " : "") +
+        "--set-upstream " +
         q(remote) +
         " " +
         q(input.expectedHeadSha + ":refs/heads/" + branch),

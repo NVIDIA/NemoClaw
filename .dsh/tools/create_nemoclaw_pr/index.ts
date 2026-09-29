@@ -13,6 +13,8 @@ export default async function create_nemoclaw_pr(input: {
   workdir: string;
   apply: boolean;
   expectedHeadSha: string;
+  expectedRemoteSha?: string | null;
+  bypassPrePushHook?: boolean;
 }): Promise<{
   ok: boolean;
   apply: boolean;
@@ -119,6 +121,10 @@ export default async function create_nemoclaw_pr(input: {
     remote,
     baseBranch,
     expectedHeadSha: input.expectedHeadSha,
+    ...(input.expectedRemoteSha !== undefined
+      ? { expectedRemoteSha: input.expectedRemoteSha }
+      : {}),
+    ...(input.bypassPrePushHook === true ? { bypassPrePushHook: true } : {}),
     ...(input.apply === true ? { apply: true } : {}),
   });
   const commitCount = publication.commits.length;

@@ -11,6 +11,7 @@ export default async function commit_push_refresh_pr(input: {
   remote?: string;
   branch?: string;
   push?: boolean;
+  bypassPrePushHook?: boolean;
   refreshBody?: boolean;
   docsResult?: "blocked" | "docs-updated" | "no-docs-needed";
   docsEvidence?: string;
@@ -63,6 +64,8 @@ export default async function commit_push_refresh_pr(input: {
   const willRefresh = input.refreshBody !== false;
   if (willRefresh && !willPush)
     throw new Error("Evidence cannot be updated for an unpushed commit; pass refreshBody:false");
+  if (input.bypassPrePushHook !== undefined && typeof input.bypassPrePushHook !== "boolean")
+    throw new Error("bypassPrePushHook must be boolean");
   if (willRefresh && (!input.docsResult || !input.docsEvidence?.trim() || !input.docsAgent?.trim()))
     throw new Error("Updating PR evidence requires a documentation writer receipt");
   if ((input.broadGatePassed === undefined) !== (input.broadGateEvidence === undefined))
@@ -249,6 +252,9 @@ export default async function commit_push_refresh_pr(input: {
         expectedHeadSha: localHead,
         pullNumber: input.pullNumber,
         expectedPullHeadSha: localHeadBefore,
+        ...(input.bypassPrePushHook === true
+          ? { bypassPrePushHook: true, expectedRemoteSha: localHeadBefore }
+          : {}),
         requireClean: false,
         apply: true,
       });
