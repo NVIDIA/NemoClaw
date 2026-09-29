@@ -911,9 +911,20 @@ impl JourneyState {
             .definition
             .ask_scopes
             .contains(&JourneyScope::DeploymentFields)
-            && let Some(document) = assessment.document()
         {
-            for field in crate::deployment::deployment_questions_for_document(document)? {
+            let deployment_values = assessment
+                .document()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?
+                .unwrap_or_else(|| self.values.clone());
+            let active_harness = harness_path(&deployment_values);
+            let active_routes = routes_path(&deployment_values);
+            for field in crate::deployment::deployment_questions_for_values(
+                &deployment_values,
+                active_harness.as_deref(),
+                active_routes.as_deref(),
+            )? {
                 if self.accepted.contains(&field.path)
                     || questions.iter().any(|question| question.id == field.path)
                 {

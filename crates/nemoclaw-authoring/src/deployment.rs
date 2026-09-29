@@ -9,60 +9,21 @@ use crate::{
     sdk_schema::{finite_choices, sdk_field_schema_for},
     settings::SettingQuestion,
 };
-use nemoclaw_sdk::config::Document;
 use serde_json::Value;
 
-pub(crate) fn deployment_questions_for_document(
-    document: &Document,
+pub(crate) fn deployment_questions_for_values(
+    values: &Value,
+    active_harness: Option<&str>,
+    active_routes: Option<&str>,
 ) -> Result<Vec<SettingQuestion>, Diagnostics> {
-    if document.spec.sandboxes.len() != 1 {
-        return Err(diagnostic(
-            "deployment",
-            "Deployment questions require one sandbox.",
-        ));
-    }
-    let values = serde_json::to_value(document)
-        .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?;
     let mut questions = Vec::new();
-    collect(&values, &values, "", &mut questions, 0)?;
-    let sandbox = &document.spec.sandboxes[0];
-    let harness = document
-        .sandbox_harness(sandbox)
-        .map_err(|error| diagnostic("deployment", &error.to_string()))?;
-    let inference = document
-        .sandbox_inference(sandbox)
-        .map_err(|error| diagnostic("deployment", &error.to_string()))?;
-    let mut harness_paths = vec!["/spec/sandboxes/0/harness".to_owned()];
-    let mut inference_paths = vec!["/spec/sandboxes/0/agent/inference".to_owned()];
-    for (base, definitions) in [
-        ("/spec/harnesses", &document.spec.harnesses),
-        ("/spec/sandboxes/0/harnesses", &sandbox.harnesses),
-    ] {
-        for (name, definition) in definitions {
-            if std::ptr::eq(definition, harness) {
-                harness_paths.push(format!("{base}/{}", escaped(name)));
-            }
-        }
-    }
-    for (base, definitions) in [
-        ("/spec/inferences", &document.spec.inferences),
-        ("/spec/sandboxes/0/inferences", &sandbox.inferences),
-    ] {
-        for (name, definition) in definitions {
-            if std::ptr::eq(definition, inference) {
-                inference_paths.push(format!("{base}/{}", escaped(name)));
-            }
-        }
-    }
+    collect(values, values, "", &mut questions, 0)?;
     questions.retain(|question| {
         (!question.path.contains("/execution/")
-            || harness_paths
-                .iter()
-                .any(|base| question.path.starts_with(&format!("{base}/execution/"))))
+            || active_harness
+                .is_some_and(|base| question.path.starts_with(&format!("{base}/execution/"))))
             && (!question.path.contains("/routes/")
-                || inference_paths
-                    .iter()
-                    .any(|base| question.path.starts_with(&format!("{base}/routes/"))))
+                || active_routes.is_some_and(|base| question.path.starts_with(&format!("{base}/"))))
     });
     Ok(questions)
 }

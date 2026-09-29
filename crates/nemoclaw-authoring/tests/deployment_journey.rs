@@ -23,6 +23,42 @@ fn journey(name: &str) -> nemoclaw_authoring::JourneyState {
 }
 
 #[test]
+fn supplied_deployment_field_is_asked_before_unrelated_required_answers() {
+    let capabilities = Capabilities::available();
+    let mut supplied = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml"))
+        .unwrap()
+        .supplied()
+        .clone();
+    supplied["spec"]["gateway"] = json!({
+        "management": "external",
+        "endpoint": "http://127.0.0.1:19001"
+    });
+    let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("sparse-deployment", base)
+        .ask([JourneyScope::DeploymentFields])
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/gateway/endpoint";
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.assessment().document().is_none());
+    let question = resolution
+        .question(path)
+        .expect("supplied endpoint question");
+    assert_eq!(question.reason(), JourneyQuestionReason::ExplicitAsk);
+    assert_eq!(
+        question.suggestion(),
+        Some(&json!("http://127.0.0.1:19001"))
+    );
+    state
+        .answer(&capabilities, path, Some(json!("http://127.0.0.1:19002")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer(path),
+        Some(&json!("http://127.0.0.1:19002"))
+    );
+}
+
+#[test]
 fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_answers() {
     let capabilities = Capabilities::available();
     let mut state = journey("fabric-pi.yaml");
