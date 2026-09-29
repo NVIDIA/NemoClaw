@@ -46,7 +46,7 @@ export interface ServiceOptions {
   repoDir?: string;
   /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
   pidDir?: string;
-  /** Injectable process operations (identity + signalling) for tests. */
+  /** Injectable process operations (identity and signaling) for tests. */
   processControl?: ProcessControl;
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
@@ -154,15 +154,86 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
 export interface ProcessControl {
   isAlive(pid: number): boolean;
   commandLine(pid: number): string | null;
-  signal(pid: number, sig: NodeJS.Signals): void;
+  signalCloudflared(pid: number, sig: "SIGTERM" | "SIGKILL"): IdentityBoundSignalOutcome;
+}
+
+type IdentityBoundSignalOutcome = "signaled" | "not-running" | "not-cloudflared" | "unavailable";
+
+const PIDFD_SIGNAL_SCRIPT = String.raw`
+import os
+import signal
+import sys
+
+if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    print("unavailable")
+    raise SystemExit(0)
+
+pid = int(sys.argv[1])
+signal_name = sys.argv[2]
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    print("not-running")
+    raise SystemExit(0)
+except (OSError, PermissionError):
+    print("unavailable")
+    raise SystemExit(0)
+
+try:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as command_file:
+            command_line = command_file.read()
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+
+    tokens = command_line.replace(b"\\0", b" ").split()
+    if not any(os.path.basename(os.fsdecode(token)) == "cloudflared" for token in tokens):
+        print("not-cloudflared")
+        raise SystemExit(0)
+
+    try:
+        signal.pidfd_send_signal(pidfd, getattr(signal, signal_name))
+    except ProcessLookupError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+    print("signaled")
+finally:
+    os.close(pidfd)
+`;
+
+function signalCloudflaredWithPidfd(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "linux") return "unavailable";
+  try {
+    const result = execFileSync("python3", ["-I", "-c", PIDFD_SIGNAL_SCRIPT, String(pid), sig], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // A missing helper or unsupported pidfd API must not fall back to a raw PID signal.
+  }
+  return "unavailable";
 }
 
 const REAL_PROCESS_CONTROL: ProcessControl = {
   isAlive,
   commandLine: readProcessCommandLine,
-  signal: (pid, sig) => {
-    process.kill(pid, sig);
-  },
+  signalCloudflared: signalCloudflaredWithPidfd,
 };
 
 function extractTryCloudflareUrl(log: string): string | null {
@@ -403,30 +474,19 @@ function stopService(
   }
   const pid = state.pid;
 
-  // Bind the identity decision as closely as possible to SIGTERM. A process
-  // can exit after the first state read and its PID can be recycled before the
-  // signal; a second fail-closed read keeps that bystander out of the signal
-  // path and preserves uninspectable state for operator recovery.
-  const preTermState = readCloudflaredState(pidDir, pc);
-  if (preTermState.kind === "unverified-pid-process") {
+  // Open an identity-bound process handle before the final identity check and
+  // signal that handle. Raw PID signalling would still race with PID reuse
+  // after a successful command-line read.
+  const termOutcome = pc.signalCloudflared(pid, "SIGTERM");
+  if (termOutcome === "unavailable") {
     warn(
-      `${name} process identity became unavailable for PID ${String(pid)}; refusing to send SIGTERM. Restore process inspection access, then retry this command`,
+      `${name} identity-bound signaling is unavailable for PID ${String(pid)}; refusing to send SIGTERM. Restore process inspection access, then retry this command`,
     );
-    return preTermState;
+    return { kind: "unverified-pid-process", pid };
   }
-  if (preTermState.kind !== "running") {
+  if (termOutcome === "not-running" || termOutcome === "not-cloudflared") {
     info(`${name} was not running`);
     removePid(pidDir, name);
-    return { kind: "complete" };
-  }
-
-  // Send SIGTERM
-  try {
-    pc.signal(pid, "SIGTERM");
-  } catch {
-    // Already dead between the check and the signal
-    removePid(pidDir, name);
-    info(`${name} stopped (PID ${String(pid)})`);
     return { kind: "complete" };
   }
 
@@ -440,24 +500,14 @@ function stopService(
     }
   }
 
-  // Re-read the same identity-aware state before escalation: the PID could
-  // have exited and been recycled, or process inspection could have become
-  // unavailable, while SIGTERM was draining.
-  const postTermState = readCloudflaredState(pidDir, pc);
-  if (postTermState.kind === "unverified-pid-process") {
-    warn(
-      `${name} process identity became unavailable for PID ${String(pid)}; refusing to send SIGKILL. Restore process inspection access, then retry this command`,
-    );
-    return postTermState;
-  }
-  if (postTermState.kind === "running") {
-    try {
-      pc.signal(pid, "SIGKILL");
-    } catch {
-      /* already dead */
+  if (pc.isAlive(pid)) {
+    const killOutcome = pc.signalCloudflared(pid, "SIGKILL");
+    if (killOutcome === "unavailable") {
+      warn(
+        `${name} identity-bound signaling is unavailable for PID ${String(pid)}; refusing to send SIGKILL. Restore process inspection access, then retry this command`,
+      );
+      return { kind: "unverified-pid-process", pid };
     }
-  } else if (postTermState.kind === "stale-pid-process") {
-    info(`${name} was not running`);
   }
 
   removePid(pidDir, name);

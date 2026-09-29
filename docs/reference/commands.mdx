@@ -3472,6 +3472,8 @@ $$nemoclaw tunnel stop
 
 The command asks NemoClaw to stop an in-sandbox gateway only when NemoClaw directly owns that process. Supervisor-owned agent runtime processes remain managed inside their sandbox. The command leaves agent-owned host forwards and the managed OpenShell gateway port available.
 
+If NemoClaw cannot obtain an identity-bound handle for a live cloudflared process, the command preserves the PID file and does not signal the process. Restore process-inspection access, and then rerun the command to complete tunnel cleanup.
+
 `$$nemoclaw stop` remains as a deprecated legacy full stop. In addition to stopping tunnel services, it attempts to stop the selected agent's host forwards when the sandbox uses a manifest-resolved non-OpenClaw agent. It also attempts to safely release an unshared OpenShell gateway port whose ownership NemoClaw can verify. Shared gateways remain running, and ambiguous ownership fails closed without releasing the port. Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 
 ### `$$nemoclaw tunnel status`
