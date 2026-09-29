@@ -55,6 +55,7 @@ import {
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
+  textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "../security/credential-filter.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
@@ -82,10 +83,12 @@ const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
-// target image regenerates config.json, and warm-up sessions use a reserved
-// internal prefix that is already hidden from ordinary session list/export.
+// target image regenerates config.json and its root-owned blueprint cache;
+// warm-up sessions use a reserved internal prefix that is already hidden from
+// ordinary session list/export.
 const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
+  "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
   "--exclude='./.pi/agent/trust.json'",
 ].join(" ");
@@ -947,15 +950,18 @@ function dependencyPackageManifestIsCredentialFree(raw: string): boolean {
     return false;
   }
   if (!isConfigValue(value)) return false;
-  const inspect = (candidate: unknown): boolean => {
-    if (typeof candidate === "string") return !valueLooksLikeSecret(candidate);
-    if (Array.isArray(candidate)) return candidate.every(inspect);
-    if (candidate && typeof candidate === "object") {
-      return Object.entries(candidate).every(
-        ([key, child]) =>
-          inspect(child) &&
-          (!isCredentialField(key) || typeof child !== "string" || !valueLooksLikeSecret(child)),
+  const inspect = (candidate: unknown, parentField?: string): boolean => {
+    if (typeof candidate === "string") {
+      return (
+        !dependencyStringContainsCredential(candidate) &&
+        (!parentField ||
+          !isDependencyCredentialField(parentField) ||
+          !valueLooksLikeSecret(candidate))
       );
+    }
+    if (Array.isArray(candidate)) return candidate.every((child) => inspect(child));
+    if (candidate && typeof candidate === "object") {
+      return Object.entries(candidate).every(([key, child]) => inspect(child, key));
     }
     return true;
   };
@@ -1028,7 +1034,7 @@ function dependencyStringContainsCredential(value: string): boolean {
       // detector below still rejects high-confidence credential material.
     }
   }
-  return valueLooksLikeSecret(nonUrlContent);
+  return textContainsHighConfidenceCredential(nonUrlContent);
 }
 
 function dependencyValueContainsCredential(value: unknown, parentField?: string): boolean {
@@ -1352,19 +1358,32 @@ function isBundledProviderProfileSchema(entry: string): boolean {
 const NATIVE_DEPENDENCY_TREE_SEGMENTS = new Set([".venv", "node_modules", "site-packages", "venv"]);
 
 function isNativeDependencyTreeEntry(entry: string): boolean {
-  const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
-  return segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment));
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const segments = normalized.split("/");
+  return (
+    normalized.startsWith(".hermes/lazy-packages/") ||
+    segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment))
+  );
 }
 
 function isNativeNonAuthoritySourceEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const sourceOrAsset = /\.(?:[cm]?[jt]sx?|css|scss|map|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(
-    path.posix.basename(normalized),
-  );
+  const sourceOrAsset =
+    /\.(?:[cm]?[jt]sx?|css|scss|map|py|rb|go|rs|java|kt|swift|php|sh|rst)$/iu.test(
+      path.posix.basename(normalized),
+    );
   return (
     sourceOrAsset &&
     (isNativeDependencyTreeEntry(normalized) || normalized.startsWith(".openclaw/cache/"))
   );
+}
+
+function isNativeNonAuthorityBinaryStateEntry(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  // OpenClaw owns this SQLite database as durable agent state. Treat only an
+  // actually binary payload as opaque; a text file at this path still passes
+  // through the credential scanner below.
+  return /^\.openclaw\/state\/openclaw\.sqlite(?:-(?:shm|wal))?$/u.test(normalized);
 }
 
 function shouldScanNativeOpaqueAssignments(
@@ -1389,7 +1408,7 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
-  dependencyBinary: boolean,
+  nonAuthorityBinary: boolean,
   nonAuthoritySource: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
@@ -1400,7 +1419,7 @@ function scanNativeTarFilePayload(
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
-    if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
+    if (nonAuthorityBinary && offset === position && chunk.subarray(0, count).includes(0)) {
       return false;
     }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
@@ -1492,7 +1511,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
-              dependencyTree,
+              dependencyTree || isNativeNonAuthorityBinaryStateEntry(entry),
               isNativeNonAuthoritySourceEntry(entry),
             );
             if (violation === null) return "native state credential scan";
@@ -1875,6 +1894,7 @@ function capturePreparedNativeState(
         "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         '  cp -RpP "$source/." "$stage/"',
         '  rm -f -- "$stage/.nemoclaw/config.json"',
+        '  rm -rf -- "$stage/.nemoclaw/blueprints"',
         '  rm -f -- "$stage/.pi/agent/trust.json"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
         '  tar -C "$stage" -cf - -- .',
@@ -1983,8 +2003,8 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
           "trap resume EXIT HUP INT TERM",
-          "collect_candidates",
-          'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
+          "quiesce_pass=0",
+          'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
           'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; } 2>/dev/null || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',

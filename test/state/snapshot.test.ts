@@ -31,7 +31,8 @@ const { backupSandboxStateWithManagedAuthority } = await import(
   ).href
 );
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
-const TOKEN_SHAPED_GENERATED_BYTES = ["AKIA", "SITQQJHDQELIAYQ"].join("");
+const TOKEN_SHAPED_GENERATED_BYTES = ["AKIA", "SITQQJHDQELIAYQX"].join("");
+const OPENCLAW_SQLITE_WAL = ".openclaw/state/openclaw.sqlite-wal";
 
 afterAll(() => {
   restoreEnv("HOME", ORIGINAL_HOME);
@@ -230,6 +231,7 @@ if (command.includes("tar -C")) {
       copyTree(path.join(root, name), path.join(copyRoot, name));
     }
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "config.json"), { force: true });
+    fs.rmSync(path.join(copyRoot, ".nemoclaw", "blueprints"), { recursive: true, force: true });
     fs.rmSync(path.join(copyRoot, ".pi", "agent", "trust.json"), { force: true });
     const sessionDirectory = path.join(copyRoot, ".openclaw", "agents", "main", "sessions");
     if (fs.existsSync(sessionDirectory)) {
@@ -477,7 +479,7 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
       expect(archivedPaths).not.toContain(".pi/agent/trust.json");
-      expect(archivedPaths).toContain(".nemoclaw/blueprints/0.1.0/provider-profiles");
+      expect(archivedPaths).not.toContain(".nemoclaw/blueprints/");
       expect(assertCurrent).toHaveBeenCalledTimes(2);
       expect(fs.statSync(payloadPath)).toMatchObject({
         ino: sourceInode,
@@ -984,7 +986,6 @@ describe("complete native home persistence", () => {
       "concurrent-copy count must be a positive integer",
     );
   });
-
   it.each([
     ["a short assignment in an ordinary note", "workspace/notes.txt", "password=abc"],
     [
@@ -998,6 +999,17 @@ describe("complete native home persistence", () => {
       '{"sessions":{"main":{"sessionToken":"opaqueSessionIdentifierZ1234567890"}}}',
     ],
     ["dependency source map", "node_modules/example.mjs.map", TOKEN_SHAPED_GENERATED_BYTES],
+    [
+      "dependency metadata",
+      "node_modules/jsonwebtoken/package.json",
+      '{"description":"JSON Web Token implementation"}',
+    ],
+    [
+      "Hermes lazy docs",
+      ".hermes/lazy-packages/boto3/examples/cloudfront.rst",
+      TOKEN_SHAPED_GENERATED_BYTES,
+    ],
+    ["OpenClaw database", OPENCLAW_SQLITE_WAL, `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
     ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
   ])(
     "preserves %s without treating it as credential configuration",
@@ -1008,7 +1020,6 @@ describe("complete native home persistence", () => {
         fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
         fs.writeFileSync(path.join(nativeRoot, relativePath), content);
         writeOpenClawRegistry("alpha");
-
         const backup = sandboxState.backupSandboxState("alpha", {
           nativeStateSource: {
             root: "/sandbox",
@@ -1016,7 +1027,6 @@ describe("complete native home persistence", () => {
             assertCurrent: vi.fn(),
           },
         });
-
         expect(backup.success, backup.error).toBe(true);
         sandboxState.inspectNativeSandboxState(
           backup.manifest!.backupPath,
@@ -1032,9 +1042,9 @@ describe("complete native home persistence", () => {
       }
     },
   );
-
   it.each([
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
+    ["a text database impostor", OPENCLAW_SQLITE_WAL, TOKEN_SHAPED_GENERATED_BYTES],
     [
       "an opaque bearer credential in a history file",
       ".openclaw/agents/child/history.log",
@@ -1061,16 +1071,6 @@ describe("complete native home persistence", () => {
       JSON.stringify({ default: { authorization: "Bearer opaqueCredentialPayloadZ1234567890" } }),
     ],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
-    [
-      "a concrete token in a bundled provider profile schema",
-      ".nemoclaw/blueprints/0.1.0/provider-profiles/injected.yaml",
-      `credentials:\n  - name: access_token\n    value: ghp_${"02468ace13579bdf"}\n`,
-    ],
-    [
-      "an opaque secret value in a bundled provider profile schema",
-      ".nemoclaw/blueprints/0.1.0/provider-profiles/injected.yaml",
-      "credentials:\n  - name: access_token\n    secret: actual-provider-password\n",
-    ],
     [
       "a concrete token in the Pi managed model registry",
       ".pi/agent/models.json",
@@ -1139,9 +1139,7 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
       writeOpenClawRegistry("alpha");
-
       const backup = sandboxState.backupSandboxState("alpha");
-
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential-bearing or uninspectable content");
       expect(backup.error).toContain(`./${relativePath}`);
@@ -1154,7 +1152,6 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("removes an incomplete archive when manifest publication fails", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-manifest-failure-"));
     try {
@@ -1162,7 +1159,6 @@ describe("complete native home persistence", () => {
       fs.mkdirSync(nativeRoot, { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
       writeOpenClawRegistry("alpha");
-
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
           root: "/sandbox",
@@ -1175,7 +1171,6 @@ describe("complete native home persistence", () => {
           fs.mkdirSync(path.join(sandboxBackups, timestamp!, "rebuild-manifest.json"));
         },
       });
-
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("Could not publish the native home/workspace backup manifest");
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
@@ -1184,7 +1179,6 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("restores an escaping symlink without following it outside the target root", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-link-"));
     const oldPath = process.env.PATH;
@@ -1206,7 +1200,6 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG = commandLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
       writeOpenClawRegistry("alpha");
-
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success, backup.error).toBe(true);
       for (const entry of fs.readdirSync(nativeRoot)) {
@@ -1216,12 +1209,12 @@ describe("complete native home persistence", () => {
         });
       }
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
-
       expect(restore.success, restore.error).toBe(true);
       expect(fs.readFileSync(path.join(nativeRoot, "original.txt"), "utf8")).toBe("payload");
       expect(fs.readlinkSync(path.join(nativeRoot, "unsafe-link"))).toBe("../../outside");
       const commands = fs.readFileSync(commandLog, "utf8");
       expect(commands).toContain('kill -STOP "$pid"');
+      expect(commands).toContain("quiesce_pass=$((quiesce_pass + 1))");
       expect(commands).toContain("trap resume EXIT HUP INT TERM");
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
@@ -1281,7 +1274,6 @@ process.stdout.write(String(uid) + "\\n");
         process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT = "1";
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
         writeOpenClawRegistry("alpha");
-
         const backup = sandboxState.backupSandboxState("alpha");
         expect(backup.success, backup.error).toBe(true);
         fs.rmSync(imageOwned, { recursive: true, force: true });
@@ -1290,7 +1282,6 @@ process.stdout.write(String(uid) + "\\n");
         } else if (collisionKind === "regular-file") {
           fs.writeFileSync(imageOwned, "replacement image authority");
         }
-
         const restore = await sandboxState.restoreSandboxState(
           "alpha",
           backup.manifest!.backupPath,
