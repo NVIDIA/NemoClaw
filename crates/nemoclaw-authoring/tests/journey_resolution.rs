@@ -437,6 +437,79 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
 }
 
 #[test]
+fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture.nested-guidance");
+    adapter.descriptor["settings_schema"] = json!({
+        "type":"object",
+        "properties":{
+            "native":{
+                "type":"object",
+                "properties":{
+                    "region":{"type":"string","enum":["west","east"]},
+                    "flavor":{"type":"string"}
+                },
+                "required":["region"]
+            }
+        }
+    });
+    catalog.adapters = vec![adapter];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"] = json!({
+        "kind":"fixture.nested-guidance",
+        "settings":{"native":{"region":"west"}}
+    });
+    let state = JourneyDefinition::new(
+        "nested-guidance",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .ask([
+        "adapter:fixture.nested-guidance:/native/region",
+        "adapter:fixture.nested-guidance:/native/typo",
+    ])
+    .omit(["adapter:fixture.nested-guidance:/native/flavor"])
+    .start(&capabilities)
+    .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let region = resolution
+        .question("adapter:fixture.nested-guidance:/native/region")
+        .expect("supplied nested setting is asked");
+    assert_eq!(region.reason(), JourneyQuestionReason::ExplicitAsk);
+    assert_eq!(region.suggestion(), Some(&json!("west")));
+    assert!(
+        resolution
+            .omitted()
+            .contains(&"adapter:fixture.nested-guidance:/native/flavor".to_owned())
+    );
+    assert!(
+        resolution
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("adapter:fixture.nested-guidance:/native/typo"))
+    );
+
+    base["spec"]["sandboxes"][0]["harness"]["settings"]["native"] = json!({});
+    let required_omit = JourneyDefinition::new(
+        "required-nested-omit",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .omit(["adapter:fixture.nested-guidance:/native/region"])
+    .start(&capabilities)
+    .unwrap();
+    assert!(
+        required_omit
+            .resolve(&capabilities)
+            .unwrap_err()
+            .to_string()
+            .contains("required setting")
+    );
+}
+
+#[test]
 fn root_fabric_alternatives_are_answered_through_the_journey() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();

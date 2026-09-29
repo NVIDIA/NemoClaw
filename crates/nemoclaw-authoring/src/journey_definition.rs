@@ -150,24 +150,13 @@ impl JourneyDefinition {
             if sdk_field_schema_for(self.base.supplied(), field).is_some() {
                 continue;
             }
-            let Some((adapter, pointer)) = adapter_field(field) else {
+            let Some((adapter, _)) = adapter_field(field) else {
                 return Err(diagnostic(
                     "journey",
                     &format!("cannot ask '{field}' in this preview"),
                 ));
             };
-            let Some(schema) = adapter_schema(capabilities, adapter)? else {
-                continue;
-            };
-            if pointer.is_empty() {
-                continue;
-            }
-            if schema["properties"].get(&pointer[1..]).is_none() {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("adapter '{adapter}' has no setting '{pointer}'"),
-                ));
-            }
+            adapter_schema(capabilities, adapter)?;
         }
         for field in &self.omit {
             if field.starts_with('/') {
@@ -203,12 +192,6 @@ impl JourneyDefinition {
                     "required adapter settings alternatives cannot be omitted",
                 ));
             }
-            let Some(property) = pointer.strip_prefix('/') else {
-                return Err(diagnostic(
-                    "journey",
-                    "adapter setting paths must start with '/'",
-                ));
-            };
             if self
                 .base
                 .supplied()
@@ -226,24 +209,7 @@ impl JourneyDefinition {
                     &format!("supplied setting '{field}' cannot be omitted"),
                 ));
             }
-            let Some(schema) = adapter_schema(capabilities, adapter)? else {
-                continue;
-            };
-            if schema["properties"].get(property).is_none() {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("adapter '{adapter}' has no setting '{pointer}'"),
-                ));
-            }
-            if schema["required"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item == property))
-            {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("required setting '{field}' cannot be omitted"),
-                ));
-            }
+            adapter_schema(capabilities, adapter)?;
         }
         Ok(())
     }

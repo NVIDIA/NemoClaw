@@ -856,6 +856,10 @@ impl JourneyState {
                         .then_some(settings.clone()),
                 });
             }
+            let active_setting_ids = fields
+                .iter()
+                .map(|field| format!("adapter:{harness}:{}", field.path))
+                .collect::<BTreeSet<_>>();
             for field in fields {
                 let id = format!("adapter:{harness}:{}", field.path);
                 let value = if field.path.is_empty() && supplied_settings.is_none() {
@@ -864,6 +868,18 @@ impl JourneyState {
                     settings.pointer(&field.path)
                 };
                 if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
+                    if field.required {
+                        return Err(diagnostic(
+                            "journey",
+                            &format!("required setting '{id}' cannot be omitted"),
+                        ));
+                    }
+                    if value.is_some() {
+                        return Err(diagnostic(
+                            "journey",
+                            &format!("supplied setting '{id}' cannot be omitted"),
+                        ));
+                    }
                     omitted.push(id);
                     continue;
                 }
@@ -894,6 +910,15 @@ impl JourneyState {
                         suggestion: field.suggestion,
                         schema: field.schema,
                     });
+                }
+            }
+            for selector in self.definition.ask.union(&self.definition.omit) {
+                if adapter_field(selector).is_some_and(|(adapter, _)| adapter == harness)
+                    && !active_setting_ids.contains(selector)
+                {
+                    warnings.push(format!(
+                        "{selector} is not applicable in the current adapter settings schema"
+                    ));
                 }
             }
             if questions
