@@ -166,6 +166,10 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     ),
   );
   await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-tls-failures.json`,
+    rebindMcp.tlsFailures,
+  );
+  await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-trusted-private-status-diagnostics.json`,
     rebindMcp.diagnostics(),
   );

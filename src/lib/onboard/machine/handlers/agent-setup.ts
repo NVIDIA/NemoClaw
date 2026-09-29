@@ -4,14 +4,11 @@
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
-type WebSearchSelection = { fetchEnabled?: boolean } | null;
-
 export interface AgentSetupStateOptions<Agent> {
   agent: Agent | null;
   sandboxName: string;
   model: string;
   provider: string;
-  webSearchConfig: WebSearchSelection;
   resume: boolean;
   session: Session | null;
   hermesAuthMethod: string | null;
@@ -48,14 +45,12 @@ export interface AgentSetupStateOptions<Agent> {
       sandboxName: string,
       model: string,
       provider: string,
-      webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
       model: string,
       provider: string,
-      webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
       managedProfileApplied?: boolean,
     ): Promise<void>;
@@ -74,7 +69,6 @@ export async function handleAgentSetupState<Agent>({
   sandboxName,
   model,
   provider,
-  webSearchConfig,
   resume,
   session,
   hermesAuthMethod,
@@ -119,7 +113,6 @@ export async function handleAgentSetupState<Agent>({
       sandboxName,
       model,
       provider,
-      webSearchConfig,
       revalidateSandboxIdentity,
       managedOpenclawStartup === true,
     );
@@ -142,7 +135,6 @@ export async function handleAgentSetupState<Agent>({
       sandboxName,
       model,
       provider,
-      webSearchConfig,
       revalidateSandboxIdentity,
       true,
     );
@@ -154,13 +146,7 @@ export async function handleAgentSetupState<Agent>({
   } else {
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
-    await deps.setupOpenclaw(
-      sandboxName,
-      model,
-      provider,
-      webSearchConfig,
-      revalidateSandboxIdentity,
-    );
+    await deps.setupOpenclaw(sandboxName, model, provider, revalidateSandboxIdentity);
     revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
