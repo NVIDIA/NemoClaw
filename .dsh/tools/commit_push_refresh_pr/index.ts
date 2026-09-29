@@ -14,7 +14,6 @@ export default async function commit_push_refresh_pr(input: {
   hookBypassReceipt?: {
     schemaVersion: 1;
     canonicalBaseSha: string;
-    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
@@ -123,8 +122,6 @@ export default async function commit_push_refresh_pr(input: {
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
   if (input.hookBypassReceipt !== undefined && pr.isDraft !== true)
     throw new Error("Hook-free updates require a draft pull request");
-  if (input.hookBypassReceipt !== undefined && !willRefresh)
-    throw new Error("Hook-free updates require an exact-commit PR evidence refresh");
   const branch = input.branch ?? pr.headRefName;
   if (typeof branch !== "string" || !branch || branch.startsWith("-"))
     throw new Error("Could not resolve a valid PR source branch");
@@ -230,7 +227,6 @@ export default async function commit_push_refresh_pr(input: {
     })
   ).head;
   let pushResult = null;
-  let guardedFallbackEvidence = null;
   let receipt = null;
   let readiness = null;
   let monitored = null;
@@ -323,7 +319,6 @@ export default async function commit_push_refresh_pr(input: {
           fallback.candidateSha !== localHead ||
           fallback.receipt.candidateSha !== localHead ||
           fallback.receipt.canonicalBaseSha !== input.hookBypassReceipt.canonicalBaseSha ||
-          fallback.receipt.workflowRevisionSha !== input.hookBypassReceipt.workflowRevisionSha ||
           fallback.receipt.workflowPath !== input.hookBypassReceipt.workflowPath ||
           fallback.receipt.workflowBlobSha !== input.hookBypassReceipt.workflowBlobSha ||
           fallback.receipt.workflowJob !== input.hookBypassReceipt.workflowJob ||
@@ -332,7 +327,22 @@ export default async function commit_push_refresh_pr(input: {
           !fallback.disclosure.endsWith("; candidate SHA " + localHead)
         )
           throw new Error("Publisher did not return exact guarded fallback evidence");
-        guardedFallbackEvidence = fallback;
+        if (pushResult.guardedFallbackBodyUpdated !== true)
+          return {
+            applied: true,
+            mode: "blocked",
+            plan,
+            notes: ["Publication completed, but guarded fallback evidence was not updated."],
+            resultJson: JSON.stringify({
+              ok: false,
+              step: "guarded-fallback-evidence",
+              pullNumber: input.pullNumber,
+              publishedCommit: localHead,
+              blocker: pushResult.blocker,
+              recovery:
+                "Reconcile fallback evidence through the guarded publisher for this exact PR commit without creating another commit.",
+            }),
+          };
       }
       let remoteHead = "";
       for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -408,7 +418,6 @@ export default async function commit_push_refresh_pr(input: {
           input.broadGatePassed === undefined
             ? undefined
             : { passed: input.broadGatePassed, evidence: input.broadGateEvidence },
-        ...(guardedFallbackEvidence === null ? {} : { guardedFallbackEvidence }),
         apply: true,
       });
     } catch (error) {

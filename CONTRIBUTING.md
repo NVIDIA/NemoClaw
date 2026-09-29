@@ -158,7 +158,9 @@ need help choosing the appropriate repository.
 
 Before publication:
 
-1. Rebase or merge the current target branch as required by the repository workflow.
+1. Merge the current target branch or use GitHub's Update branch operation only when the shared
+   [PR follow-up integration rules](.agents/skills/_shared/pr-follow-up.md#integrate-the-base-branch)
+   require synchronization.
 2. Run the applicable validation and keep the branch focused.
 3. Use a Conventional Commit message and ensure each commit appears as `Verified` on GitHub.
 4. Complete [the pull request template](.github/PULL_REQUEST_TEMPLATE.md), including the Developer

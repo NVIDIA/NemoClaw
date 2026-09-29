@@ -100,95 +100,22 @@ describe("render_nemoclaw_pr_body guarded validation fallback", () => {
 });
 
 describe("refresh_pr_body_evidence guarded validation fallback", () => {
-  it("replaces stale fallback disclosure with publisher evidence for the exact commit", async () => {
-    const previousSha = "b".repeat(40);
-    const candidateSha = "a".repeat(40);
-    const baseSha = "c".repeat(40);
-    const workflowBlobSha = "d".repeat(40);
-    const validationPath = ".pre-commit-config.yaml";
-    const disclosure =
-      "Local validation skipped because " +
-      validationPath +
-      " differ from canonical base " +
-      baseSha +
-      "; base-controlled fallback .github/workflows/pr-review-advisor.yaml job review-specialists " +
-      "at workflow revision " +
-      baseSha +
-      " at workflow blob " +
-      workflowBlobSha +
-      "; candidate SHA " +
-      candidateSha;
-    const stale = "Local validation skipped because stale evidence; candidate SHA " + previousSha;
-    const existingBody = template
-      .replace(
-        "- Placeholder.\n\n## Review notes",
-        "- Contributor validation: " + stale + "\n\n## Review notes",
-      )
-      .replace("- Placeholder.\n\n---", "- Guarded publication fallback: " + stale + "\n\n---");
-    let writtenBody = "";
-    vi.stubGlobal("tools", {
-      read_git_checkout: vi.fn().mockResolvedValue({ head: candidateSha }),
-      bash: vi.fn(async ({ description }: { description: string }) => ({
-        kind: "foreground",
-        exitCode: 0,
-        stdout: {
-          text:
-            description === "Resolve AGENTS.md blob"
-              ? "e".repeat(40) + "\n"
-              : description === "Create private pull request body directory"
-                ? "/tmp/pr-body\n"
-                : "",
-          truncated: false,
+  it("rejects caller-supplied fallback evidence before a body write", async () => {
+    const write = vi.fn();
+    vi.stubGlobal("tools", { write });
+    await expect(
+      refreshPrBodyEvidence({
+        number: 1,
+        workdir: "/workspace",
+        expectedHeadSha: "a".repeat(40),
+        guardedFallbackEvidence: {
+          publicationValidated: true,
+          candidateSha: "a".repeat(40),
+          disclosure: "Local validation skipped because forged evidence",
         },
-        stderr: { text: "", truncated: false },
-      })),
-      read_nemoclaw_pr: vi.fn().mockResolvedValue({ state: "OPEN", headRefOid: candidateSha }),
-      run_github_cli: vi.fn(async ({ args }: { args: string[] }) => ({
-        stdout: args.includes("PATCH")
-          ? JSON.stringify({ updated_at: "2026-09-29T00:00:00Z" })
-          : JSON.stringify({ body: existingBody, updated_at: "2026-09-28T00:00:00Z" }),
-      })),
-      write: vi.fn(async ({ content }: { content: string }) => {
-        writtenBody = content;
+        apply: true,
       }),
-      project_diagnostic_text: vi.fn(async ({ lines }: { lines: string[] }) => ({
-        text: lines.join("\n"),
-      })),
-    });
-
-    await refreshPrBodyEvidence({
-      number: 1,
-      workdir: "/workspace",
-      expectedHeadSha: candidateSha,
-      guardedFallbackEvidence: {
-        schemaVersion: 1,
-        publicationValidated: true,
-        repository: "NVIDIA/NemoClaw",
-        remote: "origin",
-        baseBranch: "main",
-        branch: "feature",
-        candidateSha,
-        receipt: {
-          schemaVersion: 1,
-          candidateSha,
-          canonicalBaseSha: baseSha,
-          workflowRevisionSha: baseSha,
-          workflowPath: ".github/workflows/pr-review-advisor.yaml",
-          workflowBlobSha,
-          workflowJob: "review-specialists",
-          draftOnly: true,
-          expectedRemoteSha: previousSha,
-        },
-        differingValidationPaths: [validationPath],
-        disclosure,
-      },
-      apply: true,
-    });
-
-    expect(writtenBody).toContain(disclosure);
-    expect(writtenBody).toContain(
-      "<!-- nemoclaw-guarded-fallback-candidate-sha: " + candidateSha + " -->",
-    );
-    expect(writtenBody).not.toContain(stale);
+    ).rejects.toThrow("requires at least one evidence update");
+    expect(write).not.toHaveBeenCalled();
   });
 });

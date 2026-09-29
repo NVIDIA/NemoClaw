@@ -79,12 +79,11 @@ when the candidate changes that workflow or an action that it invokes.
 
 After these conditions pass, publish the commit as a draft through the publication operation's
 guarded hook-free mode. Record a structured fallback receipt bound to the candidate SHA, canonical
-base SHA, exact trusted workflow revision, workflow path and blob, trusted job, draft state, and
-expected remote commit. The trusted workflow revision must equal the receipt's canonical base SHA.
-The publication operation accepts only a checked-in fallback allowlist entry whose workflow blob,
+base SHA, workflow path and blob, trusted job, draft state, and expected remote commit. The
+publication operation accepts only a checked-in fallback allowlist entry whose workflow blob,
 job, and repository-local action implementation blobs were reviewed for the trigger, effective
 permissions, action sources, and credential flow above. It independently verifies those action
-blobs at the receipt-bound workflow revision. A caller assertion cannot add an eligible job. The
+blobs at the receipt-bound canonical base. A caller assertion cannot add an eligible job. The
 operation independently compares the candidate
 with the canonical base across the checked-in pre-push configuration, validation helpers,
 dependency-resolution inputs, formatter and linter configuration, Vitest configuration, and
@@ -100,6 +99,9 @@ and draft-PR creation. Give it a prepared body containing exactly two
 `<!-- nemoclaw-guarded-fallback-publication-evidence -->` markers: the contributor-validation detail
 and the guarded-publication review note. The operation replaces both only with disclosure created by
 its successful publisher result. The standalone PR-body renderer never accepts fallback evidence.
+For an open draft update, the guarded publisher writes its disclosure to the exact published PR
+commit before returning. The generic PR-body evidence refresher rejects caller-supplied fallback
+evidence.
 If the first branch write succeeds but commit verification is inconclusive, stop with the operation's
 branch-specific maintainer recovery procedure; do not retry the absent-ref publication. This fallback
 needs no additional publication approval. Stop when no base-controlled job meets these conditions or

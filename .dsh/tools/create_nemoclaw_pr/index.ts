@@ -17,7 +17,6 @@ export default async function create_nemoclaw_pr(input: {
     schemaVersion: 1;
     candidateSha: string;
     canonicalBaseSha: string;
-    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
@@ -228,7 +227,6 @@ export default async function create_nemoclaw_pr(input: {
       fallback.candidateSha !== input.expectedHeadSha ||
       fallback.receipt.candidateSha !== input.expectedHeadSha ||
       fallback.receipt.canonicalBaseSha !== input.hookBypassReceipt.canonicalBaseSha ||
-      fallback.receipt.workflowRevisionSha !== input.hookBypassReceipt.workflowRevisionSha ||
       fallback.receipt.workflowPath !== input.hookBypassReceipt.workflowPath ||
       fallback.receipt.workflowBlobSha !== input.hookBypassReceipt.workflowBlobSha ||
       fallback.receipt.workflowJob !== input.hookBypassReceipt.workflowJob ||

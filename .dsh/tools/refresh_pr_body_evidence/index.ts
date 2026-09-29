@@ -11,28 +11,6 @@ export default async function refresh_pr_body_evidence(input: {
   };
   targetedValidationLine?: string;
   broadGate?: { passed: boolean; evidence: string };
-  guardedFallbackEvidence?: {
-    schemaVersion: 1;
-    publicationValidated: true;
-    repository: string;
-    remote: string;
-    baseBranch: string;
-    branch: string;
-    candidateSha: string;
-    receipt: {
-      schemaVersion: 1;
-      candidateSha: string;
-      canonicalBaseSha: string;
-      workflowRevisionSha: string;
-      workflowPath: string;
-      workflowBlobSha: string;
-      workflowJob: string;
-      draftOnly: true;
-      expectedRemoteSha: string;
-    };
-    differingValidationPaths: string[];
-    disclosure: string;
-  };
   headWaitMs?: Integer;
   workdir: string;
   expectedHeadSha?: string;
@@ -68,12 +46,7 @@ export default async function refresh_pr_body_evidence(input: {
     throw new Error("repo must be owner/name with at most 255 characters");
   if (!Number.isSafeInteger(headWaitMs) || headWaitMs < 0 || headWaitMs > 120000)
     throw new Error("headWaitMs must be an integer from 0 through 120000");
-  if (
-    !input.docsReceipt &&
-    !input.targetedValidationLine &&
-    !input.broadGate &&
-    !input.guardedFallbackEvidence
-  )
+  if (!input.docsReceipt && !input.targetedValidationLine && !input.broadGate)
     throw new Error("refresh_pr_body_evidence requires at least one evidence update");
   if (input.apply && !input.expectedHeadSha)
     throw new Error("expectedHeadSha is required when apply is true");
@@ -93,47 +66,6 @@ export default async function refresh_pr_body_evidence(input: {
   if (input.targetedValidationLine)
     oneLine("Targeted validation evidence", input.targetedValidationLine);
   if (input.broadGate) oneLine("Broad gate evidence", input.broadGate.evidence);
-  if (input.guardedFallbackEvidence) {
-    const fallback = input.guardedFallbackEvidence;
-    const receipt = fallback.receipt;
-    const sha = /^[0-9a-f]{40}$/;
-    if (
-      fallback.schemaVersion !== 1 ||
-      fallback.publicationValidated !== true ||
-      fallback.repository !== repo ||
-      fallback.candidateSha !== receipt.candidateSha ||
-      !sha.test(fallback.candidateSha) ||
-      !sha.test(receipt.canonicalBaseSha) ||
-      !sha.test(receipt.workflowRevisionSha) ||
-      !sha.test(receipt.workflowBlobSha) ||
-      !sha.test(receipt.expectedRemoteSha) ||
-      receipt.schemaVersion !== 1 ||
-      receipt.draftOnly !== true ||
-      !Array.isArray(fallback.differingValidationPaths) ||
-      fallback.differingValidationPaths.length === 0 ||
-      fallback.differingValidationPaths.some(
-        (path) => typeof path !== "string" || !path || /[\r\n,]/.test(path),
-      )
-    )
-      throw new Error("guardedFallbackEvidence is invalid");
-    const expectedDisclosure =
-      "Local validation skipped because " +
-      fallback.differingValidationPaths.join(", ") +
-      " differ from canonical base " +
-      receipt.canonicalBaseSha +
-      "; base-controlled fallback " +
-      receipt.workflowPath +
-      " job " +
-      receipt.workflowJob +
-      " at workflow revision " +
-      receipt.workflowRevisionSha +
-      " at workflow blob " +
-      receipt.workflowBlobSha +
-      "; candidate SHA " +
-      fallback.candidateSha;
-    if (oneLine("Guarded fallback disclosure", fallback.disclosure) !== expectedDisclosure)
-      throw new Error("guardedFallbackEvidence disclosure does not match its receipt");
-  }
   const accessFailure =
     /authentication|authorization|forbidden|not authorized|HTTP 40[13]|resource not accessible|SSO/i;
   const diagnostic = async (lines, sourceTruncated = false) =>
@@ -184,8 +116,6 @@ export default async function refresh_pr_body_evidence(input: {
     includeStatus: false,
   });
   const localHead = checkout.head;
-  if (input.guardedFallbackEvidence && input.guardedFallbackEvidence.candidateSha !== localHead)
-    throw new Error("Guarded fallback evidence does not match the checkout commit");
   const agentsBlob = await run("git rev-parse HEAD:AGENTS.md", "Resolve AGENTS.md blob");
   const shaPattern = /^[0-9a-f]{40,64}$/;
   if (!shaPattern.test(agentsBlob)) throw new Error("Could not resolve a valid AGENTS.md blob SHA");
@@ -306,36 +236,6 @@ export default async function refresh_pr_body_evidence(input: {
           (input.broadGate.passed ? "passed — " : "not run — ") +
           input.broadGate.evidence.trim(),
       ]);
-    if (input.guardedFallbackEvidence) {
-      const fallback = input.guardedFallbackEvidence;
-      body = body
-        .replace(/^- Contributor validation: Local validation skipped because .*\n?/gmu, "")
-        .replace(/^- Guarded publication fallback: Local validation skipped because .*\n?/gmu, "");
-      upsertVerification("guarded-fallback-publication", [
-        "- Contributor validation: " + fallback.disclosure,
-        "<!-- nemoclaw-guarded-fallback-candidate-sha: " + fallback.candidateSha + " -->",
-      ]);
-      const reviewMatch = /(^|\n)## Review notes\n/u.exec(body);
-      if (!reviewMatch) throw new Error("Could not find Review notes section");
-      const reviewStart = reviewMatch.index + reviewMatch[0].length;
-      const reviewEnd = body.indexOf("\n---", reviewStart);
-      if (reviewEnd < 0) throw new Error("Could not find the end of Review notes section");
-      const startMarker = "<!-- nemoclaw-guarded-fallback-review:start -->";
-      const endMarker = "<!-- nemoclaw-guarded-fallback-review:end -->";
-      const block =
-        startMarker + "\n- Guarded publication fallback: " + fallback.disclosure + "\n" + endMarker;
-      const pattern =
-        /<!-- nemoclaw-guarded-fallback-review:start -->[\s\S]*?<!-- nemoclaw-guarded-fallback-review:end -->/gu;
-      const complete = [...body.matchAll(pattern)];
-      const starts = body.split(startMarker).length - 1;
-      const ends = body.split(endMarker).length - 1;
-      if (starts !== ends || starts > 1 || complete.length !== starts)
-        throw new Error("PR body contains invalid or duplicate guarded fallback review markers");
-      body =
-        complete.length === 1
-          ? body.replace(pattern, block)
-          : body.slice(0, reviewEnd).trimEnd() + "\n" + block + "\n" + body.slice(reviewEnd);
-    }
     return body;
   };
   const previewBody = renderBody(String(pr.body ?? ""));

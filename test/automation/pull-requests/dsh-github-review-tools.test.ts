@@ -282,9 +282,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     "Local validation skipped because .pre-commit-config.yaml differ from canonical base " +
     baseSha +
     "; base-controlled fallback .github/workflows/pr-review-advisor.yaml job review-specialists " +
-    "at workflow revision " +
-    baseSha +
-    " at workflow blob " +
+    "at workflow blob " +
     workflowBlobSha +
     "; candidate SHA " +
     HEAD_SHA;
@@ -300,7 +298,6 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     schemaVersion: 1,
     candidateSha: HEAD_SHA,
     canonicalBaseSha: baseSha,
-    workflowRevisionSha: baseSha,
     workflowPath: ".github/workflows/pr-review-advisor.yaml",
     workflowBlobSha,
     workflowJob: "review-specialists",
@@ -391,7 +388,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       number: 1,
       url: "https://github.com/NVIDIA/NemoClaw/pull/1",
       title,
-      body: branchState === "candidate-draft" ? preparedBody : body,
+      body: preparedBody,
       assignees: [],
       isDraft: true,
       state: "OPEN",
@@ -407,7 +404,11 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         args[0] === "api"
           ? args[1].includes("/git/ref/heads/")
             ? "api base"
-            : "api commit"
+            : args[1].includes("/pulls/")
+              ? args.includes("PATCH")
+                ? "api pull patch"
+                : "api pull"
+              : "api commit"
           : command;
       const responses: Record<string, { stdout: string }> = {
         "repo view": { stdout: "main\n" },
@@ -423,6 +424,16 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         "pr view": { stdout: JSON.stringify(pull) },
         "api base": { stdout: observed.baseSha + "\n" },
         "api commit": { stdout: "true\tverified\n" },
+        "api pull": {
+          stdout: JSON.stringify({ state: "open", head: HEAD_SHA, body: pull.body }),
+        },
+        "api pull patch": {
+          stdout: JSON.stringify({
+            state: "open",
+            head: HEAD_SHA,
+            body: args.find((arg) => arg.startsWith("body="))?.slice(5),
+          }),
+        },
       };
       return key === "api commit" && !commitVerification
         ? Promise.reject(new Error("verification unavailable"))
@@ -441,7 +452,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
   }
 
   it("uses an exact ref lease for an authorized hook-free update", async () => {
-    const { bash } = publicationTools("success");
+    const { bash, runGithubCli } = publicationTools("success");
 
     await expect(
       publishNemoclawPrBranch({
@@ -456,6 +467,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       pushed: true,
       remoteState: "expected-commit",
       allVerified: true,
+      guardedFallbackBodyUpdated: true,
       guardedFallbackEvidence: {
         publicationValidated: true,
         disclosure: expect.stringContaining("Local validation skipped because"),
@@ -467,6 +479,9 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     )?.[0].command;
     expect(push).toContain("--no-verify");
     expect(push).toContain("--force-with-lease=refs/heads/" + branch + ":" + previousSha);
+    expect(
+      runGithubCli.mock.calls.find(([call]) => call.args.includes("PATCH"))?.[0].args.join("\n"),
+    ).toContain("; candidate SHA " + HEAD_SHA);
   });
 
   it("uses an absent-ref lease for authorized initial draft publication", async () => {
@@ -622,7 +637,6 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       allVerified: true,
       blocker: null,
       commits: [{ sha: HEAD_SHA, verified: true, reason: "valid" }],
-      recoveredPullUrl: null,
       guardedFallbackEvidence: fallbackEvidence,
     });
     const preparedPull = {
@@ -761,7 +775,6 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       allVerified: true,
       blocker: null,
       commits: [{ sha: HEAD_SHA, verified: true, reason: "valid" }],
-      recoveredPullUrl: null,
       guardedFallbackEvidence: fallbackEvidence,
     });
     const preparedPull = {
@@ -946,7 +959,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     await expect(createInitial()).rejects.toThrow("does not match the prepared draft publication");
   });
 
-  it("forwards a newly bound fallback receipt for an open draft PR update", async () => {
+  it("requires publisher-owned fallback evidence for an open draft PR update", async () => {
     const nextSha = "f".repeat(40);
     let stagedReads = 0;
     const publish = vi.fn().mockResolvedValue({
@@ -956,6 +969,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       headSha: nextSha,
       commits: [{ sha: nextSha, verified: true, reason: "valid" }],
       blocker: null,
+      guardedFallbackBodyUpdated: true,
       guardedFallbackEvidence: {
         ...fallbackEvidence,
         candidateSha: nextSha,
@@ -1014,7 +1028,6 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       hookBypassReceipt: {
         schemaVersion: 1,
         canonicalBaseSha: baseSha,
-        workflowRevisionSha: baseSha,
         workflowPath: receipt.workflowPath,
         workflowBlobSha,
         workflowJob: receipt.workflowJob,
@@ -1033,24 +1046,13 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         hookBypassReceipt: expect.objectContaining({
           candidateSha: nextSha,
           canonicalBaseSha: baseSha,
-          workflowRevisionSha: baseSha,
           expectedRemoteSha: previousSha,
           draftOnly: true,
         }),
       }),
     );
     expect(refresh).toHaveBeenCalledWith(
-      expect.objectContaining({
-        expectedHeadSha: nextSha,
-        guardedFallbackEvidence: expect.objectContaining({
-          candidateSha: nextSha,
-          receipt: expect.objectContaining({
-            candidateSha: nextSha,
-            expectedRemoteSha: previousSha,
-          }),
-          disclosure: expect.stringContaining("; candidate SHA " + nextSha),
-        }),
-      }),
+      expect.not.objectContaining({ guardedFallbackEvidence: expect.anything() }),
     );
   });
 
@@ -1077,7 +1079,6 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         hookBypassReceipt: {
           schemaVersion: 1,
           canonicalBaseSha: baseSha,
-          workflowRevisionSha: baseSha,
           workflowPath: receipt.workflowPath,
           workflowBlobSha,
           workflowJob: receipt.workflowJob,

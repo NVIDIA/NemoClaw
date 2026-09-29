@@ -1,5 +1,5 @@
 /**
- * Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence. Hook-free publication requires a candidate- and base-bound fallback receipt.
+ * Push an exact clean NemoClaw candidate branch, verify commits, and write publisher-owned guarded-update disclosure. Hook-free publication requires a candidate- and base-bound fallback receipt.
  */
 export default async function publish_nemoclaw_pr_branch(input: {
   workdir: string;
@@ -13,7 +13,6 @@ export default async function publish_nemoclaw_pr_branch(input: {
     schemaVersion: 1;
     candidateSha: string;
     canonicalBaseSha: string;
-    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
@@ -36,6 +35,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   blocker: string | null;
   remoteState: "not-checked" | "expected-commit" | "unchanged" | "unknown";
   recoveredPullUrl: string | null;
+  guardedFallbackBodyUpdated: boolean | null;
   guardedFallbackValidationPaths: string[];
   guardedFallbackEvidence: null | {
     schemaVersion: 1;
@@ -106,7 +106,6 @@ export default async function publish_nemoclaw_pr_branch(input: {
       bypass.schemaVersion !== 1 ||
       bypass.candidateSha !== input.expectedHeadSha ||
       !/^[0-9a-f]{40}$/.test(bypass.canonicalBaseSha) ||
-      bypass.workflowRevisionSha !== bypass.canonicalBaseSha ||
       !/^\.github\/workflows\/[A-Za-z0-9._/-]+[.]ya?ml$/.test(bypass.workflowPath) ||
       bypass.workflowPath.includes("..") ||
       !/^[0-9a-f]{40}$/.test(bypass.workflowBlobSha) ||
@@ -192,12 +191,12 @@ export default async function publish_nemoclaw_pr_branch(input: {
     for (const [actionPath, actionBlobSha] of trustedFallbackActions) {
       const observedActionBlob = (
         await run(
-          "git rev-parse " + q(bypass.workflowRevisionSha + ":" + actionPath),
+          "git rev-parse " + q(bypass.canonicalBaseSha + ":" + actionPath),
           "Verify guarded fallback action " + actionPath,
         )
       ).stdout.text.trim();
       if (observedActionBlob !== actionBlobSha)
-        throw new Error("A guarded fallback action does not match the trusted workflow revision");
+        throw new Error("A guarded fallback action does not match the canonical base");
     }
     guardedFallbackValidationPaths = (
       await run(
@@ -327,6 +326,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       blocker: null,
       remoteState: "not-checked",
       recoveredPullUrl: null,
+      guardedFallbackBodyUpdated: null,
       guardedFallbackValidationPaths,
       guardedFallbackEvidence: null,
     };
@@ -458,6 +458,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       blocker: detail.text || "Publication result is uncertain",
       remoteState,
       recoveredPullUrl,
+      guardedFallbackBodyUpdated: null,
       guardedFallbackValidationPaths,
       guardedFallbackEvidence: null,
     };
@@ -503,12 +504,126 @@ export default async function publish_nemoclaw_pr_branch(input: {
         bypass.workflowPath +
         " job " +
         bypass.workflowJob +
-        " at workflow revision " +
-        bypass.workflowRevisionSha +
         " at workflow blob " +
         bypass.workflowBlobSha +
         "; candidate SHA " +
         head;
+  const guardedFallbackEvidence =
+    allVerified && bypass !== undefined && guardedFallbackDisclosure !== null
+      ? {
+          schemaVersion: 1 as const,
+          publicationValidated: true as const,
+          repository: repo,
+          remote,
+          baseBranch,
+          branch,
+          candidateSha: head,
+          receipt: { ...bypass },
+          differingValidationPaths: [...guardedFallbackValidationPaths],
+          disclosure: guardedFallbackDisclosure,
+        }
+      : null;
+  let guardedFallbackBodyUpdated: boolean | null = null;
+  let guardedFallbackBodyBlocker: string | null = null;
+  if (
+    guardedFallbackEvidence !== null &&
+    input.pullNumber !== undefined &&
+    bypass?.expectedRemoteSha !== null
+  ) {
+    guardedFallbackBodyUpdated = false;
+    try {
+      const readPullBody = async () => {
+        const result = await tools.run_github_cli({
+          workdir: input.workdir,
+          args: [
+            "api",
+            "repos/" + repo + "/pulls/" + input.pullNumber,
+            "--jq",
+            '{state, head: .head.sha, body: (.body // ""), updatedAt: .updated_at}',
+          ],
+          timeoutMs: 120000,
+        });
+        return JSON.parse(result.stdout || "{}");
+      };
+      let current;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        current = await readPullBody();
+        if (current.state !== "open" || current.head === head) break;
+        if (attempt < 4) await run("sleep 1", "Wait for guarded fallback PR commit");
+      }
+      if (current?.state !== "open" || current.head !== head)
+        throw new Error("Pull request changed before guarded fallback evidence update");
+      let body = String(current.body ?? "")
+        .replace(/^- Contributor validation: Local validation skipped because .*\n?/gmu, "")
+        .replace(/^- Guarded publication fallback: Local validation skipped because .*\n?/gmu, "");
+      const upsert = (key, heading, nextHeading, lines) => {
+        const headingIndex = body.indexOf(heading);
+        const endIndex = body.indexOf(nextHeading, headingIndex + heading.length);
+        if (headingIndex < 0 || endIndex < 0)
+          throw new Error("PR body is missing guarded fallback evidence sections");
+        const startMarker = "<!-- nemoclaw-" + key + ":start -->";
+        const endMarker = "<!-- nemoclaw-" + key + ":end -->";
+        const block = startMarker + "\n" + lines.join("\n") + "\n" + endMarker;
+        const pattern = new RegExp(
+          "<!-- nemoclaw-" + key + ":start -->[\\s\\S]*?<!-- nemoclaw-" + key + ":end -->",
+          "gu",
+        );
+        const complete = [...body.matchAll(pattern)];
+        const starts = body.split(startMarker).length - 1;
+        const ends = body.split(endMarker).length - 1;
+        if (starts !== ends || starts > 1 || complete.length !== starts)
+          throw new Error(
+            "PR body contains invalid or duplicate guarded fallback evidence markers",
+          );
+        body =
+          complete.length === 1
+            ? body.replace(pattern, block)
+            : body.slice(0, endIndex).trimEnd() + "\n" + block + "\n" + body.slice(endIndex);
+      };
+      upsert("guarded-fallback-publication", "## Verification", "## Review notes", [
+        "- Contributor validation: " + guardedFallbackDisclosure,
+        "<!-- nemoclaw-guarded-fallback-candidate-sha: " + head + " -->",
+      ]);
+      upsert("guarded-fallback-review", "## Review notes", "\n---", [
+        "- Guarded publication fallback: " + guardedFallbackDisclosure,
+      ]);
+      const latest = await readPullBody();
+      if (
+        latest.state !== "open" ||
+        latest.head !== head ||
+        latest.body !== current.body ||
+        latest.updatedAt !== current.updatedAt
+      )
+        throw new Error("Pull request changed while guarded fallback evidence was prepared");
+      const updatedResult = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          "repos/" + repo + "/pulls/" + input.pullNumber,
+          "-X",
+          "PATCH",
+          "-f",
+          "body=" + body,
+          "--jq",
+          '{state, head: .head.sha, body: (.body // "")}',
+        ],
+        timeoutMs: 120000,
+        apply: true,
+      });
+      const updated = JSON.parse(updatedResult.stdout || "{}");
+      if (updated.state !== "open" || updated.head !== head || updated.body !== body)
+        throw new Error("Pull request changed during guarded fallback evidence update");
+      guardedFallbackBodyUpdated = true;
+    } catch (error) {
+      const detail = await tools.project_diagnostic_text({
+        lines: [String(error?.message ?? error)],
+        maxLines: 5,
+        maxCharacters: 1000,
+      });
+      guardedFallbackBodyBlocker =
+        detail.text || "Guarded fallback evidence could not be written to the pull request";
+    }
+  }
   return {
     apply: true,
     mutated: changedRemote,
@@ -522,24 +637,11 @@ export default async function publish_nemoclaw_pr_branch(input: {
     allVerified,
     remoteState,
     recoveredPullUrl,
+    guardedFallbackBodyUpdated,
     guardedFallbackValidationPaths,
-    guardedFallbackEvidence:
-      allVerified && bypass !== undefined && guardedFallbackDisclosure !== null
-        ? {
-            schemaVersion: 1,
-            publicationValidated: true,
-            repository: repo,
-            remote,
-            baseBranch,
-            branch,
-            candidateSha: head,
-            receipt: { ...bypass },
-            differingValidationPaths: [...guardedFallbackValidationPaths],
-            disclosure: guardedFallbackDisclosure,
-          }
-        : null,
+    guardedFallbackEvidence,
     blocker: allVerified
-      ? null
+      ? guardedFallbackBodyBlocker
       : verificationError
         ? bypass?.expectedRemoteSha === null && changedRemote
           ? "Maintainer recovery required: branch " +
