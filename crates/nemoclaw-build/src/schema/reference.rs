@@ -155,10 +155,10 @@ fn guide(name: &str) -> &'static str {
         | "NetworkReference" | "ExternalNetwork" => {
             "[Resource ownership](../usage.md#resource-ownership)"
         }
-        "Network" | "Proxy" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
-            "[Sandbox policy and proxy](../sandbox-network.md)"
+        "Network" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
+            "[Sandbox policy](../sandbox-network.md)"
         }
-        name if name.starts_with("Policy") => "[Sandbox policy and proxy](../sandbox-network.md)",
+        name if name.starts_with("Policy") => "[Sandbox policy](../sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",

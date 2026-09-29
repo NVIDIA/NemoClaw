@@ -59,7 +59,7 @@ The recipe's generated draft vocabulary, `files/draft_vocab_en_code_47k.txt`, st
 
 ## Related NemoClaw Code
 
-The SDK's memory-policy and serving-budget credits are retained in `crates/nemoclaw-sdk/NOTICE.md` inside `supervisor-source.tar.gz`.
+The runtime's memory-policy and serving-budget credits are retained in `crates/nemoclaw-runtime/NOTICE.md` inside `supervisor-source.tar.gz`.
 `examples/spark/spark-inline.yaml` records model settings informed by `start.sh`.
 The snapshot downloader, recipe protocol, supervisor lifecycle, and preparation manifests are NemoClaw implementations.
 Calling a recipe program does not replace that program's license with the caller's license.
@@ -69,15 +69,17 @@ Calling a recipe program does not replace that program's license with the caller
 The build recipe, original sources, modified sources, licenses, and immutable input pins remain available inside the image for inspection and source retrieval.
 The build does not publish artifacts.
 
-The supervisor and Rust workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
-The archive includes `Cargo.lock`, vendored dependencies with their original licenses, OpenShell protobuf build inputs and license, and Cargo source replacement configuration.
+The supervisor and its standalone Rust workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
+The archive includes the runtime crate and its policy attribution, a pruned `Cargo.lock`, vendored dependencies with their original licenses, and Cargo source replacement configuration.
+On 2026-09-29, the archive was narrowed to runtime build inputs after serving and supervision moved out of the SDK.
 The supervisor is compiled offline from that exact archive.
 The archive excludes every `runtimes/` directory, including this recipe.
 This image retains its recipe scripts separately under `/opt/nemoclaw/source/` and `/opt/nemoclaw/recipe/`.
 `/opt/nemoclaw/source/Dockerfile` and `build.json` retain the selected image build instructions and manifest.
 `supervisor.json` records the compiler version, source version, binary hash, and archive hash.
 
-Building requires the pinned Rust toolchain, Protocol Buffers compiler, and a native C build toolchain.
+Building the retained supervisor requires the pinned Rust toolchain and a native C build toolchain.
+It does not require the Protocol Buffers compiler.
 
 These corrections apply to newly built artifacts; they do not alter previously built images or historical validation records.
 Retaining source and attribution does not itself provide the remote-user source offer required by AGPL section 13 for a modified network service.

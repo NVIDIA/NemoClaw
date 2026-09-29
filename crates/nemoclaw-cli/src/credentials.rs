@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, Error, ObservationError, config::Document, openshell::Secrets,
+    CancellationToken, Deployment, Error, ObservationError, Secrets, config::Document,
 };
 use std::{collections::BTreeMap, fmt, io::Write, sync::Arc};
 use tokio::io::{AsyncBufRead, Lines};

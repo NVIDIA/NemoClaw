@@ -22,36 +22,18 @@ fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)
     Ok(())
 }
 pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
-    let version = nemoclaw_build::source_version(&sources()?);
     let recipe = nemoclaw_build::RuntimeArtifact::parse(&fs::read(manifest)?)?;
-    recipe.require_native_host(&bundle::platform()?)?;
+    recipe.require_native_host(nemoclaw_build::native_runtime_platform()?)?;
     image::require_containerd(Path::new("docker"))?;
     let inputs = manifest.parent().ok_or("artifact directory missing")?;
     let root = PathBuf::from(".build").join(&recipe.name);
     let root = root.as_path();
     let context = root.join("context");
     fs::create_dir_all(&context)?;
-    let vendor = root.join("vendor");
-    let output = cargo()
-        .args(["vendor", "--locked", "--versioned-dirs"])
-        .arg(&vendor)
-        .stderr(Stdio::inherit())
-        .output()?;
-    if !output.status.success() {
-        return Err("cannot retain pinned dependency sources and licenses".into());
-    }
-    let config =
-        String::from_utf8(output.stdout)?.replace(&vendor.to_string_lossy().to_string(), "vendor");
-    let config_path = root.join("vendor-config.toml");
-    fs::write(&config_path, config)?;
-    let mut files = nemoclaw_build::supervisor_source_files(Path::new("."))?;
-    files.push((".cargo/config.toml".into(), config_path));
-    vendor_files(&vendor, &vendor, &mut files)?;
-    openshell_sources(&mut files)?;
-    fs::write(
-        context.join("supervisor-source.tar.gz"),
-        nemoclaw_build::source_archive(&files, recipe.source_date_epoch)?,
-    )?;
+    let source = tempfile::tempdir_in(root)?;
+    let directory = source.path().canonicalize()?;
+    let (archive, version) = retained_source(Path::new("."), &directory, recipe.source_date_epoch)?;
+    fs::write(context.join("supervisor-source.tar.gz"), archive)?;
     let binary = build_retained_source(
         root,
         &context.join("supervisor-source.tar.gz"),
@@ -75,69 +57,49 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     fs::copy(manifest, context.join("build.json"))?;
     fs::copy("LICENSE", context.join("LICENSE"))?;
     fs::copy(binary, context.join("nemoclaw-runtime"))?;
-    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-runtime":bundle::hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":bundle::hash_file(&context.join("supervisor-source.tar.gz"))?});
+    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-runtime":hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":hash_file(&context.join("supervisor-source.tar.gz"))?});
     fs::write(
         context.join("supervisor.json"),
         serde_json::to_vec_pretty(&metadata)?,
     )?;
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    nemoclaw_build::verify_source_version(
+        &version,
+        &nemoclaw_build::runtime_source_inputs(Path::new("."))?,
+    )?;
     let output = root.join("runtime.tar");
     let reference = image::export_and_load(Path::new("docker"), &recipe, &context, &output)?;
     println!("Runtime image loaded: {reference}");
     Ok(())
 }
 
-fn openshell_sources(files: &mut Vec<(String, PathBuf)>) -> Result<()> {
-    let metadata = cargo()
-        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+fn retained_source(repository: &Path, directory: &Path, epoch: u64) -> Result<(Vec<u8>, String)> {
+    let mut files = nemoclaw_build::stage_runtime_sources(repository, directory)?;
+    let retained_inputs = files
+        .iter()
+        .map(|(name, path)| Ok((name.clone(), fs::read(path)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let version = nemoclaw_build::source_version(&retained_inputs);
+    let vendor = directory.join("vendor");
+    let output = cargo()
+        .current_dir(directory)
+        .args(["vendor", "--locked", "--versioned-dirs"])
+        .arg(&vendor)
+        .stderr(Stdio::inherit())
         .output()?;
-    if !metadata.status.success() {
-        return Err("cannot locate pinned OpenShell build inputs".into());
+    if !output.status.success() {
+        return Err("cannot retain pinned runtime dependency sources and licenses".into());
     }
-    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
-    let packages = metadata["packages"]
-        .as_array()
-        .ok_or("incomplete dependency metadata")?;
-    let packages: Vec<_> = packages
-        .iter()
-        .filter(|p| p["name"] == "openshell-core")
-        .collect();
-    if packages.len() != 1 {
-        return Err("ambiguous OpenShell source package".into());
-    }
-    let manifest = Path::new(
-        packages[0]["manifest_path"]
-            .as_str()
-            .ok_or("missing OpenShell source path")?,
-    );
-    let root = manifest
-        .parent()
-        .ok_or("missing OpenShell source directory")?
-        .join("../..");
-    let proto = root.join("proto");
-    let mut paths = Vec::new();
-    vendor_files(&proto, &proto, &mut paths)?;
-    if !paths
-        .iter()
-        .any(|(name, _)| name.ends_with("openshell.proto"))
-    {
-        return Err("OpenShell protobuf sources are incomplete".into());
-    }
-    files.extend(
-        paths
-            .into_iter()
-            .map(|(name, path)| (name.replacen("vendor/", "proto/", 1), path)),
-    );
-    let retained = root.join("licenses/openshell-LICENSE");
-    files.push((
-        "licenses/openshell-LICENSE".into(),
-        if retained.is_file() {
-            retained
-        } else {
-            root.join("LICENSE")
-        },
-    ));
-    Ok(())
+    let config =
+        String::from_utf8(output.stdout)?.replace(&vendor.to_string_lossy().to_string(), "vendor");
+    let config_path = directory.join("vendor-config.toml");
+    fs::write(&config_path, config)?;
+    files.push((".cargo/config.toml".into(), config_path));
+    vendor_files(&vendor, &vendor, &mut files)?;
+    Ok((nemoclaw_build::source_archive(&files, epoch)?, version))
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    Ok(nemoclaw_build::hex(&Sha256::digest(fs::read(path)?)))
 }
 
 fn build_retained_source(root: &Path, archive: &Path, rust_target: &str) -> Result<PathBuf> {
@@ -188,6 +150,30 @@ fn compile_retained_source(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "compiles an isolated vendored dependency closure; run explicitly"]
+    fn retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = tempfile::tempdir().unwrap();
+        let staged = tempfile::tempdir().unwrap();
+        let (archive, _) = retained_source(&repository, staged.path(), 1234).unwrap();
+        let archive_path = root.path().join("supervisor-source.tar.gz");
+        fs::write(&archive_path, archive).unwrap();
+        let mut compiler = cargo();
+        compiler.env("PROTOC", root.path().join("missing-protoc"));
+        compiler.env("CARGO_HOME", root.path().join("empty-cargo-home"));
+        let rust_target = target(nemoclaw_build::native_runtime_platform().unwrap()).unwrap();
+        let binary =
+            compile_retained_source(root.path(), &archive_path, rust_target, compiler).unwrap();
+        assert!(binary.is_file());
+        let output = Command::new(binary)
+            .env_remove("NEMOCLAW_RUNTIME_SPEC")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("missing runtime specification"));
+    }
 
     #[test]
     fn retained_compilation_returns_the_binary_for_the_selected_platform() {

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{backend::Backend, compile, config::Document, openshell::OpenShell};
+use nemoclaw_provider::openshell::OpenShell;
+use nemoclaw_sdk::{backend::Backend, compile, config::Document};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[tokio::test]
-async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readiness() {
+async fn health_accepts_only_the_pinned_bridge_contract_without_generation() {
     let fixture = Fixture::start().await;
     let mut doc = Document::parse(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -15,7 +16,7 @@ async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readi
     *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(
         &doc.spec.gateway,
-        Arc::new(nemoclaw_sdk::openshell::EnvironmentSecrets),
+        Arc::new(nemoclaw_sdk::EnvironmentSecrets),
     )
     .unwrap();
     let generations = ["workspace", "provider", "sandbox"]
@@ -42,13 +43,13 @@ async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readi
     let health = client.health(&binding).await.unwrap();
     assert!(!health.supported);
     assert!(health.allows_apply_completion());
-    for (liveness, activity, readiness, accepted) in [
-        ("responsive", "busy", "ready", true),
-        ("responsive", "idle", "not_ready", false),
-        ("responsive", "stopping", "not_ready", false),
-        ("unknown", "unknown", "unknown", false),
-        ("unresponsive", "busy", "unknown", false),
-        ("exited", "unknown", "not_ready", false),
+    for (liveness, activity, readiness) in [
+        ("responsive", "busy", "ready"),
+        ("responsive", "idle", "not_ready"),
+        ("responsive", "stopping", "not_ready"),
+        ("unknown", "unknown", "unknown"),
+        ("unresponsive", "busy", "unknown"),
+        ("exited", "unknown", "not_ready"),
     ] {
         let report = serde_json::json!({
             "runtime_id": "owned-runtime", "checked_at_millis": 100, "duration_millis": 2,
@@ -59,20 +60,15 @@ async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readi
         fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
             "supported": true, "report": report, "reason_code": null
         }));
-        let health = client.health(&binding).await.unwrap();
-        assert_eq!(health.report, Some(report));
-        assert_eq!(health.allows_apply_completion(), accepted);
+        assert!(
+            client.health(&binding).await.is_err(),
+            "unmerged health reports must not establish readiness"
+        );
     }
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
         "supported": true, "report": null, "reason_code": "fabric_health_timeout"
     }));
-    assert!(
-        !client
-            .health(&binding)
-            .await
-            .unwrap()
-            .allows_apply_completion()
-    );
+    assert!(client.health(&binding).await.is_err());
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
         "supported": false, "report": null, "reason_code": "fabric_health_timeout"
     }));

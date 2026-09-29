@@ -1137,7 +1137,7 @@
     },
     "Network": {
       "additionalProperties": false,
-      "description": "Sandbox policy selection and optional agent HTTP proxy.",
+      "description": "Sandbox policy selection.",
       "if": {
         "required": [
           "policy"
@@ -1147,10 +1147,6 @@
         "policy": {
           "$ref": "#/$defs/ExplicitPolicySelection",
           "description": "Complete authored OpenShell policy, replacing the isolated preset."
-        },
-        "proxy": {
-          "$ref": "#/$defs/Proxy",
-          "description": "HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking."
         },
         "tier": {
           "anyOf": [
@@ -1788,31 +1784,6 @@
         }
       ],
       "description": "A literal glob or a nonempty list of alternative globs."
-    },
-    "Proxy": {
-      "additionalProperties": false,
-      "description": "Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.",
-      "properties": {
-        "host": {
-          "description": "Proxy hostname or IPv4 address, without scheme, path, or credentials.",
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9._-]+$",
-          "type": "string"
-        },
-        "port": {
-          "description": "Proxy TCP port, from 1 through 65535.",
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "host",
-        "port"
-      ],
-      "type": "object"
     },
     "Resources": {
       "additionalProperties": false,

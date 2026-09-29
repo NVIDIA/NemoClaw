@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::engine_observation::{observe_engine, observe_fabric};
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
 use nemoclaw_sdk::{
-    discovery::{DiscoveryRequest, ObservationStatus, observe_engine, observe_fabric},
-    docker::Engine,
-    fabric_capabilities::{FabricRequirements, Support, assess_image},
+    discovery::DiscoveryRequest, discovery::ObservationStatus,
+    fabric_capabilities::FabricRequirements, fabric_capabilities::Support,
+    fabric_capabilities::assess_image,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -73,7 +74,7 @@ impl DiscoveryDataSource {
     fn valid(&self, config: &DiscoveryState) -> bool {
         let engine_valid = match &config.engine {
             Value::Unknown => true,
-            Value::Value(engine) => Engine::validate_endpoint(engine).is_ok(),
+            Value::Value(engine) => crate::config::validate_engine_endpoint(engine).is_ok(),
             Value::Null => false,
         };
         let selection_valid = if self.fabric {
@@ -298,8 +299,7 @@ impl DataSource for DiscoveryDataSource {
 }
 
 #[cfg(all(test, unix))]
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use crate::docker::fixture as transport;
 
 #[cfg(test)]
 mod tests {

@@ -8,15 +8,44 @@ publish = false
 
 [dependencies]
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
+bollard.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+regex.workspace = true
+url.workspace = true
+sha2.workspace = true
+tar.workspace = true
+ipnet.workspace = true
+interprocess = { version = "2.4.4", features = ["tokio"] }
+time.workspace = true
+tokio-util.workspace = true
+getrandom.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tf-provider.workspace = true
 tokio.workspace = true
 rustls.workspace = true
+openshell-core.workspace = true
+openshell-sdk.workspace = true
+openshell-policy.workspace = true
+tonic.workspace = true
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[target.'cfg(unix)'.dependencies]
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+widestring = "1"
 
 [lints]
 workspace = true

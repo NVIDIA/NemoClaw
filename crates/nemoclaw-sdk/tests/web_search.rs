@@ -418,7 +418,7 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
         assert_eq!(
             policy["network_policies"]["nemoclaw-tavily"]["binaries"],
-            json!([{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3.13"}])
+            json!([{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3"}])
         );
         let endpoint = &policy["network_policies"]["nemoclaw-tavily"]["endpoints"][0];
         assert_eq!(endpoint["host"], "api.tavily.com");
@@ -584,7 +584,8 @@ fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
     let mut value = input();
     value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
     let mut policy =
-        openshell_policy::sandbox_policy_to_json_value(&nemoclaw_sdk::openshell::policy()).unwrap();
+        openshell_policy::sandbox_policy_to_json_value(&nemoclaw_sdk::config::isolated_policy())
+            .unwrap();
     policy["network_policies"] = json!({"custom-search": {
             "name":"custom-search",
             "endpoints":[{"host":"search.example.com","port":443}],

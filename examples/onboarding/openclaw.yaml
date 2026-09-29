@@ -16,7 +16,7 @@ spec:
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
-        env: NVIDIA_INFERENCE_API_KEY
+        env: NVIDIA_API_KEY
   sandboxes:
     - name: assistant
       runtime:

@@ -60,21 +60,16 @@ jobs:
               -v "$PWD/image/test_image.py:/test.py:ro" \
               --entrypoint /opt/fabric/bin/python "$image" -B /test.py
           done < .build-image-list
-      - name: Qualify native adapters through Fabric-owned tests
+      - name: Qualify native adapters in the built images
         run: |
-          qualify() {
-            docker run --rm --runtime=runc --network none --entrypoint /bin/sh "$1" -ec '
-              fixture=$(mktemp -d)
-              tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
-              /opt/fabric/bin/python "$fixture/tests/native/qualify.py" "$1" --settings "$2"
-            ' sh "$2" "$3"
+          native() {
+            image=$1 script=$2
+            shift 2
+            docker run --rm --runtime=runc --network none               -v "$PWD/image/$script:/$script:ro"               --entrypoint /opt/fabric/bin/python "$image" -B "/$script" "$@"
           }
-          qualify nc-fabric:openclaw nvidia.fabric.openclaw '{"cli":"/app/openclaw.mjs"}'
+          native nc-fabric:openclaw qualify_native.py nvidia.fabric.openclaw --settings '{"cli":"/app/openclaw.mjs"}'
           if [ "$AGENT_PLATFORM" = linux/arm64 ]; then
-            qualify nc-fabric:hermes nvidia.fabric.hermes '{"mode":"service"}'
-            docker run --rm --runtime=runc --network none --entrypoint /bin/sh nc-fabric:hermes -ec '
-              fixture=$(mktemp -d)
-              tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
-              /opt/fabric/bin/python "$fixture/tests/native/hermes_security.py"
-            '
+            native nc-fabric:hermes qualify_native.py nvidia.fabric.hermes --settings '{"mode":"service"}'
+            native nc-fabric:hermes hermes_security.py
+            native nc-fabric:pi qualify_native.py nvidia.fabric.pi
           fi

@@ -4,8 +4,10 @@ use super::*;
 use crate::config::ComputeDriver;
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let mut spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let before = serde_json::to_value(spec.container("/owned").unwrap()).unwrap();
@@ -26,8 +28,10 @@ fn image_pull_policy_does_not_change_container_configuration() {
 }
 #[test]
 fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let data_path = "/owned data/quoted\"directory";
     let config: toml::Value = toml::from_str(&spec.gateway_config(data_path)).unwrap();
@@ -62,8 +66,10 @@ fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
 }
 #[test]
 fn invalid_placement_network_does_not_panic() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut value: serde_json::Value =
         serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
     value["process"]["engine"] = json!("ssh://host");
@@ -73,8 +79,10 @@ fn invalid_placement_network_does_not_panic() {
 }
 #[test]
 fn runtime_configuration_handles_a_gateway_without_panicking() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     assert!(spec.process.is_none());
     assert!(matches!(
@@ -85,8 +93,10 @@ fn runtime_configuration_handles_a_gateway_without_panicking() {
 
 #[test]
 fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
     let expected = spec.process.as_ref().unwrap().configuration.clone();
     assert_eq!(spec.runtime_configuration().unwrap(), expected);
@@ -99,8 +109,10 @@ fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
 
 #[test]
 fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let restored: Spec = serde_json::from_str(&spec.json().unwrap()).unwrap();
@@ -139,8 +151,10 @@ fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
 
 #[test]
 fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let launch = spec.container("/owned-data").unwrap();
@@ -268,8 +282,10 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 
 #[test]
 fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
@@ -292,8 +308,10 @@ fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
 
 #[test]
 fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let valid: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     for field in ["owner", "generation", "layout", "kind", "name"] {
         let mut spec = valid.clone();
@@ -314,8 +332,10 @@ fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
 
 #[test]
 fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     spec.compute_driver = ComputeDriver::Podman;
     let network = "a".repeat(64);
@@ -337,8 +357,10 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
 
 #[test]
 fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let current: serde_json::Value =
             serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();

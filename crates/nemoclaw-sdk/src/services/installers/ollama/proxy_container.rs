@@ -83,6 +83,3 @@ impl ProxySpec {
         Ok(())
     }
 }
-#[cfg(all(test, unix))]
-#[path = "proxy_container_tests.rs"]
-mod tests;

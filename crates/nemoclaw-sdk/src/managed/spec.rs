@@ -6,7 +6,7 @@ use crate::config::ComputeDriver;
 mod tests;
 
 use crate::{Error, config::ManagedGateway};
-use bollard::models::ContainerCreateBody;
+use bollard_stubs::models::ContainerCreateBody;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -117,7 +117,7 @@ impl Spec {
                 .kind
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
-                && crate::docker::Engine::validate_endpoint(&process.engine).is_ok()
+                && crate::config::validate_engine_endpoint(&process.engine).is_ok()
                 && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
                 && process.image.contains("@sha256:")
                 && valid_token(&process.configuration)
@@ -137,7 +137,7 @@ impl Spec {
         }
         Err(Error::Conflict("invalid managed runtime kind or layout"))
     }
-    pub(crate) fn validate_runtime(&self) -> Result<(), Error> {
+    pub fn validate_runtime(&self) -> Result<(), Error> {
         self.validate()?;
         if self.kind == GATEWAY_KIND && self.layout != 2 {
             return Err(Error::Conflict(
@@ -146,7 +146,7 @@ impl Spec {
         }
         Ok(())
     }
-    pub(crate) fn binding_namespace(
+    pub fn binding_namespace(
         &self,
         engine_id: Option<&str>,
         network_id: Option<&str>,

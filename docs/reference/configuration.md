@@ -205,7 +205,7 @@ Paths:
 
 Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -223,7 +223,7 @@ Paths:
 
 Select an explicit policy; no isolated defaults are merged into it.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -555,9 +555,9 @@ Paths:
 
 ## Network
 
-Sandbox policy selection and optional agent HTTP proxy.
+Sandbox policy selection.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -566,7 +566,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
-| `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
 ## OllamaMemory
@@ -643,7 +642,7 @@ Paths:
 
 One allowed application-protocol action.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -657,7 +656,7 @@ Paths:
 
 Alternative values for a policy matcher.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -674,7 +673,7 @@ Paths:
 
 Executable identity for an egress grant.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -688,7 +687,7 @@ Paths:
 
 TCP destination and optional application-protocol policy. Invalid or conflicting combinations are rejected by OpenShell.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -717,7 +716,7 @@ Paths:
 
 Filesystem access grants inside the sandbox.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -733,7 +732,7 @@ Paths:
 
 JSON-RPC request inspection bounds.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -747,7 +746,7 @@ Paths:
 
 Landlock compatibility; hard_requirement refuses unavailable enforcement.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -761,7 +760,7 @@ Paths:
 
 Request method/path or MCP tool selector; protocol-specific combinations are validated by OpenShell.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -779,7 +778,7 @@ Paths:
 
 MCP request inspection and tool-name restrictions.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -796,7 +795,7 @@ Paths:
 
 Process identity resolved inside the sandbox image.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -811,7 +810,7 @@ Paths:
 
 Named endpoint grants restricted to declared executable paths.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -827,7 +826,7 @@ Paths:
 
 A literal glob or a nonempty list of alternative globs.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -837,21 +836,6 @@ Paths:
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
-
-## Proxy
-
-Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
-
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
-
-Paths:
-
-- `spec.sandboxes[].network.proxy`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
-| `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## Resources
 

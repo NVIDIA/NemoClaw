@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(target_os = "linux")]
+use nemoclaw_provider::docker::Engine;
+use nemoclaw_runtime::vllm::recipes::huggingface;
 use nemoclaw_sdk::{
-    CancellationToken, Deployment,
-    config::{Document, ServiceDefinition},
-    docker::Engine,
-    managed::Spec,
-    services::installers::vllm::recipes::huggingface,
+    CancellationToken, Deployment, config::Document, config::ServiceDefinition, managed::Spec,
 };
 use serde_json::Value;
 use std::{

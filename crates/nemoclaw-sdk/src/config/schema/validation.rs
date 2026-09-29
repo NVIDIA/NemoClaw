@@ -5,31 +5,7 @@ use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
-pub(crate) fn property(schema: &mut Value, field: &str, extra: Value) {
-    let Value::Object(extra) = extra else {
-        panic!("property constraints must be objects");
-    };
-    schema["properties"][field]
-        .as_object_mut()
-        .expect("derived field exists")
-        .extend(extra);
-}
-pub(crate) fn integer(
-    schema: &mut Value,
-    field: &str,
-    rule: &c::DefaultedInteger,
-    normalized: bool,
-) {
-    property(
-        schema,
-        field,
-        json!({
-            "anyOf": if normalized { json!([{ "minimum": rule.min, "maximum": rule.max }]) } else { json!([{ "const": 0 }, { "minimum": rule.min, "maximum": rule.max }]) },
-            "default": rule.default,
-            "x-nemoclaw-default-rule": "Omitted or zero selects the default."
-        }),
-    );
-}
+pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
 fn optional_string(
     schema: &mut Value,
     field: &str,
@@ -56,23 +32,6 @@ fn optional_string(
         }),
     );
 }
-pub(crate) fn forbid(names: &[&str]) -> Value {
-    json!({"not": {"anyOf": names.iter().map(|name| json!({"required": [name]})).collect::<Vec<_>>()}})
-}
-// Required ancestors make a condition false when a field is omitted.
-// Consequences constrain only fields that are present, allowing SDK defaults.
-pub(crate) fn at(path: &str, rule: Value, required: bool) -> Value {
-    path.split('/').rev().fold(rule, |child, segment| {
-        if segment == "[]" {
-            json!({"items": child})
-        } else if required {
-            json!({"required": [segment], "properties": {segment: child}})
-        } else {
-            json!({"properties": {segment: child}})
-        }
-    })
-}
-
 pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
@@ -190,12 +149,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     );
     defs["Network"]["if"] = json!({"required": ["policy"]});
     defs["Network"]["then"] = json!({"properties": {"tier": {"const": ""}}});
-    property(
-        &mut defs["Proxy"],
-        "host",
-        json!({"pattern": "^[A-Za-z0-9._-]+$", "minLength": 1, "maxLength": 256}),
-    );
-    property(&mut defs["Proxy"], "port", json!({"minimum": 1}));
     property(&mut defs["ExplicitPolicy"], "version", json!({"const": 1}));
     property(
         &mut defs["PolicyLandlock"],

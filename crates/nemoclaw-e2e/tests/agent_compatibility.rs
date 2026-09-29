@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::openshell::{command, environment, policy, policy_matches};
+use nemoclaw_provider::openshell::{command, environment, policy, policy_matches};
 
 #[test]
 fn fabric_launch_preserves_caller_identity_without_selecting_or_invoking_an_adapter() {

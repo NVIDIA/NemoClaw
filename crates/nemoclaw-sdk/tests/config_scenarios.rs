@@ -131,8 +131,6 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
             ["mode"],
         "tools"
     );
-    assert_eq!(sandboxes[0]["network"]["proxy"]["host"], "10.200.0.1");
-    assert_eq!(sandboxes[0]["network"]["proxy"]["port"], 3128);
     assert_eq!(
         desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["diagnostics"]["otel"]
             ["enabled"],

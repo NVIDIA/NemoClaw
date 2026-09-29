@@ -49,10 +49,7 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
 
 #[test]
 fn model_identity_and_capacity_are_not_a_repository_allowlist() {
-    use nemoclaw_sdk::{
-        services::installers::vllm::recipes::huggingface as hf,
-        snapshot::{File, Manifest},
-    };
+    use nemoclaw_runtime::{snapshot::File, snapshot::Manifest, vllm::recipes::huggingface as hf};
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let service = service(&mut doc);
     service.recipe = None;

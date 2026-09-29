@@ -36,15 +36,21 @@ Replace the example port with the one in your YAML.
 Use this variant only when that gateway is already listening on the client host's loopback interface.
 Do not replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
 
-The workspace name comes from `metadata.uid`, not the deployment or sandbox name.
-Paste the exact UID from the applied YAML at the prompt:
+Copy the **OpenShell gateway** and **OpenShell workspace** selectors from the plan or apply result.
+To print them again without changing runtime resources, run from the directory containing the applied YAML, with the same state directory and credential environment:
 
 ```sh
-python3 -c 'import hashlib; uid = input("Deployment metadata.uid: ").strip(); print("nc-" + hashlib.sha256(uid.encode()).hexdigest()[:16])'
-export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
+nemoclaw plan deployment.yaml --state-dir .nemoclaw --non-interactive
 ```
 
-This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
+The workspace derives from `metadata.uid`; copy the reported value into each client terminal:
+
+```sh
+export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
+```
+
+JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
+These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
 The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.

@@ -163,13 +163,13 @@ pub enum SearchProvider {
     Tavily,
 }
 impl SearchProvider {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Brave => "brave",
             Self::Tavily => "tavily",
         }
     }
-    pub(crate) fn profile(self) -> &'static str {
+    pub fn profile(self) -> &'static str {
         match self {
             Self::Brave => "nemoclaw-brave",
             Self::Tavily => "nemoclaw-tavily",
@@ -181,26 +181,26 @@ impl SearchProvider {
             Self::Tavily => "nemoclaw_provider_profile.web_search_tavily",
         }
     }
-    pub(crate) fn credential_env(self) -> &'static str {
+    pub fn credential_env(self) -> &'static str {
         match self {
             Self::Brave => "BRAVE_API_KEY",
             Self::Tavily => "TAVILY_API_KEY",
         }
     }
-    pub(crate) fn endpoint(self) -> &'static str {
+    pub fn endpoint(self) -> &'static str {
         match self {
             Self::Brave => "https://api.search.brave.com",
             Self::Tavily => "https://api.tavily.com",
         }
     }
-    pub(crate) fn from_name(name: &str) -> Option<Self> {
+    pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "brave" => Some(Self::Brave),
             "tavily" => Some(Self::Tavily),
             _ => None,
         }
     }
-    pub(crate) fn from_profile(profile: &str) -> Option<Self> {
+    pub fn from_profile(profile: &str) -> Option<Self> {
         profile.strip_prefix("nemoclaw-").and_then(Self::from_name)
     }
 }
@@ -226,7 +226,7 @@ impl RuntimeWebSearch {
 }
 
 /// Stable registration identity for a search credential reference, never its value.
-pub(crate) fn search_provider_name(provider: SearchProvider, reference: &str) -> String {
+pub fn search_provider_name(provider: SearchProvider, reference: &str) -> String {
     use sha2::{Digest, Sha256};
     format!(
         "{}-search-{}",

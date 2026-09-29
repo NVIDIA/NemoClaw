@@ -2,6 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Programmatic desired-state contracts shared by NemoClaw consumers.
+//!
+//! Backend mutation belongs to the provider, outside the SDK API:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::openshell::OpenShell;
+//! let _ = OpenShell::connect;
+//! ```
+//!
+//! Download callbacks are delivered through deployment progress:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::with_download_progress;
+//! ```
+//!
+//! Engine operations are implemented by the bundled provider:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::docker::Engine;
+//! ```
 
 use std::fmt;
 
@@ -74,7 +93,7 @@ pub enum ObservationError {
     BindingMismatch,
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
-    Hardware(crate::hardware::HardwareDiagnostic),
+    Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic),
     SandboxStartup {
         phase: &'static str,
         reason: &'static str,
@@ -136,7 +155,9 @@ pub mod config;
 mod error;
 mod health;
 pub use health::{RuntimeHealth, SandboxHealth};
-pub mod openshell;
+mod secrets;
+pub use secrets::{EnvironmentSecrets, Secrets};
+mod gateway_observation;
 #[doc(hidden)]
 pub mod services;
 mod state;
@@ -146,26 +167,19 @@ mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
-    Change, Deployment, DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget,
-    OperationResult, Outcome, Progress, ResourceInventoryEntry, StepOutcome,
+    Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
+    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, Progress, ResourceInventoryEntry,
+    StepOutcome,
 };
-
-pub mod snapshot;
-
-pub mod docker;
 
 pub mod managed;
 
-pub mod hardware;
 pub mod hardware_discovery;
 
 mod tofu_ui;
 
 mod download;
-pub use download::{
-    ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
-    with_provider_download_progress,
-};
+pub use download::{ByteProgress, DownloadPhase, DownloadProgress};
 
 mod docker_compute;
 

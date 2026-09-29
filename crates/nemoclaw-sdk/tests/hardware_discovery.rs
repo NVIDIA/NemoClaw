@@ -3,12 +3,12 @@
 #![cfg(unix)]
 #[path = "../../test-support/docker.rs"]
 mod transport;
-use nemoclaw_sdk::{
-    discovery::ObservationStatus,
-    docker::{Connections, Engine},
-    hardware::{Capacity, GpuMemory, HostObservation, HostObserver},
-    hardware_discovery::{observe_hardware, observe_host_hardware},
+use nemoclaw_provider::{
+    docker::Connections, docker::Engine, hardware::HostObservation, hardware::HostObserver,
+    hardware_observation::observe_hardware, hardware_observation::observe_host_hardware,
 };
+use nemoclaw_runtime::{hardware::Capacity, hardware::GpuMemory};
+use nemoclaw_sdk::discovery::ObservationStatus;
 use serde_json::json;
 
 #[tokio::test]

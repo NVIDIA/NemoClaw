@@ -2127,6 +2127,7 @@ dependencies = [
  "async-trait",
  "http",
  "nemoclaw-provider",
+ "nemoclaw-runtime",
  "nemoclaw-sdk",
  "openshell-core",
  "prost",
@@ -2166,28 +2167,6 @@ name = "nemoclaw-provider"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "nemoclaw-sdk",
- "rustls",
- "serde",
- "serde_json",
- "tempfile",
- "tf-provider",
- "tokio",
-]
-
-[[package]]
-name = "nemoclaw-runtime"
-version = "0.1.0"
-dependencies = [
- "nemoclaw-sdk",
- "tokio",
-]
-
-[[package]]
-name = "nemoclaw-sdk"
-version = "0.1.0"
-dependencies = [
- "async-trait",
  "bollard",
  "futures-util",
  "getrandom 0.4.3",
@@ -2195,11 +2174,38 @@ dependencies = [
  "hyper-util",
  "interprocess",
  "ipnet",
- "jsonschema 0.56.0",
  "nemo-fabric-core",
+ "nemoclaw-runtime",
+ "nemoclaw-sdk",
  "openshell-core",
  "openshell-policy",
  "openshell-sdk",
+ "regex",
+ "reqwest 0.13.5",
+ "rustix",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tar",
+ "tempfile",
+ "tf-provider",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "url",
+ "widestring",
+]
+
+[[package]]
+name = "nemoclaw-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "getrandom 0.4.3",
+ "jsonschema 0.56.0",
  "process-wrap",
  "regex",
  "reqwest 0.13.5",
@@ -2210,14 +2216,45 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
+name = "nemoclaw-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bollard",
+ "bollard-stubs",
+ "futures-util",
+ "getrandom 0.4.3",
+ "interprocess",
+ "ipnet",
+ "jsonschema 0.56.0",
+ "nemo-fabric-core",
+ "nemoclaw-provider",
+ "nemoclaw-runtime",
+ "openshell-core",
+ "openshell-policy",
+ "process-wrap",
+ "regex",
+ "reqwest 0.13.5",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
  "time",
  "tokio",
  "tokio-util",
  "toml",
- "tonic",
  "url",
  "widestring",
 ]

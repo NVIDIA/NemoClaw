@@ -85,7 +85,7 @@ AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
-Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, generic runtime behavior tests against Fabric's installed fixture adapter, and Fabric's Pi compilation and tests.
+Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
 
@@ -101,7 +101,7 @@ The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
 The [image workflow](../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It also runs the retained Fabric revision's native OpenClaw and Hermes qualification against isolated local inference, on platforms with those image targets.
+It also qualifies the installed OpenClaw, Hermes, and Pi adapters against isolated local inference, on platforms with those image targets.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 

@@ -14,12 +14,11 @@ pub use reporting::{
 mod runtime;
 mod timing;
 use crate::{
-    CancellationToken, Error,
+    CancellationToken, EnvironmentSecrets, Error, Secrets,
     backend::Row,
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
-    openshell::{EnvironmentSecrets, Secrets},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -77,11 +76,20 @@ pub struct Change {
     pub resource: String,
     pub actions: Vec<String>,
 }
+/// Gateway and workspace selectors from validated intent, not proof of access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentConnection {
+    pub gateway_endpoint: String,
+    pub workspace: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationResult {
     pub outcome: Outcome,
     pub changes: Vec<Change>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<DeploymentConnection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,6 +104,7 @@ impl OperationResult {
         Self {
             outcome: Outcome::Planned,
             changes,
+            connection: None,
             deferred: Vec::new(),
             retained: Vec::new(),
             health: Vec::new(),
@@ -196,11 +205,16 @@ impl Deployment {
             }
         }
         record.validate_pending_intent(&document)?;
+        let connection = Some(DeploymentConnection {
+            gateway_endpoint: document.spec.gateway.endpoint().into(),
+            workspace: document.workspace(),
+        });
         let (runtime_changes, deferred, runtime_discovery, mut discovery) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
         if deferred {
             let mut result = OperationResult::planned(runtime_changes);
+            result.connection = connection;
             result.deferred = runtime_discovery;
             discovery.credentials =
                 crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
@@ -244,6 +258,7 @@ impl Deployment {
         let mut changes = runtime_changes;
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
+        result.connection = connection;
         if !apply {
             let retained = compile::compile_teardown(
                 &document,
@@ -406,6 +421,7 @@ impl Deployment {
             format!("provider_installation {{\n filesystem_mirror {{ path = {quoted} }}\n}}\n")
                 .as_bytes(),
         )
+        .map_err(Into::into)
     }
     async fn tofu(
         &self,

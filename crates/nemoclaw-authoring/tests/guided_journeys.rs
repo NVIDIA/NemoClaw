@@ -72,7 +72,7 @@ fn a_new_author_can_accept_the_openclaw_defaults_and_review_safe_desired_state()
         "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
     );
     assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
-    assert_eq!(review.credential_references(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert_eq!(review.credential_references(), ["NVIDIA_API_KEY"]);
     assert!(!review.yaml().contains("nvapi-"));
     assert_eq!(
         draft
@@ -234,7 +234,7 @@ fn an_author_can_reopen_generated_yaml_and_continue_where_they_left_off() {
     assert_eq!(answers.model, NVIDIA_MODEL);
     assert_eq!(
         reopened.review().unwrap().credential_references(),
-        ["NVIDIA_INFERENCE_API_KEY"]
+        ["NVIDIA_API_KEY"]
     );
 }
 
@@ -298,7 +298,7 @@ fn an_author_can_rename_their_deployment_without_changing_its_identity_or_infere
         "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
     );
     assert_eq!(answers.model, NVIDIA_MODEL);
-    assert_eq!(review.credential_references(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert_eq!(review.credential_references(), ["NVIDIA_API_KEY"]);
 }
 
 #[test]

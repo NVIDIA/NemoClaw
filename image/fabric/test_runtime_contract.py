@@ -4,16 +4,36 @@
 
 import asyncio
 import copy
+import io
 import json
 import os
+import runpy
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fabric import RuntimeHost, client
 from nemo_fabric import FabricConfigError
+
+
+class HealthCommand(unittest.TestCase):
+    def test_unsupported_health_does_not_contact_the_runtime_host(self):
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["fabric.py", "health", "main"]),
+            patch("asyncio.open_unix_connection", new_callable=AsyncMock) as connect,
+            redirect_stdout(output),
+        ):
+            connect.side_effect = OSError("host is unavailable")
+            runpy.run_path(str(Path(__file__).with_name("fabric.py")), run_name="__main__")
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {"supported": False, "report": None, "reason_code": "fabric_health_unsupported"},
+        )
+        connect.assert_not_awaited()
 
 
 class RuntimeLifecycle(unittest.IsolatedAsyncioTestCase):

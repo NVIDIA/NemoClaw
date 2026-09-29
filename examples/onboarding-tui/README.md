@@ -156,6 +156,7 @@ Inference service presets describe provider transports, without tying a service 
 An Anthropic-compatible endpoint uses the Anthropic protocol; the selected Fabric descriptor determines adapter compatibility.
 
 Provider presets supply endpoint, model, and credential-reference suggestions.
+The local presentation table retains API base paths and providers absent from OpenShell's egress-policy profiles; NVIDIA's suggested credential reference follows the upstream `NVIDIA_API_KEY` name.
 They do not restrict existing provider names, endpoint URLs, or credential environment-variable references.
 Loading a template retains those values as defaults, and changing its model keeps the connection intact.
 An explicitly authored engine endpoint is also preserved through guided edits.

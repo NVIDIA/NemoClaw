@@ -160,7 +160,7 @@ fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
 }
 
 #[test]
-fn retained_sources_include_the_patched_sdk_and_its_license() {
+fn bundle_sources_retain_patched_sdk_but_runtime_sources_exclude_it() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let inputs = nemoclaw_build::source_inputs(&root).unwrap();
     let archive = nemoclaw_build::supervisor_source_files(&root).unwrap();
@@ -171,8 +171,8 @@ fn retained_sources_include_the_patched_sdk_and_its_license() {
             "build identity must include {name}"
         );
         assert!(
-            archive.iter().any(|(path, _)| path == &name),
-            "retained builds must include {name}"
+            !archive.iter().any(|(path, _)| path == &name),
+            "runtime builds must exclude {name}"
         );
     }
 }
@@ -206,24 +206,25 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
 }
 
 #[test]
-fn supervisor_archive_excludes_inference_recipes_and_retains_catalog_build_inputs() {
+fn supervisor_archive_contains_only_runtime_owned_sources_and_notices() {
     let root = tempfile::tempdir().unwrap();
     let retained = [
+        "rust-toolchain.toml",
+        "LICENSE",
+        "crates/nemoclaw-runtime/src/main.rs",
+        "crates/nemoclaw-runtime/NOTICE.md",
+    ];
+    for name in retained.into_iter().chain([
         "Cargo.toml",
         "Cargo.lock",
-        "rust-toolchain.toml",
         "versions.json",
-        "LICENSE",
-        "crates/runtime/src/main.rs",
-        "crates/sdk/NOTICE.md",
+        "crates/nemoclaw-sdk/NOTICE.md",
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",
         "image/fabric/FABRIC-LICENSE",
         "image/NOTICE.md",
         "examples/onboarding-tui/src/lib.rs",
         "examples/onboarding/openclaw.yaml",
-    ];
-    for name in retained.into_iter().chain([
         "runtimes/qwen38/verify_packed.py",
         "runtimes/qwen38/AGPL-3.0-or-later.txt",
         "runtimes/vllm/Dockerfile",
@@ -295,6 +296,7 @@ fn every_bundle_platform_pins_the_docker_provider_archive() {
     }
 }
 
+#[cfg(feature = "sdk")]
 #[test]
 fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -336,5 +338,83 @@ fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     assert!(
         nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.5.0", "linux_arm64")
             .is_err()
+    );
+}
+
+#[test]
+fn runtime_source_identity_ignores_unrelated_inputs_and_dependency_owners() {
+    use std::{fs, path::Path};
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = tempfile::tempdir().unwrap();
+    nemoclaw_build::stage_runtime_sources(&repository, root.path()).unwrap();
+    // This fixture is a new package source tree, not an already packaged archive.
+    fs::remove_file(root.path().join("crates/nemoclaw-runtime/Cargo.toml.orig")).unwrap();
+    let first = nemoclaw_build::runtime_source_inputs(root.path()).unwrap();
+    assert!(
+        !first
+            .iter()
+            .any(|(name, _)| name.contains("cargo_vcs_info"))
+    );
+    let lock = first.iter().find(|(name, _)| name == "Cargo.lock").unwrap();
+    let lock = String::from_utf8_lossy(&lock.1);
+    for name in [
+        "nemoclaw-sdk",
+        "nemoclaw-provider",
+        "openshell",
+        "nemo-fabric",
+        "bollard",
+        "tonic",
+    ] {
+        assert!(
+            !lock.contains(name),
+            "unexpected runtime dependency: {name}"
+        );
+    }
+    let manifest = first.iter().find(|(name, _)| name == "Cargo.toml").unwrap();
+    let manifest = String::from_utf8_lossy(&manifest.1);
+    assert!(!manifest.contains("openshell"));
+    assert!(!manifest.contains("onboarding"));
+    assert!(
+        first
+            .iter()
+            .any(|(name, _)| name == "crates/nemoclaw-runtime/NOTICE.md")
+    );
+    for name in [
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "image/fabric/catalog.json",
+        "examples/onboarding-tui/src/lib.rs",
+        "runtimes/qwen38/prepare.py",
+    ] {
+        let path = root.path().join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "unrelated change").unwrap();
+    }
+    let path = root.path().join("Cargo.toml");
+    fs::write(
+        &path,
+        format!(
+            "{}\n[workspace.dependencies]\nterminal_size = \"99\"\n",
+            fs::read_to_string(&path).unwrap()
+        ),
+    )
+    .unwrap();
+    let path = root.path().join("Cargo.lock");
+    fs::write(
+        &path,
+        format!(
+            "{}\n[[package]]\nname = \"unrelated-owner\"\nversion = \"99.0.0\"\n",
+            fs::read_to_string(&path).unwrap()
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        first,
+        nemoclaw_build::runtime_source_inputs(root.path()).unwrap()
+    );
+    let path = root.path().join("crates/nemoclaw-runtime/src/lib.rs");
+    fs::write(&path, format!("{}\n", fs::read_to_string(&path).unwrap())).unwrap();
+    assert_ne!(
+        source_version(&first),
+        source_version(&nemoclaw_build::runtime_source_inputs(root.path()).unwrap())
     );
 }

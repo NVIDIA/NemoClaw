@@ -41,17 +41,7 @@ impl ApplyOutcome {
                 })
             })
         {
-            let health = observations
-                .0
-                .into_iter()
-                .filter_map(|observed| observed.health().ok())
-                .find(|health| !health.health.allows_apply_completion());
-            return Self::Settled(Err(match health {
-                Some(health) => Error::Health {
-                    health: Box::new(health),
-                },
-                None => error,
-            }));
+            return Self::Settled(Err(error));
         }
         Self::Unsettled(error)
     }
@@ -213,13 +203,8 @@ mod tests {
                 Readiness::decode(&document, &plan, &state),
             );
             if settles {
-                let ApplyOutcome::Settled(Err(Error::Health { health })) = outcome else {
-                    panic!("fresh readiness failure must settle")
-                };
-                assert_eq!(health.sandbox, "assistant");
-                assert_eq!(
-                    health.health.reason_code.as_deref(),
-                    Some("fabric_health_timeout")
+                assert!(
+                    matches!(outcome, ApplyOutcome::Settled(Err(Error::Execution { diagnostic, .. })) if diagnostic == "original failure")
                 );
             } else {
                 assert!(

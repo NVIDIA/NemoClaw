@@ -275,7 +275,7 @@ fn operation_label(operation: &str) -> Option<&str> {
         "tofu.apply" => Some("Applying infrastructure changes"),
         "runtime.ready" => Some("Waiting for gateway and inference readiness"),
         "sandbox.ready" => Some("Waiting for sandbox readiness"),
-        "fabric.health" => Some("Checking hosted Fabric health"),
+        "fabric.health" => Some("Checking packaged Fabric health"),
         _ => None,
     }
 }

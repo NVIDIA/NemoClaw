@@ -68,7 +68,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
                     "{name}: managed inference requires bearer auth"
                 );
                 let args = service
-                    .arguments("/data/model", 121 * nemoclaw_sdk::hardware::GIB)
+                    .arguments("/data/model", 121 * nemoclaw_runtime::hardware::GIB)
                     .unwrap();
                 assert!(!args.iter().any(|arg| arg == "--trust-remote-code"));
             }

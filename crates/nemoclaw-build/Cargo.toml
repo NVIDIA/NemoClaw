@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 [dependencies]
 thiserror.workspace = true
-nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,10 +19,14 @@ flate2.workspace = true
 tar.workspace = true
 tempfile.workspace = true
 serde-saphyr.workspace = true
-pulldown-cmark.workspace = true
-pulldown-cmark-to-cmark.workspace = true
+pulldown-cmark = { workspace = true, optional = true }
+pulldown-cmark-to-cmark = { workspace = true, optional = true }
 url.workspace = true
 [build-dependencies]
 sha2.workspace = true
 [lints]
 workspace = true
+
+[features]
+default = ["sdk"]
+sdk = ["dep:nemoclaw-sdk", "dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark"]

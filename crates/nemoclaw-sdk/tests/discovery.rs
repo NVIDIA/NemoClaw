@@ -3,10 +3,11 @@
 #![cfg(unix)]
 #[path = "../../test-support/docker.rs"]
 mod transport;
+use nemoclaw_provider::{
+    docker::Connections, engine_observation::observe_engine, engine_observation::observe_fabric,
+};
 use nemoclaw_sdk::{
-    config::ComputeDriver,
-    discovery::{DiscoveryRequest, ObservationStatus, observe_engine, observe_fabric},
-    docker::Connections,
+    config::ComputeDriver, discovery::DiscoveryRequest, discovery::ObservationStatus,
 };
 use serde_json::json;
 

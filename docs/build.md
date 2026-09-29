@@ -3,7 +3,8 @@
 
 # Build Local Artifacts
 
-Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml), and Protocol Buffers compiler 36.1.
+Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
+Native bundles also require Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
 Set `PROTOC` to the compiler’s path if it is outside `PATH`.
 [versions.json](../versions.json) records tool versions, download checksums, and the SDK's default agent, gateway, sandbox runtime, and supervisor image pins.
@@ -68,7 +69,7 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
 Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
-ARM64 selects all ten harnesses; AMD64 selects the native locks and stages for Deep Agents and OpenClaw.
+ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
 The `nooa`, `nooa-bench`, and `hermes` targets use Python 3.13.15 because their pinned upstream releases require Python below 3.14.
@@ -109,8 +110,10 @@ On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](refer
 The proxy and its `proxy-tests` target use the same explicit platform selector.
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
-[The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
-Common Fabric wheels and base layers are shared; selected images contain only their required harness dependencies.
+[The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
+Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
+Hermes retains a separate native dependency supplement, described in the [source notice](../image/NOTICE.md).
+The exact Python base-image pins remain image-build inputs; uv validates installed adapter `Requires-Python` constraints.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
 The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
@@ -120,6 +123,7 @@ Run [image checks](testing.md#image-source-checks) before changing or using an i
 ## Build a Runtime Image
 
 Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
+Use `--no-default-features` below to compile the runtime builder without the SDK or Protocol Buffers compiler.
 Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`.
 The builder checks this requirement before downloading sources or compiling the supervisor.
 Docker's classic image store is unsupported; use a daemon configured with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) before retrying.
@@ -135,7 +139,7 @@ It does not launch inference or publish an image.
 For ordinary safetensors models on Linux ARM64, run:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
+cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm/build.json
 ```
 
 This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v1`.
@@ -145,7 +149,7 @@ Select the model through [model configuration](models.md).
 For the AMD64 vLLM base used by the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host), run on a Linux AMD64 build host:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/vllm-amd64/build.json
+cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/vllm-amd64/build.json
 ```
 
 This build exports `.build/vllm-amd64/runtime.tar` and loads `nc-prototype-vllm-amd64:rust-v1`.
@@ -155,7 +159,7 @@ Selecting this artifact does not qualify GPU inference on the host.
 For Qwen3.8 preparation on Linux ARM64, run:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/qwen38/build.json
+cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/qwen38/build.json
 ```
 
 This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:spark-rust-v1`.
@@ -169,9 +173,11 @@ If deployment uses a different Docker daemon, load the archive into that daemon 
 
 ## Retained Sources and Compatibility
 
+Source collection may download the pinned dependency sources through Cargo.
 The builder creates a source archive with normalized timestamps and compiles the supervisor offline from that archive.
-It includes the Rust workspace, locked dependencies, their licenses, SDK policy attribution, and OpenShell protobuf inputs omitted by Cargo vendoring.
-It excludes the entire `runtimes/` tree, so the supervisor archives contain no recipe scripts.
+It contains the runtime crate, its standalone workspace manifest and pruned lockfile, Cargo-vendored dependencies with their licenses, and runtime policy attribution.
+The archive excludes the SDK, provider, OpenShell, Fabric, onboarding, and image recipes.
+The runtime source version covers only these runtime build inputs; changes to other repository components do not change it.
 Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
 The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.

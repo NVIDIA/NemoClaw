@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
+use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 pub mod openshell;
 
 #[cfg(unix)]
@@ -14,10 +15,7 @@ pub async fn verify_agent(
     document: &nemoclaw_sdk::config::Document,
     directory: &std::path::Path,
 ) -> String {
-    use nemoclaw_sdk::{
-        backend::Row,
-        openshell::{EnvironmentSecrets, OpenShell},
-    };
+    use nemoclaw_sdk::backend::Row;
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("terraform.tfstate")).unwrap())
             .unwrap();

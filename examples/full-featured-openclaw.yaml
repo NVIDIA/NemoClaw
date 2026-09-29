@@ -132,9 +132,6 @@ spec:
       runtime:
         provider: docker
       network:
-        proxy:
-          host: 10.200.0.1
-          port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
           explicit:
@@ -205,9 +202,6 @@ spec:
       runtime:
         provider: docker
       network:
-        proxy:
-          host: 10.200.0.1
-          port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
           explicit:
@@ -278,9 +272,6 @@ spec:
       runtime:
         provider: docker
       network:
-        proxy:
-          host: 10.200.0.1
-          port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
         policy:
           explicit:

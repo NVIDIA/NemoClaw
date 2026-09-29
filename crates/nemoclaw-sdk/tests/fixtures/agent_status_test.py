@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 class Collector(unittest.IsolatedAsyncioTestCase):
     async def test_status_read_does_not_configure_or_invoke(self):
-        spec = importlib.util.spec_from_file_location("agent_status", ROOT / "crates/nemoclaw-sdk/src/openshell/agent_status.py")
+        spec = importlib.util.spec_from_file_location("agent_status", ROOT / "crates/nemoclaw-provider/src/openshell/agent_status.py")
         collector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(collector)
         requests = []

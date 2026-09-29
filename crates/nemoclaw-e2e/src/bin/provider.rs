@@ -35,7 +35,7 @@ impl Backend for Fixture {
         let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = definition else {
             panic!("expected vLLM")
         };
-        use nemoclaw_sdk::hardware::{Capacity, GIB};
+        use nemoclaw_runtime::{hardware::Capacity, hardware::GIB};
         let capacity = Capacity {
             architecture: "arm64".into(),
             gpu: "NVIDIA GB10".into(),
@@ -50,9 +50,8 @@ impl Backend for Fixture {
             disk_free: 500 * GIB,
             ..Default::default()
         };
-        nemoclaw_sdk::services::installers::vllm::hardware_capacity::check_memory(
-            &service, &capacity, false,
-        )
+        nemoclaw_runtime::vllm::hardware_capacity::check_memory(&service, &capacity, false)
+            .map_err(Into::into)
     }
     async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
         let mode = self.mode();

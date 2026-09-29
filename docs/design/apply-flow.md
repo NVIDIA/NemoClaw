@@ -78,11 +78,11 @@ OpenShell owns sandbox creation and policy enforcement.
 | **Deployment compilation** | After the runtime stage completes, the SDK compiles the OpenShell resource dependencies, sandbox policy, and startup settings into the deployment graph. |
 | **4. OpenShell registrations** | The NemoClaw provider reconciles the workspace, provider profiles, and credential-bearing provider registrations. Gateway version and compute-driver checks gate deployment mutations. |
 | **5. Sandbox reconciliation** | The NemoClaw provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; ordinary apply protects sandboxes against replacement or recreation of a missing bound sandbox. |
-| **6. Fabric configuration** | OpenShell starts the generic Fabric host. The SDK-owned `agent_configuration` resource supplies canonical Fabric configuration after routes are established; the host validates and starts it through Fabric's public API. |
+| **6. Fabric configuration** | OpenShell starts the generic Fabric host. The NemoClaw provider's `agent_configuration` resource supplies SDK-compiled canonical Fabric configuration after routes are established; the host validates and starts it through Fabric's public API. |
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
-| **Readiness and result** | Provider data sources observe sandbox configuration, startup, and supported health within the deployment graph. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
+| **Readiness and result** | Provider data sources observe sandbox configuration, startup, and the packaged bridge's health response within the deployment graph. The pinned bridge reports health as unsupported. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.

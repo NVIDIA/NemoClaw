@@ -3,28 +3,13 @@
 //! Ollama installer implementation.
 use crate::config::ComputeDriver;
 mod config;
-mod constraints;
-#[cfg(target_os = "linux")]
-pub(in crate::services) mod runtime;
 pub use config::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,
 };
-mod models;
-pub use models::*;
-pub(in crate::services) mod artifacts;
-#[doc(hidden)]
-pub mod hardware_capacity;
-#[doc(hidden)]
-pub mod model_source;
-#[doc(hidden)]
-pub mod policy;
 mod proxy_container;
-mod registry;
 pub use proxy_container::{ProxySettings, ProxySpec};
-mod backend;
-pub(crate) mod proxy;
-pub use backend::ProxyBackend;
+pub mod proxy;
 
 use crate::managed::{Process, Spec, Storage};
 use crate::{
@@ -36,30 +21,24 @@ use crate::{
 use std::collections::BTreeMap;
 use url::Url;
 
-pub(crate) const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
+pub const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
 
 pub(crate) fn constrain_schema(
     defs: &mut serde_json::Map<String, serde_json::Value>,
     normalized: bool,
 ) {
-    for name in ["OllamaModel", "ExternalOllamaModel"] {
-        crate::config::schema::validation::property(
-            &mut defs[name],
-            "name",
-            serde_json::json!({"pattern": MODEL_PATTERN}),
-        );
-    }
+    nemoclaw_runtime::ollama::constrain_schema(defs, normalized);
     crate::config::schema::validation::property(
-        &mut defs["OllamaModel"],
-        "digest",
-        serde_json::json!({"pattern":"^[a-f0-9]{64}$"}),
+        &mut defs["ExternalOllamaModel"],
+        "name",
+        serde_json::json!({"pattern":MODEL_PATTERN}),
     );
     let service = defs["ServiceDefinition"]["oneOf"]
         .as_array_mut()
-        .expect("tagged service variants")
+        .unwrap()
         .iter_mut()
         .find(|variant| variant["properties"]["kind"]["const"] == "ollama")
-        .expect("Ollama service variant");
+        .unwrap();
     service["required"] = serde_json::json!(["kind", "hardware", "image", "model"]);
     crate::config::schema::validation::property(
         service,
@@ -68,14 +47,6 @@ pub(crate) fn constrain_schema(
     );
     service["dependentRequired"] =
         serde_json::json!({"placement":["publication"],"publication":["placement"]});
-    service["allOf"] = serde_json::json!([
-        {"if":crate::config::schema::validation::at("memory/gpuMemoryUtilization",serde_json::json!({}),true),
-         "then":{"allOf":[
-             crate::config::schema::validation::at("hardware/minGpuMemoryBytes",serde_json::json!({}),true),
-             crate::config::schema::validation::at("hardware/profile",serde_json::json!({"not":{"enum":super::vllm::HardwareProfile::UNIFIED_MEMORY}}),false),
-             crate::config::schema::validation::at("memory/gpuMemoryGiB",serde_json::json!({"const":0}),false)
-         ]}}
-    ]);
     let proxy = defs["ServiceDefinition"]["oneOf"]
         .as_array_mut()
         .expect("tagged service variants")
@@ -93,48 +64,6 @@ pub(crate) fn constrain_schema(
         serde_json::json!({
             "x-nemoclaw-error": "proxy engine must be a local Unix socket"
         }),
-    );
-    for (name, field, rule) in [
-        ("OllamaServing", "port", &constraints::PORT),
-        (
-            "OllamaServing",
-            "contextTokens",
-            &constraints::CONTEXT_TOKENS,
-        ),
-        ("OllamaServing", "maxSequences", &constraints::MAX_SEQUENCES),
-        (
-            "OllamaServing",
-            "startupTimeoutSeconds",
-            &constraints::STARTUP_TIMEOUT,
-        ),
-        ("OllamaMemory", "gpuMemoryGiB", &constraints::GPU_MEMORY),
-        ("OllamaMemory", "hostReserveGiB", &constraints::HOST_RESERVE),
-        (
-            "OllamaMemory",
-            "minAvailableGiB",
-            &constraints::MIN_AVAILABLE,
-        ),
-        ("OllamaMemory", "minFreeGiB", &constraints::MIN_FREE),
-        ("OllamaMemory", "freeGateGiB", &constraints::FREE_GATE),
-        (
-            "OllamaMemory",
-            "consecutiveSamples",
-            &constraints::CONSECUTIVE_SAMPLES,
-        ),
-    ] {
-        crate::config::schema::validation::integer(&mut defs[name], field, rule, normalized);
-    }
-    crate::config::schema::validation::property(
-        &mut defs["OllamaMemory"],
-        "gpuMemoryGiB",
-        serde_json::json!({
-            "x-nemoclaw-default-rule":"Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
-        }),
-    );
-    crate::config::schema::validation::property(
-        &mut defs["OllamaMemory"],
-        "gpuMemoryUtilization",
-        serde_json::json!({"minimum":0.05,"maximum":0.95}),
     );
 }
 
@@ -168,7 +97,7 @@ impl OllamaProxy {
         require(
             self.engine.as_ref().is_none_or(|engine| {
                 engine.starts_with("unix:///")
-                    && crate::docker::Engine::validate_endpoint(engine).is_ok()
+                    && crate::config::validate_engine_endpoint(engine).is_ok()
             }),
             "proxy engine must be a local Unix socket",
         )?;
@@ -201,18 +130,14 @@ fn address(kind: &str, name: &str) -> String {
     format!("nemoclaw_{kind}.{name}")
 }
 
-pub(crate) const SERVICE_KIND: &str = "ollama_service";
-pub(crate) const STORAGE_KIND: &str = "ollama_service_storage";
+pub const SERVICE_KIND: &str = "ollama_service";
+pub const STORAGE_KIND: &str = "ollama_service_storage";
 
-pub(crate) fn configured_service(spec: &Spec) -> Result<ManagedOllama, Error> {
-    let configuration = spec.runtime_configuration()?;
-    let definition: crate::services::ServiceDefinition = serde_json::from_str(configuration)
-        .map_err(|_| Error::Conflict("Ollama runtime configuration is invalid"))?;
-    let crate::services::ServiceDefinition::Ollama(service) = definition else {
-        return Err(Error::Conflict("runtime configuration is not Ollama"));
-    };
-    service.validate()?;
-    Ok(*service)
+pub fn configured_service(spec: &Spec) -> Result<nemoclaw_runtime::ollama::ManagedOllama, Error> {
+    match nemoclaw_runtime::RuntimeSpec::decode(spec.runtime_configuration()?)? {
+        nemoclaw_runtime::RuntimeSpec::Ollama(service) => Ok(*service),
+        _ => Err(Error::Conflict("runtime configuration is not Ollama")),
+    }
 }
 
 fn managed_targets(
@@ -225,7 +150,7 @@ fn managed_targets(
         .get(SERVICE_KIND)
         .filter(|value| !value.is_empty())
         .ok_or(Error::State("missing Ollama service generation"))?;
-    let runtime = crate::services::ServiceDefinition::Ollama(Box::new(service.runtime_settings()));
+    let runtime = nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime_settings()));
     let placement = service.published_placement()?;
     let (engine, network_cidr, bind_address) = match placement {
         Some(explicit) => (
@@ -258,12 +183,12 @@ fn managed_targets(
             .container
             .as_ref()
             .map_or(8, |container| container.shared_memory_gi_b)
-            * crate::hardware::GIB,
+            * nemoclaw_runtime::hardware::GIB,
         host_ipc: service
             .container
             .as_ref()
             .is_some_and(|container| container.ipc == super::vllm::ServiceIpc::Host),
-        memory_bytes: 104 * crate::hardware::GIB,
+        memory_bytes: 104 * nemoclaw_runtime::hardware::GIB,
         gpu: true,
     };
     let spec = Spec {

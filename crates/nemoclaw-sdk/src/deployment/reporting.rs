@@ -345,7 +345,7 @@ mod freshness_tests {
         let mut later = DiscoveryReport::default();
         later.observations.insert(
             "gateway".into(),
-            DiscoveryObservation::Gateway(crate::openshell::GatewayObservation {
+            DiscoveryObservation::Gateway(crate::discovery::GatewayObservation {
                 status: crate::discovery::ObservationStatus::Available,
                 reason: None,
                 source: "openshell_gateway_info".into(),

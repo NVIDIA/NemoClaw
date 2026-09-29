@@ -76,7 +76,7 @@ Original NemoClaw code uses [Apache-2.0](../LICENSE).
 Read the notices for components and derived code:
 
 - [Agent runtime sources](../image/NOTICE.md).
-- [SDK memory and serving policy attribution](../crates/nemoclaw-sdk/NOTICE.md).
+- [Runtime memory and serving policy attribution](../crates/nemoclaw-runtime/NOTICE.md).
 - [Brave plugin attribution](../image/fabric/BRAVE-NOTICE.md).
 - [Generic vLLM runtime](../runtimes/vllm/NOTICE.md).
 - [AMD64 vLLM runtime and Nemotron configuration sources](../runtimes/vllm-amd64/NOTICE.md).

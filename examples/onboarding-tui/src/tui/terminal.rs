@@ -175,7 +175,7 @@ pub(crate) async fn run(
         if input == Input::DelegateRemaining && wizard.can_offer_delegation() {
             wizard.facts.credentials = nemoclaw_sdk::inference_discovery::observe_credentials(
                 wizard.draft().document(),
-                &nemoclaw_sdk::openshell::EnvironmentSecrets,
+                &nemoclaw_sdk::EnvironmentSecrets,
             )?;
         }
         wizard.handle(input);
@@ -280,7 +280,7 @@ pub(super) async fn check_discovery(
     // Credential availability stays a direct read and never enters OpenTofu state.
     facts.credentials = nemoclaw_sdk::inference_discovery::observe_credentials(
         draft.document(),
-        &nemoclaw_sdk::openshell::EnvironmentSecrets,
+        &nemoclaw_sdk::EnvironmentSecrets,
     )?;
     let Some(session) = session else {
         return Ok((evidence, facts));

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{CancellationToken, Deployment, config::Document, openshell::Secrets};
+use nemoclaw_sdk::{CancellationToken, Deployment, Secrets, config::Document};
 use std::{fs, path::PathBuf, process::Command, sync::Arc};
 
 struct FixtureCredential;

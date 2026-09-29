@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
+use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::Document,
@@ -245,11 +246,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
 
 #[tokio::test]
 async fn gateway_capability_observations_preserve_metadata_and_fail_closed_without_mutations() {
-    use nemoclaw_sdk::{
-        ObservationError,
-        config::Gateway,
-        openshell::{EnvironmentSecrets, OpenShell},
-    };
+    use nemoclaw_sdk::{ObservationError, config::Gateway};
     let fixture = Fixture::start().await;
     let client = OpenShell::connect(
         &Gateway::External(nemoclaw_sdk::config::ExternalGateway {

@@ -182,9 +182,9 @@ From the repository root, select the command matching the build host:
 
 ```sh
 # Linux ARM64:
-cargo run -p nemoclaw-build -- runtime runtimes/ollama/build.json
+cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama/build.json
 # Linux AMD64:
-cargo run -p nemoclaw-build -- runtime runtimes/ollama-amd64/build.json
+cargo run -p nemoclaw-build --no-default-features -- runtime runtimes/ollama-amd64/build.json
 ```
 
 Each command builds and loads a local image and retains its OCI archive under `.build/ollama` or `.build/ollama-amd64`.
@@ -270,7 +270,7 @@ Do not supply `inferenceProviders[].credential` for a managed service.
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` using bearer authentication before reporting readiness.
 Recipe environment maps cannot set `VLLM_API_KEY`.
-The SDK reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
+The NemoClaw provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
 Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
 The runtime's root user and Docker administrators can read the key and child environment.
@@ -437,7 +437,7 @@ Use checked `nemoclaw export` to inspect provider, sandbox, and native agent con
 Observed provider or public-configuration mismatches can produce drift; they are not a NemoClaw reconnect or model-switch procedure.
 Native file changes require an owner observation contract and are not detected by comparing remembered public configuration.
 Follow [the change path](usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
-The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/nemoclaw-sdk/src/openshell/mutation.rs) define workspace ownership.
+The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/nemoclaw-provider/src/openshell/mutation.rs) define workspace ownership.
 
 ## Understand Timeout Budgets
 
@@ -455,7 +455,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-sdk/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-sdk/src/services/installers/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-provider/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result

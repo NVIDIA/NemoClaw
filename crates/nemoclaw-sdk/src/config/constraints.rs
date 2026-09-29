@@ -14,10 +14,3 @@ pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 pub(crate) const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 pub(crate) const RUNTIME: &str = super::ComputeDriver::Docker.as_str();
 pub(crate) const NETWORK_TIER: &str = "isolated";
-
-/// Zero in authored YAML selects the default; validation uses normalized values.
-pub(crate) struct DefaultedInteger {
-    pub default: i64,
-    pub min: i64,
-    pub max: i64,
-}

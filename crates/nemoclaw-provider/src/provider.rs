@@ -1,15 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::openshell::{EnvironmentSecrets, OpenShell};
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
+use crate::{docker::Connections, services::BackendRegistry};
 use async_trait::async_trait;
-use nemoclaw_sdk::{
-    ObservationError,
-    config::{Credential, Gateway, TLS},
-    docker::Connections,
-    openshell::{EnvironmentSecrets, OpenShell},
-    services::BackendRegistry,
-};
+use nemoclaw_sdk::{ObservationError, config::Credential, config::Gateway, config::TLS};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -139,8 +135,9 @@ impl Provider for NemoClawProvider {
             ),
             (
                 "target_hardware".into(),
-                Box::new(crate::hardware::HardwareDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
+                Box::new(crate::hardware_data::HardwareDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
             ),
             (
                 "engine_capabilities".into(),
@@ -378,8 +375,6 @@ impl Provider for NemoClawProvider {
                     "agent_name",
                     "agent_runtime",
                     "policy_json",
-                    "proxy_host",
-                    "proxy_port",
                     "provider_names_json",
                 ],
                 &[],

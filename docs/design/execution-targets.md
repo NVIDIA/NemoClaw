@@ -27,7 +27,7 @@ There is no per-sandbox engine selection.
 
 ```mermaid
 flowchart TD
-    Client[SDK and provider] -->|SSH Docker API| Engine[Inference Docker daemon]
+    Client[NemoClaw provider] -->|SSH Docker API| Engine[Inference Docker daemon]
     Client -->|OpenShell API| Gateway[OpenShell gateway]
     Gateway -->|native driver| Sandbox[Sandbox and Fabric agent]
     Engine -->|owns| Model[Inference container and retained volume]
@@ -48,7 +48,7 @@ Reading the client laptop's memory can produce valid measurements for the wrong 
 Missing, incomplete, or mismatched observations must fail; there is no fallback to client-host values.
 
 The fixed SSH collector verifies that its remote Docker context is local and reads Linux memory, GPU, and Docker-storage capacity.
-SDK and provider subprocesses reconstruct the same collector from explicit placement; in-process client or observer injection does not cross the subprocess boundary.
+The provider reconstructs the collector from explicit placement; in-process client or observer injection does not cross the subprocess boundary.
 The collector requires existing host trust and tools, installs nothing, and accepts no shell hooks.
 See [host observation boundaries](../engine-assumptions.md#host-observations-and-supervision) for prerequisites and implementation owners.
 

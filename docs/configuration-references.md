@@ -174,12 +174,12 @@ For integration examples, see [define and attach integrations](agents.md#define-
 
 ## Combine Supported Features
 
-The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, shared search, tracing, dashboard access, execution settings, tool restrictions, and explicit network policy with a proxy.
+The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, shared search, tracing, dashboard access, execution settings, tool restrictions, and explicit network policy.
 All three agents select the same provider and inference settings; only two receive search access.
 It passes the SDK parser and JSON Schema checks, but this combined deployment has not been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
 Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](inference.md#build-an-image-with-the-configuration-interface), and [Brave credential instructions](agents.md#brave-web-search).
-The proxy and OTLP collector must already exist and be reachable; follow the [policy and proxy prerequisites](sandbox-network.md).
+The OTLP collector must already exist and be reachable; follow the [sandbox policy prerequisites](sandbox-network.md).
 Apply provisions the managed resources and checks readiness; verify inference separately.
 
 No single active configuration exercises every schema branch:

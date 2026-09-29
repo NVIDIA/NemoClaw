@@ -169,18 +169,19 @@ fn launch_mode_selects_the_recipe_contract() {
 
 #[test]
 fn launch_mode_rejects_hardware_with_a_recipe() {
-    let service = Service {
-        hardware: Some(hardware()),
-        ..recipe_service()
-    };
+    let mut service = recipe_service();
+    service.hardware = Some(hardware());
     assert!(service.launch_mode().is_err());
 }
 
 #[test]
 fn launch_mode_selects_the_native_hardware_contract() {
     let service = Service {
-        hardware: Some(hardware()),
-        ..Service::default()
+        runtime: nemoclaw_runtime::vllm::Service {
+            hardware: Some(hardware()),
+            ..Default::default()
+        },
+        ..Default::default()
     };
     assert!(matches!(
         service.launch_mode().unwrap(),

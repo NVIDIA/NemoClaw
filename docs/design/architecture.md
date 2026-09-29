@@ -24,14 +24,15 @@ The SDK checks deployment scope and recovery constraints; providers decide resou
 For reconstructible OpenShell resources and non-retained disposable Docker resources, apply and teardown report OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
 Durable identity, retained storage, and undeclared-resource checks remain deployment constraints.
 OpenTofu executes the graph with its default parallelism.
-The SDK and NemoClaw provider share backend library code.
+The provider implements resource operations against SDK desired-state and observation contracts.
+Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
 
 ## OpenShell SDK Boundary
 
-NemoClaw's [OpenShell adapter](../../crates/nemoclaw-sdk/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+NemoClaw's [OpenShell adapter](../../crates/nemoclaw-provider/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
 NemoClaw uses the SDK's public operations directly where they cover the deployment contract.
 Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wait_deleted`; it checks ownership before deletion and requires confirmed absence afterward.
 Teardown does not require the sandbox's old image, command, or policy to remain intact.
@@ -90,6 +91,11 @@ The selected-image descriptor snapshot is validated by Fabric's planner, without
 An unavailable or incompatible metadata version leaves native validation unknown.
 Generic field validation helps the interview; Fabric's planner owns validation of the complete native configuration.
 
+The Fabric revision remains pinned until the [descriptor catalog change](https://github.com/NVIDIA/NeMo-Fabric/pull/318) and its adapter follow-ups are available together.
+That change removes `config.schema` without a replacement; NemoClaw must stop using it to infer required workflows when adopting that revision.
+Settings, model, and target schemas remain owner contracts.
+A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
+
 The authoring dependency graph relates fields independently of their screen order.
 The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
 Ties retain presentation order; inactive fields and choices with only one valid answer do not require a question.
@@ -118,7 +124,8 @@ Managed search credentials, endpoint protocols, and network grants remain SDK de
 The reconstructible `agent_configuration` resource applies canonical Fabric configuration after provider routes are established.
 It restarts the Fabric runtime inside its retained sandbox when configuration changes; it does not replace the sandbox.
 A restarted host waits for explicit apply before starting a runtime, because persisted intent does not prove that current gateway routes match.
-The host calls Fabric's public plan/start/invoke/stop APIs and transports health reports when Fabric provides them.
+The host calls Fabric's public plan/start/invoke/stop APIs.
+The bridge reports health as unsupported for the pinned Fabric revision.
 Native model or agent probes with no Fabric contract remain unavailable.
 
 The authoring dependency graph and OpenTofu execution graph have different jobs.
@@ -204,7 +211,8 @@ The [retention reference](../state.md#deletion-and-retention) lists what survive
 ## Readiness and Export
 
 Required service and sandbox readiness runs through provider data sources in the graph, including on unchanged applies.
-Sandbox completion checks deployment configuration and runtime startup, then requests Fabric health when supported, without invoking an agent or model.
+Sandbox completion checks deployment configuration and runtime startup, then requests the packaged bridge's health response without invoking an agent or model.
+The pinned bridge reports health as unsupported; unrecognized responses fail completion.
 A remembered active handle does not establish fresh native health or native file validation; see [observation limits](fabric-management.md#observation-limits).
 The SDK reports the fresh OpenTofu observations; it does not repeat those probes.
 Only failures proven to be exclusively completion observations can clear the pending-mutation guard.

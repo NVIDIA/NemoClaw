@@ -6,7 +6,7 @@
 
 #[test]
 fn unix_clients_parse_remote_gpu_inventory_without_a_local_gpu() {
-    let inventory = nemoclaw_sdk::hardware::nvidia::inventory;
+    let inventory = nemoclaw_runtime::hardware::nvidia::inventory;
     assert_eq!(
         inventory("NVIDIA GB10, 580.142\n", "12\n34\n").unwrap(),
         ("NVIDIA GB10".into(), 580, 2)

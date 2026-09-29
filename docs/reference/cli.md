@@ -115,13 +115,14 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
 | `complete` | Whether a planned result has no deferred work; inspect this alongside the exit code |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
+| `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
 | `deferred` | Checks or changes deferred by planning; omitted when empty |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
-| `health` | Apply observations for the hosted Fabric runtime; includes explicit unsupported results; omitted for other operations |
+| `health` | Apply health responses from the packaged Fabric bridge; currently unsupported; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
-The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`; Fabric failures include `error.health`.
+The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
 When available, `remainingState` describes the known effects and `help` supplies a next step.
 Diagnostics identify the operation, cause, and confirmed retention where available; they do not imply rollback or cleanup when resource state is unknown.
 On Unix, SIGINT and SIGTERM cancel ongoing work, including credential prompts.

@@ -174,7 +174,7 @@ impl super::ManagedGateway {
         let bind = authority.parse::<SocketAddr>().ok();
         require(
             bind.is_some_and(|a| a.port() >= 1024)
-                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
+                && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
             "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
@@ -198,6 +198,6 @@ impl Document {
     }
 }
 
-pub(crate) fn valid_name(name: &str) -> bool {
+pub fn valid_name(name: &str) -> bool {
     schema::validate_property("Metadata", "name", &name).is_ok()
 }

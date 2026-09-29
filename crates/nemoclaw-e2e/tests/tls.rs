@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_provider::openshell::{OpenShell, Secrets};
 use nemoclaw_sdk::{
     ObservationError,
     backend::Backend,
     config::{Credential, Gateway, TLS},
-    openshell::{OpenShell, Secrets},
 };
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,

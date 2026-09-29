@@ -129,7 +129,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             kind: InferenceProviderKind::Openai,
             name: "nvidia-prod",
             endpoint: "https://integrate.api.nvidia.com/v1",
-            credential: "NVIDIA_INFERENCE_API_KEY",
+            credential: "NVIDIA_API_KEY",
             custom_endpoint: false,
             default_model: Some(NVIDIA_MODEL),
         },

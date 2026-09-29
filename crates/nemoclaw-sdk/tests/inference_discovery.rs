@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    ObservationError,
+    ObservationError, Secrets,
     config::InferenceApi,
     discovery::ObservationStatus,
     inference_discovery::{
         AuthenticationStatus, EndpointRequest, observe_credential, observe_endpoint,
     },
-    openshell::Secrets,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 struct Missing;

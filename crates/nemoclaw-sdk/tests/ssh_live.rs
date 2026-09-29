@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-use nemoclaw_sdk::docker::Engine;
+use nemoclaw_provider::docker::Engine;
 
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE and NEMOCLAW_TEST_ENGINE_ID; read-only real SSH/Docker"]
@@ -79,7 +79,7 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 or AMD64 NVIDIA host; read-only remote host collection"]
 async fn ssh_capacity_belongs_to_the_selected_docker_host() {
-    use nemoclaw_sdk::hardware::{HostObserver, SshHost};
+    use nemoclaw_provider::hardware::{HostObserver, SshHost};
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     let observation = SshHost.observe(&engine).await.unwrap();
     let info = engine.info().await.unwrap();

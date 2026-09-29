@@ -67,36 +67,44 @@ fn declared_openshell_clients_match_the_artifact_revision() {
         String::from_utf8_lossy(&output.stderr)
     );
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let package = metadata["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|package| package["name"] == env!("CARGO_PKG_NAME"))
-        .unwrap();
-    for name in ["openshell-core", "openshell-policy", "openshell-sdk"] {
-        let dependency = package["dependencies"]
+    for (owner, clients) in [
+        ("nemoclaw-sdk", &["openshell-core", "openshell-policy"][..]),
+        (
+            "nemoclaw-provider",
+            &["openshell-core", "openshell-policy", "openshell-sdk"][..],
+        ),
+    ] {
+        let package = metadata["packages"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|dependency| dependency["name"] == name)
+            .find(|package| package["name"] == owner)
             .unwrap();
-        let source = url::Url::parse(
-            dependency["source"]
-                .as_str()
+        for &name in clients {
+            let dependency = package["dependencies"]
+                .as_array()
                 .unwrap()
-                .strip_prefix("git+")
-                .unwrap(),
-        )
-        .unwrap();
-        let revision = source
-            .query_pairs()
-            .find(|(key, _)| key == "rev")
-            .map(|(_, value)| value.into_owned());
-        assert_eq!(
-            revision.as_deref(),
-            pins["openshellRevision"].as_str(),
-            "{name}"
-        );
+                .iter()
+                .find(|dependency| dependency["name"] == name)
+                .unwrap();
+            let source = url::Url::parse(
+                dependency["source"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("git+")
+                    .unwrap(),
+            )
+            .unwrap();
+            let revision = source
+                .query_pairs()
+                .find(|(key, _)| key == "rev")
+                .map(|(_, value)| value.into_owned());
+            assert_eq!(
+                revision.as_deref(),
+                pins["openshellRevision"].as_str(),
+                "{owner}: {name}"
+            );
+        }
     }
 }
 
@@ -116,4 +124,24 @@ fn fabric_planner_uses_the_same_immutable_owner_revision_as_image_discovery() {
         "the planner and image descriptors must use the same owner revision"
     );
     assert!(dependency.get("path").is_none());
+}
+
+#[test]
+fn current_openshell_contract_links_match_the_artifact_revision() {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let revision = pins["openshellRevision"].as_str().unwrap();
+    // These pages describe the current contract. Historical validation and
+    // source notices retain the revisions that their evidence came from.
+    for page in [
+        include_str!("../../../docs/sandbox-network.md"),
+        include_str!("../../../docs/design/architecture.md"),
+    ] {
+        for link in page
+            .split("https://github.com/NVIDIA/OpenShell/blob/")
+            .skip(1)
+        {
+            assert_eq!(link.split('/').next().unwrap(), revision);
+        }
+    }
 }

@@ -32,6 +32,12 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 pub fn source_inputs(root: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    selected_inputs(root, SOURCE_ROOTS)
+}
+pub fn selected_inputs(
+    root: &std::path::Path,
+    roots: &[&str],
+) -> Result<Vec<(String, Vec<u8>)>, String> {
     use std::{collections::BTreeMap, fs, path::Path};
     fn collect(
         root: &Path,
@@ -66,7 +72,7 @@ pub fn source_inputs(root: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, S
         Ok(())
     }
     let mut files = BTreeMap::new();
-    for name in SOURCE_ROOTS {
+    for name in roots {
         collect(root, &root.join(name), &mut files)?;
     }
     Ok(files.into_iter().collect())

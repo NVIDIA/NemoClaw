@@ -32,7 +32,7 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
             r#"{"rust":"1.98.1","protobuf":"36.1","opentofu":"1.12.6","dockerProvider":"4.6.0","platforms":{}}"#,
         )
         .unwrap();
-        let manifest = serde_json::json!({"name":"fixture","platform":nemoclaw_sdk::bundle::platform().unwrap(),"image":"fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+        let manifest = serde_json::json!({"name":"fixture","platform":nemoclaw_build::native_runtime_platform().unwrap(),"image":"fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
         fs::write(root.path().join("runtime.json"), manifest.to_string()).unwrap();
         let bin = root.path().join("bin");
         executable(
@@ -54,7 +54,7 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
             .current_dir(root.path())
             .env("PATH", path)
             .env("CARGO", bin.join("cargo"))
-            .env("PROTOC", bin.join("protoc"))
+            .env("PROTOC", bin.join("missing-protoc"))
             .env("NEMOCLAW_FIXTURE_INFO", info)
             .output()
             .unwrap();
@@ -63,5 +63,46 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
         assert!(error.contains("containerd image store"), "{error}");
         assert!(!root.path().join("compiled").exists());
         assert!(!root.path().join(".build").exists());
+    }
+}
+
+#[test]
+fn runtime_builder_dependency_closure_excludes_sdk_and_provider_transports() {
+    let output = Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "--package",
+            "nemoclaw-build",
+            "--no-default-features",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let tree = String::from_utf8(output.stdout).unwrap();
+    for name in [
+        "nemoclaw-sdk",
+        "nemoclaw-provider",
+        "openshell",
+        "nemo-fabric",
+        "bollard",
+        "tonic",
+    ] {
+        assert!(
+            !tree.contains(name),
+            "runtime builder includes {name}: {tree}"
+        );
     }
 }

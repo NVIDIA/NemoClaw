@@ -93,9 +93,29 @@ pub use resource::ResourceAdapter;
 mod capacity;
 mod discovery;
 mod gateway;
-mod hardware;
+pub mod hardware;
+mod hardware_data;
 mod inference_discovery;
 mod provider;
 mod readiness;
 mod sandbox_readiness;
 pub use provider::NemoClawProvider;
+
+/// OpenShell resource operations owned by this provider.
+pub mod openshell;
+
+pub mod docker;
+pub mod engine_observation;
+pub mod hardware_observation;
+pub mod managed;
+pub mod services;
+pub(crate) use nemoclaw_sdk::{
+    CancellationToken, Error, ObservationError, Progress, backend, config, fabric_capabilities,
+    fabric_catalog,
+};
+
+mod download;
+pub(crate) use nemoclaw_sdk::{ByteProgress, DownloadPhase};
+
+#[cfg(all(test, unix))]
+use nemoclaw_sdk::compile;

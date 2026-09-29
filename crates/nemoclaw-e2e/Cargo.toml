@@ -10,6 +10,7 @@ publish = false
 rcgen = "0.14.10"
 rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-runtime = { path = "../nemoclaw-runtime" }
 nemoclaw-provider = { path = "../nemoclaw-provider" }
 async-trait.workspace = true
 serde_json.workspace = true

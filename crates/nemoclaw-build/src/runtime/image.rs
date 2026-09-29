@@ -124,7 +124,7 @@ mod tests {
         fs::write(root.path().join("payload"), &name).unwrap();
         let recipe = RuntimeArtifact::parse(
             &serde_json::to_vec(&serde_json::json!({
-                "name":name,"image":image,"platform":nemoclaw_sdk::bundle::platform().unwrap(),
+                "name":name,"image":image,"platform":nemoclaw_build::native_runtime_platform().unwrap(),
                 "sourceDateEpoch":1789516800_u64,"files":["Dockerfile"],"downloads":{}
             }))
             .unwrap(),

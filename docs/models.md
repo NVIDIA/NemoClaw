@@ -178,7 +178,7 @@ Omit fixed GPU and KV-cache budgets in fractional mode.
 Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
 All profiles retain the resident host-memory watchdog.
 
-The [profile catalog](../crates/nemoclaw-sdk/src/services/installers/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
+The [profile catalog](../crates/nemoclaw-runtime/src/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
 One Qwen3-4B and OpenClaw lifecycle is retained in the [DGX Station test record](validation/dgx-station-qwen3-openclaw-linux-arm64.md).
 That result does not establish successful inference for another candidate, model, agent, GPU count, or host configuration; those qualification checks remain **TBD**.
@@ -233,7 +233,7 @@ Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
 No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
-The [runtime reporter](../crates/nemoclaw-sdk/src/services/installers/vllm/runtime/mod.rs), [supervisor](../crates/nemoclaw-sdk/src/services/runtime/supervisor.rs), and [SDK artifact reader](../crates/nemoclaw-sdk/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
+The [runtime reporter](../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [supervisor](../crates/nemoclaw-runtime/src/execution/supervisor.rs), and [provider artifact reader](../crates/nemoclaw-provider/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
 
 ## Configure Nemotron on an AMD64 GPU Host
 

@@ -3,7 +3,8 @@
 #![cfg(target_os = "linux")]
 
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{CancellationToken, Deployment, config::Document, docker::Engine};
+use nemoclaw_provider::docker::Engine;
+use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, process::Command};
@@ -157,12 +158,12 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     let cancel = CancellationToken::new();
     let state_path = directory.path().join("terraform.tfstate");
 
-    // Fail the OpenShell sandbox health check after proxy creation; no proxy process failure is simulated.
+    // Reject an unsupported health report after proxy creation; no proxy process failure is simulated.
     fixture.state.lock().unwrap().health_report =
         Some(json!({"supported":true,"report":null,"reason_code":"fabric_health_timeout"}));
     let error = deployment.apply(&document, &cancel).await.unwrap_err();
     assert!(
-        matches!(error, nemoclaw_sdk::Error::Health { .. }),
+        matches!(error, nemoclaw_sdk::Error::Execution { .. }),
         "{error}"
     );
     let id = engine.container(&name).await.unwrap().unwrap().id.unwrap();

@@ -4,10 +4,10 @@
 use crate::{Capabilities, Diagnostics, Draft, EditableField, FieldValue, GuidedField};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Gateway},
+    discovery::GatewayObservation,
     discovery::ObservationStatus,
     hardware_discovery::HardwareObservation,
     inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
-    openshell::GatewayObservation,
 };
 
 #[derive(Clone, Debug)]

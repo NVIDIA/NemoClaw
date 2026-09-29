@@ -20,9 +20,6 @@ spec:
       runtime:
         provider: docker
       network:
-        proxy:
-          host: 10.200.0.1
-          port: 3128
         policy:
           explicit:
             version: 1

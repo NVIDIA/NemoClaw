@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use async_trait::async_trait;
 use nemoclaw_sdk::{
+    EnvironmentSecrets,
     config::InferenceApi,
     inference_discovery::{EndpointRequest, observe_endpoint},
-    openshell::EnvironmentSecrets,
 };
 use serde::{Deserialize, Serialize};
 use tf_provider::{

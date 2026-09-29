@@ -45,7 +45,7 @@ impl Backend for IncompatibleHost {
             assert_eq!(prior["id"], "retained-id");
         }
         Err(
-            ObservationError::Hardware(nemoclaw_sdk::hardware::HardwareDiagnostic::Minimum {
+            ObservationError::Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic::Minimum {
                 field: "hardware.minDriverMajor",
                 required: 580,
                 observed: 570,

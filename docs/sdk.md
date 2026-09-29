@@ -64,7 +64,6 @@ They cover bundle verification and OpenTofu commands, including provider readine
 Download events contain the backend resource kind and name, requested image or model, optional layer ID, phase, and optional completed/total byte counts.
 Each event replaces the previous counts for that resource, artifact, and layer; counts are not increments.
 Provider downloads reach the callback through a local channel; updates can be dropped and never determine the operation result.
-Direct SDK calls to image or Ollama model operations can use `with_download_progress(resource, callback, future)` to report through the same callback type.
 Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
@@ -102,7 +101,6 @@ Only reference names, availability, and safe reasons are returned.
 Plan results include these direct observations in `OperationResult.discovery`, outside OpenTofu provider state.
 Provider subprocess discovery resolves credential references from its environment; it does not accept arbitrary in-process secret resolvers through `DiscoverySession`.
 For an explicit application-owned endpoint read, `observe_endpoint(&request, secrets)` accepts the application's resolver.
-For explicit host measurements, `hardware_discovery::observe_host_hardware(&engine, observer)` accepts a selected `HostObserver` and checks its daemon identity.
 These operations do not infer runtime feasibility from an available model name or advertised GPU.
 
 Deployment planning already refreshes selected resources and gateway metadata through their owners.
@@ -163,20 +161,19 @@ Always inspect the operation's `deferred` list before treating the preview as co
 ## Read Apply Health
 
 `OperationResult.health` contains `SandboxHealth` observations, labeled with the sandbox and its sole agent.
-Each observation wraps `RuntimeHealth`: a `supported` flag, an optional Fabric `report`, and an optional bridge `reason_code`.
-The report uses Fabric's field names and retains check timestamps and dependency results.
+Each observation wraps `RuntimeHealth`: a `supported` flag, an optional `report`, and an optional bridge `reason_code`.
+The pinned bridge reports unsupported health with a null report; the SDK rejects unrecognized or proposed health reports.
 Other lifecycle operations leave this list empty.
 OpenTofu schedules the provider's sandbox completion observation; the SDK reads its recorded result without a second health request.
 
-`Error::Health { health }` retains the observation when supported health cannot establish readiness.
-Socket failures inside the host bridge also return `Error::Health`, with `health_transport_error` or `health_transport_timeout`.
-Outer OpenShell transport failures and invalid reports use the existing error variants without copying raw diagnostics.
+OpenShell transport failures and invalid reports use the existing error variants without copying raw diagnostics.
+A failed apply preserves its original execution error and uses fresh readiness observations to establish whether mutations completed.
 No health failure deletes deployment resources.
 The compatibility behavior for the current Fabric pin and required agent image is described in [apply health](usage.md#fabric-health-during-apply).
 
 ## Resolve Credentials in an Application
 
-`with_secrets` supplies an application-owned `openshell::Secrets` implementation; the default resolves nonempty environment variables.
+`with_secrets` supplies an application-owned `Secrets` implementation; the default resolves nonempty environment variables.
 The resolver receives reference names, including gateway TLS references whose values must be file paths.
 Resolved values are supplied to the SDK and, as required, its provider subprocess.
 OpenTofu initialization and JSON inspection do not resolve deployment credentials.
@@ -186,7 +183,7 @@ Keep them out of application logs and return typed authentication errors without
 This resolver adapts values already loaded by the application:
 
 ```rust
-use nemoclaw_sdk::{ObservationError, openshell::Secrets};
+use nemoclaw_sdk::{ObservationError, Secrets};
 use std::collections::BTreeMap;
 
 struct ApplicationSecrets(BTreeMap<String, String>);
@@ -220,8 +217,8 @@ If destroy is unfinished, resume destroy; cancellation is not a rollback or a lo
 
 ## Docker Over SSH
 
-On Unix clients, `docker::Engine::connect("ssh://operator@gpu-box:2222")` selects Docker through the system OpenSSH client and the remote `docker system dial-stdio` command.
-Connection construction is lazy.
+Set a managed service's `placement.engine` to an explicit SSH URL, such as `ssh://operator@gpu-box:2222`.
+On Unix clients, the provider uses the system OpenSSH client and the remote `docker system dial-stdio` command.
 The remote user must be able to run Docker against the intended daemon.
 
 Host keys must already be trusted.
@@ -232,16 +229,11 @@ Each API request has its own SSH connection, with a 10-second connection timeout
 There is no connection pool or automatic mutation retry.
 Errors do not include SSH stderr.
 
-SSH engines default to an unavailable remote capacity observer.
-Supply a typed `HostObserver` with `with_host_observer` when remote measurements are available; local `/proc`, GPU and disk data are never substituted.
-Existing engine ID and resource ownership checks apply to observations obtained over SSH.
-
-Managed service placement now selects this transport independently of the OpenShell gateway.
-For an explicit SSH service, both SDK runtime validation and the provider subprocess use the fixed `SshHost` collector, unless an in-process SDK caller supplies its own observer.
-Plain `Engine::connect` retains the unavailable default.
-
-The collector reads the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem, rejects a Docker context pointing to another host, and tags measurements with the daemon identity for comparison.
-Python 3, Docker and `nvidia-smi` must already be available on that host.
+Service placement selects this transport independently of the OpenShell gateway.
+Explicit capacity observation uses the provider's host collector to read the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem.
+The collector rejects a Docker context pointing to another host and checks the daemon identity before accepting measurements.
+Collector failure never substitutes the client's hardware.
+For that observation, Python 3, Docker and `nvidia-smi` must already be available on that host.
 No packages are installed.
 
 This transport does not tunnel inference traffic.

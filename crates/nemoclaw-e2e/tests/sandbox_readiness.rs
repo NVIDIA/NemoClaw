@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated gateway fixture"]
-async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_observations() {
+async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindings() {
     let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
     let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -65,9 +65,11 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
         .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
         .unwrap();
     assert_eq!(health["values"]["ready"], false);
-    let report: Value =
-        serde_json::from_str(health["values"]["health_json"].as_str().unwrap()).unwrap();
-    assert_eq!(report["reason_code"], "fabric_health_timeout");
+    assert!(health["values"]["health_json"].is_null());
+    assert_eq!(
+        health["values"]["error_message"],
+        "invalid Fabric health response; resources retained"
+    );
     let token = health["values"]["read_trigger"]
         .as_str()
         .unwrap()

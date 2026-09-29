@@ -98,20 +98,6 @@ fn ownership_follows_configuration_instead_of_optional_annotations() {
 }
 
 #[test]
-fn external_proxy_is_a_connection_not_an_ownership_choice() {
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input(include_str!("../../../examples/fabric-openclaw.yaml"));
-    value["spec"]["sandboxes"][0]["network"]["proxy"] =
-        json!({"host":"proxy.internal","port":3128});
-    parse(&value).unwrap();
-    for management in ["external", "managed"] {
-        value["spec"]["sandboxes"][0]["network"]["proxy"]["management"] = json!(management);
-        assert!(parse(&value).is_err());
-        assert!(!schema.is_valid(&value));
-    }
-}
-
-#[test]
 fn provider_selects_exactly_one_connection_form() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     let original = input(include_str!("../../../examples/managed-ollama-gpu.yaml"));

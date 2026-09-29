@@ -3,55 +3,18 @@
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
 use crate::config::ComputeDriver;
 mod config;
-mod constraints;
+mod container;
 mod hardware_profile;
-#[cfg(target_os = "linux")]
-pub(in crate::services) mod runtime;
 mod service_hardware;
 use crate::Error;
 pub use crate::services::placement::{ServicePlacement, ServicePublication};
 pub use config::{Memory, Model, Service, ServiceAuthentication, Serving};
+pub use container::{ServiceContainer, ServiceIpc};
 pub use hardware_profile::HardwareProfile;
-pub(crate) use hardware_profile::MemoryArchitecture;
-pub use service_hardware::{
-    DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc, VllmLaunchMode,
-};
-pub(crate) mod arguments;
-pub(crate) mod artifacts;
-pub use artifacts::RuntimeStatus;
-pub(crate) mod capacity;
-pub mod hardware_capacity;
-mod hardware_policy;
-pub(crate) mod policy;
-pub mod recipes;
+#[cfg(test)]
+use nemoclaw_runtime::vllm::arguments;
+pub use service_hardware::{DedicatedHardware, ServiceHardware, VllmLaunchMode};
 pub(crate) mod schema;
-pub(crate) mod validation;
-impl Service {
-    pub fn gpu_bytes(&self) -> Result<u64, Error> {
-        self.validate()?;
-        Ok(validation::gpu_bytes(self))
-    }
-    pub fn check_capacity(
-        &self,
-        capacity: &crate::hardware::Capacity,
-        starting: bool,
-        download_remaining: u64,
-        preparation_remaining: u64,
-    ) -> Result<(), Error> {
-        hardware_capacity::check_capacity(
-            self,
-            capacity,
-            starting,
-            download_remaining,
-            preparation_remaining,
-        )
-    }
-    pub fn arguments(&self, model_directory: &str, total: u64) -> Result<Vec<String>, Error> {
-        self.validate()?;
-        arguments::arguments(self, model_directory, total)
-    }
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -63,23 +26,15 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-pub(crate) const SERVICE_KIND: &str = "inference_service";
-pub(crate) const STORAGE_KIND: &str = "inference_storage";
+pub const SERVICE_KIND: &str = "inference_service";
+pub const STORAGE_KIND: &str = "inference_storage";
 
-pub(crate) fn configured_service(spec: &Spec) -> Result<Service, Error> {
-    let configuration = spec
-        .process
-        .as_ref()
-        .map(|process| process.configuration.as_str())
-        .ok_or(Error::Conflict("vLLM runtime has no service configuration"))?;
-    let service = match serde_json::from_str::<crate::services::ServiceDefinition>(configuration) {
-        Ok(crate::services::ServiceDefinition::Vllm(service)) => *service,
-        Ok(_) => return Err(Error::Conflict("runtime configuration is not vLLM")),
-        Err(_) => serde_json::from_str::<Service>(configuration)
-            .map_err(|_| Error::Conflict("vLLM runtime configuration is invalid"))?,
-    };
-    service.validate()?;
-    Ok(service)
+pub fn configured_service(spec: &Spec) -> Result<nemoclaw_runtime::vllm::Service, Error> {
+    let configuration = spec.runtime_configuration()?;
+    match nemoclaw_runtime::RuntimeSpec::decode(configuration)? {
+        nemoclaw_runtime::RuntimeSpec::Vllm(service) => Ok(*service),
+        _ => Err(Error::Conflict("runtime configuration is not vLLM")),
+    }
 }
 
 impl Service {
@@ -88,7 +43,7 @@ impl Service {
         if let Some(placement) = self.published_placement()? {
             placement.validate(self.serving.port)?;
         }
-        validation::validate(self)
+        self.runtime.validate()
     }
 }
 
@@ -108,9 +63,7 @@ fn targets(
         .ok_or(crate::config::ConfigError::new(
             "missing resource generation",
         ))?;
-    let mut runtime_service = service.runtime_settings();
-    runtime_service.placement = None;
-    runtime_service.publication = None;
+    let runtime_service = service.runtime_settings();
     let mut image_labels = service
         .recipe
         .as_ref()
@@ -145,7 +98,7 @@ fn targets(
         image_labels,
         pull_image: false,
         image_pull_policy: None,
-        configuration: serde_json::to_string(&crate::services::ServiceDefinition::Vllm(Box::new(
+        configuration: serde_json::to_string(&nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(
             runtime_service,
         )))
         .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
@@ -158,12 +111,12 @@ fn targets(
             .container
             .as_ref()
             .map_or(8, |container| container.shared_memory_gi_b)
-            * crate::hardware::GIB,
+            * nemoclaw_runtime::hardware::GIB,
         host_ipc: service
             .container
             .as_ref()
             .is_some_and(|container| container.ipc == ServiceIpc::Host),
-        memory_bytes: 104 * crate::hardware::GIB,
+        memory_bytes: 104 * nemoclaw_runtime::hardware::GIB,
         gpu: true,
     };
     let spec = Spec {

@@ -309,8 +309,6 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
         "agent_name",
         "agent_runtime",
         "policy_json",
-        "proxy_host",
-        "proxy_port",
         "provider_names_json",
     ]
     .iter()

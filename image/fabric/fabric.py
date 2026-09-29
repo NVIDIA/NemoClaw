@@ -72,20 +72,6 @@ class RuntimeHost:
     async def handle(self, request):
         if request == {"operation": "status"}:
             return self.status()
-        if (
-            isinstance(request, dict)
-            and request.get("operation") == "health"
-            and set(request) <= {"operation", "agent"}
-        ):
-            from health import runtime_health, unavailable
-
-            runtime = self.runtime if request.get("agent", self.name) == self.name else None
-            response = await runtime_health(runtime)
-            return (
-                unavailable("runtime_changed")
-                if self.runtime is not runtime or self.stopping
-                else response
-            )
         if isinstance(request, dict) and set(request) == {"operation", "config"}:
             if request["operation"] == "prepare":
                 return await self.prepare(request["config"])
@@ -190,11 +176,10 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["serve"]:
         asyncio.run(serve())
     elif len(sys.argv) in (2, 3) and sys.argv[1] == "health":
-        from health import request_health
-
+        # The pinned Fabric SDK has no runtime health API.
         print(
             json.dumps(
-                asyncio.run(request_health(SOCKET, sys.argv[2] if len(sys.argv) == 3 else None))
+                {"supported": False, "report": None, "reason_code": "fabric_health_unsupported"}
             )
         )
     elif len(sys.argv) == 4 and sys.argv[1] in ("prepare", "configure", "check"):

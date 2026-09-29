@@ -141,7 +141,7 @@ impl DiscoverySession {
         gateway: &crate::config::Gateway,
         required: &[crate::config::ComputeDriver],
         cancel: &CancellationToken,
-    ) -> Result<crate::openshell::GatewayObservation, Error> {
+    ) -> Result<crate::discovery::GatewayObservation, Error> {
         let value = tokio::time::timeout(
             std::time::Duration::from_secs(35),
             self.query_configured(

@@ -11,7 +11,7 @@ macro_rules! harness_test {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
         async fn $name() {
-            harness_preserves_conversations_and_rejects_runtime_drift($harness).await;
+            harness_reconciles_configuration_and_protects_sandbox_identity($harness).await;
         }
     };
 }
@@ -27,7 +27,7 @@ harness_test!(harness_nooa_bench, "nooa-bench");
 harness_test!(harness_remote_agent, "remote-agent");
 harness_test!(harness_pi, "pi");
 
-async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str) {
+async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness: &str) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -203,9 +203,16 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .rev()
             .find(|command| command.get(2).is_some_and(|arg| arg == "configure"))
             .unwrap();
-        let model: serde_json::Value = serde_json::from_str(&configured[5]).unwrap();
-        assert_eq!(model["model"], "another-custom-model");
-        assert_eq!(model["piModel"]["annotation"], "${runtime.value} %{native}");
+        let config: serde_json::Value = serde_json::from_str(&configured[4]).unwrap();
+        assert_eq!(config["schema_version"], "fabric.agent/v1alpha1");
+        assert_eq!(config["harness"]["adapter_id"], harness);
+        for role in ["primary", "default"] {
+            assert_eq!(config["models"][role]["model"], "another-custom-model");
+            assert_eq!(
+                config["models"][role]["settings"]["model_metadata"]["annotation"],
+                "${runtime.value} %{native}"
+            );
+        }
         assert!(
             !calls
                 .iter()
@@ -214,19 +221,55 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
         deployment.apply(&document, &cancel).await.unwrap();
     }
     let effects = fixture.state.lock().unwrap().effects;
-    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    let before_writes = writes();
     let mut changed = document.clone();
     changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
         "nvidia.fabric.hermes".parse().unwrap()
     } else {
         "nvidia.fabric.langchain.deepagents".parse().unwrap()
     };
-    changed.spec.inference_providers[0].provider = InferenceProviderKind::Openai;
-    assert!(
-        deployment.apply(&changed, &cancel).await.is_err(),
-        "{harness} replacement must be refused"
+    // A harness change updates Fabric inside the same sandbox. It does not
+    // migrate conversations or authorize replacing the sandbox's files.
+    let planned = deployment.plan(&changed, &cancel).await.unwrap();
+    assert_eq!(planned.changes.len(), 1);
+    assert_eq!(
+        planned.changes[0].resource,
+        format!(
+            "nemoclaw_agent_configuration.{}",
+            document.spec.sandboxes[0].name
+        )
     );
+    assert_eq!(planned.changes[0].actions, ["update"]);
+    assert_eq!(writes(), before_writes, "plan must not configure a harness");
+    let applied = deployment.apply(&changed, &cancel).await.unwrap();
+    assert_eq!(applied.changes, planned.changes);
+    assert_eq!(writes(), before_writes + 1);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), changed);
+    deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+
+    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let before_writes = writes();
+    let mut replacement = document.clone();
+    replacement.spec.sandboxes[0].image.ref_ = format!("replacement@sha256:{}", "a".repeat(64));
+    assert!(
+        deployment.plan(&replacement, &cancel).await.is_err(),
+        "{harness} sandbox replacement must be refused during plan"
+    );
+    assert!(
+        deployment.apply(&replacement, &cancel).await.is_err(),
+        "{harness} sandbox replacement must be refused during apply"
+    );
+    assert_eq!(writes(), before_writes);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        state
+    );
     fixture
         .state
         .lock()

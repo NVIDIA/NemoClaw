@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{ErrorKind, Write},
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -274,7 +274,7 @@ impl Store {
     }
     pub fn save(&self, record: &Record) -> Result<(), Error> {
         record.validate()?;
-        save_json(&self.directory.join("intent.json"), record)
+        save_json(&self.directory.join("intent.json"), record).map_err(Into::into)
     }
     pub async fn bindings(
         &self,
@@ -400,31 +400,4 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
     }
     Ok(bindings)
 }
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    let parent = path.parent().ok_or(Error::State("invalid state path"))?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|_| Error::State("cannot create atomic state write"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|_| Error::State("cannot protect state file"))?;
-    }
-    file.write_all(bytes)
-        .and_then(|()| file.as_file().sync_all())
-        .map_err(|_| Error::State("cannot write and sync state file"))?;
-    file.persist(path)
-        .map_err(|_| Error::State("cannot commit state file"))?;
-    #[cfg(unix)]
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| Error::State("cannot sync state directory"))?;
-    Ok(())
-}
-pub(crate) fn save_json(path: &Path, value: &impl Serialize) -> Result<(), Error> {
-    let mut bytes =
-        serde_json::to_vec_pretty(value).map_err(|_| Error::State("cannot serialize state"))?;
-    bytes.push(b'\n');
-    atomic_write(path, &bytes)
-}
+pub(crate) use nemoclaw_runtime::files::{atomic_write, save_json};

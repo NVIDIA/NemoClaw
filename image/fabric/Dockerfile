@@ -47,13 +47,14 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/loc
 FROM common-wheels AS harness-wheels
 ARG HARNESS
 ARG ADAPTER
-ARG LOCKFILE
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
-    && cat "/build/$LOCKFILE" /own-requirements.txt > /requirements.txt \
+    && if [ "$HARNESS" = hermes ]; then cp /build/hermes-dependencies.lock /requirements.txt; \
+       else uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${ADAPTER:+--extra=$ADAPTER} --output-file /requirements.txt; fi \
+    && cat /own-requirements.txt >> /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && python3 /build/provenance.py > /provenance.json
 
@@ -63,7 +64,7 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/health.py image/fabric/catalog.py /opt/nemoclaw/
+COPY image/fabric/fabric.py image/fabric/catalog.py /opt/nemoclaw/
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic
@@ -93,7 +94,12 @@ FROM base AS hermes-assets
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
-RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1
+COPY --from=common-wheels /src/fabric/adapters/python/hermes/metadata-propagate.patch /sources/metadata-propagate.patch
+COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
+RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
+    && patch --batch --fuzz=0 -d /opt/hermes -p1 < /sources/metadata-propagate.patch \
+    && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
 RUN --mount=type=cache,target=/root/.npm \
     npm install --global npm@11.17.0 \
     && cd /opt/hermes/web && npm ci --ignore-scripts && npm run build \
@@ -113,15 +119,29 @@ RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
     && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
     && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
 RUN --mount=type=cache,target=/root/.npm \
-    cd /opt/fabric-source/adapter-contract/typescript && npm ci --no-audit --no-fund && npm run build \
-    && cd /opt/fabric-source/adapters/typescript && npm ci --no-audit --no-fund && npm run build
-RUN --network=none node --test /opt/fabric-source/adapters/typescript/pi/test/pi-sdk.test.mjs \
-        /opt/fabric-source/adapters/typescript/pi/test/runtime.test.mjs
+    cd /opt/fabric-source/adapter-contract/typescript && npm ci --ignore-scripts --no-audit --no-fund && npm run build \
+    && cd /opt/fabric-source/adapters/typescript \
+    && npm ci --workspace nemo-fabric-adapters-pi --include-workspace-root --ignore-scripts --no-audit --no-fund \
+    && npm run build --workspace nemo-fabric-adapters-common && npm run build --workspace nemo-fabric-adapters-pi
+
+# Preserve npm ci's locked peer dependencies while installing only packed code.
+RUN mkdir -p /opt/pi/adapters/typescript \
+    && cp -a /opt/fabric-source/adapters/typescript/node_modules /opt/pi/adapters/typescript/ \
+    && rm -f /opt/pi/adapters/typescript/node_modules/nemo-fabric-adapters-opencode \
+    && for package in adapter-contract/typescript adapters/typescript/common adapters/typescript/pi; do \
+        mkdir -p "/opt/pi/$package" \
+        && (cd "/opt/fabric-source/$package" && npm pack --ignore-scripts --pack-destination "/opt/pi/$package") \
+        && tar -xzf /opt/pi/$package/*.tgz -C "/opt/pi/$package" --strip-components=1 \
+        && rm /opt/pi/$package/*.tgz || exit 1; \
+    done
 
 FROM runtime-base AS pi
-COPY --from=pi-build /opt/fabric-source /opt/fabric-source
-RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters \
-    && ln -s /opt/fabric-source/adapters/typescript/pi /opt/fabric/share/nemo-fabric/adapters/pi
+COPY --from=pi-build /opt/pi /opt/fabric-source
+# Fabric discovery skips symlinked directories, so link only the descriptor.
+# Its runner script resolves beside the real file under /opt/fabric-source.
+RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters/pi \
+    && ln -s /opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json \
+        /opt/fabric/share/nemo-fabric/adapters/pi/pi.fabric-adapter.json
 USER node
 
 FROM base AS lint

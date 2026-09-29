@@ -216,7 +216,7 @@ impl DataSource for GatewayDataSource {
                     .map(|driver| driver.parse())
                     .collect::<Result<Vec<_>, _>>()
                     .ok()?;
-                let observation = nemoclaw_sdk::openshell::GatewayObservation::from_result(
+                let observation = nemoclaw_sdk::discovery::GatewayObservation::from_result(
                     Ok(observed.clone()),
                     &required,
                 );

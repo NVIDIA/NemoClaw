@@ -9,10 +9,39 @@ publish = false
 [[bin]]
 name = "nemoclaw-runtime"
 path = "src/main.rs"
+required-features = ["execution"]
 
 [lints]
 workspace = true
 
 [dependencies]
-nemoclaw-sdk = { path = "../nemoclaw-sdk" }
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "process", "io-util", "fs"] }
+
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+jsonschema.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+url.workspace = true
+regex.workspace = true
+async-trait.workspace = true
+tokio-util.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+tempfile.workspace = true
+time.workspace = true
+getrandom.workspace = true
+process-wrap = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["process"], optional = true }
+
+[features]
+default = ["execution"]
+execution = ["dep:process-wrap", "dep:rustix"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+serde-saphyr.workspace = true

@@ -3,9 +3,14 @@
 
 mod agent_inference;
 pub(crate) mod constraints;
+#[doc(hidden)]
+pub mod credential_metadata;
+mod engine_endpoint;
 mod execution;
+pub use engine_endpoint::validate_engine_endpoint;
 pub(crate) mod integration_policy;
 mod integrations;
+pub use integration_policy::search_policy;
 pub use integrations::*;
 mod inference;
 mod providers;
@@ -16,6 +21,10 @@ pub use agent_inference::*;
 pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
+mod inference_profile;
+pub use inference_profile::definition as inference_profile;
+mod sandbox_policy;
+pub use sandbox_policy::{isolated_policy, isolated_policy_matches, policy_json};
 mod network;
 pub use network::*;
 mod kinds;
@@ -26,9 +35,9 @@ mod types;
 pub use inference::{InferenceConnection, InferenceTarget};
 pub(crate) mod validation;
 use sha2::{Digest, Sha256};
-use std::{fmt, io::Read};
+use std::io::Read;
 pub use types::*;
-pub use validation::{is_fabric_harness, validate_endpoint};
+pub use validation::{is_fabric_harness, valid_name, validate_endpoint};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
@@ -36,19 +45,7 @@ pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigError(pub String);
-impl ConfigError {
-    pub fn new(message: &'static str) -> Self {
-        Self(message.into())
-    }
-}
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for ConfigError {}
+pub use nemoclaw_runtime::config::ConfigError;
 
 impl Document {
     /// Read, default, and validate a configuration document.
@@ -281,13 +278,13 @@ impl Gateway {
         self.as_managed()
             .ok_or(ConfigError::new("operation requires a managed gateway"))
     }
-    pub(crate) fn credential(&self) -> Option<&Credential> {
+    pub fn credential(&self) -> Option<&Credential> {
         match self {
             Self::Managed(_) => None,
             Self::External(gateway) => gateway.credential.as_ref(),
         }
     }
-    pub(crate) fn tls(&self) -> Option<&TLS> {
+    pub fn tls(&self) -> Option<&TLS> {
         match self {
             Self::Managed(_) => None,
             Self::External(gateway) => gateway.tls.as_ref(),

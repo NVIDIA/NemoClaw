@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[cfg(feature = "sdk")]
 mod platform;
 mod runtime;
 use clap::{Parser, Subcommand};
+#[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "sdk")]
+use std::collections::BTreeMap;
 use std::{
-    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -23,6 +26,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Action {
     /// Render repository Markdown into Fern pages and check local links.
+    #[cfg(feature = "sdk")]
     Docs {
         /// Check generated output without changing it.
         #[arg(long)]
@@ -32,10 +36,12 @@ enum Action {
         revision: Option<String>,
     },
     /// Generate the configuration schema and reference, or check them for drift.
+    #[cfg(feature = "sdk")]
     Schema {
         #[arg(long)]
         check: bool,
     },
+    #[cfg(feature = "sdk")]
     Bundle {
         #[arg(long)]
         platform: Option<String>,
@@ -52,10 +58,14 @@ struct Artifact {
 #[derive(Deserialize)]
 struct Pins {
     rust: String,
+    #[cfg(feature = "sdk")]
     protobuf: String,
+    #[cfg(feature = "sdk")]
     opentofu: String,
+    #[cfg(feature = "sdk")]
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
+    #[cfg(feature = "sdk")]
     platforms: BTreeMap<String, BTreeMap<String, Artifact>>,
 }
 fn cargo() -> Command {
@@ -73,6 +83,7 @@ fn run(command: &mut Command) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(feature = "sdk")]
 fn sources() -> Result<Vec<(String, Vec<u8>)>> {
     Ok(nemoclaw_build::source_inputs(Path::new("."))?)
 }
@@ -122,6 +133,7 @@ fn target(platform: &str) -> Result<&'static str> {
         _ => return Err("unsupported platform".into()),
     })
 }
+#[cfg(feature = "sdk")]
 fn build(packages: &[&str], target: &str) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
@@ -138,6 +150,7 @@ fn build(packages: &[&str], target: &str) -> Result<()> {
         );
     run(&mut command)
 }
+#[cfg(feature = "sdk")]
 fn executable(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::write(path, bytes)?;
     #[cfg(unix)]
@@ -147,6 +160,7 @@ fn executable(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(feature = "sdk")]
 async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let artifact = pins
         .platforms
@@ -252,12 +266,15 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "sdk")]
     if let Action::Docs { check, revision } = cli.command {
         return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
     }
+    #[cfg(feature = "sdk")]
     if let Action::Schema { check } = cli.command {
         return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
     }
+    #[cfg(feature = "sdk")]
     if matches!(cli.command, Action::Bundle { .. })
         && nemoclaw_build::source_version(&sources()?) != nemoclaw_build::BUILDER_SOURCE_VERSION
     {
@@ -270,19 +287,24 @@ async fn main() -> Result<()> {
     {
         return Err("build requires the pinned Rust toolchain".into());
     }
-    let protoc = Command::new(std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into()))
-        .arg("--version")
-        .output()?;
-    if !protoc.status.success()
-        || String::from_utf8(protoc.stdout)?.trim() != format!("libprotoc {}", pins.protobuf)
-    {
-        return Err("build requires the pinned Protocol Buffers compiler".into());
-    }
     match cli.command {
+        #[cfg(feature = "sdk")]
         Action::Schema { .. } | Action::Docs { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
+        #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {
+            let protoc =
+                Command::new(std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into()))
+                    .arg("--version")
+                    .output()?;
+            if !protoc.status.success()
+                || String::from_utf8(protoc.stdout)?.trim()
+                    != format!("libprotoc {}", pins.protobuf)
+            {
+                return Err("build requires the pinned Protocol Buffers compiler".into());
+            }
+
             bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
         Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,

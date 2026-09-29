@@ -221,6 +221,13 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some((heading, rest)) = output.split_once('\n') {
         output = format!("{}\n{rest}", context.output_palette.paint(heading, tone));
     }
+    if let Some(connection) = &result.connection {
+        output.push_str(&format!(
+            "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
+            terminal_text(&connection.gateway_endpoint),
+            terminal_text(&connection.workspace),
+        ));
+    }
     if !result.changes.is_empty() {
         output.push_str(if planned {
             "\nPlanned actions:\n"
@@ -387,21 +394,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     for health in &result.health {
         let runtime = &health.health;
-        let status = if !runtime.supported {
-            "unsupported"
-        } else if runtime.allows_apply_completion() {
-            "ready at completion"
-        } else {
-            "readiness unknown or not ready"
-        };
-        let status = context.output_palette.paint(
-            status,
-            if runtime.supported && runtime.allows_apply_completion() {
-                Tone::Success
-            } else {
-                Tone::Warning
-            },
-        );
+        let status = context.output_palette.paint("unsupported", Tone::Warning);
         output.push_str(&format!(
             "\nFabric health · sandbox/{}: {status}",
             terminal_text(&health.sandbox)
@@ -485,10 +478,6 @@ pub(crate) fn render_error(
         || error_in_chain::<crate::credentials::FulfillmentError>(error).is_some();
     let remaining = match sdk {
         _ if preflight_error => "No runtime resources changed.",
-        Some(Error::Health { health }) => {
-            details["error"]["health"] = serde_json::json!(health);
-            "Resources retained; Fabric readiness could not be established."
-        }
         Some(Error::SandboxStartup { .. }) => "Resources retained; sandbox startup failed.",
         _ if matches!(context.operation, "Apply" | "Destroy") => {
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
@@ -502,9 +491,6 @@ pub(crate) fn render_error(
         Some(Error::SandboxStartup { .. }) => Some(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         ),
-        Some(Error::Health { .. }) => {
-            Some("Inspect the reported Fabric health reason before retrying.")
-        }
         _ => None,
     };
     if let Some(help) = help {
@@ -540,9 +526,6 @@ pub(crate) fn render_error(
                 "State: {}\n\n{message}\n",
                 terminal_text(&context.state_dir.display().to_string())
             ));
-            if let Some(Error::Health { health }) = sdk {
-                output.push_str(&health_diagnostic(health));
-            }
             if !remaining.is_empty() {
                 output.push_str(&format!("\n{remaining}\n"));
             }
@@ -552,43 +535,6 @@ pub(crate) fn render_error(
             output
         }
     }
-}
-
-fn health_diagnostic(health: &nemoclaw_sdk::SandboxHealth) -> String {
-    let report = health.health.report.as_ref();
-    let reason = health
-        .health
-        .reason_code
-        .as_deref()
-        .or_else(|| report.and_then(|report| report["reason_code"].as_str()))
-        .unwrap_or("readiness not established");
-    let mut output = format!(
-        "Sandbox/{}: {}\n",
-        terminal_text(&health.sandbox),
-        terminal_text(reason)
-    );
-    if let Some(checks) = report.and_then(|report| report["checks"].as_array()) {
-        let relevant: Vec<_> = checks
-            .iter()
-            .filter(|check| check["status"] != "ok")
-            .collect();
-        for check in relevant.iter().take(10) {
-            let field = |key| terminal_text(check[key].as_str().unwrap_or("unknown"));
-            output.push_str(&format!(
-                "  {}: {} ({})\n",
-                field("name"),
-                field("status"),
-                field("reason_code")
-            ));
-        }
-        if relevant.len() > 10 {
-            output.push_str(&format!(
-                "  {} additional checks; use JSON output for the full report.\n",
-                relevant.len() - 10
-            ));
-        }
-    }
-    output
 }
 
 #[cfg(test)]
@@ -605,6 +551,33 @@ mod tests {
             &RenderContext::new(&cli),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn connection_output_identifies_the_gateway_and_workspace_without_claiming_access() {
+        for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
+            let connection = json!({
+                "gatewayEndpoint": "https://gateway.example:443",
+                "workspace": "nc-1234567890abcdef"
+            });
+            let result = json!({"outcome": outcome, "changes": [], "connection": connection});
+            let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
+            assert!(
+                text.contains("OpenShell gateway: https://gateway.example:443\n"),
+                "{text}"
+            );
+            assert!(
+                text.contains("OpenShell workspace: nc-1234567890abcdef\n"),
+                "{text}"
+            );
+            assert!(!text.contains("access verified"));
+            let machine: Value = serde_json::from_str(&render(
+                &["nemoclaw", command, "deployment.yaml", "-o", "json"],
+                result,
+            ))
+            .unwrap();
+            assert_eq!(machine["connection"], connection);
+        }
     }
 
     #[test]
@@ -803,51 +776,28 @@ mod tests {
     }
 
     #[test]
-    fn health_failures_keep_reason_and_resource_in_both_formats() {
+    fn rejected_health_uses_ordinary_failure_output_and_preserves_state_warning() {
         let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
         let context = RenderContext::new(&cli);
-        let error = Error::Health {
-            health: Box::new(
-                serde_json::from_value(json!({
-                    "sandbox":"assistant", "agents":[], "supported":true,
-                    "report":null, "reason_code":"fabric_health_timeout"
-                }))
-                .unwrap(),
-            ),
-        };
+        let error = Error::Conflict("invalid Fabric health response; resources retained");
         let text = render_error(&error, OutputFormat::Text, &context);
         for expected in [
             "Apply failed",
             "Input: spark.yaml",
-            "Sandbox/assistant",
-            "fabric_health_timeout",
-            "Resources retained",
+            "invalid Fabric health response",
+            "preserve the deployment state directory",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
         let json: Value =
             serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
-        assert_eq!(
-            json["error"]["health"]["reason_code"],
-            "fabric_health_timeout"
-        );
         assert_eq!(json["outcome"], "failed");
-    }
-
-    #[test]
-    fn supported_health_failure_exposes_report_reason_and_failed_checks() {
-        let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
-        let error = Error::Health { health: Box::new(serde_json::from_value(json!({
-            "sandbox":"assistant", "agents":[], "supported":true, "reason_code":null,
-            "report": {"reason_code":"adapter_not_ready", "readiness":"not_ready", "checks":[
-                {"name":"adapter", "status":"failed", "reason_code":"connection_refused"},
-                {"name":"runtime", "status":"ok", "reason_code":"responsive"}
-            ]}
-        })).unwrap()) };
-        let text = render_error(&error, OutputFormat::Text, &RenderContext::new(&cli));
-        assert!(text.contains("adapter_not_ready"));
-        assert!(text.contains("adapter: failed (connection_refused)"));
-        assert!(!text.contains("runtime: ok"));
+        assert_eq!(json["error"], json!({"message": error.to_string()}));
+        assert!(json.get("help").is_none());
+        assert_eq!(
+            json["remainingState"],
+            "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
+        );
     }
 
     #[test]

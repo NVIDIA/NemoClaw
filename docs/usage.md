@@ -76,28 +76,22 @@ Destroy retains that network and gateway storage.
 
 ## Fabric Health During Apply
 
-Apply requests health from each existing Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
+Apply requests the packaged bridge's health report after configuration and infrastructure readiness checks, including on unchanged applies.
 It does not invoke agents, send generation requests, repair failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
 Each sandbox's `health` entry identifies its agent and runtime.
-When supported, `report` contains Fabric's liveness, activity, readiness, reasons, timestamps, and dependency observations.
-Fabric decides overall readiness; a busy runtime can pass if responsive and ready to accept work.
-An unsupported dependency is not a successful check.
-These observations do not test every inference route or integration.
-
-**Current limit:** the pinned Fabric lacks `runtime.check_health()`.
-New images report `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported` while apply retains its other configuration and readiness checks.
-Success therefore does not establish fresh Fabric health or working inference.
-Real adapter health qualification remains **TBD** until an accepted implementation is pinned and tested.
+The pinned Fabric has no health API.
+The packaged bridge reports `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported` locally, without contacting the running Fabric host.
+Apply retains its other configuration and readiness checks; success does not establish fresh Fabric health or working inference.
+Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
 
 Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the bridge fails with a rebuild diagnostic.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
-Not-ready or unknown supported health, transport failures, and malformed reports fail apply and retain resources.
-For a supported health failure, the CLI exits with status 1 and reports the observation in the selected [output format](reference/cli.md#output-and-failure).
+Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
+The CLI exits with status 1 and reports the failure in the selected [output format](reference/cli.md#output-and-failure).
 Keep state, diagnose the failure, and explicitly reapply after recovery.
-Health is an observation at its recorded time, not a guarantee of future availability.
 
 ## Configuration and Credentials
 
@@ -124,7 +118,7 @@ Caller-supplied inference credentials require HTTPS.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
-See [policy and proxy configuration](sandbox-network.md) for changes and [security](security.md) for qualification limits.
+See [sandbox policy configuration](sandbox-network.md) for changes and [security](security.md) for qualification limits.
 
 ## Control Container Image Downloads
 
@@ -173,7 +167,6 @@ Only `gateway.management` selects a lifecycle mode.
 | `spec.services.<name>` with `kind: ollamaProxy` | The proxy and its credential storage, not its upstream daemon or model |
 | Inference provider with `serviceRef` | An OpenShell registration using the named service's connection |
 | Inference provider with `endpoint` | An OpenShell registration using an externally operated server |
-| `sandboxes[].network.proxy` | No proxy infrastructure; this is an existing HTTP proxy connection |
 
 Every declared service is installed, even without an inference provider referring to it.
 Every selected inference provider has a deployment-owned OpenShell registration; destroy removes that registration without deleting an external server.
@@ -231,7 +224,7 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 | Models, native model settings, adapter settings, or public Fabric configuration | Reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
 | Sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
-| Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
+| Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |

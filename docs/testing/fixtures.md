@@ -108,11 +108,12 @@ A failed assertion reports the OpenTofu diagnostic; rerun after correcting the m
 
 ## Ollama and Platform Fixtures
 
-Managed Ollama's deterministic SDK tests use local registry, capacity, configuration, and runtime-plan fixtures, not live containers or model downloads.
+Managed Ollama's deterministic runtime, provider, and SDK tests use local registry, capacity, configuration, and runtime-plan fixtures, not live containers or model downloads.
 They cover immutable model resolution, bounded readiness, retained storage, service references, independent installer resources, and provider connection resolution:
 
 ```sh
-cargo test -p nemoclaw-sdk services::installers::ollama
+cargo test -p nemoclaw-runtime ollama
+cargo test -p nemoclaw-provider --lib
 cargo test -p nemoclaw-sdk --test service_references --test multiple_providers
 ```
 
@@ -135,7 +136,7 @@ It removes its image tag afterward; Docker's build cache remains.
 Run from the repository root:
 
 ```sh
-NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
+NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --no-default-features --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
 ```
 
 A failure reports the build, load, or identity check that failed; correct the Docker configuration and rerun.

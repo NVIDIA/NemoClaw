@@ -464,23 +464,18 @@ fn missing_credential_is_a_review_action_without_blocking_yaml_authoring() {
     let mut wizard = Wizard::new(capabilities, draft);
     wizard.target_status = Some("Target unverified. You can save and check it with plan.".into());
     wizard.facts.credentials = vec![CredentialObservation {
-        reference: "NVIDIA_INFERENCE_API_KEY".into(),
+        reference: "NVIDIA_API_KEY".into(),
         status: ObservationStatus::Unavailable,
         reason: None,
     }];
     let mut terminal = Terminal::new(TestBackend::new(72, 24)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
-    assert!(
-        !terminal
-            .backend()
-            .to_string()
-            .contains("NVIDIA_INFERENCE_API_KEY")
-    );
+    assert!(!terminal.backend().to_string().contains("NVIDIA_API_KEY"));
     navigate(&mut wizard, Step::Review, Input::Continue);
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let rendered = terminal.backend().to_string();
     assert!(
-        rendered.contains("Set NVIDIA_INFERENCE_API_KEY before applying."),
+        rendered.contains("Set NVIDIA_API_KEY before applying."),
         "{rendered}"
     );
     for diagnostic in [
@@ -653,7 +648,7 @@ fn every_guided_template_preserves_defaults_and_requires_missing_adapter_answers
 }
 
 #[test]
-fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
+fn a_podman_template_is_disabled_on_mac_and_windows_and_requires_a_runtime_change() {
     use nemoclaw_authoring::RuntimeChoice;
     let capabilities = Capabilities::available();
     let answers = Answers {
@@ -664,36 +659,38 @@ fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
         .unwrap()
         .project(&capabilities, &answers)
         .unwrap();
-    let mut wizard = Wizard::for_host(
-        capabilities.clone(),
-        Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
-        "macos",
-    );
-    navigate(&mut wizard, Step::Runtime, Input::Continue);
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| wizard.render(frame)).unwrap();
-    let rendered = terminal.backend().to_string();
-    assert!(
-        rendered.contains("Podman (unavailable: requires local Linux)"),
-        "{rendered}"
-    );
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Runtime);
-    assert_eq!(
-        wizard.draft().guided_answers(&capabilities).unwrap(),
-        answers
-    );
-    wizard.handle(Input::Previous);
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::DeploymentName);
-    assert_eq!(
-        wizard
-            .draft()
-            .guided_answers(&capabilities)
-            .unwrap()
-            .runtime,
-        RuntimeChoice::Docker
-    );
+    for host in ["macos", "windows"] {
+        let mut wizard = Wizard::for_host(
+            capabilities.clone(),
+            Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
+            host,
+        );
+        navigate(&mut wizard, Step::Runtime, Input::Continue);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| wizard.render(frame)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("Podman (unavailable: requires local Linux)"),
+            "{rendered}"
+        );
+        wizard.handle(Input::Continue);
+        assert_eq!(wizard.step(), Step::Runtime);
+        assert_eq!(
+            wizard.draft().guided_answers(&capabilities).unwrap(),
+            answers
+        );
+        wizard.handle(Input::Previous);
+        wizard.handle(Input::Continue);
+        assert_eq!(wizard.step(), Step::DeploymentName);
+        assert_eq!(
+            wizard
+                .draft()
+                .guided_answers(&capabilities)
+                .unwrap()
+                .runtime,
+            RuntimeChoice::Docker
+        );
+    }
 }
 
 #[test]

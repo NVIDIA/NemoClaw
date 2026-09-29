@@ -70,13 +70,13 @@ async fn export_refreshes_through_opentofu_without_applying_or_losing_bindings()
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn export_uses_provider_observations_without_resolving_inference_credentials() {
     struct Values;
-    impl nemoclaw_sdk::openshell::Secrets for Values {
+    impl nemoclaw_sdk::Secrets for Values {
         fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
             Ok("fixture-value".into())
         }
     }
     struct Unavailable;
-    impl nemoclaw_sdk::openshell::Secrets for Unavailable {
+    impl nemoclaw_sdk::Secrets for Unavailable {
         fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
             Err(nemoclaw_sdk::ObservationError::Authentication)
         }
@@ -107,7 +107,7 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     for provider in fixture.state.lock().unwrap().providers.values_mut() {
         provider.metadata.as_mut().unwrap().labels.insert(
-            nemoclaw_sdk::openshell::CREDENTIAL.into(),
+            nemoclaw_provider::openshell::CREDENTIAL.into(),
             "CHANGED_EXPORT_REFERENCE".into(),
         );
     }

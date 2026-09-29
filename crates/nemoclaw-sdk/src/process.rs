@@ -98,7 +98,7 @@ pub(crate) async fn run_with_progress(
         }
         command.envs(overrides);
         if let Some(downloads) = &downloads {
-            command.env("NEMOCLAW_INTERNAL_PROGRESS_ENDPOINT", &downloads.endpoint);
+            command.env(crate::download::ENV, &downloads.endpoint);
         }
     });
     command.wrap(KillOnDrop);
