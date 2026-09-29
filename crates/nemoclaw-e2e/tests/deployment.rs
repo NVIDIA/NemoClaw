@@ -236,8 +236,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     assert!(
         error
             .to_string()
-            .to_ascii_lowercase()
-            .contains("gateway version or compute driver"),
+            .contains("gateway compute driver is podman, but runtime.provider is docker"),
         "{error}"
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);

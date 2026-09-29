@@ -36,6 +36,12 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    // Reserve an unserved loopback port so passive discovery consistently
+    // reports unavailable instead of depending on routes to the example host.
+    let inference = tokio::net::TcpSocket::new_v4().unwrap();
+    inference.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    document.spec.inference_providers[0].endpoint =
+        format!("http://{}/v1", inference.local_addr().unwrap());
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "pi" {
         let pi = Document::parse(
