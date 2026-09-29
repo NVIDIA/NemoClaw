@@ -3,7 +3,7 @@
 
 use crate::{Diagnostics, Draft, diagnostics::diagnostic};
 use nemoclaw_sdk::{
-    config::{ComputeDriver, HarnessKind},
+    config::{ComputeDriver, Document, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
@@ -49,30 +49,34 @@ pub struct DiscoveryAssessment {
 
 impl Draft {
     pub fn discovery_key(&self) -> Result<DiscoveryKey, Diagnostics> {
-        let document = self.document();
-        let [sandbox] = document.spec.sandboxes.as_slice() else {
-            return Err(diagnostic(
-                "sandbox",
-                "guided discovery requires one sandbox",
-            ));
-        };
-        let harness = document
-            .sandbox_harness(sandbox)
-            .map_err(|error| diagnostic("harness", &error.to_string()))?
-            .kind
-            .clone();
-        Ok(DiscoveryKey {
-            engine: document
-                .spec
-                .gateway
-                .as_managed()
-                .map(|gateway| gateway.engine.clone())
-                .unwrap_or_default(),
-            compute_driver: sandbox.runtime.provider,
-            image: sandbox.image.ref_.clone(),
-            harness,
-        })
+        discovery_key_for_document(self.document())
     }
+}
+
+/// Read target dependencies from SDK-valid desired state without a Draft.
+pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, Diagnostics> {
+    let [sandbox] = document.spec.sandboxes.as_slice() else {
+        return Err(diagnostic(
+            "sandbox",
+            "guided discovery requires one sandbox",
+        ));
+    };
+    let harness = document
+        .sandbox_harness(sandbox)
+        .map_err(|error| diagnostic("harness", &error.to_string()))?
+        .kind
+        .clone();
+    Ok(DiscoveryKey {
+        engine: document
+            .spec
+            .gateway
+            .as_managed()
+            .map(|gateway| gateway.engine.clone())
+            .unwrap_or_default(),
+        compute_driver: sandbox.runtime.provider,
+        image: sandbox.image.ref_.clone(),
+        harness,
+    })
 }
 
 impl DiscoveryEvidence {
@@ -92,7 +96,14 @@ impl DiscoveryEvidence {
     /// Pending contains only dependency-ready reads. A completed unknown result
     /// remains unknown until the caller explicitly refreshes it.
     pub fn assessment(&self, draft: &Draft) -> Result<DiscoveryAssessment, Diagnostics> {
-        let key = draft.discovery_key()?;
+        self.assessment_for_document(draft.document())
+    }
+
+    pub fn assessment_for_document(
+        &self,
+        document: &Document,
+    ) -> Result<DiscoveryAssessment, Diagnostics> {
+        let key = discovery_key_for_document(document)?;
         let engine = self.engine.as_ref().filter(|_| {
             self.key.engine == key.engine && self.key.compute_driver == key.compute_driver
         });
@@ -125,8 +136,8 @@ impl DiscoveryEvidence {
                 if observed.image_id.as_ref().is_some_and(|id| !id.is_empty())
                     && observed.status != ObservationStatus::Unavailable =>
             {
-                let sandbox = &draft.document().spec.sandboxes[0];
-                let requirements = FabricRequirements::for_sandbox(draft.document(), sandbox)
+                let sandbox = &document.spec.sandboxes[0];
+                let requirements = FabricRequirements::for_sandbox(document, sandbox)
                     .map_err(|error| diagnostic("discovery", &error.to_string()))?;
                 let capability = assess_image(
                     observed.catalog.as_ref(),

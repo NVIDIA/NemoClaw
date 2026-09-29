@@ -3,7 +3,7 @@
 
 use crate::{Capabilities, Diagnostics, Draft, EditableField, FieldValue, GuidedField};
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Gateway},
+    config::{ComputeDriver, Document, Gateway, InferenceApi},
     discovery::GatewayObservation,
     discovery::ObservationStatus,
     hardware_discovery::HardwareObservation,
@@ -39,6 +39,39 @@ pub struct AuthoringFacts {
 }
 
 impl AuthoringFacts {
+    pub fn retarget_document(
+        &mut self,
+        document: &Document,
+        route: Option<&str>,
+    ) -> Result<(), Diagnostics> {
+        let request = inference_request_for_document(document, route)?;
+        if self
+            .endpoint
+            .as_ref()
+            .is_some_and(|evidence| evidence.request != request)
+        {
+            self.endpoint = None;
+        }
+        let key = crate::discovery_key_for_document(document)?;
+        if self
+            .hardware
+            .as_ref()
+            .is_some_and(|evidence| evidence.engine != key.engine)
+        {
+            self.hardware = None;
+        }
+        if self.gateway.as_ref().is_some_and(|evidence| {
+            evidence.gateway != document.spec.gateway
+                || evidence.compute_driver != key.compute_driver
+        }) {
+            self.gateway = None;
+        }
+        let references = document.credential_names();
+        self.credentials
+            .retain(|observation| references.contains(&observation.reference.as_str()));
+        Ok(())
+    }
+
     /// Keep facts whose dependency keys still match the current document.
     pub fn retarget(
         &mut self,
@@ -72,6 +105,39 @@ impl AuthoringFacts {
             .retain(|observation| references.contains(&observation.reference.as_str()));
         Ok(())
     }
+}
+
+/// Read the currently selected route's endpoint request from SDK-valid state.
+pub fn inference_request_for_document(
+    document: &Document,
+    route_name: Option<&str>,
+) -> Result<EndpointRequest, Diagnostics> {
+    let [sandbox] = document.spec.sandboxes.as_slice() else {
+        return Err(crate::diagnostics::diagnostic(
+            "sandbox",
+            "Inference discovery requires one sandbox.",
+        ));
+    };
+    let inference = document
+        .sandbox_inference(sandbox)
+        .map_err(|error| crate::diagnostics::diagnostic("inference", &error.to_string()))?;
+    let route = route_name
+        .and_then(|name| inference.routes.iter().find(|route| route.name == name))
+        .or_else(|| inference.routes.first())
+        .ok_or_else(|| {
+            crate::diagnostics::diagnostic("route", "Inference discovery requires a route.")
+        })?;
+    let provider = document
+        .sandbox_route_provider(sandbox, route)
+        .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
+    let connection = document
+        .provider_connection(provider)
+        .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
+    Ok(EndpointRequest {
+        endpoint: connection.endpoint,
+        api: provider.api.unwrap_or(InferenceApi::OpenaiCompletions),
+        credential_env: connection.credential.map(|credential| credential.env),
+    })
 }
 
 impl Draft {

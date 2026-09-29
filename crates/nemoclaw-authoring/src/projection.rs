@@ -15,6 +15,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// Identity generated for this authoring session.
+    pub fn uid(&self) -> &str {
+        &self.uid
+    }
+
     /// Generates a random UUID without creating deployment state.
     pub fn new() -> Result<Self, Diagnostics> {
         let mut bytes = [0_u8; 16];

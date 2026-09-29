@@ -21,6 +21,7 @@ mod graph;
 mod guided;
 mod journey;
 mod journey_definition;
+mod journey_design;
 mod journey_flow;
 mod journey_state;
 mod partial_document;
@@ -36,12 +37,17 @@ pub use draft::{
 };
 pub use evidence::{
     CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+    discovery_key_for_document,
 };
-pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
+pub use facts::{
+    AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence,
+    inference_request_for_document,
+};
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use journey::{PartialTemplate, TargetFacts, TargetStatus};
 pub use journey_definition::JourneyDefinition;
+pub use journey_design::JourneyDesign;
 pub use journey_flow::{JourneyFlow, JourneyFlowQuestion};
 pub use journey_state::{JourneyQuestion, JourneyQuestionReason, JourneyResolution, JourneyState};
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};

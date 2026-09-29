@@ -6,22 +6,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
+use nemoclaw_sdk::discovery::ObservationStatus;
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
+use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};
 
 use crate::{
-    Capabilities, Diagnostics, PartialAssessment, PartialDocument, PartialIssueKind,
-    ProviderPreset, SettingQuestion,
+    AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryEvidence,
+    PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset, SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, NAME, SETTINGS, adapter_field,
         adapter_schema, sdk_field_schema,
     },
+    journey_design::JourneyGuidance,
 };
 
 const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";
 const ROUTE_SELECTION: &str = "route:selection";
 const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
+const RUNTIME_PROVIDER: &str = "/spec/sandboxes/0/runtime/provider";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,12 +116,16 @@ impl JourneyResolution {
 #[derive(Clone, Debug)]
 pub struct JourneyState {
     definition: JourneyDefinition,
+    guidance: JourneyGuidance,
     values: Value,
     accepted: BTreeSet<String>,
     omitted: BTreeSet<String>,
     inactive_settings: BTreeMap<String, Value>,
     selected_presets: BTreeMap<usize, ProviderPreset>,
     accepted_presets: BTreeSet<usize>,
+    accepted_model_settings: BTreeSet<(usize, String)>,
+    omitted_model_settings: BTreeSet<(usize, String)>,
+    generated_gateway_engine: bool,
     selected_route: Option<usize>,
     completed_routes: BTreeSet<usize>,
 }
@@ -133,15 +141,24 @@ impl JourneyState {
             .then_some(0);
         Self {
             definition,
+            guidance: JourneyGuidance::default(),
             values,
             accepted: BTreeSet::new(),
             omitted: BTreeSet::new(),
             inactive_settings: BTreeMap::new(),
             selected_presets: BTreeMap::new(),
             accepted_presets: BTreeSet::new(),
+            accepted_model_settings: BTreeSet::new(),
+            omitted_model_settings: BTreeSet::new(),
+            generated_gateway_engine: false,
             selected_route,
             completed_routes: BTreeSet::new(),
         }
+    }
+
+    pub(crate) fn with_guidance(mut self, guidance: JourneyGuidance) -> Self {
+        self.guidance = guidance;
+        self
     }
 
     pub fn values(&self) -> &Value {
@@ -153,6 +170,171 @@ impl JourneyState {
         self.values
             .pointer(&format!("{ROUTES}/{index}/name"))
             .and_then(Value::as_str)
+    }
+
+    /// Add current endpoint observations to model suggestions. The model remains
+    /// free text; a discovery response is never an allowlist.
+    pub fn resolve_with_facts(
+        &self,
+        capabilities: &Capabilities,
+        facts: &AuthoringFacts,
+    ) -> Result<JourneyResolution, Diagnostics> {
+        let mut resolution = self.resolve(capabilities)?;
+        let Some(document) = resolution.assessment.document() else {
+            return Ok(resolution);
+        };
+        let Some(request) =
+            crate::inference_request_for_document(document, self.current_route()).ok()
+        else {
+            return Ok(resolution);
+        };
+        let Some(observed) = facts.endpoint.as_ref().filter(|observed| {
+            observed.request == request
+                && observed.observation.status == ObservationStatus::Available
+        }) else {
+            return Ok(resolution);
+        };
+        let Some(path) = self.route_model_path() else {
+            return Ok(resolution);
+        };
+        if let Some(question) = resolution
+            .questions
+            .iter_mut()
+            .find(|question| question.id == path)
+        {
+            if let Some(suggestion) = question.suggestion.clone() {
+                question.choices.push(suggestion);
+            }
+            for model in &observed.observation.models {
+                if !model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control) {
+                    let value = Value::String(model.clone());
+                    if !question.choices.contains(&value) {
+                        question.choices.push(value);
+                    }
+                }
+            }
+        }
+        Ok(resolution)
+    }
+
+    /// Accept remaining suggestions as one explicit, evidence-gated action.
+    /// Required questions without a suggestion and route choices stay manual.
+    pub fn delegate_remaining(
+        &self,
+        capabilities: &Capabilities,
+        evidence: Option<&DiscoveryEvidence>,
+        facts: &AuthoringFacts,
+    ) -> Result<Self, Diagnostics> {
+        self.check_delegation(capabilities, evidence, facts)?;
+        let mut candidate = self.clone();
+        for _ in 0..256 {
+            let resolution = candidate.resolve_with_facts(capabilities, facts)?;
+            let Some(question) = resolution.next_question() else {
+                if resolution.materialized_document().is_some() {
+                    candidate.check_delegation(capabilities, evidence, facts)?;
+                    return Ok(candidate);
+                }
+                return Err(diagnostic(
+                    "delegation",
+                    "Remaining SDK or Fabric constraints need individual answers.",
+                ));
+            };
+            if question.id == ROUTE_SELECTION {
+                return Err(diagnostic(
+                    "delegation",
+                    "Select each inference route before delegating its questions.",
+                ));
+            }
+            let value = question.suggestion.clone();
+            if value.is_none() && question.required {
+                return Err(diagnostic(
+                    "delegation",
+                    "A required question has no safe suggested answer.",
+                ));
+            }
+            candidate.answer(capabilities, question.id(), value)?;
+        }
+        Err(diagnostic(
+            "delegation",
+            "Too many questions remain to delegate safely.",
+        ))
+    }
+
+    fn check_delegation(
+        &self,
+        capabilities: &Capabilities,
+        evidence: Option<&DiscoveryEvidence>,
+        facts: &AuthoringFacts,
+    ) -> Result<(), Diagnostics> {
+        if !self.accepted.contains(HARNESS) {
+            return Err(diagnostic(
+                "delegation",
+                "Choose a harness before delegating settings.",
+            ));
+        }
+        let resolution = self.resolve(capabilities)?;
+        let document = resolution
+            .assessment()
+            .document()
+            .ok_or_else(|| diagnostic("delegation", "The desired state is not SDK-valid yet."))?;
+        let key = crate::discovery_key_for_document(document)?;
+        let evidence = evidence
+            .filter(|evidence| evidence.key == key)
+            .ok_or_else(|| diagnostic("delegation", "Target discovery is missing or stale."))?;
+        if evidence.assessment_for_document(document)?.status != CompatibilityStatus::Compatible {
+            return Err(diagnostic(
+                "delegation",
+                "Target engine and image compatibility is not verified.",
+            ));
+        }
+        let request = crate::inference_request_for_document(document, self.current_route())?;
+        let endpoint = facts
+            .endpoint
+            .as_ref()
+            .filter(|endpoint| endpoint.request == request)
+            .ok_or_else(|| diagnostic("delegation", "Model discovery is missing or stale."))?;
+        if endpoint.observation.status != ObservationStatus::Available
+            || endpoint.observation.reachable != Some(true)
+            || !matches!(
+                endpoint.observation.authentication,
+                AuthenticationStatus::Accepted | AuthenticationStatus::NotRequired
+            )
+        {
+            return Err(diagnostic(
+                "delegation",
+                "The model catalog could not be verified.",
+            ));
+        }
+        let model = self
+            .route_model_path()
+            .and_then(|path| self.values.pointer(&path))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                diagnostic("delegation", "Choose a model before delegating settings.")
+            })?;
+        if !endpoint
+            .observation
+            .models
+            .iter()
+            .any(|advertised| advertised == model)
+        {
+            return Err(diagnostic(
+                "delegation",
+                "The selected model was not advertised by the endpoint.",
+            ));
+        }
+        if document.credential_names().iter().any(|reference| {
+            !facts.credentials.iter().any(|credential| {
+                credential.reference == *reference
+                    && credential.status == ObservationStatus::Available
+            })
+        }) {
+            return Err(diagnostic(
+                "delegation",
+                "Required credentials are unavailable or unverified.",
+            ));
+        }
+        Ok(())
     }
 
     fn route_model_path(&self) -> Option<String> {
@@ -276,14 +458,14 @@ impl JourneyState {
                         JourneyQuestionReason::ExplicitAsk
                     },
                     required,
-                    choices: schema["enum"].as_array().cloned().unwrap_or_default(),
+                    choices: finite_choices(&schema),
                     suggestion: value.cloned().or_else(|| schema.get("default").cloned()),
                     schema,
                 });
             }
         }
 
-        if self.definition.ask_route_models {
+        if self.guidance.ask_route_models {
             if let Some(path) = self.route_model_path()
                 && !self.accepted.contains(&path)
                 && !questions.iter().any(|question| question.id == path)
@@ -365,6 +547,37 @@ impl JourneyState {
                 suggestion,
                 schema: serde_json::json!({"type":"string"}),
             });
+        }
+        if self.guidance.ask_inference_api
+            && let Some(provider) = self.provider_path()
+        {
+            let path = format!("{provider}/api");
+            if !self.accepted.contains(&path)
+                && let Some((mut schema, required)) = sdk_field_schema(&path)
+            {
+                if let Some(preset) = self.current_preset() {
+                    schema["enum"] = Value::Array(
+                        preset
+                            .apis()
+                            .iter()
+                            .map(|api| serde_json::to_value(api).expect("SDK API serializes"))
+                            .collect(),
+                    );
+                }
+                let value = self.values.pointer(&path);
+                questions.push(JourneyQuestion {
+                    id: path,
+                    reason: if value.is_some() {
+                        JourneyQuestionReason::ExplicitAsk
+                    } else {
+                        JourneyQuestionReason::Missing
+                    },
+                    required,
+                    choices: finite_choices(&schema),
+                    suggestion: value.cloned(),
+                    schema,
+                });
+            }
         }
         if self.definition.ask.contains(INFERENCE_PRESET)
             && self
@@ -468,7 +681,8 @@ impl JourneyState {
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
                 if value.is_none()
                     || !valid
-                    || (self.definition.ask.contains(&id) && !self.accepted.contains(&id))
+                    || ((self.guidance.ask_adapter || self.definition.ask.contains(&id))
+                        && !self.accepted.contains(&id))
                 {
                     questions.push(JourneyQuestion {
                         id,
@@ -497,7 +711,7 @@ impl JourneyState {
             }
         }
 
-        if self.definition.ask_deployment
+        if self.guidance.ask_deployment
             && let Some(document) = assessment.document()
         {
             for field in crate::deployment::deployment_questions_for_document(document)? {
@@ -516,21 +730,41 @@ impl JourneyState {
                 });
             }
         }
-        if self.definition.ask_native
+        if self.guidance.ask_native
             && let Some(document) = assessment.document()
         {
             for field in native_questions_for_document(document, capabilities, self.selected_route)?
             {
+                if field.path == "model:" {
+                    unverified.push(
+                        "selected native model configuration does not satisfy its Fabric schema"
+                            .into(),
+                    );
+                    continue;
+                }
                 let value = native_value(&self.values, self.selected_route, &field.path);
                 let valid =
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
-                if self.omitted.contains(&field.path) {
+                let route_key = self.selected_route.map(|route| (route, field.path.clone()));
+                let accepted = if field.path.starts_with("model:") {
+                    route_key
+                        .as_ref()
+                        .is_some_and(|key| self.accepted_model_settings.contains(key))
+                } else {
+                    self.accepted.contains(&field.path)
+                };
+                let omitted_route = route_key
+                    .as_ref()
+                    .is_some_and(|key| self.omitted_model_settings.contains(key));
+                if self.omitted.contains(&field.path) || omitted_route {
                     omitted.push(field.path);
-                } else if !valid {
+                } else if !valid || !accepted {
                     questions.push(JourneyQuestion {
                         id: field.path,
-                        reason: if value.is_some() {
+                        reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
+                        } else if value.is_some() {
+                            JourneyQuestionReason::ExplicitAsk
                         } else {
                             JourneyQuestionReason::Missing
                         },
@@ -577,11 +811,14 @@ impl JourneyState {
             questions.retain(|question| question.id != model);
         }
         questions.sort_by_key(|question| {
-            self.definition
-                .ask_order
-                .iter()
-                .position(|id| id == question.id())
-                .unwrap_or(usize::MAX)
+            (
+                question.id == ROUTE_SELECTION,
+                self.definition
+                    .ask_order
+                    .iter()
+                    .position(|id| id == question.id())
+                    .unwrap_or(usize::MAX),
+            )
         });
         JourneyResolution {
             questions,
@@ -695,25 +932,46 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if self.definition.ask_native
+        } else if self.guidance.ask_native
             && (id.starts_with("workflow:") || id.starts_with("model:"))
         {
             candidate.put_native_field(id, value.clone())?;
-            if value.is_none() {
+            if id.starts_with("model:") {
+                let route = candidate.selected_route.ok_or_else(|| {
+                    diagnostic("journey", "Select a route before model settings.")
+                })?;
+                let key = (route, id.to_owned());
+                if value.is_none() {
+                    candidate.omitted_model_settings.insert(key.clone());
+                } else {
+                    candidate.omitted_model_settings.remove(&key);
+                }
+                candidate.accepted_model_settings.insert(key);
+            } else if value.is_none() {
                 candidate.omitted.insert(id.into());
             } else {
                 candidate.omitted.remove(id);
             }
         } else if ((self.definition.ask.contains(id)
+            || self.guidance.ask_inference_api
+                && self
+                    .provider_path()
+                    .is_some_and(|path| id == format!("{path}/api"))
             || self
                 .provider_path()
                 .is_some_and(|path| id == format!("{path}/endpoint"))
-            || self.definition.ask_route_models && self.route_model_path().as_deref() == Some(id))
+            || self.guidance.ask_route_models && self.route_model_path().as_deref() == Some(id))
             && sdk_field_schema(id).is_some())
-            || self.definition.ask_deployment && id.starts_with('/')
+            || self.guidance.ask_deployment && id.starts_with('/')
         {
             candidate.put_sdk_field(id, value.clone())?;
-            if self.definition.ask_deployment
+            if id == "/spec/gateway/engine" {
+                candidate.generated_gateway_engine = false;
+            }
+            if id == RUNTIME_PROVIDER {
+                candidate.sync_gateway_engine_for_runtime()?;
+            }
+            if self.guidance.ask_deployment
                 && !self.definition.ask.contains(id)
                 && self.resolve(capabilities)?.question(id).is_some()
                 && PartialDocument::from_value(self.values.clone())
@@ -796,7 +1054,7 @@ impl JourneyState {
             self.current_preset()
                 .map(|preset| Value::String(preset.id().into()))
         } else if sdk_field_schema(id).is_some()
-            || (self.definition.ask_deployment && self.values.pointer(id).is_some())
+            || (self.guidance.ask_deployment && self.values.pointer(id).is_some())
         {
             previous.values.pointer(id).cloned()
         } else {
@@ -952,6 +1210,10 @@ impl JourneyState {
             ));
         }
         let previous = self.current_preset();
+        if previous == Some(preset) {
+            self.selected_presets.insert(route_index, preset);
+            return Ok(());
+        }
         let before_values = self.values.clone();
         let profile = preset.profile();
         let old_api = self
@@ -1024,16 +1286,67 @@ impl JourneyState {
             .rsplit_once('/')
             .ok_or_else(|| diagnostic("journey", "Invalid SDK field path."))?;
         let property = property.replace("~1", "/").replace("~0", "~");
-        let object = self
-            .values
-            .pointer_mut(parent)
-            .and_then(Value::as_object_mut)
+        if value.is_none() && self.values.pointer(parent).is_none() {
+            return Ok(());
+        }
+        let mut current = &mut self.values;
+        for segment in parent.split('/').skip(1) {
+            let key = segment.replace("~1", "/").replace("~0", "~");
+            current = match current {
+                Value::Array(items) => {
+                    let index = key
+                        .parse::<usize>()
+                        .map_err(|_| diagnostic("journey", "Invalid SDK array index."))?;
+                    items
+                        .get_mut(index)
+                        .ok_or_else(|| diagnostic("journey", "SDK array index is unavailable."))?
+                }
+                Value::Object(object) => object
+                    .entry(key)
+                    .or_insert_with(|| Value::Object(Map::new())),
+                _ => {
+                    return Err(diagnostic(
+                        "journey",
+                        "The SDK field's parent is not an object.",
+                    ));
+                }
+            };
+        }
+        let object = current
+            .as_object_mut()
             .ok_or_else(|| diagnostic("journey", "The SDK field's parent is not an object."))?;
         if let Some(value) = value {
             object.insert(property, value);
         } else {
             object.remove(&property);
         }
+        Ok(())
+    }
+
+    fn sync_gateway_engine_for_runtime(&mut self) -> Result<(), Diagnostics> {
+        if self
+            .values
+            .pointer("/spec/gateway/management")
+            .and_then(Value::as_str)
+            != Some("managed")
+        {
+            return Ok(());
+        }
+        if self.values.pointer("/spec/gateway/engine").is_some() && !self.generated_gateway_engine {
+            return Ok(());
+        }
+        let engine = match self
+            .values
+            .pointer(RUNTIME_PROVIDER)
+            .and_then(Value::as_str)
+        {
+            Some("podman") => "unix:///run/user/1000/podman/podman.sock",
+            Some("docker") => "unix:///var/run/docker.sock",
+            _ => return Ok(()),
+        };
+        self.put_sdk_field("/spec/gateway/engine", Some(Value::String(engine.into())))?;
+        self.generated_gateway_engine = true;
+        self.accepted.remove("/spec/gateway/engine");
         Ok(())
     }
 }
@@ -1053,6 +1366,36 @@ fn native_value<'a>(
     } else {
         None
     }
+}
+
+fn finite_choices(schema: &Value) -> Vec<Value> {
+    let mut choices = Vec::new();
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        choices.extend(
+            values
+                .iter()
+                .filter(|value| value.as_str() != Some(""))
+                .cloned(),
+        );
+    }
+    if let Some(value) = schema.get("const")
+        && value.as_str() != Some("")
+        && !choices.contains(value)
+    {
+        choices.push(value.clone());
+    }
+    for keyword in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
+            for branch in branches {
+                for choice in finite_choices(branch) {
+                    if !choices.contains(&choice) {
+                        choices.push(choice);
+                    }
+                }
+            }
+        }
+    }
+    choices
 }
 
 fn native_questions_for_document(
@@ -1144,6 +1487,11 @@ fn native_questions_for_document(
                 0,
             )?;
             for mut field in model {
+                if field.path.is_empty() {
+                    field.path = "model:".into();
+                    fields.push(field);
+                    continue;
+                }
                 if field.path == "/settings" || field.path.starts_with("/settings/") {
                     field.path = format!("model:{}", &field.path["/settings".len()..]);
                     fields.push(field);

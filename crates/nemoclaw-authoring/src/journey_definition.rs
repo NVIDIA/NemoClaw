@@ -30,9 +30,6 @@ pub struct JourneyDefinition {
     pub(crate) base: PartialDocument,
     pub(crate) ask: BTreeSet<String>,
     pub(crate) ask_order: Vec<String>,
-    pub(crate) ask_deployment: bool,
-    pub(crate) ask_native: bool,
-    pub(crate) ask_route_models: bool,
     pub(crate) omit: BTreeSet<String>,
 }
 
@@ -43,9 +40,6 @@ impl JourneyDefinition {
             base,
             ask: BTreeSet::new(),
             ask_order: Vec::new(),
-            ask_deployment: false,
-            ask_native: false,
-            ask_route_models: false,
             omit: BTreeSet::new(),
         }
     }
@@ -62,25 +56,6 @@ impl JourneyDefinition {
 
     pub fn omit(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.omit.extend(fields.into_iter().map(Into::into));
-        self
-    }
-
-    /// Prompt for existing deployment-owned SDK values in the selected document.
-    /// Their field schemas and active reference paths come from the SDK document.
-    pub fn ask_deployment_fields(mut self) -> Self {
-        self.ask_deployment = true;
-        self
-    }
-
-    /// Resolve workflow and model settings from the selected Fabric descriptors.
-    pub fn ask_native_fields(mut self) -> Self {
-        self.ask_native = true;
-        self
-    }
-
-    /// Visit each existing inference route and ask for its model selection.
-    pub fn ask_route_models(mut self) -> Self {
-        self.ask_route_models = true;
         self
     }
 
@@ -408,13 +383,7 @@ pub(crate) fn sdk_field_schema(path: &str) -> Option<(Value, bool)> {
                 .get("required")
                 .and_then(Value::as_array)
                 .is_some_and(|items| items.iter().any(|item| item == &name));
-            node = node
-                .get("properties")
-                .and_then(|properties| properties.get(&name))
-                .or_else(|| {
-                    node.get("additionalProperties")
-                        .filter(|schema| schema.is_object())
-                })?;
+            node = node.get("properties")?.get(&name)?;
         }
     }
     let mut field = follow_ref(root, node)?.clone();
