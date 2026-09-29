@@ -496,6 +496,9 @@ export function resolveOnboardOptions(
     fail(deps, "  --from and --from-image cannot both be set.");
   }
   const fromImage = resolveExternalImageReference(flags["from-image"], deps);
+  if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
+    fail(deps, "  --from-image cannot be used with the Portable profile.");
+  }
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(

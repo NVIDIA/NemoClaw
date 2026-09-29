@@ -27,6 +27,7 @@ export interface OnboardEntryOptionsInput {
     fromDockerfile?: string | null;
     fromImage?: string | null;
     sandboxName?: string | null;
+    experimentalProfile?: import("./docker-driver-platform").ExperimentalOnboardProfile | null;
   };
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
   stdinIsTty: boolean;
@@ -392,6 +393,10 @@ export function resolveOnboardEntryOptions(
       deps.error(`  ${error instanceof Error ? error.message : String(error)}`);
       deps.exitProcess(1);
     }
+  }
+  if (input.opts.experimentalProfile === "portable" && requestedFromImage) {
+    deps.error("  --from-image cannot be used with the Portable profile.");
+    deps.exitProcess(1);
   }
   if (requestedFromDockerfile && requestedFromImage) {
     deps.error(

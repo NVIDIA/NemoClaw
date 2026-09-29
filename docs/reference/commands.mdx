@@ -1019,7 +1019,7 @@ Onboarding adopts that mode when you have not selected one; an explicit conflict
 Configure registry credentials through Docker before onboarding a private image.
 
 Do not combine `--from-image` with `--from` or the Portable profile.
-Resume retains the recorded digest; changing it requires `--fresh --recreate-sandbox`.
+Resume retains the recorded digest. To use another digest, start fresh. In non-interactive mode, also use `--recreate-sandbox`.
 Rebuild consumes the same digest without building an image.
 Cleanup retains the published image, and upgrades leave it pinned and publisher-managed.
 

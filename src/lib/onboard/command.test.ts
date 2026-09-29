@@ -571,6 +571,20 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("repository@sha256");
   });
 
+  it("rejects external images for the Portable profile", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from-image cannot be used with the Portable profile");
+  });
+
   it("rejects simultaneous Dockerfile and external image sources", () => {
     const errors: string[] = [];
     expect(() =>
