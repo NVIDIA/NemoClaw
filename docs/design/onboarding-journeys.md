@@ -70,7 +70,7 @@ Tree printing reads fixtures only and does not probe or apply resources.
 2. **Journey definition.** Add a real base partial document with `ask` and `omit` guidance. Resolve the minimum viable values and fully supplied fixtures through the same API. Preserve current guided behavior while moving the example's policy into the new definition.
 3. **Question resolver and tree printer.** Start with a bounded preview of identity, harness choices, and top-level adapter settings. Expand SDK and Fabric conditional branches through the same resolver used by interactive authoring rather than listing schema properties statically.
 4. **Fabric and deployment coverage.** Incorporate adapter settings, model settings, and SDK deployment fields. Validate against the selected descriptor; retain an unverified result when no trusted descriptor is available.
-5. **TUI integration.** Drive the example TUI from journey state and the shared next-question result. Retire the separate guided, setting, and deployment cursor loops after equivalent cases pass.
+5. **TUI integration.** Move question selection into authoring, then drive the example TUI from journey state and the shared next-question result. Retire the separate guided, setting, and deployment cursor loops after equivalent cases pass.
 
 Each implementation slice starts with a failing behavioral test, then focused tests.
 Before committing, run the workspace format, Clippy, and test gates required by `AGENTS.md`.
@@ -109,7 +109,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 - Invalid supplied SDK fields stay visible in the preview even when their paths are in the question surface. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.
 - The first mutable journey state keeps accepted answers and explicit omissions separate from supplied values. It preserves each adapter's settings while changing harnesses and recomputes active questions after every answer. Missing catalog schemas leave guidance in place with a warning.
 - SDK materialization and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. The caller must also consider unresolved Fabric and target evidence before treating the journey as ready.
-- The example TUI still uses the complete-document `Draft` and its guided, setting, route, and deployment cursors. Moving it to `JourneyState` requires those question sources to join the resolver so there is one answer state.
+- The example TUI now takes its next guided, route, Fabric-setting, deployment, or review decision from `JourneyFlow` in authoring. `JourneyFlow` reads the existing complete-document `Draft`, which remains the sole answer state for imported templates and the built-in example. The TUI still owns navigation history and route/deployment progress. This bridge preserves current behavior while the sparse `JourneyState` grows to cover guided inference, model settings, conditional Fabric fields, and deployment fields. It is not yet the single resolver described in the goal.
 
 ## Decisions to revisit after the prototype
 

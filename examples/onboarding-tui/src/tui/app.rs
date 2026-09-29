@@ -3,7 +3,8 @@
 
 use super::labels;
 use nemoclaw_authoring::{
-    Capabilities, Draft, EditableField, FieldValue, GuidedEdit, RuntimeChoice,
+    Capabilities, Draft, EditableField, FieldValue, GuidedEdit, JourneyFlow, JourneyFlowQuestion,
+    RuntimeChoice,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,8 +318,14 @@ impl Wizard {
             return;
         }
         if self.step == Step::Review {
-            match self.draft.next_setting(&self.capabilities) {
-                Ok(Some(_)) => {
+            let flow = JourneyFlow::new(&self.draft, &self.capabilities).with_progress(
+                &self.completed_routes,
+                self.route_selected,
+                self.deployment_cursor,
+            );
+            match flow.next_question() {
+                Ok(JourneyFlowQuestion::Review) => {}
+                Ok(_) => {
                     self.advance_step();
                     return;
                 }
@@ -326,7 +333,6 @@ impl Wizard {
                     self.error = Some(error.to_string());
                     return;
                 }
-                _ => {}
             }
             if let Err(error) = self.draft.validate_settings(&self.capabilities) {
                 self.error = Some(error.to_string());
@@ -358,11 +364,7 @@ impl Wizard {
                     _ => {}
                 }
             }
-            match self.draft.next_question(&self.capabilities) {
-                Ok(None) => self.accepted = true,
-                Ok(Some(_)) => self.advance_step(),
-                Err(error) => self.error = Some(error.to_string()),
-            }
+            self.accepted = true;
             return;
         }
         if let Some(question) = self.setting_question() {
@@ -463,59 +465,35 @@ impl Wizard {
     }
 
     fn advance_step(&mut self) {
-        match self.draft.next_question(&self.capabilities) {
+        let flow = JourneyFlow::new(&self.draft, &self.capabilities).with_progress(
+            &self.completed_routes,
+            self.route_selected,
+            self.deployment_cursor,
+        );
+        match flow.next_question() {
             Ok(question) => {
-                let next = if let Some(step) = question.and_then(|field| step_for_field(field.id()))
-                {
-                    if matches!(
-                        step,
-                        Step::Inference | Step::Api | Step::Endpoint | Step::Model
-                    ) && !self.route_selected
-                        && self.route_choices().len() > 1
-                    {
-                        Step::Route
-                    } else {
-                        step
+                let next = match question {
+                    JourneyFlowQuestion::Guided(field) => {
+                        step_for_field(field.id()).expect("guided field has a TUI step")
                     }
-                } else {
-                    match self.draft.next_setting(&self.capabilities) {
-                        Ok(Some(question)) => {
-                            let fields = self
-                                .draft
-                                .setting_questions(&self.capabilities)
-                                .expect("question comes from active schema");
-                            Step::Setting(
-                                fields
-                                    .iter()
-                                    .position(|field| field.path == question.path)
-                                    .unwrap(),
-                            )
-                        }
-                        Ok(None) => {
+                    JourneyFlowQuestion::Route(_) => {
+                        if self.route_selected {
                             let route = self.draft.current_route().unwrap().to_owned();
                             if !self.completed_routes.contains(&route) {
                                 self.completed_routes.push(route);
                             }
-                            if !self.route_choices().is_empty() {
-                                self.route_selected = false;
-                                Step::Route
-                            } else {
-                                match self.draft.deployment_questions() {
-                                    Ok(questions) if self.deployment_cursor < questions.len() => {
-                                        Step::Deployment(self.deployment_cursor)
-                                    }
-                                    Ok(_) => Step::Review,
-                                    Err(error) => {
-                                        self.error = Some(error.to_string());
-                                        return;
-                                    }
-                                }
-                            }
+                            self.route_selected = false;
                         }
-                        Err(error) => {
-                            self.error = Some(error.to_string());
-                            return;
+                        Step::Route
+                    }
+                    JourneyFlowQuestion::Setting { index, .. } => Step::Setting(index),
+                    JourneyFlowQuestion::Deployment { index, .. } => Step::Deployment(index),
+                    JourneyFlowQuestion::Review => {
+                        let route = self.draft.current_route().unwrap().to_owned();
+                        if !self.completed_routes.contains(&route) {
+                            self.completed_routes.push(route);
                         }
+                        Step::Review
                     }
                 };
                 if self.step != next {
@@ -595,25 +573,23 @@ impl Wizard {
     }
 
     pub(super) fn setting_question(&self) -> Option<nemoclaw_authoring::SettingQuestion> {
+        let flow = JourneyFlow::new(&self.draft, &self.capabilities);
         match self.step {
-            Step::Setting(index) => self
-                .draft
-                .setting_questions(&self.capabilities)
-                .ok()?
-                .get(index)
-                .cloned(),
-            Step::Deployment(index) => self.draft.deployment_questions().ok()?.get(index).cloned(),
+            Step::Setting(index) => flow.setting_at(index).ok()?,
+            Step::Deployment(index) => flow.deployment_at(index).ok()?,
             _ => None,
         }
     }
 
     fn route_choices(&self) -> Vec<String> {
-        self.draft
-            .route_names()
+        JourneyFlow::new(&self.draft, &self.capabilities)
+            .with_progress(
+                &self.completed_routes,
+                self.route_selected,
+                self.deployment_cursor,
+            )
+            .remaining_routes()
             .unwrap_or_default()
-            .into_iter()
-            .filter(|route| !self.completed_routes.contains(route))
-            .collect()
     }
 
     pub(super) fn is_choice(&self) -> bool {
