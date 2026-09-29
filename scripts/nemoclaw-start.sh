@@ -4570,6 +4570,110 @@ finally:
 PY
 }
 
+repair_openclaw_shared_state_schema() {
+  local database="/sandbox/.openclaw/state/openclaw.sqlite"
+  local database_metadata database_owner database_links node_bin repair_rc=0
+  local -a repair_command
+
+  if [ ! -e "$database" ] && [ ! -L "$database" ]; then
+    return 0
+  fi
+  if [ ! -f "$database" ] || [ -L "$database" ]; then
+    echo "[SECURITY] Refusing unsafe OpenClaw shared state database" >&2
+    return 1
+  fi
+  database_metadata="$(stat -c '%u %h' "$database" 2>/dev/null)" || return 1
+  read -r database_owner database_links <<EOF
+$database_metadata
+EOF
+  if [ "$database_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    || [ "$database_links" != "1" ]; then
+    echo "[SECURITY] Refusing untrusted OpenClaw shared state database" >&2
+    return 1
+  fi
+  node_bin="$(command -v node 2>/dev/null)" || {
+    echo "[SECURITY] Cannot repair the OpenClaw shared state schema without Node.js" >&2
+    return 1
+  }
+
+  # OpenClaw's doctor validates the current schema before loading its repair
+  # contributions, so databases from sufficiently old releases cannot reach
+  # the repair that doctor recommends. Invoke the exact startup repair exported
+  # by the installed OpenClaw package, rather than duplicating its SQL here.
+  repair_command=("$node_bin" - "$OPENCLAW")
+  if [ "$(id -u)" -eq 0 ]; then
+    repair_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env
+      HOME=/sandbox PATH="$PATH:/sandbox/.local/bin"
+      "${repair_command[@]}"
+    )
+  fi
+  "${repair_command[@]}" <<'NODEREPAIR' || repair_rc=$?
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  const executable = fs.realpathSync(process.argv[2]);
+  let current = fs.statSync(executable).isDirectory() ? executable : path.dirname(executable);
+  let packageRoot;
+  while (true) {
+    const candidates = [current];
+    if (path.basename(current) === "node_modules") {
+      candidates.unshift(path.join(current, "openclaw"));
+    }
+    for (const candidate of candidates) {
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8"));
+      } catch {
+        continue;
+      }
+      if (manifest.name === "openclaw") {
+        packageRoot = candidate;
+        break;
+      }
+    }
+    if (packageRoot) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  if (!packageRoot) throw new Error("OpenClaw package root not found");
+  const dist = path.join(packageRoot, "dist");
+  const stateModules = fs
+    .readdirSync(dist)
+    .filter((name) => /^openclaw-state-db-.*\.js$/.test(name))
+    .sort();
+  for (const candidate of stateModules) {
+    const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+    if (typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded !== "function") continue;
+    const result = await Promise.resolve(
+      loaded.repairOpenClawStateDatabaseSchemaIfNeeded({ env: process.env }),
+    );
+    if (!result || !Array.isArray(result.changes) || !Array.isArray(result.warnings)) {
+      throw new Error("OpenClaw shared state repair returned an invalid result");
+    }
+    if (result.warnings.length > 0) {
+      throw new Error(`OpenClaw shared state repair warnings: ${result.warnings.join("; ")}`);
+    }
+    if (result.changes.length > 0) {
+      console.error(`[setup] OpenClaw repaired ${result.changes.length} shared state schema change(s)`);
+    }
+    return;
+  }
+  throw new Error("OpenClaw shared state schema repair not found");
+})().catch((error) => {
+  console.error(`[SECURITY] Could not repair the OpenClaw shared state schema: ${error.message}`);
+  process.exit(1);
+});
+NODEREPAIR
+  if [ "$repair_rc" -ne 0 ]; then
+    echo "[SECURITY] OpenClaw shared state schema repair failed" >&2
+    return 1
+  fi
+}
+
 wait_for_openclaw_startup_migration_lease() {
   local node_bin lease_rc lease_attempt=0
   local -a lease_command
@@ -4725,6 +4829,7 @@ EOF
   else
     doctor_command=("$OPENCLAW" doctor --fix --yes --non-interactive)
   fi
+  repair_openclaw_shared_state_schema || return 1
   if ! "${doctor_command[@]}"; then
     echo "[setup] OpenClaw doctor requested a follow-up migration pass; retrying once" >&2
   else

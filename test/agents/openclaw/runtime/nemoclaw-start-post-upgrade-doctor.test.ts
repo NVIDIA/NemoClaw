@@ -105,6 +105,9 @@ function doctorFunction(
   return [
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "repair_openclaw_shared_state_schema")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
     extractShellFunctionFromSource(source, "wait_for_openclaw_startup_migration_lease"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
@@ -136,6 +139,7 @@ function fixture() {
   const stepDownCalls = path.join(root, "step-down-calls");
   const leaseActive = path.join(root, "lease-active");
   const leaseViolation = path.join(root, "lease-violation");
+  const schemaRepairCalls = path.join(root, "schema-repair-calls");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(path.dirname(openclaw), { recursive: true });
@@ -149,13 +153,17 @@ function fixture() {
     `import fs from "node:fs";\nexport function hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\n`,
   );
   fs.writeFileSync(
+    path.join(packageRoot, "dist", "openclaw-state-db-test.js"),
+    `import fs from "node:fs";\nexport function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(${JSON.stringify(schemaRepairCalls)}, "repair\\n"); return { changes: ["migrated"], warnings: [] }; }\n`,
+  );
+  fs.writeFileSync(
     openclaw,
     `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
     { mode: 0o755 },
   );
   fs.writeFileSync(
     path.join(fakeBin, "stat"),
-    `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%u %a %h": f"{s.st_uid} {stat.S_IMODE(s.st_mode):o} {s.st_nlink}"}\nprint(values[sys.argv[1]])\nPY\n`,
+    `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%u %h": f"{s.st_uid} {s.st_nlink}", "%u %a %h": f"{s.st_uid} {stat.S_IMODE(s.st_mode):o} {s.st_nlink}"}\nprint(values[sys.argv[1]])\nPY\n`,
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -173,6 +181,7 @@ function fixture() {
     openclaw,
     ready,
     root,
+    schemaRepairCalls,
     stepDown,
     stepDownCalls,
   };
@@ -328,6 +337,33 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
       );
       expect(result.stderr).toContain("checking dependent migrations once");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs a legacy shared state schema before running doctor", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(f.configDir, "state"));
+      fs.writeFileSync(path.join(f.configDir, "state", "openclaw.sqlite"), "legacy");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe("repair\n");
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
+      expect(result.stderr).toContain("OpenClaw repaired 1 shared state schema change(s)");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

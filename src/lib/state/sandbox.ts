@@ -1407,10 +1407,12 @@ function isNativeNonAuthoritySourceEntry(entry: string): boolean {
 
 function isNativeNonAuthorityBinaryStateEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  // OpenClaw owns this SQLite database as durable agent state. Treat only an
-  // actually binary payload as opaque; a text file at this path still passes
-  // through the credential scanner below.
-  return /^\.openclaw\/state\/openclaw\.sqlite(?:-(?:shm|wal))?$/u.test(normalized);
+  // These SQLite databases are durable agent state rather than credential
+  // authorities. Treat only an actually binary payload as opaque; a text file
+  // at either path still passes through the credential scanner below.
+  return /^(?:\.openclaw\/state\/openclaw\.sqlite|\.deepagents\/\.state\/sessions\.db)(?:-(?:shm|wal))?$/u.test(
+    normalized,
+  );
 }
 
 function shouldScanNativeOpaqueAssignments(

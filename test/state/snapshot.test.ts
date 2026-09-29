@@ -972,11 +972,9 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_CAPTURE_BYTES = "4096";
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
       writeOpenClawRegistry("alpha");
-
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateCaptureMaxBytes: 1024,
       });
-
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("exceeded the 1024-byte backup-space limit");
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
@@ -1025,6 +1023,7 @@ describe("complete native home persistence", () => {
       JSON.stringify({ accessKeyId: TOKEN_SHAPED_GENERATED_BYTES }),
     ],
     ["OpenClaw database", OPENCLAW_SQLITE_WAL, `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
+    ["Deep Agents DB", ".deepagents/.state/sessions.db", `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
     ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
   ])(
     "preserves %s without treating it as credential configuration",
@@ -1060,6 +1059,7 @@ describe("complete native home persistence", () => {
   it.each([
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
     ["a text database impostor", OPENCLAW_SQLITE_WAL, TOKEN_SHAPED_GENERATED_BYTES],
+    ["a DCode DB text impostor", ".deepagents/.state/sessions.db", TOKEN_SHAPED_GENERATED_BYTES],
     [
       "an opaque bearer credential in a history file",
       ".openclaw/agents/child/history.log",
