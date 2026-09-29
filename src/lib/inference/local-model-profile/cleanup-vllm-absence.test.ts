@@ -134,17 +134,23 @@ describe.each(operations)("$name managed vLLM absence", ({ cleanup, refusal, abs
     },
   );
 
-  it.each(["present", "unavailable"])(
-    "preserves private state when the receipt container ID is %s after its name disappears",
-    (observation) => {
+  it.each([
+    { name: "present", observe: () => "f".repeat(64) },
+    {
+      name: "unavailable",
+      observe: () => {
+        throw new Error("Docker ID inventory unavailable");
+      },
+    },
+  ])(
+    "preserves private state when the receipt container ID is $name after its name disappears",
+    ({ observe }) => {
       const state = privateState();
-      const capture = vi.fn<Capture>().mockImplementation((args) => {
-        if (args.includes(`id=${"f".repeat(64)}`)) {
-          if (observation === "unavailable") throw new Error("Docker ID inventory unavailable");
-          return "f".repeat(64);
-        }
-        return "";
-      });
+      const capture = vi
+        .fn<Capture>()
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
+        .mockImplementation(observe);
       const forceRm = vi.fn(() => ({ status: 0 }) as never);
       const result = cleanup({
         homeDir: state.homeDir,
@@ -155,6 +161,12 @@ describe.each(operations)("$name managed vLLM absence", ({ cleanup, refusal, abs
         },
       });
       expect(result).toMatchObject({ ...refusal, removed: [] });
+      expect(capture).toHaveBeenLastCalledWith(
+        inventoryArgs.map((arg) =>
+          arg === `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$` ? `id=${"f".repeat(64)}` : arg,
+        ),
+        { ignoreError: false, timeout: 10_000 },
+      );
       expect(forceRm).not.toHaveBeenCalled();
       expect(fs.readFileSync(state.keyPath, "utf8")).toBe(state.keyContent);
       expect(fs.readFileSync(state.receiptPath, "utf8")).toBe(state.receiptContent);
