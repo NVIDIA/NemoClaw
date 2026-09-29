@@ -725,6 +725,46 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
         "spec":{"settings_schema":{"type":"object","properties":{"region":{"type":"string","enum":["west","east"]}},"required":["region"]}}
     },"provenance":[]})];
     let capabilities = Capabilities::from_catalog(&catalog);
+    let mut partial: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
+    partial["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.native-owner");
+    let mut sparse = JourneyDefinition::new(
+        "sparse-native",
+        PartialDocument::from_yaml(partial.to_string().as_bytes()).unwrap(),
+    )
+    .ask([JourneyScope::NativeSettings])
+    .start(&capabilities)
+    .unwrap();
+    let pending = sparse.resolve(&capabilities).unwrap();
+    assert!(pending.assessment().document().is_none());
+    assert!(pending.question("workflow:/target_id").is_some());
+    sparse
+        .answer(
+            &capabilities,
+            "workflow:/target_id",
+            Some(json!("fixture.target")),
+        )
+        .unwrap();
+    assert!(
+        sparse
+            .resolve(&capabilities)
+            .unwrap()
+            .question("workflow:/settings/region")
+            .is_some()
+    );
+    sparse
+        .answer(
+            &capabilities,
+            "workflow:/settings/region",
+            Some(json!("west")),
+        )
+        .unwrap();
+    assert_eq!(
+        sparse
+            .values()
+            .pointer("/spec/sandboxes/0/harness/config/workflow/settings/region"),
+        Some(&json!("west"))
+    );
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();

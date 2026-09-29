@@ -907,21 +907,33 @@ impl JourneyState {
             }
         }
 
+        let inspect_values = if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::DeploymentFields)
+            || self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::NativeSettings)
+        {
+            assessment
+                .document()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?
+        } else {
+            None
+        };
+        let inspect_values = inspect_values.as_ref().unwrap_or(&self.values);
         if self
             .definition
             .ask_scopes
             .contains(&JourneyScope::DeploymentFields)
         {
-            let deployment_values = assessment
-                .document()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?
-                .unwrap_or_else(|| self.values.clone());
-            let active_harness = harness_path(&deployment_values);
-            let active_routes = routes_path(&deployment_values);
+            let active_harness = harness_path(inspect_values);
+            let active_routes = routes_path(inspect_values);
             for field in crate::deployment::deployment_questions_for_values(
-                &deployment_values,
+                inspect_values,
                 active_harness.as_deref(),
                 active_routes.as_deref(),
             )? {
@@ -946,10 +958,13 @@ impl JourneyState {
             .definition
             .ask_scopes
             .contains(&JourneyScope::NativeSettings)
-            && let Some(document) = assessment.document()
         {
-            for field in native_questions_for_document(document, capabilities, self.selected_route)?
-            {
+            for field in native_questions_for_values(
+                inspect_values,
+                assessment.document(),
+                capabilities,
+                self.selected_route,
+            )? {
                 if field.path == "model:" {
                     unverified.push(
                         "selected native model configuration does not satisfy its Fabric schema"
@@ -1936,20 +1951,23 @@ fn collect_required_leaf_questions(
     }
 }
 
-fn native_questions_for_document(
-    document: &Document,
+fn native_questions_for_values(
+    values: &Value,
+    document: Option<&Document>,
     capabilities: &Capabilities,
     selected_route: Option<usize>,
 ) -> Result<Vec<SettingQuestion>, Diagnostics> {
-    let sandbox = &document.spec.sandboxes[0];
-    let harness = document
-        .sandbox_harness(sandbox)
-        .map_err(|error| diagnostic("journey", &error.to_string()))?;
-    let harness_id = harness.kind.as_str();
-    let workflow = harness
-        .config
-        .as_ref()
-        .and_then(|config| config.get("workflow"))
+    let Some(harness_path) = harness_path(values) else {
+        return Ok(Vec::new());
+    };
+    let Some(harness_id) = values
+        .pointer(&format!("{harness_path}/kind"))
+        .and_then(Value::as_str)
+    else {
+        return Ok(Vec::new());
+    };
+    let workflow = values
+        .pointer(&format!("{harness_path}/config/workflow"))
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
     let targets = capabilities
@@ -2002,7 +2020,8 @@ fn native_questions_for_document(
             }
         }
     }
-    if let Some(schema) = capabilities.model_schemas.get(harness_id) {
+    if let (Some(schema), Some(document)) = (capabilities.model_schemas.get(harness_id), document) {
+        let sandbox = &document.spec.sandboxes[0];
         let inference = document
             .sandbox_inference(sandbox)
             .map_err(|error| diagnostic("journey", &error.to_string()))?;
