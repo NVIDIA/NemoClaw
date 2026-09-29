@@ -63,18 +63,21 @@ const OPENCLAW: AgentSkillIntegration = {
   listCommand: ["skills", "list", "--agent", "main"],
   addCommand: ["skills", "install", "{source}", "--agent", "main", "--force"],
   removeCommand: null,
+  verifiedContentDigest: null,
 };
 const HERMES: AgentSkillIntegration = {
   writableRoot: "/sandbox/.hermes/skills",
   listCommand: ["skills", "list"],
   addCommand: null,
   removeCommand: null,
+  verifiedContentDigest: null,
 };
 const DCODE: AgentSkillIntegration = {
   writableRoot: "/sandbox/.deepagents/agent/skills",
   listCommand: ["skills", "list", "--agent", "agent"],
   addCommand: null,
   removeCommand: ["skills", "delete", "{name}", "--agent", "agent", "--force", "--json"],
+  verifiedContentDigest: "sha256",
 };
 
 describe("stateless sandbox skill orchestration", () => {

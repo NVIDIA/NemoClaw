@@ -126,7 +126,7 @@ function resolveSelectedSkillAgent(sandboxName: string) {
     process.exitCode = 1;
     return null;
   }
-  return { binary, integration, name: resolution.agent.name };
+  return { binary, integration };
 }
 
 function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
@@ -442,13 +442,15 @@ export async function installSandboxSkill(
     }
 
     const native = selected.integration.addCommand;
+    const verifiedContentDigest =
+      selected.integration.verifiedContentDigest === "sha256" ? snapshot.contentDigest : undefined;
     const command = native
       ? renderAgentSkillCommand(selected.binary, native, { source: stagedSkillDirectory })
       : skillInstall.buildCanonicalSkillAddCommand(
           selected.integration.writableRoot,
           local.name,
           stagedSkillDirectory,
-          selected.name === "langchain-deepagents-code" ? snapshot.contentDigest : undefined,
+          verifiedContentDigest,
         );
     const installed = await runSkillCommandWithStageCleanup(
       sandboxName,
@@ -456,8 +458,8 @@ export async function installSandboxSkill(
       stageDirectory,
       command,
     );
-    if (installed && selected.name === "langchain-deepagents-code") {
-      console.log(`  ${D}Content digest (SHA-256): ${snapshot.contentDigest}${R}`);
+    if (installed && verifiedContentDigest) {
+      console.log(`  ${D}Content digest (SHA-256): ${verifiedContentDigest}${R}`);
     }
     stageCreated = false;
   } finally {
