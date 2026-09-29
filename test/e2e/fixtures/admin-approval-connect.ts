@@ -35,7 +35,9 @@ export function adminApprovalConnectScript(
     `import hashlib, sys; raw=open(sys.argv[1], "rb").read(${Buffer.byteLength(body) + 2}); raw=raw.removesuffix(b"\\n"); hashlib.sha256(raw).hexdigest() == sys.argv[2] or sys.exit("ADMIN_SCRIPT_INTEGRITY_FAILED"); sys.stdout.buffer.write(raw)`,
   )}`;
   const connectPrefix = `approval_body=$(${readVerifiedScript} `;
-  const connectSuffix = ` ${shellQuote(digest)}) && eval "$approval_body"; exit $?`;
+  // The body owns an EXIT trap and calls exit. A subshell inherits the prepared
+  // functions without letting that exit unwind the interactive shell's eval.
+  const connectSuffix = ` ${shellQuote(digest)}) && ( eval "$approval_body" ); exit $?`;
   return [
     "set -euo pipefail",
     // Connect allocates an interactive terminal. Its line editor can corrupt a

@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { reconcileModelRouter } from "./model-router";
+import { saveCredential } from "../credentials/store";
 
 const RECORDED_ROUTER_PID = 4321;
 
@@ -109,6 +110,24 @@ describe("model router reconciliation", () => {
     await reconcileModelRouter();
 
     expect(holder.updatedRouterPorts).toEqual([4000]);
+  });
+
+  it("retains the router receipt and credential when the configured port changes", async () => {
+    holder.routerPort = 14000;
+    holder.snapshotBody = JSON.stringify({ healthy_endpoints: [{}] });
+    vi.mocked(saveCredential).mockClear();
+
+    await expect(reconcileModelRouter()).rejects.toThrow(/recorded Model Router port 14000/);
+
+    expect(holder.routerPort).toBe(14000);
+    expect(holder.updatedRouterPorts).toEqual([]);
+    expect(holder.stopped).toEqual([]);
+    expect(holder.snapshotCalls).toBe(0);
+    expect(saveCredential).not.toHaveBeenCalled();
+
+    holder.routerPort = 4000;
+    await reconcileModelRouter();
+    expect(holder.reachabilityProbes).toBe(1);
   });
 
   it("restarts a recorded router that answers 2xx with no healthy endpoint (#9437)", async () => {

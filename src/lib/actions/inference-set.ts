@@ -631,6 +631,13 @@ function buildProviderConfig(
   const selectedModel = cloneConfigObject(existingModels[selectedIndex] ?? existingModels[0]);
   const existingModelId = typeof selectedModel.id === "string" ? selectedModel.id : null;
   delete selectedModel.compat;
+  if (selectedIndex < 0) {
+    // A different model's limits are not evidence for the selected model. Let
+    // OpenClaw use its own defaults unless this route has an authoritative
+    // value below.
+    delete selectedModel.contextWindow;
+    delete selectedModel.maxTokens;
+  }
   selectedModel.id = model;
   selectedModel.name = route.primaryModelRef;
   // Recompute for the new model rather than inheriting the prior model's window.
@@ -673,10 +680,13 @@ export function patchOpenClawInferenceConfig(
   contextWindow?: number | null,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
+  inheritPrimaryReplyBudget = true,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
+  const inheritedMaxTokens = inheritPrimaryReplyBudget
+    ? readOpenClawPrimaryReplyBudget(config)
+    : undefined;
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -698,12 +708,12 @@ export function patchOpenClawInferenceConfig(
   return { changed: before !== JSON.stringify(config), route };
 }
 
-function writeOpenClawInferenceConfigNatively(
+export function writeOpenClawInferenceConfigNatively(
   sandboxName: string,
   config: ConfigObject,
   route: SandboxInferenceConfig,
   writeValues: InferenceSetDeps["setOpenClawConfigValues"],
-  gatewayName: string,
+  gatewayName?: string,
 ): void {
   const agents = config.agents;
   const models = config.models;

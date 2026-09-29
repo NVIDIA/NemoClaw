@@ -160,7 +160,17 @@ function runAdminApprovalScript(
   const terminalRc = path.join(root, "connect.bashrc");
   fs.writeFileSync(
     terminalRc,
-    'openclaw() { ADMIN_CONNECT_WRAPPER_USED=1 command openclaw "$@"; }\n',
+    `trap 'printf "ADMIN_CONNECT_SHELL_CLEANED\\n"' EXIT
+openclaw() {
+  local approval_errexit=0 approval_status=0
+  case $- in *e*) approval_errexit=1 ;; esac
+  set +e
+  (unset OPENCLAW_GATEWAY_TOKEN; ADMIN_CONNECT_WRAPPER_USED=1 command openclaw "$@")
+  approval_status=$?
+  if [ "$approval_errexit" = 1 ]; then set -e; else set +e; fi
+  return "$approval_status"
+}
+`,
   );
   fs.writeFileSync(cliPath, ADMIN_APPROVAL_TEST_CLI_SH, { mode: 0o755 });
   fs.writeFileSync(
@@ -296,20 +306,26 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stderr).toContain("ADMIN_SCRIPT_CLEANUP_FAILED");
     expect(stagedScriptRetained).toBe(true);
   });
-  it.each([undefined, "devices:approve"] as const)(
-    "preserves connect-shell wrappers and approval status through a terminal (%s)",
-    (failureCommand) => {
+  it.each([
+    [undefined, true],
+    ["devices:approve", true],
+    [undefined, false],
+  ] as const)(
+    "preserves connect-shell wrappers and approval status through a terminal (%s, cron=%s)",
+    (failureCommand, verifyCronConsumer) => {
       const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
         failureCommand,
         0,
         EXPECTED_REQUEST_ID,
         {
           terminal: true,
+          verifyCronConsumer,
         },
       );
       expect(result.status, `${result.stdout}\n${result.stderr}`.slice(-2_000)).toBe(
         failureCommand ? 27 : 0,
       );
+      expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
       expect(commands).toContain(`devices approve ${EXPECTED_REQUEST_ID}`);
       expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(!failureCommand);
       const stagedScript = result.stdout.match(

@@ -605,6 +605,12 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
+  const session = onboardSession.loadSession();
+  if (session?.routerPort != null && session.routerPort !== routerPort) {
+    throw new Error(
+      `The recorded Model Router port ${session.routerPort} differs from configured port ${routerPort}. Restore the recorded port and clean up the existing router before changing ports.`,
+    );
+  }
   const routerCredentialEnv =
     bp.router.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
   const routerCredential =
@@ -615,7 +621,6 @@ export async function reconcileModelRouter(): Promise<void> {
   }
   saveCredential(routerCredentialEnv, routerCredential);
   const routerCredentialHash = hashCredential(routerCredential);
-  const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 

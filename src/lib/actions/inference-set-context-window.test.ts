@@ -45,7 +45,7 @@ describe("runInferenceSet context window", () => {
     expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
   });
 
-  it("removes a previous route's window when the new value cannot be determined", async () => {
+  it("drops another model's window and warns when the selected window is unknown (#12033)", async () => {
     const config = ollamaConfig();
     const deps = createDeps({ config, session: baseSession(), contextWindow: null });
 

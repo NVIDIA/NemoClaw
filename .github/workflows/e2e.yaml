@@ -4878,50 +4878,43 @@ jobs:
       - id: runtime-bases
         name: Resolve digest-pinned amd64 runtime base images
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
+          HERMES_BASE_REF: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
         shell: bash
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-runtime-bases.XXXXXX")"
           trap 'rm -rf -- "$work_dir"' EXIT
 
-          resolve_base() {
-            local output_name="$1"
-            local alias="$2"
-            local repository="$3"
-            local alias_raw="$work_dir/${output_name}-alias.raw"
-            local exact_raw="$work_dir/${output_name}-exact.raw"
-            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
-            local digest
-            digest="$(
-              jq -er '
-                if (
-                  .mediaType == "application/vnd.oci.image.index.v1+json" or
-                  .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
-                ) then
-                  [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")]
-                  | if length == 1 then .[0].digest else error("not one exact amd64 descriptor") end
-                else
-                  error("base alias is not a platform index")
-                end
-              ' "$alias_raw"
-            )"
-            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-              echo "::error::${output_name} base alias returned an invalid digest" >&2
-              exit 1
-            }
-            local reference="${repository}@${digest}"
-            docker buildx imagetools inspect "$reference" --raw > "$exact_raw"
-            [[ "sha256:$(sha256sum "$exact_raw" | awk '{print $1}')" == "$digest" ]] || {
-              echo "::error::${output_name} exact base bytes do not match the selected digest" >&2
-              exit 1
-            }
-            printf '%s=%s\n' "$output_name" "$reference" >> "$GITHUB_OUTPUT"
+          # The mutable base alias can move after the startup job prepared this cache.
+          # Reuse that job's exact OpenClaw base and preserve the other identity checks.
+          prepared_inputs="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/prepared-inputs"
+          [[ -f "$prepared_inputs" && ! -L "$prepared_inputs" ]] || {
+            echo "::error::protected build cache has no safe prepared-input identity" >&2
+            exit 1
           }
-
-          resolve_base openclaw \
-            ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
-            ghcr.io/nvidia/nemoclaw/sandbox-base
+          read -r cached_revision cached_platform cached_openclaw cached_hermes cached_dcode extra < "$prepared_inputs"
+          [[ -z "$extra" &&
+             "$cached_revision" == "$CHECKOUT_SHA" &&
+             "$cached_platform" == "linux/amd64" &&
+             "$cached_hermes" == "$HERMES_BASE_REF" &&
+             "$cached_dcode" == "$DCODE_BASE_REF" &&
+             "$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode" ]] || {
+            echo "::error::protected build-cache identity does not match this run" >&2
+            exit 1
+          }
+          [[ "$cached_openclaw" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::prepared OpenClaw base is not an exact approved image reference" >&2
+            exit 1
+          }
+          openclaw_digest="${cached_openclaw##*@}"
+          docker buildx imagetools inspect "$cached_openclaw" --raw > "$work_dir/openclaw-exact.raw"
+          [[ "sha256:$(sha256sum "$work_dir/openclaw-exact.raw" | awk '{print $1}')" == "$openclaw_digest" ]] || {
+            echo "::error::OpenClaw exact base bytes do not match the prepared digest" >&2
+            exit 1
+          }
+          printf 'openclaw=%s\n' "$cached_openclaw" >> "$GITHUB_OUTPUT"
           [[ "$DCODE_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
             echo "::error::dcode base publication returned an invalid exact reference" >&2
             exit 1

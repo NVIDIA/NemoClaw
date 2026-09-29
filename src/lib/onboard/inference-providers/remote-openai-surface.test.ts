@@ -9,6 +9,8 @@ import { noAuthProxy, withOllamaProxyLifecycleTransaction } from "../../inferenc
 import { hydrateCredentialEnv } from "../credential-env";
 import { setupRemoteProviderInference } from "./remote";
 import type { RemoteProviderDeps } from "./types";
+import { stopDestroyedSandboxProxy } from "../../actions/sandbox/destroy-preflight";
+import type { SandboxEntry } from "../../state/registry";
 
 vi.mock("../../inference/ollama/proxy", () => ({
   noAuthProxy: vi.fn(),
@@ -57,7 +59,7 @@ function createHarness() {
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: vi.fn(() => true),
-    registry: { updateSandbox: vi.fn() },
+    registry: { updateSandbox: vi.fn(() => true) },
     exitProcess,
     error,
     log: vi.fn(),
@@ -348,6 +350,59 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
 });
 
 describe("OpenAI-compatible no-auth provider registration", () => {
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "publishes the pending %s owner before a waiting destroy checks the proxy",
+    async (provider) => {
+      const harness = createHarness();
+      const prior = { name: "old-owner", provider: "ollama-local" } as SandboxEntry;
+      const pending = { name: SANDBOX, provider, credentialEnv: NO_AUTH_ENV } as SandboxEntry;
+      const entries = [prior];
+      let proxyRunning = true;
+      const restore = vi.fn();
+      vi.mocked(noAuthProxy).mockReturnValue({
+        baseUrl: "http://host.openshell.internal:11435/v1",
+        credentialValue: "proxy-token",
+        persist: vi.fn(),
+        restore,
+      });
+      harness.deps.registry.updateSandbox.mockImplementation(() => {
+        entries.push(pending);
+        return true;
+      });
+      vi.mocked(withOllamaProxyLifecycleTransaction).mockImplementation(async (operation) => {
+        const result = await operation();
+        stopDestroyedSandboxProxy(
+          prior.name,
+          prior,
+          () => ({ sandboxes: entries, defaultSandbox: null }),
+          {
+            killStaleProxyIfUnused: (hasOwner) => {
+              proxyRunning = hasOwner();
+              return !proxyRunning;
+            },
+          },
+        );
+        return result;
+      });
+
+      await expect(
+        setupRemoteProviderInference(
+          {
+            ...makeArgs(SANDBOX),
+            provider,
+            credentialEnv: NO_AUTH_ENV,
+            endpointUrl: "http://localhost:8000/v1",
+            preferredInferenceApi: "anthropic-messages",
+          },
+          harness.deps,
+        ),
+      ).resolves.toEqual({ done: false });
+
+      expect(entries).toEqual([prior, pending]);
+      expect(proxyRunning).toBe(true);
+      expect(restore).not.toHaveBeenCalled();
+    },
+  );
   const args = {
     sandboxName: SANDBOX,
     model: MODEL,
@@ -422,6 +477,34 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:11434/v1", {
       allowLegacyRecordedEndpoint: true,
     });
+  });
+
+  it.each([
+    { outcome: "rejected", reserve: () => false, message: "Could not reserve the inference route" },
+    {
+      outcome: "thrown",
+      reserve: () => {
+        throw new Error("reservation failed");
+      },
+      message: "reservation failed",
+    },
+  ])("restores proxy state when route reservation is $outcome", async ({ reserve, message }) => {
+    const harness = createHarness();
+    const persist = vi.fn();
+    const restore = vi.fn();
+    process.env[NO_AUTH_ENV] = "committed-token";
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+      restore,
+    });
+    harness.deps.registry.updateSandbox.mockImplementation(reserve);
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow(message);
+    expect(persist).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
   });
 
   it("stops before registration when proxy startup fails (#7424)", async () => {

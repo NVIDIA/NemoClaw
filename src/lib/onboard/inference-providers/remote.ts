@@ -404,6 +404,11 @@ export async function setupRemoteProviderInference(
         }
         const applyResult = runOpenshell(argsv, { ignoreError: true });
         if (applyResult.status === 0) {
+          // Publish the pending owner before releasing the proxy lifecycle lock.
+          // Otherwise concurrent teardown can stop the newly configured proxy.
+          if (proxy && sandboxName && registry.updateSandbox(sandboxName) === false) {
+            throw new Error(`Could not reserve the inference route for sandbox '${sandboxName}'.`);
+          }
           proxy?.persist();
           proxySettled = true;
           break;
