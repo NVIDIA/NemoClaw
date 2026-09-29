@@ -1191,6 +1191,14 @@ function describeStateDirDiscoveryFailure(
   result: ReturnType<typeof spawnSync>,
   invalidDirectories: readonly string[],
 ): { log: string; unreachable: boolean; error?: string } | null {
+  if (result.status === 65) {
+    return {
+      log: "SECURITY: State directory discovery rejected an unsafe entry",
+      unreachable: false,
+      error:
+        "State directory discovery rejected an unsafe entry (exit 65). No state archive was captured.",
+    };
+  }
   if (result.status !== 0) {
     return {
       log: `FAILED: SSH dir check exited ${String(result.status)} — cannot determine which dirs exist`,

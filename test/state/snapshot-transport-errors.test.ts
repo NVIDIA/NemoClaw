@@ -25,16 +25,34 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 describe("sandbox backup transport failures", () => {
-  it.each(["ssh-config", "directory-discovery"])(
-    "reports %s failure before capturing archives without exposing stderr",
-    (stage) => {
+  it.each([
+    {
+      stage: "ssh-config",
+      status: 255,
+      unreachable: true,
+      error: "Could not obtain SSH configuration",
+    },
+    {
+      stage: "directory-discovery",
+      status: 255,
+      unreachable: true,
+      error: "SSH state-directory discovery failed (exit 255)",
+    },
+    {
+      stage: "unsafe-directory",
+      status: 65,
+      unreachable: false,
+      error: "State directory discovery rejected an unsafe entry (exit 65)",
+    },
+  ])(
+    "reports $stage failure before capturing archives without exposing stderr",
+    ({ stage, status, unreachable, error }) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-backup-transport-"));
       const oldPath = process.env.PATH;
       const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
       try {
         const openshell = path.join(fixture, "openshell");
-        const failure =
-          '#!/usr/bin/env node\nprocess.stderr.write("private-transport-detail"); process.exit(255);\n';
+        const failure = `#!/usr/bin/env node\nprocess.stderr.write("private-transport-detail"); process.exit(${status});\n`;
         writeExecutable(path.join(fixture, "ssh"), failure);
         writeExecutable(
           openshell,
@@ -56,14 +74,10 @@ describe("sandbox backup transport failures", () => {
         const backup = sandboxState.backupSandboxState("alpha");
         expect(backup).toMatchObject({
           success: false,
-          unreachable: true,
+          unreachable,
           backedUpDirs: [],
           backedUpFiles: [],
-          error: expect.stringContaining(
-            stage === "ssh-config"
-              ? "Could not obtain SSH configuration"
-              : "SSH state-directory discovery failed (exit 255)",
-          ),
+          error: expect.stringContaining(error),
         });
         expect(backup.error).toContain("No state archive was captured.");
         expect(JSON.stringify(backup)).not.toContain("private-transport-detail");
