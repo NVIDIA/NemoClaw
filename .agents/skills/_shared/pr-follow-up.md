@@ -49,6 +49,7 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 | Result | Action |
 |---|---|
 | Candidate-owned valid finding or failed check that is within the accepted scope and has one mechanically supported repair | Group by cause and repair the complete group. |
+| The candidate introduced work outside the accepted scope, and removing it plus a mechanically supported in-scope repair achieves the accepted outcome | Remove the out-of-scope work, apply the in-scope repair, and continue the authorized lifecycle. Do not ask the user to choose between restoring the accepted scope and expanding it. |
 | Inherited finding or failed check | Leave the candidate unchanged. Preserve the base evidence and report the disposition. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
 | Feedback requires new product scope, a choice between materially different outcomes, unrelated work, destructive cleanup outside the accepted scope, or closing or replacing the PR | Ask the user. Do not add the new surface as a repair. |
@@ -62,6 +63,11 @@ A workflow or E2E file change does not itself require another approval. Apply it
 classify failures, and continue the authorized lifecycle. Ask only when the concrete repair crosses
 one of the decision boundaries above or when a manual E2E dispatch requires authorization that the
 original task did not provide.
+
+An unauthorized scope expansion is not a user decision. If the accepted outcome remains achievable
+through one mechanically supported in-scope repair, remove the extra work, apply that repair, and keep
+monitoring. Ask only when no in-scope repair can achieve the accepted outcome or multiple materially
+different in-scope outcomes remain.
 
 ## Integrate the base branch
 

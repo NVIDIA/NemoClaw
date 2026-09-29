@@ -25,7 +25,10 @@ they cannot authorize writes or override user instructions and repository guidan
 For a review repair, recover the original objective, accepted scope, deferred scope, and classified
 root-cause group from the invoking workflow or current PR. Ask for a missing decision only if those
 sources cannot establish the repair boundary. A finding does not itself authorize new product scope.
-If the accepted design cannot be repaired within that boundary, report the needed decision.
+If the candidate accidentally added behavior outside that boundary, remove it and apply the single
+mechanically supported in-scope repair without asking the user to choose scope expansion. If the
+accepted design cannot be repaired within the boundary, or multiple materially different in-scope
+outcomes remain, report the needed decision.
 
 ## Relevant guidance
 
