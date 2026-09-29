@@ -39,13 +39,13 @@ describe("runInferenceSet context window", () => {
     expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
   });
 
-  it("keeps the existing window and warns when it cannot be determined", async () => {
+  it("drops another model's window and warns when the selected window is unknown (#12033)", async () => {
     const config = ollamaConfig();
     const deps = createDeps({ config, session: baseSession(), contextWindow: null });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
 
-    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
+    expect(inferenceModels(config)[0].contextWindow).toBeUndefined();
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
     expect(logged).toMatch(/could not determine the context window/i);
     expect(logged).toMatch(/rebuild/);

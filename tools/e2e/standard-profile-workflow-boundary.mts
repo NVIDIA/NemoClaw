@@ -338,12 +338,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Initialize runner comparison telemetry",
     "Install OpenShell CLI",
     "Install OpenShell CLI without workflow credentials",
+    "Prepare GPU launch-readiness runtime directory",
     "Run catalogue E2E target",
     "Finalize runner comparison telemetry",
     "Write E2E evidence manifest",
     "Upload skill-agent artifacts",
     "Upload E2E artifacts",
     "Restore Docker CLI after native Podman E2E",
+    "Restore GPU launch-readiness runtime directory",
     "Clean up Docker auth",
   ];
   if (
@@ -604,6 +606,50 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push(
       "standard E2E profile must remove workflow credentials from credential-free installs",
     );
+  }
+
+  const gpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare GPU launch-readiness runtime directory",
+  );
+  const gpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    'unit="user@${uid}.service"',
+    'prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"',
+    'if [[ "$prior_state" != "active" ]]; then',
+    '  [[ "$prior_state" == "inactive" ]]',
+    "  printf 'started=true\\n' >> \"$GITHUB_OUTPUT\"",
+    '  /usr/bin/sudo -n /usr/bin/systemctl start "$unit"',
+    "fi",
+    '/usr/bin/systemctl is-active --quiet "$unit"',
+    'runtime_directory="/run/user/$uid"',
+    '[[ -d "$runtime_directory" && ! -L "$runtime_directory" ]]',
+    '[[ "$(/usr/bin/stat -c \'%u:%a\' "$runtime_directory")" == "${uid}:700" ]]',
+  ].join("\n");
+  const restoreGpuRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Restore GPU launch-readiness runtime directory",
+  );
+  const restoreGpuRuntimeScript = [
+    "set -euo pipefail",
+    'uid="$(/usr/bin/id -u)"',
+    '/usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"',
+  ].join("\n");
+  if (
+    gpuRuntime?.id !== "gpu_runtime_directory" ||
+    gpuRuntime.if !==
+      "${{ inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' }}" ||
+    gpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(gpuRuntime.run).trim() !== gpuRuntimeScript ||
+    restoreGpuRuntime?.if !==
+      "${{ always() && inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' && steps.gpu_runtime_directory.outputs.started == 'true' }}" ||
+    restoreGpuRuntime.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    String(restoreGpuRuntime.run).trim() !== restoreGpuRuntimeScript
+  ) {
+    errors.push("GPU E2E must prepare and restore only its OS-managed user runtime directory");
   }
 
   const execute = requireStep(errors, workflowSteps, "Run catalogue E2E target");
