@@ -261,7 +261,6 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
   "catalogue-github-read",
-  "catalogue-brave-nvidia-inference",
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
@@ -2653,7 +2652,7 @@ const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
     "ee0b2e6c6aa4552b228bd1cc3ba4e1f9cd72701c30b81f7d5fbf9bc011fb51c7",
   "Authorize Launchable E2E maintainer dispatch":
     "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
-  "Generate E2E target matrix": "e2678fa3599f04cbe2b09d8be035e3b551359aab8ea8064e4f457da5a35dde3e",
+  "Generate E2E target matrix": "7b250c79a05973c6bc2f904195c174ddd6ffee80c62a2ff3362d7362e075b0ef",
 };
 
 function requirePreCandidateEnvironment(

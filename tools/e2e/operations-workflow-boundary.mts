@@ -996,7 +996,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-nvidia-api",
     "catalogue-nvidia-inference",
     "catalogue-github-read",
-    "catalogue-brave-nvidia-inference",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
     if (
@@ -1100,7 +1099,6 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
   "catalogue-github-read",
-  "catalogue-brave-nvidia-inference",
 ] as const;
 
 const MANAGED_IMAGE_REVISION_EXPRESSION =
