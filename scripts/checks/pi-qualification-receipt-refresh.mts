@@ -16,7 +16,6 @@ import type {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import * as managedImageContract from "../../src/lib/onboard/managed-image/contract.ts";
 import { directDockerfileCopySources } from "../lib/dockerfile-copy-sources.mts";
-import { parseReviewedNpmIdentityConfig } from "../lib/reviewed-npm-audit.mts";
 
 type CandidateAuthorityModule = typeof candidateAuthority & { default?: typeof candidateAuthority };
 type ManagedImageContractModule = typeof managedImageContract & {
@@ -35,7 +34,6 @@ type GitRunner = (args: readonly string[]) => GitResult;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PI_DOCKERFILES = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"] as const;
 const PI_CANDIDATE_AUTHORITY = "src/lib/agent/candidate-authority.ts";
-const NPM_AUDIT_CONFIG = "ci/reviewed-npm-audit.json";
 export const PI_QUALIFICATION_RECEIPTS: readonly {
   path: string;
   platform: ManagedImagePlatform;
@@ -123,19 +121,6 @@ function piImageSourcePaths(rootDir: string): string[] {
     ),
   );
   return [...new Set([".dockerignore", ...PI_DOCKERFILES, ...copiedSources])].sort();
-}
-
-function npmImageIdentityChanged(rootDir: string, git: GitRunner, revision: string): boolean {
-  const before = requireGitOutput(
-    git(["show", `${revision}:${NPM_AUDIT_CONFIG}`]),
-    "Could not read the base npm image identity",
-  );
-  const after = fs.readFileSync(path.join(rootDir, NPM_AUDIT_CONFIG), "utf8");
-  // Audit graph fingerprints are not consumed by the image's npm installer.
-  return (
-    JSON.stringify(parseReviewedNpmIdentityConfig(before)) !==
-    JSON.stringify(parseReviewedNpmIdentityConfig(after))
-  );
 }
 
 type ValidatedReceipt = {
@@ -281,10 +266,8 @@ export function checkPiQualificationReceiptRefresh(
   const revision = mergeBaseRevision(git, baseBranch);
   const changedPaths = changedPathsFromBase(git, revision);
   const imageSourcePaths = piImageSourcePaths(rootDir);
-  const imageInputsChanged = changedPaths.some(
-    (changedPath) =>
-      imageSourcePaths.some((source) => ownsPath(source, changedPath)) &&
-      (changedPath !== NPM_AUDIT_CONFIG || npmImageIdentityChanged(rootDir, git, revision)),
+  const imageInputsChanged = changedPaths.some((changedPath) =>
+    imageSourcePaths.some((source) => ownsPath(source, changedPath)),
   );
   const receiptPaths = receipts.map(({ path: receipt }) => receipt);
   const receiptAuthorityChanged = changedPaths.some(
