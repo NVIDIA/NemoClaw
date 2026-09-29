@@ -402,6 +402,21 @@ function releaseAfterReady(f: ReturnType<typeof fixture>): string {
   ].join("; ");
 }
 
+function restoreIdentityAndReleaseAfterReady(
+  f: ReturnType<typeof fixture>,
+  restoredIdentity: string,
+): string {
+  const staged = `${f.marker}.release`;
+  return [
+    `(while [ ! -f ${JSON.stringify(f.ready)} ]; do sleep 0.01; done`,
+    `mkdir -p ${JSON.stringify(path.dirname(restoredIdentity))}`,
+    `printf '%s' '{"version":1,"deviceId":"retired-sandbox","privateKeyPem":"private"}' >${JSON.stringify(restoredIdentity)}`,
+    `printf '%s\n' nemoclaw-openclaw-post-upgrade-doctor-release-v1 >${JSON.stringify(staged)}`,
+    `chmod 600 ${JSON.stringify(staged)}`,
+    `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}) &`,
+  ].join("; ");
+}
+
 function promoteAfterReady(f: ReturnType<typeof fixture>): string {
   const staged = `${f.marker}.promote`;
   return [
@@ -499,6 +514,33 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.stderr).toContain(
         "Removed restored legacy device identity for post-upgrade rotation: device.json.native-importing",
       );
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates a legacy identity restored after doctor before gateway release", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      const restoredIdentity = path.join(f.configDir, "identity", "device.json");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${restoreIdentityAndReleaseAfterReady(f, restoredIdentity)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(restoredIdentity)).toBe(false);
+      expect(result.stderr).toContain(
+        "Removed restored legacy device identity for post-upgrade rotation: device.json",
+      );
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

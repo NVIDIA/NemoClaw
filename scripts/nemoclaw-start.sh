@@ -4576,14 +4576,22 @@ PY
 # identity itself so OpenClaw creates fresh local authority. Ordinary starts
 # preserve real identities and malformed user data for native diagnostics.
 remove_restored_legacy_device_identity() {
-  run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
+  local upgrade_request="${1:-nemoclaw-openclaw-post-upgrade-doctor-v2}"
+  case "$upgrade_request" in
+    nemoclaw-openclaw-post-upgrade-doctor-v2 | nemoclaw-openclaw-post-upgrade-doctor-release-v1) ;;
+    *)
+      echo "[SECURITY] Refusing invalid restored device identity migration phase" >&2
+      return 1
+      ;;
+  esac
+  run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw "$upgrade_request" <<'PY'
 import os
 import stat
 import sys
 
 MARKER = b'{"nemoclawSanitizedDeviceIdentity":1}'
 UPGRADE_MARKER = '.nemoclaw-post-upgrade-doctor'
-UPGRADE_REQUEST = b'nemoclaw-openclaw-post-upgrade-doctor-v2\n'
+UPGRADE_REQUEST = (sys.argv[2] + '\n').encode('ascii')
 
 def identity(value):
     return value.st_dev, value.st_ino, value.st_mode
@@ -5155,6 +5163,10 @@ EOF
       fi
     } <"$marker" || return 1
     if [ "$marker_value" = "$release_expected" ]; then
+      # The host performs the final offline state writes after Doctor publishes
+      # its ready receipt. Rotate any machine-local identity restored during
+      # that window before consuming the authenticated release marker.
+      remove_restored_legacy_device_identity "$release_expected" || return 1
       rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
       return 0
