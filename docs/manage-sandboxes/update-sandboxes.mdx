@@ -231,6 +231,10 @@ When all your registered sandboxes resolve to one recorded gateway, the command 
 Each rebuild destroys the old container and creates a new one while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
 `upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
 
+Sandboxes created with `--from-image` remain pinned to their publisher-managed image digest.
+`upgrade-sandboxes` lists these sandboxes but excludes them from agent version and image drift classification, including with `--auto`.
+After you update NemoClaw, run `$$nemoclaw <sandbox-name> rebuild` to revalidate the external image and recreate the sandbox from its recorded digest.
+
 Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
 Runtime changes outside the manifest-defined state paths, such as packages installed manually in the running container, are not preserved.
 

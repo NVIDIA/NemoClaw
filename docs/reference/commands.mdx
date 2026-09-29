@@ -3236,6 +3236,10 @@ NemoClaw cannot order a `git describe` version against a different prerelease on
 
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw. NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with. Sandboxes that match the current digest are left alone. NemoClaw also checks the build fingerprint recorded on each managed sandbox image. A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both. When the target version is older than the recorded one (for example after reinstalling with an older `NEMOCLAW_INSTALL_TAG`), the stale listing marks the change with a `(downgrade)` suffix instead of framing it as a routine upgrade. Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image. Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild. A recorded sandbox that is not observed in any phase on its own recorded gateway is reported as not found there, with remediation guidance — this typically means its gateway registration or Docker image was removed (for example by `$$nemoclaw uninstall`, which preserves `sandboxes.json` but removes both).
 
+Sandboxes created with `--from-image` are excluded from agent version and image drift classification.
+The command lists them as pinned, publisher-managed images and does not rebuild them, including with `--auto`.
+After you update NemoClaw, run `$$nemoclaw <name> rebuild` to revalidate the external image and recreate the sandbox from its recorded digest.
+
 ```bash
 $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
