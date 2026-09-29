@@ -343,6 +343,10 @@ describe("fixed catalog vLLM installs", () => {
       });
 
       expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
+      );
+      expect(spies.logSpy).toHaveBeenCalledWith("    Context limit: 32768 tokens");
       expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
       const command = mocks.dockerRunDetached.mock.calls[0]![0].at(-1) as string;
       expect(command).toContain("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4");
