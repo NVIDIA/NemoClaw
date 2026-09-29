@@ -63,6 +63,34 @@ describe("final onboard flow phases", () => {
     ).toBe(testCase.expected);
   });
 
+  it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async () => undefined);
+    const [branchPhase] = createPhases("openclaw", [], { setupOpenclaw });
+
+    await branchPhase.run(
+      context({ fromDockerfile: "/tmp/CustomDockerfile", revalidateSandboxIdentity }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+    );
+  });
+
+  it("rejects custom-image route setup without verified sandbox identity (#12033)", async () => {
+    const [branchPhase] = createPhases("openclaw");
+
+    await expect(
+      branchPhase.run(context({ fromDockerfile: "/tmp/CustomDockerfile" })),
+    ).rejects.toThrow(/requires verified sandbox identity/u);
+  });
+
   describe.each(["openclaw", "hermes"])("%s providerless component lifecycle", (agentName) => {
     it("completes providerless onboarding only after verified component activation (#11486)", async () => {
       const flow = createProviderlessComponentFlow(agentName);

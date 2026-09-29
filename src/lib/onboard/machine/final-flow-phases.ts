@@ -90,6 +90,13 @@ export function createFinalOnboardFlowPhases<
     if (isProviderlessComponentOnboarding(context)) {
       return { result: advanceTo("policies", { metadata: { state: options.branchState } }) };
     }
+    const initializeNativeInferenceRoute = shouldInitializeNativeOpenclawInferenceRoute(
+      context,
+      options.preserveRebuildLivePolicy === true,
+    );
+    if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
+      throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
+    }
     const agentSetupResult = await handleAgentSetupState({
       agent: context.agent,
       sandboxName: context.sandboxName,
@@ -101,10 +108,8 @@ export function createFinalOnboardFlowPhases<
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
-      initializeNativeInferenceRoute: shouldInitializeNativeOpenclawInferenceRoute(
-        context,
-        options.preserveRebuildLivePolicy === true,
-      ),
+      initializeNativeInferenceRoute,
+      revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,
     });
     return {

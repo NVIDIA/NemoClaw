@@ -406,6 +406,42 @@ describe("handleAgentSetupState", () => {
     expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
   });
 
+  it("rejects an identity change before reading a fresh custom-image route (#12033)", async () => {
+    const readConfig = vi.fn();
+    const writeConfig = vi.fn();
+    const restartGateway = vi.fn();
+    const setupOpenclaw = vi.fn(
+      async (
+        sandboxName: string,
+        _model: string,
+        _provider: string,
+        revalidate?: (operation: string) => void,
+      ) => {
+        revalidate?.(`read native OpenClaw config in sandbox '${sandboxName}'`);
+        readConfig();
+        writeConfig();
+        restartGateway();
+      },
+    );
+    const { deps, calls } = createDeps({ setupOpenclaw });
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        revalidateSandboxIdentity,
+      }),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(readConfig).not.toHaveBeenCalled();
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("retries native route initialization while the OpenClaw step is unfinished (#12033)", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
 

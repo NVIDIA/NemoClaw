@@ -1046,7 +1046,7 @@ test(
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "install.sh --non-interactive onboards an OpenClaw sandbox from a custom Dockerfile",
         "fresh custom-image onboarding replaces the baked primary route with the selected model",
-        "the selected model's baked context window and token limit survive gateway restart and rebuild",
+        "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
