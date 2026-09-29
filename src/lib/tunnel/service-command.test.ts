@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +12,9 @@ import {
   runStartCommand,
   runStopCommand,
 } from "./service-command";
+import { readCloudflaredState, startAll } from "./services";
+
+vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;
@@ -74,6 +80,50 @@ describe("services command", () => {
       startAll,
     });
     expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha", dashboardPort: 18_791 });
+  });
+
+  it("targets the registered dashboard port in the cloudflared process", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-service-command-test-"));
+    const pidDir = join(tmpDir, "pids");
+    const binDir = join(tmpDir, "bin");
+    const fakeCloudflared = join(binDir, "cloudflared");
+    const originalPath = process.env.PATH;
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://registered-port.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await runStartCommand({
+        listSandboxes: () => ({ defaultSandbox: "alpha" }),
+        getSandbox: () => ({ dashboardPort: 18_791 }),
+        startAll: (options) => startAll({ ...options, pidDir }),
+      });
+
+      expect(readFileSync(join(pidDir, "cloudflared.log"), "utf8")).toContain(
+        "argv:tunnel --url http://localhost:18791",
+      );
+    } finally {
+      const state = readCloudflaredState(pidDir);
+      const runningPid = state.kind === "running" ? state.pid : Number.NaN;
+      try {
+        process.kill(runningPid, "SIGTERM");
+      } catch {
+        // Process may have already exited.
+      }
+      process.env.PATH = originalPath;
+      logSpy.mockRestore();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("keeps the service fallback when the selected sandbox is not registered", () => {
