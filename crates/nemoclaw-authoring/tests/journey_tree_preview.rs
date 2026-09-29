@@ -234,3 +234,51 @@ fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
     assert!(tree.contains("invalid supplied value"), "{tree}");
     assert!(!tree.contains("42"), "{tree}");
 }
+
+#[test]
+fn tree_branches_on_finite_sdk_choices_from_the_resolver() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let definition =
+        JourneyDefinition::new("api-choices", base).ask(["/spec/inferenceProviders/0/api"]);
+    let capabilities = Capabilities::available();
+    let resolution = definition
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    let question = resolution
+        .question("/spec/inferenceProviders/0/api")
+        .unwrap();
+    assert!(question.choices().len() > 1);
+    let tree = definition.print_tree(&capabilities).unwrap();
+    for choice in question.choices() {
+        assert!(
+            tree.contains(&format!("├─ {}", choice.as_str().unwrap())),
+            "{tree}"
+        );
+    }
+}
+
+#[test]
+fn tree_does_not_print_supplied_route_names_as_choice_labels() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let routes = values
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    let mut other = routes[0].clone();
+    other["name"] = serde_json::json!("private-route-name");
+    routes.push(other);
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let tree = JourneyDefinition::new("routes", base)
+        .ask([JourneyScope::RouteModels])
+        .print_tree(&Capabilities::available())
+        .unwrap();
+    assert!(tree.contains("route:selection"), "{tree}");
+    assert!(!tree.contains("private-route-name"), "{tree}");
+}

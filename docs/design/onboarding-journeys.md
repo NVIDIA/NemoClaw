@@ -94,7 +94,7 @@ The express preview reports zero questions only in its inspected surface; model 
 
 The prototype now also exposes `JourneyDefinition::start`, `JourneyState::answer`, and `JourneyState::resolve`.
 Each open question reports whether a value is missing, deliberately asked, or invalid for its current field schema.
-The tree printer uses this same resolver for its identity, harness, asked SDK fields, and top-level adapter-setting questions.
+The tree printer uses this same resolver for every current question and follows finite choices through `JourneyState::answer`, with explicit branch and depth limits.
 A supplied complete template can finish a guided journey through that surface and materialize an SDK document after its prompted answers and omissions.
 The minimum-values case still stops at the unresolved SDK frontier.
 
@@ -102,9 +102,9 @@ The minimum-values case still stops at the unresolved SDK frontier.
 
 - The SDK exposes a bounded YAML value parser so sparse authoring input uses the same syntax limits as complete documents.
 - The first partial assessment preserves supplied values and classifies full-schema errors. A compound rule remains deferred unless branch errors prove that adding values cannot satisfy it. This classification is a probe, not the final partial evaluator.
-- The tree preview names its inspected surface and prints an unresolved SDK frontier. It does not enumerate every SDK conditional branch; the TUI calls the mutable resolver after each answer.
+- The tree preview names its inspected surface and prints an unresolved SDK frontier. It follows schema-derived finite choices without a separate harness or preset question implementation, but does not enumerate every SDK conditional branch or every combination of independent choices; the TUI calls the mutable resolver after each answer.
 - Explicit omission guidance covers optional adapter settings. The TUI also offers an omit action for optional questions, including native model settings.
-- The tree preview redacts suggestion values because native settings may contain sensitive data.
+- The tree preview redacts suggestion values and authored route names because supplied values may contain sensitive data.
 - Invalid supplied SDK scalar fields become editable questions even without explicit guidance and stay visible in the preview without printing their values. Optional invalid fields can be omitted. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.
 - The first mutable journey state keeps accepted answers and explicit omissions separate from supplied values. It preserves each adapter's settings while changing harnesses and recomputes active questions after every answer. Missing catalog schemas leave guidance in place with a warning.
 - Guidance can ask SDK fields found through object properties, array items, and references in the generated input schema. The resolver preserves authored question order, validates each answer against that field schema, and can complete a partially supplied onboarding document. The earlier `Draft` guide and projection have been removed. Missing unconditional scalar fields under known SDK object shapes become questions without guidance, including required leaves beneath an absent parent object. Missing conditional alternatives and array structure remain unresolved frontiers.
@@ -123,7 +123,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 | One resolver owns question selection and answers | The executable TUI uses `JourneyState` for every question and answer, including routes, native settings, deployment fields, and evidence-gated bulk acceptance | Automatic discovery of every missing SDK requirement remains outside the bounded single-sandbox surface. |
 | Constraints come from SDK and Fabric | SDK field schemas validate asked values; Fabric schemas determine active settings and detect invalid native model combinations; `Document::parse` is the final SDK gate | The preset is curated authoring policy. Some SDK conditional branches still need a partial evaluator. |
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance | Reopened questions identify their state, but do not yet explain which earlier answer changed them. |
-| Visual inspection uses the same resolver | The tree prints current questions and branches over harness and inference preset choices | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
+| Visual inspection uses the same resolver | The tree prints current questions and branches over finite choices returned by the resolver | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
 
 The direct suite covers the default replay, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
 

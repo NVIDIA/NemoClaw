@@ -3,236 +3,248 @@
 
 //! Bounded symbolic inspection of questions returned by the authoring resolver.
 
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 use crate::{
-    Capabilities, Diagnostics, JourneyDefinition, JourneyQuestionReason, PartialIssueKind,
-    journey_definition::{HARNESS, INFERENCE_PRESET, NAME, adapter_field},
+    Capabilities, Diagnostics, JourneyDefinition, JourneyQuestionReason, JourneyState,
+    PartialIssueKind, journey_definition::adapter_field,
 };
 
-const MAX_BRANCHES: usize = 32;
-const MAX_SETTINGS: usize = 32;
+const MAX_CHOICES: usize = 32;
+const MAX_BRANCH_DEPTH: usize = 3;
+const MAX_BRANCHES: usize = 128;
 
-/// Print a reviewable first tree. An unresolved frontier is never shown as
-/// a complete journey; later slices expand it through the same field rules.
+/// Print a bounded tree by answering the same finite questions as the TUI.
+/// Free input and unresolved SDK constraints remain visible frontiers.
 pub(crate) fn print_tree(
     definition: &JourneyDefinition,
     capabilities: &Capabilities,
 ) -> Result<String, Diagnostics> {
     let state = definition.start(capabilities)?;
-    let initial = state.resolve(capabilities)?;
-    let mut lines = vec![format!("Journey {}", definition.id)];
-    let mut questions = 0;
-    if let Some(name) = initial.question(NAME) {
-        questions += 1;
-        lines.push(format!(
-            "  {NAME}: <valid name>{}",
-            suggestion(name.suggestion())
+    let mut printer = TreePrinter {
+        capabilities,
+        lines: vec![format!("Journey {}", definition.id)],
+        branches: 0,
+    };
+    printer.render(&state, "  ", 0, &BTreeSet::new(), &BTreeSet::new())?;
+    printer.lines.push("  Preview scope: current resolver questions and bounded finite branches; dependent free-form and conditional branches are not fully expanded.".into());
+    Ok(printer.lines.join("\n"))
+}
+
+struct TreePrinter<'a> {
+    capabilities: &'a Capabilities,
+    lines: Vec<String>,
+    branches: usize,
+}
+
+impl TreePrinter<'_> {
+    fn render(
+        &mut self,
+        state: &JourneyState,
+        indent: &str,
+        depth: usize,
+        shown: &BTreeSet<String>,
+        expanded: &BTreeSet<String>,
+    ) -> Result<(), Diagnostics> {
+        let resolved = state.resolve(self.capabilities)?;
+        let mut shown_here = shown.clone();
+        for id in resolved.omitted() {
+            if shown_here.insert(id.clone()) {
+                self.lines
+                    .push(format!("{indent}{}: omitted", display_id(id)));
+            }
+        }
+        for question in resolved.questions() {
+            if shown_here.insert(question.id().into()) {
+                let kind = question.schema()["type"].as_str().unwrap_or("JSON value");
+                let value = if question.required() {
+                    format!("<{kind}>")
+                } else {
+                    format!("[omit | <{kind}>]")
+                };
+                let invalid = if question.reason() == JourneyQuestionReason::InvalidSupplied {
+                    " (invalid supplied value)"
+                } else {
+                    ""
+                };
+                self.lines.push(format!(
+                    "{indent}{}: {value}{}{invalid}",
+                    display_id(question.id()),
+                    suggestion(question.suggestion())
+                ));
+            }
+        }
+        for warning in resolved.warnings() {
+            if shown_here.insert(format!("warning:{warning}")) {
+                self.lines.push(format!("{indent}Warning: {warning}"));
+            }
+        }
+        for reason in resolved.unverified() {
+            if shown_here.insert(format!("unverified:{reason}")) {
+                self.lines.push(format!("{indent}Unverified: {reason}"));
+            }
+        }
+        if depth == 0 {
+            let remaining = resolved
+                .assessment()
+                .issues()
+                .iter()
+                .filter(|issue| {
+                    !(issue.kind() == PartialIssueKind::Missing
+                        && resolved.question(issue.path()).is_some())
+                })
+                .collect::<Vec<_>>();
+            if !remaining.is_empty() {
+                self.lines
+                    .push(format!("{indent}Other unresolved SDK constraints:"));
+                for issue in remaining {
+                    self.lines.push(format!(
+                        "{indent}  {}: {:?} ({})",
+                        issue.path(),
+                        issue.kind(),
+                        issue.rule()
+                    ));
+                }
+            }
+            if resolved.questions().is_empty()
+                && resolved.assessment().issues().is_empty()
+                && resolved.unverified().is_empty()
+            {
+                self.lines.push(format!(
+                    "{indent}No configuration questions in the inspected surface"
+                ));
+            }
+            if let Some(target) = resolved.target_assessment() {
+                self.lines
+                    .push(format!("{indent}Target prerequisite: {:?}", target.status));
+                for reason in &target.reasons {
+                    self.lines.push(format!("{indent}  {reason}"));
+                }
+            }
+        }
+
+        let question = resolved
+            .questions()
+            .iter()
+            .filter(|question| !question.choices().is_empty() && !expanded.contains(question.id()))
+            .max_by_key(|question| self.branch_impact(state, &resolved, question));
+        let Some(question) = question else {
+            return Ok(());
+        };
+        if depth >= MAX_BRANCH_DEPTH || self.branches >= MAX_BRANCHES {
+            self.lines
+                .push(format!("{indent}... finite branches not expanded"));
+            return Ok(());
+        }
+        let impact = self.branch_impact(state, &resolved, question);
+        self.lines.push(format!(
+            "{indent}Choices for {}:",
+            display_id(question.id())
         ));
+        let mut next_expanded = expanded.clone();
+        next_expanded.insert(question.id().into());
+        let mut choices = question
+            .choices()
+            .iter()
+            .take(MAX_CHOICES)
+            .cloned()
+            .map(Some)
+            .collect::<Vec<_>>();
+        if !question.required() {
+            choices.push(None);
+        }
+        for (index, choice) in choices.into_iter().enumerate() {
+            if self.branches >= MAX_BRANCHES {
+                self.lines.push(format!("{indent}... branch limit reached"));
+                break;
+            }
+            self.branches += 1;
+            let label = choice.as_ref().map_or_else(
+                || "omit".into(),
+                |value| choice_label(question.id(), value, index),
+            );
+            self.lines.push(format!("{indent}  ├─ {label}"));
+            let mut branch = state.clone();
+            match branch.answer(self.capabilities, question.id(), choice) {
+                Ok(()) if impact > 0 => self.render(
+                    &branch,
+                    &format!("{indent}  │  "),
+                    depth + 1,
+                    &shown_here,
+                    &next_expanded,
+                )?,
+                Ok(()) => {}
+                Err(_) => self.lines.push(format!(
+                    "{indent}  │  Cannot resolve this choice from the current sparse base"
+                )),
+            }
+        }
+        if question.choices().len() > MAX_CHOICES {
+            self.lines.push(format!(
+                "{indent}  ... {} more choices not expanded",
+                question.choices().len() - MAX_CHOICES
+            ));
+        }
+        Ok(())
     }
 
-    let branch_harness = initial.question(HARNESS);
-    let harnesses = if let Some(question) = branch_harness {
+    fn branch_impact(
+        &self,
+        state: &JourneyState,
+        before: &crate::JourneyResolution,
+        question: &crate::JourneyQuestion,
+    ) -> usize {
+        let baseline = before
+            .questions()
+            .iter()
+            .filter(|other| other.id() != question.id())
+            .map(|other| (other.id().to_owned(), other.choices().to_vec()))
+            .collect::<Vec<_>>();
         question
             .choices()
             .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    } else {
-        state
-            .values()
-            .pointer(HARNESS)
-            .and_then(Value::as_str)
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    };
-    if let Some(question) = branch_harness {
-        questions += 1;
-        lines.push(format!(
-            "  {HARNESS}: choose adapter{}",
-            suggestion(question.suggestion())
-        ));
-    }
-    let mut unverified_adapter = false;
-    for harness in harnesses.iter().take(MAX_BRANCHES) {
-        if branch_harness.is_some() {
-            lines.push(format!("    ├─ {harness}"));
-        }
-        let indent = if branch_harness.is_some() {
-            "    │  "
-        } else {
-            "  "
-        };
-        let mut branch = state.clone();
-        if branch_harness.is_some() {
-            branch.answer(capabilities, HARNESS, Some(Value::String(harness.clone())))?;
-        }
-        let resolved = branch.resolve(capabilities)?;
-        if !resolved.unverified().is_empty() {
-            unverified_adapter = true;
-            for reason in resolved.unverified() {
-                lines.push(format!("{indent}{reason}"));
-            }
-        }
-        for id in resolved.omitted().iter().take(MAX_SETTINGS) {
-            if let Some((_, pointer)) = adapter_field(id) {
-                lines.push(format!("{indent}{pointer}: omitted"));
-            }
-        }
-        let setting_questions = resolved
-            .questions()
-            .iter()
-            .filter(|question| question.id().starts_with("adapter:"))
-            .collect::<Vec<_>>();
-        for question in setting_questions.iter().take(MAX_SETTINGS) {
-            let Some((_, pointer)) = adapter_field(question.id()) else {
-                continue;
-            };
-            questions += 1;
-            let kind = question.schema()["type"].as_str().unwrap_or("JSON value");
-            let options = if question.required() {
-                format!("<{kind}>")
-            } else {
-                format!("[omit | <{kind}>]")
-            };
-            lines.push(format!(
-                "{indent}{pointer}: {options}{}{}",
-                suggestion(question.suggestion()),
-                invalid_note(question.reason())
-            ));
-        }
-        if setting_questions.len() > MAX_SETTINGS {
-            lines.push(format!(
-                "{indent}... {} more settings not expanded",
-                setting_questions.len() - MAX_SETTINGS
-            ));
-        }
-    }
-    if harnesses.len() > MAX_BRANCHES {
-        lines.push(format!(
-            "    ... {} more adapters not expanded",
-            harnesses.len() - MAX_BRANCHES
-        ));
-    }
-
-    if let Some(preset) = initial.question(INFERENCE_PRESET) {
-        questions += 1;
-        lines.push(format!(
-            "  {INFERENCE_PRESET}: choose endpoint preset{}",
-            suggestion(preset.suggestion())
-        ));
-        for choice in preset.choices().iter().take(MAX_BRANCHES) {
-            let Some(id) = choice.as_str() else { continue };
-            lines.push(format!("    ├─ {id}"));
-            let mut branch = state.clone();
-            match branch.answer(capabilities, INFERENCE_PRESET, Some(choice.clone())) {
-                Ok(()) => {
-                    let resolved = branch.resolve(capabilities)?;
-                    for question in resolved.questions().iter().filter(|question| {
-                        question.id() == "/spec/inferenceProviders/0/api"
-                            || question.id()
-                                == "/spec/sandboxes/0/agent/inference/routes/0/overrides/model"
-                    }) {
-                        questions += 1;
-                        lines.push(format!(
-                            "    │  {}: <valid value>{}",
-                            question.id(),
-                            suggestion(question.suggestion())
-                        ));
-                    }
-                    if let Some(endpoint) = resolved.question("/spec/inferenceProviders/0/endpoint")
-                    {
-                        questions += 1;
-                        lines.push(format!(
-                            "    │  {}: <URL>{}",
-                            endpoint.id(),
-                            suggestion(endpoint.suggestion())
-                        ));
-                        if let Some(sample) = endpoint.suggestion() {
-                            let mut after_endpoint = branch.clone();
-                            if after_endpoint
-                                .answer(capabilities, endpoint.id(), Some(sample.clone()))
-                                .is_ok()
-                                && let Some(model) = after_endpoint.resolve(capabilities)?.question(
-                                    "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
-                                )
-                            {
-                                questions += 1;
-                                lines.push(format!(
-                                    "    │    then {}: <valid model>{}",
-                                    model.id(),
-                                    suggestion(model.suggestion())
-                                ));
-                            }
-                        }
-                    }
+            .take(MAX_CHOICES)
+            .filter(|choice| {
+                let mut branch = state.clone();
+                if branch
+                    .answer(self.capabilities, question.id(), Some((*choice).clone()))
+                    .is_err()
+                {
+                    return true;
                 }
-                Err(_) => lines
-                    .push("    │  cannot project this choice from the current sparse base".into()),
-            }
-        }
+                let Ok(after) = branch.resolve(self.capabilities) else {
+                    return true;
+                };
+                let following = after
+                    .questions()
+                    .iter()
+                    .filter(|other| other.id() != question.id())
+                    .map(|other| (other.id().to_owned(), other.choices().to_vec()))
+                    .collect::<Vec<_>>();
+                baseline != following
+            })
+            .count()
     }
-
-    for question in initial.questions().iter().filter(|question| {
-        let id = question.id();
-        (id.starts_with('/') && id != NAME && id != HARNESS)
-            || id.starts_with("workflow:")
-            || id.starts_with("model:")
-            || id == "route:selection"
-    }) {
-        questions += 1;
-        let kind = question.schema()["type"].as_str().unwrap_or("JSON value");
-        lines.push(format!(
-            "  {}: <{kind}>{}{}",
-            question.id(),
-            suggestion(question.suggestion()),
-            invalid_note(question.reason())
-        ));
-    }
-
-    let remaining_issues = initial
-        .assessment()
-        .issues()
-        .iter()
-        .filter(|issue| {
-            !(issue.kind() == PartialIssueKind::Missing && initial.question(issue.path()).is_some())
-        })
-        .collect::<Vec<_>>();
-    if !remaining_issues.is_empty() {
-        lines.push("  Other unresolved SDK constraints:".into());
-        for issue in remaining_issues {
-            lines.push(format!(
-                "    {}: {:?} ({})",
-                issue.path(),
-                issue.kind(),
-                issue.rule()
-            ));
-        }
-    }
-    if questions == 0 && initial.assessment().issues().is_empty() && !unverified_adapter {
-        lines.push("  No configuration questions in the inspected surface".into());
-    }
-    for warning in initial.warnings() {
-        lines.push(format!("  Warning: {warning}"));
-    }
-    if let Some(target) = initial.target_assessment() {
-        lines.push(format!("  Target prerequisite: {:?}", target.status));
-        for reason in &target.reasons {
-            lines.push(format!("    {reason}"));
-        }
-    }
-    lines.push("  Preview scope: current resolver questions and bounded finite branches; dependent free-form and conditional branches are not fully expanded.".into());
-    Ok(lines.join("\n"))
-}
-fn suggestion(value: Option<&Value>) -> String {
-    value.map_or(String::new(), |_| " (suggestion available)".into())
 }
 
-fn invalid_note(reason: JourneyQuestionReason) -> &'static str {
-    if reason == JourneyQuestionReason::InvalidSupplied {
-        " (invalid supplied value)"
+fn display_id(id: &str) -> &str {
+    adapter_field(id).map_or(id, |(_, pointer)| pointer)
+}
+
+fn choice_label(question_id: &str, choice: &Value, index: usize) -> String {
+    if question_id == "route:selection" {
+        return format!("<route {}>", index + 1);
+    }
+    choice
+        .as_str()
+        .map_or_else(|| choice.to_string(), str::to_owned)
+}
+
+fn suggestion(value: Option<&Value>) -> &'static str {
+    if value.is_some() {
+        " (suggestion available)"
     } else {
         ""
     }
