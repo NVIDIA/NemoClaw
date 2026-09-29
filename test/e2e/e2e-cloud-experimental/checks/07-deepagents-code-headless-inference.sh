@@ -624,6 +624,15 @@ main() {
   else
     fail_test "public install and native list did not complete through DCode"
   fi
+  skill_digest_line_count="$(
+    printf '%s\n' "$skill_install_output" \
+      | grep -Ec '^[[:space:]]*Content digest \(SHA-256\): [a-f0-9]{64}$' || true
+  )"
+  if [ "$skill_digest_line_count" -eq 1 ]; then
+    pass "public DCode skill install reported one verified SHA-256 content digest"
+  else
+    fail_test "public DCode skill install did not report one verified SHA-256 content digest"
+  fi
   skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
   printf '%s\n' \
     '---' \

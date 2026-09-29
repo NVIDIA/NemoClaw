@@ -4,6 +4,7 @@
 // Stateless skill staging and canonical-root filesystem fallbacks. Agent
 // discovery and activation always remain native-agent responsibilities.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -125,6 +126,7 @@ export interface SkillRootIdentity {
 }
 
 export type StatelessSkillSnapshot = Readonly<{
+  contentDigest: string;
   files: readonly string[];
   hostDirectory: string;
   skillDirectory: string;
@@ -207,6 +209,7 @@ export function createStatelessSkillSnapshot(
       return { success: false, reason: "source-changed" };
     }
 
+    const digestManifest: string[] = [];
     let totalBytes = 0;
     for (const relativePath of collected.files) {
       const source = path.join(sourceRoot, relativePath);
@@ -247,6 +250,9 @@ export function createStatelessSkillSnapshot(
           flag: "wx",
           mode: (opened.mode & 0o111) === 0 ? 0o644 : 0o755,
         });
+        const normalizedMode = (opened.mode & 0o111) === 0 ? "644" : "755";
+        const fileDigest = createHash("sha256").update(content).digest("hex");
+        digestManifest.push(`${normalizedMode} ${fileDigest}  ${relativePath}\n`);
         totalBytes += content.length;
       } catch {
         return { success: false, reason: "source-changed" };
@@ -270,6 +276,7 @@ export function createStatelessSkillSnapshot(
     return {
       success: true,
       snapshot: {
+        contentDigest: createHash("sha256").update(digestManifest.join("")).digest("hex"),
         files: Object.freeze([...collected.files]),
         hostDirectory,
         skillDirectory: snapshotDirectory,
@@ -290,6 +297,7 @@ export function createStatelessSkillSnapshot(
 }
 
 const PRIVATE_STAGE_PATTERN = /^\/sandbox\/[.]nemoclaw-skill-stage[.][a-f0-9]{32}$/u;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
 export function buildPrepareSkillStageCommand(stageDirectory: string): string {
   if (!PRIVATE_STAGE_PATTERN.test(stageDirectory))
@@ -351,14 +359,35 @@ function assertCanonicalSkillRoot(writableRoot: string): void {
   }
 }
 
-/** Place one snapshot in only the declared canonical writable root. */
+/** Place one snapshot in the declared root after optional pre-publication verification. */
 export function buildCanonicalSkillAddCommand(
   writableRoot: string,
   skillName: string,
   stagedSkillDirectory: string,
+  expectedDigest?: string,
 ): string[] {
   if (!validateSkillName(skillName)) throw new Error("Invalid skill name");
   if (!stagedSkillDirectory.endsWith(`/${skillName}`)) throw new Error("Invalid staged skill path");
+  if (expectedDigest !== undefined && !SHA256_PATTERN.test(expectedDigest)) {
+    throw new Error("Invalid skill content digest");
+  }
+  const verificationCommands =
+    expectedDigest === undefined
+      ? []
+      : [
+          `expected=${shellQuote(expectedDigest)}`,
+          'verification="$(mktemp -d "$root/.nemoclaw-skill-verify.$name.XXXXXX")"',
+          'chmod 700 "$verification"',
+          'find "$temporary" -mindepth 1 -fprintf "$verification/entries" "%P\\n"',
+          'while IFS= read -r rel; do safe_rel "$rel"; done < "$verification/entries"',
+          'find "$temporary" -type f -fprintf "$verification/unsorted-files" "%P\\n"',
+          'LC_ALL=C sort "$verification/unsorted-files" > "$verification/files"',
+          ': > "$verification/manifest"',
+          'while IFS= read -r rel; do candidate="$temporary/$rel"; [ -f "$candidate" ] && [ ! -L "$candidate" ]; if [ -n "$(find "$candidate" -maxdepth 0 -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum -- "$candidate")"; hash="${hash%% *}"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$verification/manifest"; done < "$verification/files"',
+          'actual="$(sha256sum -- "$verification/manifest")"',
+          'actual="${actual%% *}"',
+          '[ "$actual" = "$expected" ]',
+        ];
   return [
     "/bin/sh",
     "-c",
@@ -367,6 +396,11 @@ export function buildCanonicalSkillAddCommand(
       `root=${shellQuote(writableRoot)}`,
       `source=${shellQuote(stagedSkillDirectory)}`,
       `name=${shellQuote(skillName)}`,
+      ...(expectedDigest === undefined
+        ? []
+        : [
+            'safe_rel() { case "$1" in ""|/*|*//*|*[!A-Za-z0-9._/-]*) return 1 ;; esac; case "/$1/" in *"/./"*|*"/../"*) return 1 ;; esac; }',
+          ]),
       ...canonicalRootCreationCommands(writableRoot),
       '[ "$(pwd -P)" = "$root" ]',
       '[ -d "$source" ] && [ ! -L "$source" ] && [ "$(realpath -e -- "$source")" = "$source" ]',
@@ -374,10 +408,18 @@ export function buildCanonicalSkillAddCommand(
       'destination="$name"',
       'if [ -e "$destination" ] || [ -L "$destination" ]; then printf "Refusing to replace existing %s in the canonical writable skill root. Native skill list remains authoritative.\\n" "$name" >&2; exit 1; fi',
       'temporary="$(mktemp -d "$root/.nemoclaw-skill-add.$name.XXXXXX")"',
-      'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; }',
+      ...(expectedDigest === undefined
+        ? [
+            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; }',
+          ]
+        : [
+            'verification=""',
+            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; if [ -n "${verification:-}" ] && [ -d "$verification" ] && [ ! -L "$verification" ]; then rm -rf -- "$verification"; fi; }',
+          ]),
       "trap cleanup EXIT HUP INT TERM",
       'cp -a -- "$source/." "$temporary/"',
       '[ -z "$(find "$temporary" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
+      ...verificationCommands,
       'mv -T -- "$temporary" "$destination"',
       'temporary=""',
       'printf "Placed %s in the canonical writable skill root. Native skill list and new sessions remain authoritative.\\n" "$name"',

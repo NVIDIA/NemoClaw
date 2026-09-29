@@ -72,6 +72,9 @@ describe("stateless skill snapshots", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.snapshot.files).toEqual(["SKILL.md", "nested/tool.sh"]);
+    expect(result.snapshot.contentDigest).toBe(
+      "4e4e4b41e297b6aa262e0adab773584f52809fbf688d9a44ea5a863ebcfe0b8c",
+    );
     expect(result.snapshot.skippedDotfiles).toEqual([".secret"]);
     expect(fs.statSync(result.snapshot.hostDirectory).mode & 0o777).toBe(0o700);
     expect(
@@ -79,6 +82,33 @@ describe("stateless skill snapshots", () => {
     ).toBe(true);
     result.snapshot.cleanup();
     expect(fs.existsSync(result.snapshot.hostDirectory)).toBe(false);
+  });
+
+  it("changes the snapshot digest when content or executable mode changes (#8470)", () => {
+    const root = skill();
+    const script = path.join(root, "tool.sh");
+    fs.writeFileSync(script, "#!/bin/sh\nprintf first\\n", { mode: 0o644 });
+
+    const first = createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root));
+    expect(first.success).toBe(true);
+    const firstSnapshot = (first as Extract<typeof first, { success: true }>).snapshot;
+    const firstDigest = firstSnapshot.contentDigest;
+    firstSnapshot.cleanup();
+
+    fs.chmodSync(script, 0o755);
+    const executable = createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root));
+    expect(executable.success).toBe(true);
+    const executableSnapshot = (executable as Extract<typeof executable, { success: true }>)
+      .snapshot;
+    expect(executableSnapshot.contentDigest).not.toBe(firstDigest);
+    executableSnapshot.cleanup();
+
+    fs.writeFileSync(script, "#!/bin/sh\nprintf second\\n", { mode: 0o755 });
+    const changed = createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root));
+    expect(changed.success).toBe(true);
+    const changedSnapshot = (changed as Extract<typeof changed, { success: true }>).snapshot;
+    expect(changedSnapshot.contentDigest).not.toBe(executableSnapshot.contentDigest);
+    changedSnapshot.cleanup();
   });
 
   it("rejects a source that exceeds the byte bound before copying it", () => {
@@ -111,6 +141,42 @@ describe("stateless skill snapshots", () => {
 });
 
 describe("canonical writable-root fallbacks", () => {
+  it("verifies Deep Agents content before atomic publication (#8470)", () => {
+    const digest = "a".repeat(64);
+    const command = buildCanonicalSkillAddCommand(
+      "/sandbox/.deepagents/agent/skills",
+      "demo-skill",
+      "/sandbox/.nemoclaw-skill-stage.0123456789abcdef0123456789abcdef/demo-skill",
+      digest,
+    );
+    const script = command[2] ?? "";
+
+    expect(command.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
+    expect(script).toContain('LC_ALL=C sort "$verification/unsorted-files"');
+    expect(script).toContain("mode=755");
+    expect(script).toContain('sha256sum -- "$candidate"');
+    expect(script).toContain('[ "$actual" = "$expected" ]');
+    expect(script.indexOf('[ "$actual" = "$expected" ]')).toBeLessThan(
+      script.indexOf('mv -T -- "$temporary" "$destination"'),
+    );
+    expect(script).not.toContain("Content digest (SHA-256)");
+    expect(script).toContain(digest);
+  });
+
+  it.each(["invalid", "A".repeat(64), "a".repeat(63)])(
+    "rejects invalid skill content digest %j",
+    (digest) => {
+      expect(() =>
+        buildCanonicalSkillAddCommand(
+          "/sandbox/.deepagents/agent/skills",
+          "demo-skill",
+          "/sandbox/.nemoclaw-skill-stage.0123456789abcdef0123456789abcdef/demo-skill",
+          digest,
+        ),
+      ).toThrow("Invalid skill content digest");
+    },
+  );
+
   it("places only the named staged tree in the declared root", () => {
     const command = buildCanonicalSkillAddCommand(
       "/sandbox/.hermes/skills",
@@ -128,6 +194,8 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).toContain("Native skill list and new sessions remain authoritative");
     expect(script).not.toContain("receipt");
     expect(script).not.toContain("provenance");
+    expect(script).not.toContain("safe_rel");
+    expect(script).not.toContain(".nemoclaw-skill-verify");
     expect(script).not.toContain("/sandbox/.openclaw");
   });
 
