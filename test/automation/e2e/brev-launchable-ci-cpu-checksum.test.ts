@@ -408,6 +408,38 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(nodeArchiveExtraction).toBeGreaterThan(staleNpmRemoval);
   });
 
+  it("normalizes terminal controls before redacting npm credentials", () => {
+    const [controlValue, ansiValue] = ["controlsplit1234567890", "ansisplit1234567890"].map(
+      (suffix) => `ghp_${suffix}`,
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        'source "$NPM_DIAGNOSTICS_HELPER"\nprintf "%s" "$RAW_DIAGNOSTIC" | sanitize_npm_diagnostics',
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_DIAGNOSTICS_HELPER,
+          RAW_DIAGNOSTIC: [
+            `npm error ghp_con\u000btrolsplit1234567890`,
+            `npm error ghp_ans\u001b[31misplit1234567890\u001b[0m`,
+            "",
+          ].join("\n"),
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("npm error <REDACTED>\nnpm error <REDACTED>\n");
+    expect(result.stdout).not.toContain(controlValue);
+    expect(result.stdout).not.toContain(ansiValue);
+  });
+
   it.each([
     ["reviewed-npm", 43],
     ["root", 41],

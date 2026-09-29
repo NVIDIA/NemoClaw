@@ -3,7 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 sanitize_npm_diagnostics() {
-  awk '
+  LC_ALL=C sed -E \
+    -e $'s/\033\\][^\007\033]*(\007|\033\\\\)//g' \
+    -e $'s/\033\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | LC_ALL=C tr '\015' '\012' \
+    | LC_ALL=C tr -cd '\11\12\40-\176' \
+    | awk '
     BEGIN { private_key = 0 }
     {
       line = $0
@@ -30,8 +35,7 @@ sanitize_npm_diagnostics() {
       -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
       -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
       -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
-      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g' \
-    | LC_ALL=C tr -cd '\11\12\15\40-\176'
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g'
 }
 
 bounded_npm_diagnostic_excerpt() {

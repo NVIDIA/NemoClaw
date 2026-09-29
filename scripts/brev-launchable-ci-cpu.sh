@@ -16,7 +16,6 @@ SENTINEL="/var/run/nemoclaw-launchable-ready"
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-# Logging
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 exec > >(tee -a "$LAUNCH_LOG") 2>&1
 
@@ -28,10 +27,15 @@ fail() {
   exit 1
 }
 
-# Keep this standalone trust-boundary copy aligned with scripts/lib/npm-diagnostics.sh.
+# Keep aligned with scripts/lib/npm-diagnostics.sh.
 # BEGIN npm diagnostics helper
 sanitize_npm_diagnostics() {
-  awk '
+  LC_ALL=C sed -E \
+    -e $'s/\033\\][^\007\033]*(\007|\033\\\\)//g' \
+    -e $'s/\033\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | LC_ALL=C tr '\015' '\012' \
+    | LC_ALL=C tr -cd '\11\12\40-\176' \
+    | awk '
     BEGIN { private_key = 0 }
     {
       line = $0
@@ -58,8 +62,7 @@ sanitize_npm_diagnostics() {
       -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
       -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
       -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
-      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g' \
-    | LC_ALL=C tr -cd '\11\12\15\40-\176'
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g'
 }
 
 bounded_npm_diagnostic_excerpt() {
@@ -166,7 +169,6 @@ TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
-# Usage: retry 3 10 "description" command arg1 arg2
 retry() {
   local max_attempts="$1" sleep_sec="$2" desc="$3"
   shift 3
@@ -185,7 +187,6 @@ retry() {
   done
 }
 
-# Wait for apt locks.
 # Brev VMs sometimes have unattended-upgrades running at boot.
 wait_for_apt_lock() {
   local max_wait=120 elapsed=0
