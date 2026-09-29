@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_TOOL_DISCLOSURE,
+  defaultToolDisclosureForRoute,
+  isLocalToolDisclosureRoute,
   readToolDisclosureEnv,
+  resolveGeneratedToolDisclosure,
   resolveSandboxToolDisclosure,
+  resolveSessionToolDisclosureForRoute,
   resolveToolDisclosureRequest,
   toolDisclosureOrDefault,
 } from "./tool-disclosure";
@@ -90,5 +94,51 @@ describe("tool disclosure", () => {
         recreate: false,
       }),
     ).toBe("direct");
+  });
+
+  it("defaults local routes to direct and remote routes to progressive", () => {
+    expect(isLocalToolDisclosureRoute("ollama-local")).toBe(true);
+    expect(isLocalToolDisclosureRoute("vllm-local")).toBe(true);
+    expect(isLocalToolDisclosureRoute(" llama-cpp-local ")).toBe(false);
+    expect(isLocalToolDisclosureRoute("nvidia-prod")).toBe(false);
+    expect(defaultToolDisclosureForRoute("ollama-local")).toBe("direct");
+    expect(defaultToolDisclosureForRoute("vllm-local")).toBe("direct");
+    expect(defaultToolDisclosureForRoute("llama-cpp-local")).toBe("progressive");
+    expect(defaultToolDisclosureForRoute("nvidia-prod")).toBe("progressive");
+    expect(defaultToolDisclosureForRoute(undefined)).toBe("progressive");
+  });
+
+  it("does not let a fresh progressive session override the local-route default", () => {
+    expect(
+      resolveSandboxToolDisclosure({
+        requested: null,
+        recorded: undefined,
+        session: "progressive",
+        sandboxExists: false,
+        recreate: false,
+        provider: "ollama-local",
+      }),
+    ).toBe("direct");
+    expect(
+      resolveSandboxToolDisclosure({
+        requested: null,
+        recorded: undefined,
+        session: "progressive",
+        sandboxExists: false,
+        recreate: false,
+        provider: "nvidia-prod",
+      }),
+    ).toBe("progressive");
+    expect(resolveSessionToolDisclosureForRoute("progressive", "ollama-local")).toBe("direct");
+    expect(resolveSessionToolDisclosureForRoute("direct", "ollama-local")).toBe("direct");
+    expect(resolveSessionToolDisclosureForRoute("progressive", "nvidia-prod")).toBe("progressive");
+  });
+
+  it("keeps generated local-route config on direct when env still says progressive", () => {
+    expect(resolveGeneratedToolDisclosure("progressive", "ollama-local")).toBe("direct");
+    expect(resolveGeneratedToolDisclosure("progressive", "inference", "vllm-local")).toBe("direct");
+    expect(resolveGeneratedToolDisclosure("progressive", "nvidia-prod")).toBe("progressive");
+    expect(resolveGeneratedToolDisclosure("progressive", "llama-cpp-local")).toBe("progressive");
+    expect(resolveGeneratedToolDisclosure("direct", "nvidia-prod")).toBe("direct");
   });
 });

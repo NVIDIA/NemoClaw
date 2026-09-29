@@ -76,6 +76,35 @@ describe("generate-openclaw-config.mts: tool disclosure", () => {
     );
   });
 
+  it.each(["ollama-local", "vllm-local"] as const)(
+    "writes direct Tool Search for %s when env still says progressive (#12106)",
+    (upstream) => {
+      const config = buildConfig({
+        ...BASE_ENV,
+        NEMOCLAW_PROVIDER_KEY: "inference",
+        NEMOCLAW_UPSTREAM_PROVIDER: upstream,
+        NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      });
+
+      expect(config.tools?.toolSearch).toBe(false);
+    },
+  );
+
+  it("keeps progressive Tool Search for remote routes", () => {
+    const config = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+    });
+
+    expect(config.tools?.toolSearch).toEqual({
+      mode: "tools",
+      searchDefaultLimit: 8,
+      maxSearchLimit: 20,
+    });
+  });
+
   it("does not let a model setup re-enable Tool Search over a direct request", () => {
     const registryDir = path.join(tmpDir, "model-specific-setup");
     const manifestPath = path.join(registryDir, "openclaw", "tool-search-on.json");

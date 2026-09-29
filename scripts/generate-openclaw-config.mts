@@ -41,7 +41,10 @@ import {
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildAgentEntries, validateExtraAgents } from "../src/lib/extra-agents-validation.ts";
-import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
+import {
+  readToolDisclosureEnv,
+  resolveGeneratedToolDisclosure,
+} from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -787,7 +790,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
-  const toolDisclosure = readToolDisclosureEnv(env);
+  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  const toolDisclosure = resolveGeneratedToolDisclosure(
+    readToolDisclosureEnv(env),
+    upstreamProvider,
+    providerKey,
+  );
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const reasoningEffortParams = buildReasoningEffortParams(env);
@@ -857,17 +865,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
     searchDefaultLimit: 8,
     maxSearchLimit: 20,
   };
-  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
     alsoAllow: ["bundle-mcp"],
-    // An explicit direct request is authoritative. Compatibility manifests may
-    // downgrade progressive mode to false, but may never re-enable search over
-    // a user's direct selection. OpenClaw 2026.9.1 otherwise expands that false
-    // fallback into the full direct catalog. llama.cpp rejects the resulting
-    // request schema, so keep its progressive route on the compact structured
-    // search/describe/call surface even for models whose hosted route still
-    // needs the legacy direct-tool compatibility override.
+    // An explicit direct request is authoritative. Local Ollama/vLLM routes
+    // fail-safe to direct even when NEMOCLAW_TOOL_DISCLOSURE is still
+    // progressive so a rebuild-imposed default cannot nest tool_call.
+    // Compatibility manifests may downgrade progressive mode to false, but may
+    // never re-enable search over a user's direct selection. OpenClaw 2026.9.1
+    // otherwise expands that false fallback into the full direct catalog.
+    // llama.cpp rejects the resulting request schema, so keep its progressive
+    // route on the compact structured search/describe/call surface even for
+    // models whose hosted route still needs the legacy direct-tool override.
     toolSearch:
       toolDisclosure === "direct"
         ? false

@@ -154,6 +154,40 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
 
+  it("defaults a fresh local route to direct when the session still has progressive (#12106)", () => {
+    const result = prepareSandboxToolDisclosure(
+      "alpha",
+      null,
+      false,
+      () => ({
+        existingEntry: null,
+        preservedMcpState: undefined,
+        liveExists: false,
+      }),
+      null,
+      "ollama-local",
+    );
+
+    expect(result).toMatchObject({ effectiveToolDisclosure: "direct" });
+  });
+
+  it("keeps progressive for a fresh remote route", () => {
+    const result = prepareSandboxToolDisclosure(
+      "alpha",
+      null,
+      false,
+      () => ({
+        existingEntry: null,
+        preservedMcpState: undefined,
+        liveExists: false,
+      }),
+      null,
+      "nvidia-prod",
+    );
+
+    expect(result).toMatchObject({ effectiveToolDisclosure: "progressive" });
+  });
+
   it("resolves schema-5 tool disclosure without reading or writing session state (#9203)", () => {
     const result = prepareHermesPortableToolDisclosure("direct");
 

@@ -7,6 +7,8 @@ export type ToolDisclosure = "progressive" | "direct";
 export const DEFAULT_TOOL_DISCLOSURE: ToolDisclosure = "progressive";
 export const TOOL_DISCLOSURE_ENV = "NEMOCLAW_TOOL_DISCLOSURE";
 export const TOOL_DISCLOSURE_VALUES = ["progressive", "direct"] as const;
+/** Host-local inference routes that cannot drive nested Tool Search. */
+export const LOCAL_TOOL_DISCLOSURE_PROVIDERS = ["ollama-local", "vllm-local"] as const;
 
 /** Normalize a user or persisted value without silently accepting unknown modes. */
 export function normalizeToolDisclosure(value: unknown): ToolDisclosure | null {
@@ -53,6 +55,43 @@ export function toolDisclosureOrDefault(value: unknown): ToolDisclosure {
   return normalizeToolDisclosure(value) ?? DEFAULT_TOOL_DISCLOSURE;
 }
 
+export function isLocalToolDisclosureRoute(provider: string | null | undefined): boolean {
+  const normalized = typeof provider === "string" ? provider.trim().toLowerCase() : "";
+  return (LOCAL_TOOL_DISCLOSURE_PROVIDERS as readonly string[]).includes(normalized);
+}
+
+/** Local Ollama/vLLM routes default to direct; cloud and llama.cpp keep progressive. */
+export function defaultToolDisclosureForRoute(provider: string | null | undefined): ToolDisclosure {
+  return isLocalToolDisclosureRoute(provider) ? "direct" : DEFAULT_TOOL_DISCLOSURE;
+}
+
+/**
+ * Session create writes the global progressive default before a provider is
+ * known. Treat that placeholder as unset so a local route can take direct.
+ */
+export function resolveSessionToolDisclosureForRoute(
+  sessionValue: unknown,
+  provider: string | null | undefined,
+): ToolDisclosure {
+  const session = normalizeToolDisclosure(sessionValue);
+  if (session && session !== DEFAULT_TOOL_DISCLOSURE) return session;
+  return defaultToolDisclosureForRoute(provider);
+}
+
+/**
+ * Config-generation fail-safe: a local route stays on direct even when the
+ * baked env still says progressive. An explicit direct request also wins.
+ * llama.cpp is not a local disclosure route and keeps structured search.
+ */
+export function resolveGeneratedToolDisclosure(
+  envDisclosure: ToolDisclosure,
+  ...providers: Array<string | null | undefined>
+): ToolDisclosure {
+  if (envDisclosure === "direct") return "direct";
+  if (providers.some((provider) => isLocalToolDisclosureRoute(provider))) return "direct";
+  return envDisclosure;
+}
+
 export function invalidRecordedToolDisclosure(value: unknown): boolean {
   return value !== undefined && value !== null && normalizeToolDisclosure(value) === null;
 }
@@ -63,12 +102,17 @@ export function resolveSandboxToolDisclosure(input: {
   session: unknown;
   sandboxExists: boolean;
   recreate: boolean;
+  provider?: string | null;
 }): ToolDisclosure {
   if (invalidRecordedToolDisclosure(input.recorded)) {
     throw new Error("recorded toolDisclosure value is invalid");
   }
   const recorded = normalizeToolDisclosure(input.recorded);
   const session = normalizeToolDisclosure(input.session);
+  const routeDefault = defaultToolDisclosureForRoute(input.provider);
+  // Fresh sessions store progressive before a provider is known. Do not let
+  // that placeholder override the local-route default.
+  const sessionChoice = session && session !== DEFAULT_TOOL_DISCLOSURE ? session : undefined;
 
   // Reusing a live sandbox must keep the behavior already baked into it.
   if (input.sandboxExists && !input.recreate) {
@@ -82,11 +126,11 @@ export function resolveSandboxToolDisclosure(input: {
     }
     // Missing durable state marks a legacy sandbox that the caller will
     // recreate. Preserve an explicit requested mode for that migration.
-    return input.requested ?? session ?? DEFAULT_TOOL_DISCLOSURE;
+    return input.requested ?? sessionChoice ?? routeDefault;
   }
 
   // A deliberate recreation may override recorded state. With no explicit
   // request, preserve the sandbox's durable choice; interrupted creation falls
-  // back to its session before adopting the new default.
-  return input.requested ?? recorded ?? session ?? DEFAULT_TOOL_DISCLOSURE;
+  // back to a non-default session before adopting the route default.
+  return input.requested ?? recorded ?? sessionChoice ?? routeDefault;
 }

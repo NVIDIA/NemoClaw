@@ -31,6 +31,7 @@ export function prepareSandboxToolDisclosure(
   recreate: boolean,
   inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
   desiredToolDisclosure: ToolDisclosure | null = null,
+  provider: string | null = null,
 ) {
   const { existingEntry, liveExists } = inspectSandboxForCreate(sandboxName);
   let mode: ToolDisclosure;
@@ -41,6 +42,7 @@ export function prepareSandboxToolDisclosure(
       session: onboardSession.loadSession()?.toolDisclosure,
       sandboxExists: liveExists,
       recreate,
+      provider,
     });
   } catch (error) {
     console.error(`  Tool disclosure configuration is invalid: ${String(error)}`);

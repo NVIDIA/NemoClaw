@@ -37,7 +37,7 @@ import {
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
 import {
-  DEFAULT_TOOL_DISCLOSURE,
+  defaultToolDisclosureForRoute,
   invalidRecordedToolDisclosure,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -222,7 +222,7 @@ export function resolveRebuildDurableConfig(
   const toolDisclosure =
     requestedToolDisclosure ??
     normalizeToolDisclosure(recordedToolDisclosure) ??
-    DEFAULT_TOOL_DISCLOSURE;
+    defaultToolDisclosureForRoute(resolvedSelection.provider);
   const recordedDcodeAutoApprovalMode = entry.dcodeAutoApprovalMode;
   const dcodeAutoApprovalModeError = invalidRecordedDcodeAutoApprovalMode(
     recordedDcodeAutoApprovalMode,
