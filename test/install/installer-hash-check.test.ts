@@ -45,6 +45,12 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+const ISSUE_12192_BREV_TEMPLATE_SHA256 =
+  "49ec7db2590c7499e391b281c6816575951c4ec10a75b2e7589b2371865234ed";
+const ISSUE_12192_BREV_TEMPLATE = fs.readFileSync(
+  path.join(import.meta.dirname, "fixtures/issue-12192-brev-template.sh"),
+  "utf8",
+);
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
@@ -892,6 +898,27 @@ function runFixture(
   });
 }
 
+function extractFixturePins(fixtureRoot: string) {
+  return spawnSync(
+    "node",
+    [
+      "--no-warnings",
+      path.join(fixtureRoot, "scripts/checks/extract-installer-pins.mts"),
+      "--blueprint",
+      path.join(fixtureRoot, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer",
+      path.join(fixtureRoot, "scripts/install-openshell.sh"),
+      "--brev-installer",
+      path.join(fixtureRoot, "scripts/brev-launchable-ci-cpu.sh"),
+      "--supervisor-runtime",
+      path.join(fixtureRoot, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+      "--format",
+      "json",
+    ],
+    { encoding: "utf8" },
+  );
+}
+
 function expectTrustedRelease(
   result: ReturnType<typeof runFixture>,
   version: string,
@@ -909,6 +936,38 @@ function expectTrustedRelease(
 }
 
 describe("installer hash verification", () => {
+  // source-shape-contract: security -- Exact prospective template bytes must match the approved trust digest and reject operational drift
+  it("binds the trusted digest to the exact prospective Brev template (#12192)", () => {
+    const fixtureRoot = createFixture("0.0.116");
+    const brevInstaller = path.join(fixtureRoot, "scripts/brev-launchable-ci-cpu.sh");
+    fs.writeFileSync(brevInstaller, ISSUE_12192_BREV_TEMPLATE);
+
+    const accepted = extractFixturePins(fixtureRoot);
+    expect(accepted.status, accepted.stderr).toBe(0);
+    const pins = JSON.parse(accepted.stdout) as Array<{
+      operationalTemplateSha256: string;
+      source: string;
+    }>;
+    const brevTemplateDigests = new Set(
+      pins
+        .filter(({ source }) => source === "Brev launchable")
+        .map(({ operationalTemplateSha256 }) => operationalTemplateSha256),
+    );
+    expect(brevTemplateDigests.size).toBe(1);
+    expect(brevTemplateDigests.has(ISSUE_12192_BREV_TEMPLATE_SHA256)).toBe(true);
+
+    const mutated = ISSUE_12192_BREV_TEMPLATE.replace(
+      "npm_command=(npm install --ignore-scripts)",
+      "npm_command=(npm install --ignore-scripts --audit=false)",
+    );
+    expect(mutated).not.toBe(ISSUE_12192_BREV_TEMPLATE);
+    fs.writeFileSync(brevInstaller, mutated);
+
+    const rejected = extractFixturePins(fixtureRoot);
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("Brev launchable operational template is not base-trusted");
+  });
+
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
