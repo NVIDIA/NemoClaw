@@ -137,7 +137,7 @@ describe("agent definitions", () => {
       runtime: { kind: string };
       config: { dir: string };
       state_dirs: { path: string; backup?: boolean }[];
-      state_files: { path: string; restore: Record<string, unknown> }[];
+      state_files: { path: string; restore?: Record<string, unknown> }[];
     };
 
     expect(manifest.name).toBe("pi");
@@ -151,24 +151,7 @@ describe("agent definitions", () => {
       manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path),
     ).toEqual(["tools", "bin"]);
     expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
-    const restore = manifest.state_files[0]?.restore as {
-      merge?: string;
-      user_keys?: unknown[];
-    };
-    expect(restore?.merge).toBe("key-allowlist");
-    expect(restore?.user_keys).toEqual([
-      { key: "theme", type: "string", max_length: 128 },
-      { key: "hideThinkingBlock", type: "boolean" },
-      { key: "showCacheMissNotices", type: "boolean" },
-      { key: "quietStartup", type: "boolean" },
-      { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
-      { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
-      {
-        key: "defaultThinkingLevel",
-        type: "enum",
-        values: ["off", "minimal", "low", "medium", "high", "xhigh"],
-      },
-    ]);
+    expect(manifest.state_files[0]?.restore).toBeUndefined();
   });
 
   it("orders OpenClaw first in interactive choices", () => {
