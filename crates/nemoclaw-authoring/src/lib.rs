@@ -42,7 +42,9 @@ pub use facts::{
 };
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
-pub use journey_definition::{JourneyDefinition, JourneyScope, JourneySelector};
+pub use journey_definition::{
+    JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
+};
 pub use journey_state::{JourneyQuestion, JourneyQuestionReason, JourneyResolution, JourneyState};
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use projection::Session;

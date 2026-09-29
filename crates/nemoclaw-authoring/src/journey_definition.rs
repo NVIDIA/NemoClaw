@@ -33,6 +33,14 @@ pub enum JourneyScope {
     DeploymentFields,
 }
 
+/// A target check that a journey requires before its completed document is
+/// ready to leave authoring. The observation remains separate from authored
+/// desired state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TargetPrerequisite {
+    EngineAndImageCompatible,
+}
+
 /// Select one field or a family discovered from the active SDK and Fabric
 /// schemas. Selection controls prompting, not applicability or requiredness.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +78,7 @@ pub struct JourneyDefinition {
     pub(crate) ask_order: Vec<String>,
     pub(crate) ask_scopes: BTreeSet<JourneyScope>,
     pub(crate) omit: BTreeSet<String>,
+    pub(crate) target_prerequisites: BTreeSet<TargetPrerequisite>,
 }
 
 impl JourneyDefinition {
@@ -81,6 +90,7 @@ impl JourneyDefinition {
             ask_order: Vec::new(),
             ask_scopes: BTreeSet::new(),
             omit: BTreeSet::new(),
+            target_prerequisites: BTreeSet::new(),
         }
     }
 
@@ -102,6 +112,14 @@ impl JourneyDefinition {
 
     pub fn omit(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.omit.extend(fields.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn require_target(
+        mut self,
+        prerequisites: impl IntoIterator<Item = TargetPrerequisite>,
+    ) -> Self {
+        self.target_prerequisites.extend(prerequisites);
         self
     }
 
@@ -408,6 +426,12 @@ impl JourneyDefinition {
         }
         for warning in initial.warnings() {
             lines.push(format!("  Warning: {warning}"));
+        }
+        if let Some(target) = initial.target_assessment() {
+            lines.push(format!("  Target prerequisite: {:?}", target.status));
+            for reason in &target.reasons {
+                lines.push(format!("    {reason}"));
+            }
         }
         lines.push("  Preview scope: current resolver questions and bounded finite branches; dependent free-form and conditional branches are not fully expanded.".into());
         Ok(lines.join("\n"))

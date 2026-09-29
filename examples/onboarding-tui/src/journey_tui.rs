@@ -176,10 +176,11 @@ impl JourneyWizard {
             return;
         }
         let Some(question) = self.question() else {
-            match self.state.resolve(&self.capabilities) {
-                Ok(resolution) if resolution.materialized_document().is_some() => {
-                    self.accepted = true
-                }
+            match self
+                .state
+                .resolve_with_target(&self.capabilities, self.discovery.as_ref())
+            {
+                Ok(resolution) if resolution.ready_document().is_some() => self.accepted = true,
                 Ok(resolution) => {
                     let issues = resolution
                         .assessment()
@@ -188,9 +189,13 @@ impl JourneyWizard {
                         .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
                         .collect::<Vec<_>>();
                     self.error = Some(format!(
-                        "Cannot save yet: {} {}",
+                        "Cannot save yet: {} {} {}",
                         resolution.unverified().join("; "),
-                        issues.join("; ")
+                        issues.join("; "),
+                        resolution
+                            .target_assessment()
+                            .map(|assessment| assessment.reasons.join("; "))
+                            .unwrap_or_default()
                     ));
                 }
                 Err(error) => self.error = Some(error.to_string()),
@@ -328,7 +333,10 @@ impl JourneyWizard {
                 "Review desired state",
                 Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
             )));
-            match self.state.resolve(&self.capabilities) {
+            match self
+                .state
+                .resolve_with_target(&self.capabilities, self.discovery.as_ref())
+            {
                 Ok(resolution) => {
                     if let Some(document) = resolution.materialized_document() {
                         if let Ok(yaml) = document.yaml() {
@@ -348,6 +356,16 @@ impl JourneyWizard {
                         lines.extend(resolution.assessment().issues().iter().take(5).map(
                             |issue| Line::from(format!("{}: {}", issue.path(), issue.rule())),
                         ));
+                    }
+                    if let Some(assessment) = resolution.target_assessment() {
+                        lines.push(Line::from(format!("Target: {:?}", assessment.status)));
+                        lines.extend(
+                            assessment
+                                .reasons
+                                .iter()
+                                .take(2)
+                                .map(|reason| Line::from(reason.clone())),
+                        );
                     }
                 }
                 Err(error) => lines.push(Line::from(error.to_string())),
@@ -375,8 +393,8 @@ impl JourneyWizard {
 
     fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
         self.state
-            .resolve(&self.capabilities)?
-            .materialized_document()
+            .resolve_with_target(&self.capabilities, self.discovery.as_ref())?
+            .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())
     }
@@ -558,17 +576,27 @@ pub(crate) async fn run(
                 if wizard.started
                     && wizard.question().is_none()
                     && let Some(bundle) = bundle
-                    && let Ok(document) = wizard.document()
+                    && let Some(document) = wizard
+                        .state
+                        .resolve(&wizard.capabilities)?
+                        .materialized_document()
+                        .cloned()
                 {
                     match observe_target(bundle, &document, wizard.state.current_route(), cancel)
                         .await
                     {
                         Ok(Some((evidence, facts))) => {
                             wizard.facts = facts;
-                            let assessment = evidence.assessment_for_document(&document)?;
                             wizard.discovery = Some(evidence);
-                            if assessment.status == CompatibilityStatus::Conflict {
-                                wizard.error = Some(assessment.reasons.join(" "));
+                            let assessment = wizard.state.resolve_with_target(
+                                &wizard.capabilities,
+                                wizard.discovery.as_ref(),
+                            )?;
+                            if assessment.target_assessment().is_some_and(|target| {
+                                target.status == CompatibilityStatus::Conflict
+                            }) {
+                                let target = assessment.target_assessment().expect("checked");
+                                wizard.error = Some(target.reasons.join(" "));
                                 continue;
                             }
                         }
@@ -747,6 +775,37 @@ async fn observe_target(
 mod tests {
     use super::*;
     use crate::{Source, load_journey};
+    use nemoclaw_authoring::{JourneyDefinition, PartialDocument, TargetPrerequisite};
+
+    #[test]
+    fn configured_target_prerequisite_blocks_save_until_observed() {
+        let capabilities = Capabilities::available();
+        let base =
+            PartialDocument::from_yaml(include_bytes!("../../onboarding/openclaw.yaml")).unwrap();
+        let state = JourneyDefinition::new("target-gated", base)
+            .omit([
+                "adapter:nvidia.fabric.openclaw:/agent_name",
+                "adapter:nvidia.fabric.openclaw:/cli",
+                "adapter:nvidia.fabric.openclaw:/home",
+                "adapter:nvidia.fabric.openclaw:/native_config",
+                "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            ])
+            .require_target([TargetPrerequisite::EngineAndImageCompatible])
+            .start(&capabilities)
+            .unwrap();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        wizard.started = true;
+        assert!(wizard.question().is_none());
+        wizard.advance();
+        assert!(!wizard.accepted);
+        assert!(
+            wizard
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Target compatibility")
+        );
+    }
 
     #[test]
     fn enter_uses_the_supplied_choice_suggestion() {

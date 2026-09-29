@@ -12,8 +12,9 @@ use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};
 
 use crate::{
-    AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryEvidence,
-    PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset, SettingQuestion,
+    AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryAssessment,
+    DiscoveryEvidence, PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset,
+    SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, SETTINGS, adapter_field,
@@ -74,6 +75,8 @@ pub struct JourneyResolution {
     warnings: Vec<String>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
+    target_required: bool,
+    target_assessment: Option<DiscoveryAssessment>,
 }
 
 impl JourneyResolution {
@@ -99,6 +102,10 @@ impl JourneyResolution {
         &self.assessment
     }
 
+    pub fn target_assessment(&self) -> Option<&DiscoveryAssessment> {
+        self.target_assessment.as_ref()
+    }
+
     /// SDK-valid desired state only after every question in this resolver's
     /// current surface is answered and no Fabric schema is unverified.
     /// Target compatibility remains a separate check.
@@ -108,6 +115,20 @@ impl JourneyResolution {
         } else {
             None
         }
+    }
+
+    /// A completed document whose configured target prerequisites are met.
+    pub fn ready_document(&self) -> Option<&Document> {
+        let document = self.materialized_document()?;
+        if self.target_required
+            && self
+                .target_assessment
+                .as_ref()
+                .is_none_or(|assessment| assessment.status != CompatibilityStatus::Compatible)
+        {
+            return None;
+        }
+        Some(document)
     }
 }
 
@@ -205,6 +226,20 @@ impl JourneyState {
                     }
                 }
             }
+        }
+        Ok(resolution)
+    }
+
+    /// Recheck target evidence against the current desired state. A missing or
+    /// stale observation is unverified, never an implicit approval.
+    pub fn resolve_with_target(
+        &self,
+        capabilities: &Capabilities,
+        evidence: Option<&DiscoveryEvidence>,
+    ) -> Result<JourneyResolution, Diagnostics> {
+        let mut resolution = self.resolve(capabilities)?;
+        if let (Some(evidence), Some(document)) = (evidence, resolution.assessment.document()) {
+            resolution.target_assessment = Some(evidence.assessment_for_document(document)?);
         }
         Ok(resolution)
     }
@@ -840,6 +875,16 @@ impl JourneyState {
             warnings,
             unverified,
             assessment,
+            target_required: !self.definition.target_prerequisites.is_empty(),
+            target_assessment: (!self.definition.target_prerequisites.is_empty()).then(|| {
+                DiscoveryAssessment {
+                    status: CompatibilityStatus::Unverified,
+                    reasons: vec![
+                        "Target compatibility has not been observed for this desired state.".into(),
+                    ],
+                    pending: Vec::new(),
+                }
+            }),
         }
     }
 
