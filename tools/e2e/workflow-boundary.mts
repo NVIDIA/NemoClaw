@@ -3018,7 +3018,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||
     asRecord(staging?.with).enabled !==
-      "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}" ||
+      "${{ (contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'portable-hermes-finalization')) && 'true' || 'false' }}" ||
     asRecord(staging?.with)["github-token"] !== "${{ github.token }}"
   ) {
     errors.push(

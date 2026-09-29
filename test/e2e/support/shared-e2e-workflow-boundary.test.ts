@@ -306,6 +306,19 @@ describe("shared E2E workflow boundary", () => {
     expect(errors.some((error) => error.includes("native Podman staging"))).toBe(true);
   });
 
+  it("requires Portable Hermes selection to stage its native helper artifact", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const staging = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Stage immutable native Podman E2E toolchains",
+      )!;
+      staging.with!.enabled =
+        "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}";
+    });
+    expect(errors).toContain(
+      "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+    );
+  });
+
   it.each(stagingReferenceVariants)("rejects renamed staging action alias %s", (uses) => {
     const errors = validateMutatedWorkflow((workflow) => {
       const steps = workflow.jobs["generate-matrix"].steps!;
