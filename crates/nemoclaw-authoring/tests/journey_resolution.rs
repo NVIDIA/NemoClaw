@@ -785,7 +785,9 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         ..Default::default()
     };
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let discovered = state.resolve_with_facts(&capabilities, &facts).unwrap();
+    let discovered = state
+        .resolve_with_evidence(&capabilities, &facts, None)
+        .unwrap();
     let question = discovered.question(model).unwrap();
     assert!(
         question
@@ -814,7 +816,7 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
     stale.endpoint.as_mut().unwrap().request.endpoint = "https://other.example/v1".into();
     assert!(
         !state
-            .resolve_with_facts(&capabilities, &stale)
+            .resolve_with_evidence(&capabilities, &stale, None)
             .unwrap()
             .question(model)
             .unwrap()
@@ -825,7 +827,7 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
     stale.endpoint.as_mut().unwrap().observation.status = ObservationStatus::Unknown;
     assert!(
         !state
-            .resolve_with_facts(&capabilities, &stale)
+            .resolve_with_evidence(&capabilities, &stale, None)
             .unwrap()
             .question(model)
             .unwrap()

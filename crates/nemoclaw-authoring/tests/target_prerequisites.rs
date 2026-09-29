@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    Capabilities, CompatibilityStatus, DiscoveryEvidence, JourneyDefinition, PartialDocument,
-    TargetPrerequisite, discovery_key_for_document,
+    AuthoringFacts, Capabilities, CompatibilityStatus, DiscoveryEvidence, EndpointEvidence,
+    JourneyDefinition, JourneyScope, PartialDocument, TargetPrerequisite,
+    discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_capabilities::ImageMetadata,
     fabric_catalog::FabricCatalog,
+    inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
+use serde_json::json;
 
 fn express() -> JourneyDefinition {
     let base =
@@ -78,7 +81,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
         }),
     };
     let verified = state
-        .resolve_with_target(&capabilities, Some(&compatible))
+        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&compatible))
         .unwrap();
     assert_eq!(
         verified.target_assessment().unwrap().status,
@@ -89,7 +92,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     let mut stale = compatible;
     stale.key.image = "sha256:old-image".into();
     let unresolved = state
-        .resolve_with_target(&capabilities, Some(&stale))
+        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&stale))
         .unwrap();
     assert_eq!(
         unresolved.target_assessment().unwrap().status,
@@ -120,12 +123,68 @@ fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisi
         fabric: None,
     };
     let resolved = state
-        .resolve_with_target(&capabilities, Some(&conflict))
+        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&conflict))
         .unwrap();
     assert_eq!(
         resolved.target_assessment().unwrap().status,
         CompatibilityStatus::Conflict
     );
     assert!(resolved.materialized_document().is_some());
+    assert!(resolved.ready_document().is_none());
+}
+
+#[test]
+fn one_resolution_combines_model_suggestions_and_target_compatibility() {
+    let capabilities = Capabilities::available();
+    let state = express()
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let base = state.resolve(&capabilities).unwrap();
+    let document = base.assessment().document().unwrap();
+    let facts = AuthoringFacts {
+        endpoint: Some(EndpointEvidence {
+            request: inference_request_for_document(document, state.current_route()).unwrap(),
+            observation: EndpointObservation {
+                status: ObservationStatus::Available,
+                reason: None,
+                source: "fixture".into(),
+                reachable: Some(true),
+                authentication: AuthenticationStatus::Accepted,
+                models: vec!["vendor/discovered-model".into()],
+                api_verified: false,
+            },
+        }),
+        ..Default::default()
+    };
+    let conflict = DiscoveryEvidence {
+        key: discovery_key_for_document(document).unwrap(),
+        engine: Some(EngineObservation {
+            status: ObservationStatus::Unavailable,
+            reason: Some("engine rejected the target".into()),
+            source: "fixture".into(),
+            server_version: None,
+            architecture: None,
+            operating_system: None,
+            memory_bytes: None,
+            cpus: None,
+        }),
+        fabric: None,
+    };
+    let resolved = state
+        .resolve_with_evidence(&capabilities, &facts, Some(&conflict))
+        .unwrap();
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    assert!(
+        resolved
+            .question(model)
+            .unwrap()
+            .choices()
+            .contains(&json!("vendor/discovered-model"))
+    );
+    assert_eq!(
+        resolved.target_assessment().unwrap().status,
+        CompatibilityStatus::Conflict
+    );
     assert!(resolved.ready_document().is_none());
 }

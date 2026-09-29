@@ -68,7 +68,7 @@ impl JourneyWizard {
 
     pub(crate) fn question(&self) -> Option<JourneyQuestion> {
         self.state
-            .resolve_with_facts(&self.capabilities, &self.facts)
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())
             .ok()?
             .next_question()
             .cloned()
@@ -166,10 +166,11 @@ impl JourneyWizard {
             return;
         }
         let Some(question) = self.question() else {
-            match self
-                .state
-                .resolve_with_target(&self.capabilities, self.discovery.as_ref())
-            {
+            match self.state.resolve_with_evidence(
+                &self.capabilities,
+                &self.facts,
+                self.discovery.as_ref(),
+            ) {
                 Ok(resolution) if resolution.ready_document().is_some() => self.accepted = true,
                 Ok(resolution) => {
                     let issues = resolution
@@ -307,10 +308,11 @@ impl JourneyWizard {
                 "Review desired state",
                 Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
             )));
-            match self
-                .state
-                .resolve_with_target(&self.capabilities, self.discovery.as_ref())
-            {
+            match self.state.resolve_with_evidence(
+                &self.capabilities,
+                &self.facts,
+                self.discovery.as_ref(),
+            ) {
                 Ok(resolution) => {
                     if let Some(document) = resolution.materialized_document() {
                         if let Ok(yaml) = document.yaml() {
@@ -367,7 +369,7 @@ impl JourneyWizard {
 
     fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
         self.state
-            .resolve_with_target(&self.capabilities, self.discovery.as_ref())?
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
             .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())

@@ -207,14 +207,18 @@ impl JourneyState {
             .and_then(Value::as_str)
     }
 
-    /// Add current endpoint observations to model suggestions. The model remains
-    /// free text; a discovery response is never an allowlist.
-    pub fn resolve_with_facts(
+    /// Resolve questions and readiness against current observations. Endpoint
+    /// models remain suggestions, while target evidence can block readiness.
+    pub fn resolve_with_evidence(
         &self,
         capabilities: &Capabilities,
         facts: &AuthoringFacts,
+        evidence: Option<&DiscoveryEvidence>,
     ) -> Result<JourneyResolution, Diagnostics> {
         let mut resolution = self.resolve(capabilities)?;
+        if let (Some(evidence), Some(document)) = (evidence, resolution.assessment.document()) {
+            resolution.target_assessment = Some(evidence.assessment_for_document(document)?);
+        }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
@@ -252,20 +256,6 @@ impl JourneyState {
         Ok(resolution)
     }
 
-    /// Recheck target evidence against the current desired state. A missing or
-    /// stale observation is unverified, never an implicit approval.
-    pub fn resolve_with_target(
-        &self,
-        capabilities: &Capabilities,
-        evidence: Option<&DiscoveryEvidence>,
-    ) -> Result<JourneyResolution, Diagnostics> {
-        let mut resolution = self.resolve(capabilities)?;
-        if let (Some(evidence), Some(document)) = (evidence, resolution.assessment.document()) {
-            resolution.target_assessment = Some(evidence.assessment_for_document(document)?);
-        }
-        Ok(resolution)
-    }
-
     /// Accept remaining suggestions as one explicit, evidence-gated action.
     /// Required questions without a suggestion and route choices stay manual.
     pub fn delegate_remaining(
@@ -277,7 +267,7 @@ impl JourneyState {
         self.check_delegation(capabilities, evidence, facts)?;
         let mut candidate = self.clone();
         for _ in 0..256 {
-            let resolution = candidate.resolve_with_facts(capabilities, facts)?;
+            let resolution = candidate.resolve_with_evidence(capabilities, facts, evidence)?;
             let Some(question) = resolution.next_question() else {
                 if resolution.materialized_document().is_some() {
                     candidate.check_delegation(capabilities, evidence, facts)?;
