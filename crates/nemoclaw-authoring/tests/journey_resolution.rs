@@ -254,6 +254,28 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
             .choices()
             .contains(&json!("vendor/discovered-model"))
     );
+    let mut stale = facts.clone();
+    stale.endpoint.as_mut().unwrap().request.endpoint = "https://other.example/v1".into();
+    assert!(
+        !state
+            .resolve_with_facts(&capabilities, &stale)
+            .unwrap()
+            .question(model)
+            .unwrap()
+            .choices()
+            .contains(&json!("vendor/discovered-model"))
+    );
+    stale.endpoint.as_mut().unwrap().request = facts.endpoint.as_ref().unwrap().request.clone();
+    stale.endpoint.as_mut().unwrap().observation.status = ObservationStatus::Unknown;
+    assert!(
+        !state
+            .resolve_with_facts(&capabilities, &stale)
+            .unwrap()
+            .question(model)
+            .unwrap()
+            .choices()
+            .contains(&json!("vendor/discovered-model"))
+    );
     state
         .answer(&capabilities, model, Some(json!("private/custom")))
         .unwrap();
