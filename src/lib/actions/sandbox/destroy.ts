@@ -88,6 +88,7 @@ import {
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   retireManagedVllmForDestroyedSandbox,
+  listInferenceRouteOwnersAcrossGatewayRoots,
   stopModelRouterForDestroyedSandbox,
   stopDestroyedSandboxProxy,
   stopSandboxInferenceResources,
@@ -1072,7 +1073,12 @@ async function destroySandboxUnlocked(
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     abortPreparedCleanupOnError(() =>
-      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes),
+      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes, {
+        listInferenceRouteOwners: () => [
+          ...listRegisteredSandboxes().sandboxes,
+          ...listInferenceRouteOwnersAcrossGatewayRoots(),
+        ],
+      }),
     );
     const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
       removeManagedAgentStateVolumes(

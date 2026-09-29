@@ -13,7 +13,7 @@ describe("runInferenceSet failure handling", () => {
     });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true }, deps),
     ).rejects.toThrow(/unknown-runtime.*not registered/u);
     expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
@@ -97,11 +97,117 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true }, deps),
     ).rejects.toThrow(/OpenShell inference route update failed/);
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("gives same-gateway recovery guidance for an ambiguous production mutation", async () => {
+    const deps = createDeps({ config: {}, openshellStatus: 17 });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+    ).rejects.toThrow(
+      /route state is unknown.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
+    );
+
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("stops before provider, route, config, or registry effects when pre-mutation observation fails", async () => {
+    const setInferenceRoute = vi.fn();
+    const createProvider = vi.fn();
+    const base = createDeps({
+      config: {},
+      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old-model" }],
+      inferenceRouteMutator: { setInferenceRoute },
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: false as const,
+          error: {
+            kind: "transport" as const,
+            reason: "unreachable" as const,
+            message: "gateway unavailable",
+          },
+        })),
+      },
+    });
+    const deps = {
+      ...base,
+      providerAdapter: { ...base.providerAdapter, createProvider },
+    };
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
+    ).rejects.toThrow(/Cannot reconcile.*gateway 'nemoclaw'.*gateway unavailable/su);
+
+    expect(createProvider).not.toHaveBeenCalled();
+    expect(setInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("observes the same named gateway before a retry can write after an ambiguous mutation", async () => {
+    const events: string[] = [];
+    const observeInferenceRoute = vi.fn(async (request) => {
+      events.push(
+        `observe:${request.target.kind === "named" ? request.target.gatewayName : "selected"}`,
+      );
+      return {
+        ok: true as const,
+        value: {
+          state: "configured" as const,
+          route: { provider: "nvidia-prod", model: "old-model" },
+        },
+      };
+    });
+    const setInferenceRoute = vi
+      .fn()
+      .mockImplementationOnce(async (request) => {
+        events.push(`write:${request.target.gatewayName}`);
+        return {
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "schema" as const,
+            message: "gateway schema mismatch",
+          },
+        };
+      })
+      .mockImplementationOnce(async (request) => {
+        events.push(`write:${request.target.gatewayName}`);
+        return { ok: true as const };
+      });
+    const deps = createDeps({
+      config: {},
+      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old-model" }],
+      inferenceRouteObserver: { observeInferenceRoute },
+      inferenceRouteMutator: { setInferenceRoute },
+    });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
+    ).rejects.toThrow(
+      /gateway schema mismatch.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "new-model" }, deps),
+    ).resolves.toMatchObject({ provider: "nvidia-prod", model: "new-model" });
+
+    expect(events).toEqual([
+      "observe:nemoclaw",
+      "write:nemoclaw",
+      "observe:nemoclaw",
+      "write:nemoclaw",
+    ]);
   });
 
   it("keeps ENOBUFS failures bounded and redacted without writing sandbox state (#5924)", async () => {
@@ -141,12 +247,14 @@ describe("runInferenceSet failure handling", () => {
     expect(detail).toHaveLength(2_000);
     expect(message).not.toContain(password);
     expect(message).not.toContain(querySecret);
-    expect(message).toContain("Registered providers: nvidia-prod");
-    expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
+    expect(message).not.toContain("Registered providers:");
+    expect(message).not.toContain("Tip: register a new provider");
     expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(1, expect.any(Array), {
       ignoreError: true,
       includeStreams: true,
-      maxBuffer: 64 * 1024,
+      includeStderr: true,
+      maxBuffer: 1024 * 1024,
+      timeout: expect.any(Number),
     });
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -207,7 +315,7 @@ describe("runInferenceSet failure handling", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      { provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true },
       deps,
     ).catch((e: Error) => e);
 

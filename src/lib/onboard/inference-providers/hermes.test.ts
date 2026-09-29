@@ -6,8 +6,33 @@ import { describe, expect, it, vi } from "vitest";
 import { setupHermesProviderInference } from "./hermes";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
+  const runOpenshell = vi.fn((_args: string[], _options?: { ignoreError?: boolean }) => ({
+    status: 0,
+    stdout: "",
+    stderr: "",
+  }));
   return {
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    runOpenshell,
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator: {
+      setInferenceRoute: vi.fn(async (request) => {
+        runOpenshell(
+          [
+            "inference",
+            "set",
+            "-g",
+            request.target.gatewayName,
+            "--no-verify",
+            "--provider",
+            request.route.provider,
+            "--model",
+            request.route.model,
+          ],
+          { ignoreError: true },
+        );
+        return { ok: true as const };
+      }),
+    },
     upsertProvider: vi.fn(),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
@@ -293,7 +318,7 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
 
     expect(lookup).not.toHaveBeenCalled();
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["inference", "set", "--no-verify", "--provider", "p", "--model", "m"],
+      ["inference", "set", "-g", "nemoclaw", "--no-verify", "--provider", "p", "--model", "m"],
       { ignoreError: true },
     );
     expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(

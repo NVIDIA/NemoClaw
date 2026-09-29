@@ -37,9 +37,12 @@ import * as registry from "../../state/registry";
 import {
   findSandboxAcrossGatewayRoots,
   getSandboxAcrossGatewayRoots,
+  listInferenceRouteOwnersAcrossGatewayRoots,
   listPublishedSandboxesAcrossGatewayRoots,
   removeSandboxFromOwningGatewayRegistry,
 } from "../../state/registry/cross-port";
+
+export { listInferenceRouteOwnersAcrossGatewayRoots };
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -142,6 +145,7 @@ export function stopDestroyedSandboxProxy(
   listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
   deps: {
     killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
+    listInferenceRouteOwners?: () => readonly SandboxEntry[];
   } = {},
 ): void {
   // Read remaining owners inside the proxy lifecycle lock. The destroyed
@@ -157,8 +161,10 @@ export function stopDestroyedSandboxProxy(
           killStaleProxyIfUnused: (hasRemainingOwner: () => boolean) => boolean;
         }
       ).killStaleProxyIfUnused;
+    const listInferenceRouteOwners =
+      deps.listInferenceRouteOwners ?? (() => listSandboxes().sandboxes);
     killStaleProxyIfUnused(() =>
-      listSandboxes().sandboxes.some(
+      listInferenceRouteOwners().some(
         (entry) =>
           entry.name !== sandboxName &&
           (entry.provider?.includes("ollama") === true ||

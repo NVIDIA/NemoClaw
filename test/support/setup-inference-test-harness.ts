@@ -379,6 +379,35 @@ export function createDirectSetupInferenceHarnessFactory(
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
+      inferenceRouteMutator: {
+        async setInferenceRoute(request) {
+          const args = ["inference", "set", "-g", request.target.gatewayName];
+          if (request.verification === "skip") args.push("--no-verify");
+          args.push("--provider", request.route.provider, "--model", request.route.model);
+          if (request.verificationTimeoutSeconds !== undefined) {
+            args.push("--timeout", String(request.verificationTimeoutSeconds));
+          }
+          const result = runOpenshell(args, { ignoreError: true });
+          return result.status === 0
+            ? { ok: true as const }
+            : {
+                ok: false as const,
+                ambiguous: false,
+                error: {
+                  kind: "command" as const,
+                  reason: "failed" as const,
+                  exitCode: result.status,
+                  message: String(result.stderr || result.stdout || "route update failed"),
+                },
+              };
+        },
+      },
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => ({
+          ok: true as const,
+          value: { state: "unconfigured" as const },
+        }),
+      },
       upsertProvider: async (
         name: string,
         type: string,

@@ -125,12 +125,42 @@ const localProviderScenarios = [
 
 function makeRouteApplier() {
   return createLocalInferenceRouteApplier({
-    runOpenshell: openshellRuntime.runOpenshell,
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator: {
+      async setInferenceRoute(request) {
+        const result = openshellRuntime.runOpenshell(
+          [
+            "inference",
+            "set",
+            "-g",
+            request.target.gatewayName,
+            "--no-verify",
+            "--provider",
+            request.route.provider,
+            "--model",
+            request.route.model,
+            "--timeout",
+            String(request.verificationTimeoutSeconds),
+          ],
+          { ignoreError: true },
+        );
+        return result.status === 0
+          ? { ok: true as const }
+          : {
+              ok: false as const,
+              ambiguous: false,
+              error: {
+                kind: "command" as const,
+                reason: "failed" as const,
+                exitCode: result.status,
+                message: String(result.stderr || result.stdout || "route update failed"),
+              },
+            };
+      },
+    },
     isNonInteractive: () => true,
     promptValidationRecovery: async () => "selection",
     classifyApplyFailure: () => ({ kind: "unknown" }) as never,
-    compactText: (value) => value.trim(),
-    redact: (value) => value,
     localInferenceTimeoutSecs: 30,
     error: unusedCommonInferenceDeps.error,
     exitProcess: unusedCommonInferenceDeps.exitProcess,
@@ -221,6 +251,8 @@ describe("rebuild local-provider recreation", () => {
       expect(calls).toContainEqual([
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--no-verify",
         "--provider",
         provider,

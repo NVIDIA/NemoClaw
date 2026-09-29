@@ -128,6 +128,10 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
+import type {
+  OpenShellInferenceRouteMutator,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -205,6 +209,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
+  inferenceRouteMutator: OpenShellInferenceRouteMutator;
+  inferenceRouteObserver: OpenShellInferenceRouteObserver;
   upsertProvider: (
     name: string,
     type: string,
@@ -308,13 +314,15 @@ export async function selectGatewayForFollowupOrExit(
 
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
-  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  inferenceRouteMutator: OpenShellInferenceRouteMutator,
+  gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
-      runOpenshell,
+      inferenceRouteMutator,
+      gatewayName,
       isNonInteractive: deps.isNonInteractive,
       promptValidationRecovery: (label, recovery, credentialEnv, helpUrl) =>
         deps.promptValidationRecovery(
@@ -325,8 +333,6 @@ function resolveLocalInferenceRouteApplier(
           revalidateSandboxIdentity,
         ),
       classifyApplyFailure: deps.classifyApplyFailure,
-      compactText: deps.compactText,
-      redact: deps.redact,
       localInferenceTimeoutSecs: deps.localInferenceTimeoutSecs,
       error: deps.error,
       exitProcess: deps.exitProcess,
@@ -618,6 +624,7 @@ export function createSetupInference(
   overrides: Partial<SetupInferenceDeps> = {},
 ): SetupInference {
   const deps: SetupInferenceDeps = { ...defaults, ...overrides };
+  const { inferenceRouteMutator } = deps;
 
   return async function setupInferenceWithDeps(
     sandboxName: string | null,
@@ -655,6 +662,15 @@ export function createSetupInference(
         ) {
           deps.error(
             `  Error: recorded inference recovery for sandbox '${sandboxName}' lost reservation ownership before route setup.`,
+          );
+          return deps.exitProcess(1);
+        }
+        const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
+          target: { kind: "named", gatewayName },
+        });
+        if (!observedRoute.ok) {
+          deps.error(
+            `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
           );
           return deps.exitProcess(1);
         }
@@ -722,6 +738,12 @@ export function createSetupInference(
         const runGatewayOpenshell: typeof runExactGatewayOpenshell = (...args) => {
           revalidateSandboxIdentity?.("change the OpenShell inference provider route");
           return runExactGatewayOpenshell(...args);
+        };
+        const revalidatingInferenceRouteMutator: OpenShellInferenceRouteMutator = {
+          setInferenceRoute: (request) => {
+            revalidateSandboxIdentity?.("change the OpenShell inference provider route");
+            return inferenceRouteMutator.setInferenceRoute(request);
+          },
         };
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
@@ -791,6 +813,8 @@ export function createSetupInference(
         };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
+          inferenceRouteMutator: revalidatingInferenceRouteMutator,
+          gatewayName,
           upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
@@ -811,10 +835,15 @@ export function createSetupInference(
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
           },
+          reserveSandboxInferenceRoute: (name: string) => reserveRoute(name, provider, model),
           exitProcess: providerExitProcess,
           error: providerError,
           log: deps.log,
-        } satisfies CommonDeps;
+        } satisfies CommonDeps &
+          Pick<
+            RemoteProviderDeps,
+            "inferenceRouteMutator" | "gatewayName" | "reserveSandboxInferenceRoute"
+          >;
 
         if (options.hostLocalInference) {
           try {
@@ -971,7 +1000,8 @@ export function createSetupInference(
                         error: commonDeps.error,
                       }
                     : deps,
-                  runGatewayOpenshell,
+                  revalidatingInferenceRouteMutator,
+                  gatewayName,
                   revalidateSandboxIdentity,
                 ),
                 run: deps.run,
@@ -1027,7 +1057,8 @@ export function createSetupInference(
                           error: commonDeps.error,
                         }
                       : deps,
-                    runGatewayOpenshell,
+                    revalidatingInferenceRouteMutator,
+                    gatewayName,
                     revalidateSandboxIdentity,
                   ),
                   run: deps.run,
