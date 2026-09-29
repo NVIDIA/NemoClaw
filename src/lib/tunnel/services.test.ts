@@ -10,6 +10,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -404,6 +405,45 @@ describe("startAll", () => {
     expect(replacementPid).not.toBe(oldPid);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
       "argv:tunnel --url http://localhost:18791",
+    );
+  });
+
+  it("restarts a quick tunnel when its recorded dashboard port is missing", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://missing-target.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    const oldPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    unlinkSync(join(pidDir, "cloudflared.dashboard-port"));
+    let oldProcessAlive = true;
+    const processControl: ProcessControl = {
+      isAlive: (pid) => pid === oldPid && oldProcessAlive,
+      commandLine: () => "cloudflared tunnel --url http://localhost:12345",
+      signal: (pid, signal) => {
+        process.kill(pid, signal);
+        oldProcessAlive = false;
+      },
+    };
+
+    await startAll({ pidDir, dashboardPort: 18_789, processControl });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    expect(replacementPid).not.toBe(oldPid);
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "argv:tunnel --url http://localhost:18789",
     );
   });
 

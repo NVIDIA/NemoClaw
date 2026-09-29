@@ -728,10 +728,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       }
     } else {
       if (isRunning(pidDir, "cloudflared")) {
-        // Releases before this target-state file existed always used the
-        // default dashboard port. Treat an absent record as that legacy state
-        // so rerunning `tunnel start` after upgrade repairs a changed target.
-        const runningPort = readCloudflaredDashboardPort(pidDir) ?? DASHBOARD_PORT;
+        const runningPort = readCloudflaredDashboardPort(pidDir);
         if (runningPort !== dashboardPort) {
           stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
         }
