@@ -233,7 +233,6 @@ if (command.includes("tar -C")) {
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "config.json"), { force: true });
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "blueprints"), { recursive: true, force: true });
     fs.rmSync(path.join(copyRoot, ".openclaw", ".nemoclaw-post-upgrade-doctor"), { force: true });
-    fs.rmSync(path.join(copyRoot, ".pi", "agent", "trust.json"), { force: true });
     const sessionDirectory = path.join(copyRoot, ".openclaw", "agents", "main", "sessions");
     if (fs.existsSync(sessionDirectory)) {
       for (const name of fs.readdirSync(sessionDirectory)) {
@@ -484,7 +483,7 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
-      expect(archivedPaths).not.toContain(".pi/agent/trust.json");
+      expect(archivedPaths).toContain(".pi/agent/trust.json");
       expect(archivedPaths).not.toContain(".nemoclaw/blueprints/");
       expect(assertCurrent).toHaveBeenCalledTimes(2);
       expect(fs.statSync(payloadPath)).toMatchObject({

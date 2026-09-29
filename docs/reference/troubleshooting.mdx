@@ -2186,14 +2186,7 @@ When the file is empty, OpenClaw commands may report that the config is empty in
 NemoClaw treats `openclaw.json` as ordinary OpenClaw-owned state.
 It does not maintain a hash, seal, last-good copy, recovery anchor, baseline, or config guard that can replace or reject the file during startup.
 
-Restore a trusted snapshot that predates the failed write:
-
-```bash
-$$nemoclaw <name> snapshot list
-$$nemoclaw <name> snapshot restore <selector>
-```
-
-If no trusted snapshot exists, back up other required state manually, recreate the sandbox through onboarding, and restore only the trusted files.
+The retired selective snapshot commands cannot recover this file. Preserve other required state with `$$nemoclaw <name> download` or another independent host backup, destroy the damaged sandbox, and recreate it through onboarding. Restore only reviewed agent-owned files from a trusted copy that predates the damage; do not upload the empty config or credential-bearing state. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) for the supported download and upload procedure.
 
 </AgentOnly>
 
@@ -2243,15 +2236,15 @@ openclaw config unset <dotpath>
 ```
 
 Restart and reconnect preserve the current native configuration.
-Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
-Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.
+Rebuild transfers the complete native configuration captured immediately before replacement.
+The retired selective snapshot restore flow is not available; roll back by explicitly reapplying reviewed files from an independent trusted backup.
 The host command `$$nemoclaw <sandbox> config set` returns guidance to use the native OpenClaw command.
 
 Native OpenClaw commands do not create OpenShell credential bindings or widen network policy.
 Use NemoClaw credential, inference, and policy commands when a change needs matching host-side state.
-Keep provider credentials in OpenShell because values stored directly in `openclaw.json` are readable inside the sandbox and can be removed by snapshot sanitization.
-Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
-Reconcile those resources after restore when the native configuration expects different values, then restart the gateway when OpenClaw requires it.
+Keep provider credentials in OpenShell because values stored directly in `openclaw.json` are readable inside the sandbox and block rebuild before replacement rather than being stripped from a published transfer.
+Rebuild and manual file recovery do not change OpenShell policy, credential bindings, or the host-side inference route.
+Reconcile those resources when the native configuration expects different values, then restart the gateway when OpenClaw requires it.
 
 ### `openclaw doctor --fix` cannot reconcile managed Discord host resources
 

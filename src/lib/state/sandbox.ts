@@ -90,7 +90,6 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
-  "--exclude='./.pi/agent/trust.json'",
 ].join(" ");
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
@@ -1960,7 +1959,6 @@ function capturePreparedNativeState(
         '  rm -f -- "$stage/.nemoclaw/config.json"',
         '  rm -rf -- "$stage/.nemoclaw/blueprints"',
         '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
-        '  rm -f -- "$stage/.pi/agent/trust.json"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
         '  tar -C "$stage" -cf - -- .',
         "fi",
