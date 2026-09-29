@@ -1171,6 +1171,22 @@ export function writeE2eWorkflowPlanCiOutput(
     ? planned
     : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
   const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
+  const scheduledExecutions = new Set(
+    Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.execution_id),
+  );
+  const omittedTargetLines = Object.values(planned.catalogueMatrices)
+    .flat()
+    .filter((row) => !scheduledExecutions.has(row.execution_id))
+    .map((row) => {
+      const unavailableCredentials = catalogueTarget(row.id)
+        .requiredOptionalCredentials.filter(
+          (credential) => !availableOptionalCredentials.has(credential),
+        )
+        .map((credential) => `\`${credential}\``);
+      return `- \`${row.id}\`: not scheduled; unavailable credentials: ${unavailableCredentials.join(", ")}.`;
+    });
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
@@ -1202,7 +1218,10 @@ export function writeE2eWorkflowPlanCiOutput(
     summary,
     renderE2eWorkflowPlanSummary(plan, {
       includeCoverageAudit: !hasPlannerSelectors && changedFiles === undefined,
-    }),
+    }) +
+      (omittedTargetLines.length > 0
+        ? `\n### Targets not scheduled\n\n${omittedTargetLines.join("\n")}\n`
+        : ""),
   );
 }
 

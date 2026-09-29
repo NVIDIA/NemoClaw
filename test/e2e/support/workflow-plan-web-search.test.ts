@@ -39,6 +39,11 @@ describe("web-search E2E workflow planning", () => {
         requiredOptionalCredentials: ["TAVILY_API_KEY"],
         selector: `^${agent}.Tavily.export.+$`,
       });
+      expect(
+        new RegExp(catalogueTarget(id).selector!).test(
+          `${agent} Tavily export preserves source intent without exporting credential values (#12138)`,
+        ),
+      ).toBe(true);
     },
   );
 
@@ -97,20 +102,65 @@ describe("web-search E2E workflow planning", () => {
   });
 
   it.for([
-    ["automatic without a key", {}, "false", 0],
-    ["automatic with a key", {}, "true", 2],
-    ["explicit without a key", { jobs: "tavily-export-openclaw" }, "false", 1],
+    {
+      name: "automatic without a key",
+      selectors: {},
+      changedFile: "test/e2e/live/brave-search.test.ts",
+      available: "false",
+      count: 0,
+      omitted: [
+        "- `tavily-export-openclaw`: not scheduled; unavailable credentials: `TAVILY_API_KEY`.",
+        "- `tavily-export-hermes`: not scheduled; unavailable credentials: `TAVILY_API_KEY`.",
+      ],
+    },
+    {
+      name: "automatic with a key",
+      selectors: {},
+      changedFile: "test/e2e/live/brave-search.test.ts",
+      available: "true",
+      count: 2,
+      omitted: [],
+    },
+    {
+      name: "explicit without a key",
+      selectors: { jobs: "tavily-export-openclaw" },
+      changedFile: "test/e2e/live/brave-search.test.ts",
+      available: "false",
+      count: 1,
+      omitted: [],
+    },
+    {
+      name: "one selected agent without a key",
+      selectors: {},
+      changedFile: "test/e2e/manifests/hermes-nvidia-tavily.yaml",
+      available: "false",
+      count: 0,
+      omitted: [
+        "- `tavily-export-hermes`: not scheduled; unavailable credentials: `TAVILY_API_KEY`.",
+      ],
+    },
+    {
+      name: "unrelated changes without a key",
+      selectors: {},
+      changedFile: "test/e2e/live/snapshot-commands.test.ts",
+      available: "false",
+      count: 0,
+      omitted: [],
+    },
   ] as const)(
-    "preserves Tavily credential rules for %s selection (#12138)",
-    ([_name, selectors, available, count], { onTestFinished }) => {
+    "reports omitted Tavily targets while preserving $name selection (#12138)",
+    ({ selectors, changedFile, available, count, omitted }, { onTestFinished }) => {
       const directory = mkdtempSync(path.join(tmpdir(), "tavily-plan-"));
       onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
       const output = path.join(directory, "output");
       writeE2eWorkflowPlanCiOutput(selectors, {
         EVENT_NAME: "push",
-        CHANGED_FILES: "test/e2e/live/brave-search.test.ts",
+        CHANGED_FILES: changedFile,
         INFERENCE_MODE: "mock",
         NEMOCLAW_E2E_TAVILY_API_KEY_AVAILABLE: available,
+        get TAVILY_API_KEY(): string {
+          throw new Error("planning must not read the credential value");
+        },
         GITHUB_OUTPUT: output,
         GITHUB_STEP_SUMMARY: path.join(directory, "summary"),
       });
@@ -118,6 +168,9 @@ describe("web-search E2E workflow planning", () => {
         .split("\n")
         .find((line) => line.startsWith("catalogue_tavily_nvidia_inference_matrix="))!;
       expect(JSON.parse(matrix.slice(matrix.indexOf("=") + 1))).toHaveLength(count);
+      const summary = readFileSync(path.join(directory, "summary"), "utf8");
+      expect(summary.split("\n").filter((line) => line.startsWith("- `"))).toEqual(omitted);
+      expect(summary.includes("### Targets not scheduled")).toBe(omitted.length > 0);
     },
   );
 
@@ -129,8 +182,16 @@ describe("web-search E2E workflow planning", () => {
         "Brave credentials stay outside the running OpenClaw process and login shell (#7425)",
       ),
     ).toBe(true);
-    expect(selector.test("openclaw Tavily export preserves source intent")).toBe(false);
-    expect(selector.test("hermes Tavily export preserves source intent")).toBe(false);
+    expect(
+      selector.test(
+        "openclaw Tavily export preserves source intent without exporting credential values (#12138)",
+      ),
+    ).toBe(false);
+    expect(
+      selector.test(
+        "hermes Tavily export preserves source intent without exporting credential values (#12138)",
+      ),
+    ).toBe(false);
   });
 
   it("keeps mocked Brave scheduled when Tavily credentials are unavailable (#12138)", () => {

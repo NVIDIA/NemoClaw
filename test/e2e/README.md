@@ -695,9 +695,10 @@ also select them; each manifest selects its owning agent. They remain outside th
 default release plan and release-required gate. Each target needs `TAVILY_API_KEY`
 and `NVIDIA_INFERENCE_API_KEY`. For changed-file selection, unavailable Tavily credentials
 remove these targets from the plan. Explicit selections remain scheduled and require
-both credentials. The
-dedicated Tavily execution profile passes these only through the existing trusted
-workflow credential guard. Untrusted calls receive no provider credentials.
+both credentials.
+The plan summary lists omitted targets and the names of unavailable credential environment variables.
+The dedicated Tavily execution profile passes these only through the existing trusted workflow credential guard.
+Untrusted calls receive no provider credentials.
 
 The Tavily cases in `brave-search.test.ts` install the selected local source with `install.sh`, onboard
 a uniquely named sandbox with Tavily and hosted compatible inference, then call the

@@ -122,7 +122,7 @@ test(
 );
 
 test.for(["openclaw", "hermes"] as const)(
-  "%s Tavily export preserves source intent and credential isolation (#12138)",
+  "%s Tavily export preserves source intent without exporting credential values (#12138)",
   {
     timeout: testTimeout(35 * 60_000),
     meta: {
