@@ -406,17 +406,27 @@ export function buildCanonicalSkillAddCommand(
         : [
             'verification=""',
             'published=""',
-            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; if [ -n "${published:-}" ] && [ -d "$published" ] && [ ! -L "$published" ]; then rm -rf -- "$published"; fi; if [ -n "${verification:-}" ] && [ -d "$verification" ] && [ ! -L "$verification" ]; then rm -rf -- "$verification"; fi; }',
+            'publication_identity=""',
+            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; if [ -n "${published:-}" ] && [ -d "$published" ] && [ ! -L "$published" ]; then observed_publication_identity="$(stat -c "%d:%i" -- "$published" 2>/dev/null || true)"; if [ -n "$observed_publication_identity" ] && [ "$observed_publication_identity" = "${publication_identity:-}" ]; then rm -rf -- "$published"; fi; fi; if [ -n "${verification:-}" ] && [ -d "$verification" ] && [ ! -L "$verification" ]; then rm -rf -- "$verification"; fi; }',
+            "cancel() { cleanup; exit 1; }",
           ]),
-      "trap cleanup EXIT HUP INT TERM",
+      ...(expectedDigest === undefined
+        ? ["trap cleanup EXIT HUP INT TERM"]
+        : ["trap cleanup EXIT", "trap cancel HUP INT TERM"]),
       'cp -a -- "$source/." "$temporary/"',
       '[ -z "$(find "$temporary" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
       ...(expectedDigest === undefined ? [] : ['verify_tree "$temporary"']),
+      ...(expectedDigest === undefined
+        ? []
+        : [
+            'publication_identity="$(stat -c "%d:%i" -- "$temporary")"',
+            'published="$destination"',
+          ]),
       'mv -T -- "$temporary" "$destination"',
       'temporary=""',
       ...(expectedDigest === undefined
         ? []
-        : ['published="$destination"', 'verify_tree "$destination"', 'published=""']),
+        : ['verify_tree "$destination"', 'published=""', 'publication_identity=""']),
       'printf "Placed %s in the canonical writable skill root. Native skill list and new sessions remain authoritative.\\n" "$name"',
     ].join("; "),
   ];
