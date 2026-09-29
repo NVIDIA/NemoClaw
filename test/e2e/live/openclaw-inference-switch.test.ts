@@ -805,8 +805,10 @@ async function checkOpenClawGatewayInference(
     phase: string;
   },
   mockProvider: MockAnthropicProvider | undefined,
+  baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">,
 ): Promise<"ok" | { skipped: string }> {
   const requestOffset = mockProvider?.requests().length ?? 0;
+  const baselineRequestOffset = baselineProvider?.requests().length ?? 0;
   const script = String.raw`
 set -u
 ssh_config="$(mktemp)"
@@ -845,13 +847,23 @@ exit "$rc"
     timeoutMs: AGENT_TIMEOUT_MS,
   });
   const mockRequests = mockProvider?.requests().slice(requestOffset) ?? [];
+  const baselineRequests = baselineProvider?.requests().slice(baselineRequestOffset) ?? [];
   const requestArtifact = "mock-anthropic-openclaw-gateway-requests.json";
+  const baselineRequestArtifact = `${expected.artifactName}-baseline-requests.json`;
   await (mockProvider
     ? artifacts.writeJson(requestArtifact, {
         phase: expected.phase,
         requestCount: mockRequests.length,
         requests: mockRequests.slice(0, 20),
         truncated: mockRequests.length > 20,
+      })
+    : Promise.resolve());
+  await (baselineProvider
+    ? artifacts.writeJson(baselineRequestArtifact, {
+        phase: expected.phase,
+        requestCount: baselineRequests.length,
+        requests: baselineRequests.slice(0, 20),
+        truncated: baselineRequests.length > 20,
       })
     : Promise.resolve());
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
@@ -872,6 +884,15 @@ exit "$rc"
           request.stream &&
           request.toolCount === 0,
       ));
+  const baselineRequestMatched =
+    !baselineProvider ||
+    baselineRequests.some(
+      (request) =>
+        request.auth === "ok" &&
+        request.method === "POST" &&
+        request.path === "/v1/chat/completions" &&
+        request.model === expected.model,
+    );
   const expectedOpenClawProvider =
     expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
   if (
@@ -880,7 +901,8 @@ exit "$rc"
     modelRun.model === expected.model &&
     agentReplyContainsToken(reply, "PONG") &&
     !fallbackOrPairing &&
-    mockRequestMatched
+    mockRequestMatched &&
+    baselineRequestMatched
   ) {
     return "ok";
   }
@@ -893,12 +915,16 @@ exit "$rc"
       mockProvider && !mockRequestMatched
         ? `request evidence mismatch; see ${requestArtifact}`
         : "",
+      baselineProvider && !baselineRequestMatched
+        ? `authenticated baseline request evidence mismatch; see ${baselineRequestArtifact}`
+        : "",
     ].join("; "),
   );
 }
 
 async function runInitialRouteLifecycle(options: {
   artifacts: ArtifactSink;
+  baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">;
   home: string;
   host: HostCliClient;
   model: string;
@@ -925,6 +951,7 @@ async function runInitialRouteLifecycle(options: {
         phase: `prove initial custom-image route ${artifactSuffix}`,
       },
       undefined,
+      options.baselineProvider,
     );
   };
   const requireLifecycleSuccess = (result: ShellProbeResult): void => {
@@ -1054,6 +1081,7 @@ test(
         "fresh custom-image onboarding replaces the baked primary route with the selected model",
         "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
+        "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
@@ -1173,6 +1201,7 @@ test(
     );
     await runInitialRouteLifecycle({
       artifacts,
+      baselineProvider,
       home,
       host,
       model: baseline.model,
@@ -1305,6 +1334,7 @@ test(
         customImageModelMetadataPreserved: true,
         customImageRouteSurvivedGatewayRestart: true,
         customImageRouteSurvivedRebuild: true,
+        customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,
