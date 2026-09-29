@@ -19,30 +19,6 @@ export default async function render_nemoclaw_pr_body(input: {
   sensitivePath?: { changed: boolean; reviewEvidence?: string };
   ciWaiver?: { check: string; approval: string; followUpIssue: Integer };
   hooks?: { passed: boolean; evidence?: string };
-  guardedFallbackPublication?: {
-    apply: true;
-    remoteState: "expected-commit";
-    allVerified: true;
-    blocker: null;
-    headSha: string;
-    guardedFallbackEvidence: {
-      schemaVersion: 1;
-      publicationValidated: true;
-      candidateSha: string;
-      receipt: {
-        schemaVersion: 1;
-        candidateSha: string;
-        canonicalBaseSha: string;
-        workflowRevisionSha: string;
-        workflowPath: string;
-        workflowBlobSha: string;
-        workflowJob: string;
-        draftOnly: true;
-        expectedRemoteSha: string | null;
-      };
-      differingValidationPaths: string[];
-    };
-  };
   broadGate?: { passed: boolean; evidence: string };
   docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
   dgxStation?: {
@@ -111,48 +87,7 @@ export default async function render_nemoclaw_pr_body(input: {
     blockers.push("Test evidence is required.");
   if (tests.result !== "added-or-updated" && !tests.justification)
     blockers.push("Test justification is required.");
-  const fallbackPublication = input.guardedFallbackPublication;
-  const fallback = fallbackPublication?.guardedFallbackEvidence;
-  const fallbackReceipt = fallback?.receipt;
-  const fallbackPaths = fallback?.differingValidationPaths;
-  const validFallback =
-    fallbackPublication?.apply === true &&
-    fallbackPublication.remoteState === "expected-commit" &&
-    fallbackPublication.allVerified === true &&
-    fallbackPublication.blocker === null &&
-    fallbackPublication.headSha === fallback?.candidateSha &&
-    fallback?.publicationValidated === true &&
-    fallback?.schemaVersion === 1 &&
-    fallback.candidateSha === fallbackReceipt?.candidateSha &&
-    fallbackReceipt?.schemaVersion === 1 &&
-    /^[0-9a-f]{40}$/.test(fallbackReceipt?.candidateSha ?? "") &&
-    /^[0-9a-f]{40}$/.test(fallbackReceipt?.canonicalBaseSha ?? "") &&
-    fallbackReceipt?.workflowRevisionSha === fallbackReceipt?.canonicalBaseSha &&
-    /^\.github\/workflows\/[A-Za-z0-9._/-]+[.]ya?ml$/.test(fallbackReceipt?.workflowPath ?? "") &&
-    !fallbackReceipt?.workflowPath?.includes("..") &&
-    /^[0-9a-f]{40}$/.test(fallbackReceipt?.workflowBlobSha ?? "") &&
-    typeof fallbackReceipt?.workflowJob === "string" &&
-    fallbackReceipt.workflowJob.trim().length > 0 &&
-    fallbackReceipt.draftOnly === true &&
-    (fallbackReceipt.expectedRemoteSha === null ||
-      /^[0-9a-f]{40}$/.test(fallbackReceipt?.expectedRemoteSha ?? "")) &&
-    Array.isArray(fallbackPaths) &&
-    fallbackPaths.length > 0 &&
-    fallbackPaths.length <= 100 &&
-    fallbackPaths.every(
-      (path) =>
-        typeof path === "string" &&
-        path.length > 0 &&
-        path.length <= 500 &&
-        !path.startsWith("-") &&
-        !path.startsWith("/") &&
-        !path.includes("..") &&
-        !/[\r\n]/.test(path),
-    );
-  if (fallbackPublication !== undefined && !validFallback)
-    blockers.push("Guarded fallback validation evidence is incomplete or invalid.");
-  if (input.hooks?.passed !== true && !validFallback)
-    blockers.push("Hook or validate:pr evidence is required.");
+  if (input.hooks?.passed !== true) blockers.push("Hook or validate:pr evidence is required.");
   if (input.noSecrets !== true) blockers.push("No-secrets confirmation is required.");
   if (!input.dco || input.dco.commitsVerified !== true)
     blockers.push("Every commit must appear as Verified.");
@@ -178,25 +113,9 @@ export default async function render_nemoclaw_pr_body(input: {
   const addEvidence = (label, detail) => {
     verification.push("- " + label + ": " + line(detail, label));
   };
-  const fallbackDisclosure = validFallback
-    ? "Local validation skipped because " +
-      fallbackPaths.join(", ") +
-      " differ from canonical base " +
-      fallbackReceipt.canonicalBaseSha +
-      "; base-controlled fallback " +
-      fallbackReceipt.workflowPath +
-      " job " +
-      fallbackReceipt.workflowJob +
-      " at workflow revision " +
-      fallbackReceipt.workflowRevisionSha +
-      " at workflow blob " +
-      fallbackReceipt.workflowBlobSha
-    : null;
   addEvidence(
     "Contributor validation",
-    input.hooks?.passed === true
-      ? (input.hooks.evidence ?? "Normal hooks passed")
-      : (fallbackDisclosure ?? "Missing"),
+    input.hooks?.passed === true ? (input.hooks.evidence ?? "Normal hooks passed") : "Missing",
   );
   if (tests.result === "not-applicable")
     addEvidence(
@@ -211,7 +130,6 @@ export default async function render_nemoclaw_pr_body(input: {
     addEvidence("New documentation pages", "SPDX headers and frontmatter validated");
   addEvidence("Secrets review", "The diff contains no secrets, API keys, or credentials");
   const reviewNotes = [];
-  if (fallbackDisclosure) reviewNotes.push("- Guarded publication fallback: " + fallbackDisclosure);
   if (sensitive.changed && sensitive.reviewEvidence)
     reviewNotes.push(
       "- Sensitive-path review: " + line(sensitive.reviewEvidence, "Sensitive-path review"),

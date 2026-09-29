@@ -24,30 +24,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     sensitivePath?: { changed: boolean; reviewEvidence?: string };
     ciWaiver?: { check: string; approval: string; followUpIssue: Integer };
     hooks?: { passed: boolean; evidence?: string };
-    guardedFallbackPublication?: {
-      apply: true;
-      remoteState: "expected-commit";
-      allVerified: true;
-      blocker: null;
-      headSha: string;
-      guardedFallbackEvidence: {
-        schemaVersion: 1;
-        publicationValidated: true;
-        candidateSha: string;
-        receipt: {
-          schemaVersion: 1;
-          candidateSha: string;
-          canonicalBaseSha: string;
-          workflowRevisionSha: string;
-          workflowPath: string;
-          workflowBlobSha: string;
-          workflowJob: string;
-          draftOnly: true;
-          expectedRemoteSha: string | null;
-        };
-        differingValidationPaths: string[];
-      };
-    };
     broadGate?: { passed: boolean; evidence: string };
     docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
     dgxStation?: {

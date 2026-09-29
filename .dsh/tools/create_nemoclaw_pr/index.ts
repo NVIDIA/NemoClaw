@@ -44,6 +44,7 @@ export default async function create_nemoclaw_pr(input: {
   remoteState?: "not-checked" | "expected-commit" | "unchanged" | "unknown";
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
+  const fallbackMarker = "<!-- nemoclaw-guarded-fallback-publication-evidence -->";
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     remote = input.remote ?? "origin",
     baseBranch = input.baseBranch ?? "main";
@@ -66,6 +67,24 @@ export default async function create_nemoclaw_pr(input: {
     throw new Error("body is invalid");
   if (input.hookBypassReceipt !== undefined && input.draft !== true)
     throw new Error("Hook-free initial publication must create a draft pull request");
+  const fallbackMarkerCount = input.body.split(fallbackMarker).length - 1;
+  const verificationHeading = input.body.indexOf("## Verification");
+  const reviewHeading = input.body.indexOf("## Review notes");
+  const firstFallbackMarker = input.body.indexOf(fallbackMarker);
+  const secondFallbackMarker = input.body.indexOf(fallbackMarker, firstFallbackMarker + 1);
+  if (
+    input.hookBypassReceipt !== undefined &&
+    (fallbackMarkerCount !== 2 ||
+      verificationHeading < 0 ||
+      reviewHeading <= verificationHeading ||
+      firstFallbackMarker <= verificationHeading ||
+      firstFallbackMarker >= reviewHeading ||
+      secondFallbackMarker <= reviewHeading ||
+      input.body.includes("Local validation skipped because"))
+  )
+    throw new Error("Guarded initial publication requires exactly two unclaimed evidence markers");
+  if (input.hookBypassReceipt === undefined && fallbackMarkerCount !== 0)
+    throw new Error("Fallback evidence markers require guarded initial publication");
   if (
     !/^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/im.test(input.body) ||
     input.body.includes("Your Name <your-email@example.com>")
@@ -200,6 +219,26 @@ export default async function create_nemoclaw_pr(input: {
         .filter((c) => !c.verified)
         .map((c) => ({ sha: c.sha, reason: c.reason })),
     };
+  let preparedBody = input.body;
+  if (input.hookBypassReceipt !== undefined) {
+    const fallback = publication.guardedFallbackEvidence;
+    if (
+      fallback?.publicationValidated !== true ||
+      fallback.candidateSha !== input.expectedHeadSha ||
+      fallback.receipt.candidateSha !== input.expectedHeadSha ||
+      fallback.receipt.canonicalBaseSha !== input.hookBypassReceipt.canonicalBaseSha ||
+      fallback.receipt.workflowRevisionSha !== input.hookBypassReceipt.workflowRevisionSha ||
+      fallback.receipt.workflowPath !== input.hookBypassReceipt.workflowPath ||
+      fallback.receipt.workflowBlobSha !== input.hookBypassReceipt.workflowBlobSha ||
+      fallback.receipt.workflowJob !== input.hookBypassReceipt.workflowJob ||
+      fallback.receipt.draftOnly !== true ||
+      fallback.receipt.expectedRemoteSha !== null ||
+      fallback.disclosure.length === 0 ||
+      /[\r\n]/.test(fallback.disclosure)
+    )
+      throw new Error("Publisher did not return exact guarded fallback evidence");
+    preparedBody = input.body.replaceAll(fallbackMarker, fallback.disclosure);
+  }
   const current = await tools.read_git_checkout({
     workdir: input.workdir,
     includeRoot: false,
@@ -220,7 +259,7 @@ export default async function create_nemoclaw_pr(input: {
     "--title",
     input.title,
     "--body",
-    input.body,
+    preparedBody,
   ];
   if (input.draft) createArgs.push("--draft");
   if (assignee) createArgs.push("--assignee", "@me");
@@ -261,7 +300,7 @@ export default async function create_nemoclaw_pr(input: {
     const expectedAssignees = expectedAssigneeLogin ? [expectedAssigneeLogin] : [];
     return pull?.isDraft === (input.draft === true) &&
       pull?.title === input.title &&
-      pull?.body === input.body &&
+      pull?.body === preparedBody &&
       JSON.stringify(observedAssignees) === JSON.stringify(expectedAssignees) &&
       pull?.headRefName === branch &&
       pull?.headRefOid === input.expectedHeadSha &&

@@ -47,6 +47,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     candidateSha: string;
     receipt: NonNullable<typeof input.hookBypassReceipt>;
     differingValidationPaths: string[];
+    disclosure: string;
   };
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
@@ -491,6 +492,21 @@ export default async function publish_nemoclaw_pr_branch(input: {
   }
   const allVerified =
     !verificationError && verified.length === commits.length && verified.every((c) => c.verified);
+  const guardedFallbackDisclosure =
+    bypass === undefined
+      ? null
+      : "Local validation skipped because " +
+        guardedFallbackValidationPaths.join(", ") +
+        " differ from canonical base " +
+        bypass.canonicalBaseSha +
+        "; base-controlled fallback " +
+        bypass.workflowPath +
+        " job " +
+        bypass.workflowJob +
+        " at workflow revision " +
+        bypass.workflowRevisionSha +
+        " at workflow blob " +
+        bypass.workflowBlobSha;
   return {
     apply: true,
     mutated: changedRemote,
@@ -506,7 +522,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     recoveredPullUrl,
     guardedFallbackValidationPaths,
     guardedFallbackEvidence:
-      allVerified && bypass !== undefined
+      allVerified && bypass !== undefined && guardedFallbackDisclosure !== null
         ? {
             schemaVersion: 1,
             publicationValidated: true,
@@ -517,12 +533,20 @@ export default async function publish_nemoclaw_pr_branch(input: {
             candidateSha: head,
             receipt: { ...bypass },
             differingValidationPaths: [...guardedFallbackValidationPaths],
+            disclosure: guardedFallbackDisclosure,
           }
         : null,
     blocker: allVerified
       ? null
       : verificationError
-        ? "Commit verification is incomplete: " + verificationError
+        ? bypass?.expectedRemoteSha === null && changedRemote
+          ? "Maintainer recovery required: branch " +
+            branch +
+            " now points to guarded candidate " +
+            head +
+            ", but commit verification was inconclusive before draft PR creation. The branch owner must independently verify that exact commit and create the matching draft PR, or authorize deletion of only this branch before retrying. " +
+            verificationError
+          : "Commit verification is incomplete: " + verificationError
         : "One or more published commits are not verified.",
   };
 }
