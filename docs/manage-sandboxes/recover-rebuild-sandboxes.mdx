@@ -517,8 +517,9 @@ NemoClaw fails closed when the selected gateway, replacement settings, durable s
 A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal. If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings. The active replacement can continue without adding `--resume`. Use `--resume` for interrupted onboarding steps that occur before a replacement journal exists.
 
 If any manifest-declared state directory or state file cannot be archived, NemoClaw reports each failed path and stops before deleting the original sandbox.
-If the reason names SSH configuration or state-directory discovery, backup failed before it could determine which state paths exist.
-Restore access to the recorded OpenShell gateway and sandbox before retrying.
+State-directory discovery can fail because of an SSH command failure, unsafe entries, or an expired backup deadline.
+Use the reported reason to identify the failed condition.
+For an SSH access failure, restore access to the recorded OpenShell gateway and sandbox before retrying.
 This fail-closed behavior also applies to `rebuild --force`, even when the backup contains other usable entries.
 When an incomplete snapshot contains captured entries, NemoClaw retains it at the printed path but excludes it from `snapshot list` and snapshot restore selection.
 The retained snapshot may contain unsanitized credentials.

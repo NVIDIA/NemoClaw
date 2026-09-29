@@ -10,6 +10,7 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcpInspectCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -37,6 +38,7 @@ import {
 } from "./mcp-bridge-cleanup.ts";
 import {
   assertHermesMcpHttpResponse,
+  buildHermesMcpChatProbeScript,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
   buildHermesMcpRuntimeDiagnosticsScript,
   captureHermesMcpLifecycleFailure,
@@ -57,10 +59,8 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
-  buildMcpToolCallCommand,
-  COMPATIBLE_MODEL,
-  TOOL_CHALLENGE,
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
+  HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
   captureRejectedOpenClawCredentialAliasState,
   addBridgeAndReadStatus,
@@ -111,6 +111,8 @@ const CONCURRENT_SERVER_NAME = "concurrent";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
+const COMPATIBLE_MODEL = "mock/mcp-bridge";
+const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const MCP_RESULT = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
 const MCP_SERVER_OPTIONS = {
   secret: HOST_SECRET,
@@ -524,40 +526,51 @@ async function assertRealAdapterToolCall(
     mcpUrl?: string;
   },
 ): Promise<void> {
+  const isHermes = options.agent === "hermes";
   const before = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call").length;
   const otherCallsBefore = options.otherEndpoint?.requests.filter(
     (request) => request.rpcMethod === "tools/call",
   ).length;
-  const { command, hermesRedactionValues } = buildMcpToolCallCommand(options);
+  const prompt = `Call the fake MCP tool exactly once with challenge ${TOOL_CHALLENGE} and return its result verbatim.`;
+  const hermesPayload = JSON.stringify({
+    model: COMPATIBLE_MODEL,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 256,
+  });
+  const hermesRedactionValues: string[] = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
+  hermesRedactionValues.push(TOOL_CHALLENGE, prompt, hermesPayload);
+  const command =
+    options.agent === "openclaw"
+      ? `nemoclaw-start openclaw agent --agent main --json --thinking off --session-id ${shellQuote(`mcp-e2e-native-${options.artifactName}`)} -m ${shellQuote(prompt)}`
+      : options.agent === "hermes"
+        ? [
+            ...HERMES_MCP_ENV_LOAD_COMMANDS,
+            buildHermesMcpChatProbeScript(hermesPayload, options.resultToken),
+          ].join("\n")
+        : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
+  const script = trustedSandboxShellScript(["set -eu", command].join("\n"));
   const runToolCall = (artifactName: string) =>
-    sandbox.execShell(
-      options.sandboxName,
-      trustedSandboxShellScript(["set -eu", command].join("\n")),
-      {
-        artifactName,
-        env: buildAvailabilityProbeEnv(),
-        captureLimitBytes:
-          options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
-        redactionValues: options.agent === "hermes" ? hermesRedactionValues : [],
-        timeoutMs: 5 * 60_000,
-      },
-    );
+    sandbox.execShell(options.sandboxName, script, {
+      artifactName,
+      env: buildAvailabilityProbeEnv(),
+      captureLimitBytes: isHermes ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+      redactionValues: isHermes ? hermesRedactionValues : [],
+      timeoutMs: 5 * 60_000,
+    });
   const initialResult = await runToolCall(options.artifactName);
-  const result =
-    options.agent === "hermes"
-      ? await retryHermesGatewayDraining({
-          initialResult,
-          retry: (attempt) =>
-            runToolCall(`${options.artifactName}-gateway-draining-retry-${attempt}`),
-        })
-      : initialResult;
-  const assertResponse =
-    options.agent === "hermes"
-      ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)
-      : () => {
-          expectExitZero(result, `${options.agent} real MCP tool call`);
-          expect(resultText(result)).toContain(options.resultToken);
-        };
+  const result = isHermes
+    ? await retryHermesGatewayDraining({
+        initialResult,
+        retry: (attempt) =>
+          runToolCall(`${options.artifactName}-gateway-draining-retry-${attempt}`),
+      })
+    : initialResult;
+  const assertResponse = isHermes
+    ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)
+    : () => {
+        expectExitZero(result, `${options.agent} real MCP tool call`);
+        expect(resultText(result)).toContain(options.resultToken);
+      };
   assertResponse();
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
   const details = ["rpcId", "rpcToolName", "responseStatus", "responseHasResult"];
