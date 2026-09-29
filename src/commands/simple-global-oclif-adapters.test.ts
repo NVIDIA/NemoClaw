@@ -435,8 +435,6 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       sandboxes: [{ name: "resolved-sandbox", dashboardPort: 18_791 }],
       defaultSandbox: "resolved-sandbox",
     } as never);
-    mocks.getSandbox.mockReturnValue({ name: "resolved-sandbox", dashboardPort: 18_791 } as never);
-
     await TunnelStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
@@ -450,7 +448,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
     expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
-    expect(mocks.getSandbox).toHaveBeenCalledWith("resolved-sandbox");
+    expect(mocks.getSandbox).not.toHaveBeenCalled();
     expect(mocks.showStatus).toHaveBeenCalledWith({
       sandboxName: "resolved-sandbox",
       dashboardPort: 18_791,

@@ -10,6 +10,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -444,6 +445,50 @@ describe("startAll", () => {
     expect(replacementPid).not.toBe(oldPid);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
       "argv:tunnel --url http://localhost:18789",
+    );
+  });
+
+  it("restarts a quick tunnel when its recorded dashboard port cannot be read", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://unreadable-target.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    const oldPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const targetFile = join(pidDir, "cloudflared.dashboard-port");
+    const unreadableTarget = join(tmpDir, "dashboard-port-directory");
+    unlinkSync(targetFile);
+    mkdirSync(unreadableTarget);
+    symlinkSync(unreadableTarget, targetFile);
+    let oldProcessAlive = true;
+    const processControl: ProcessControl = {
+      isAlive: (pid) => pid === oldPid && oldProcessAlive,
+      commandLine: () => "cloudflared tunnel --url http://localhost:12345",
+      signal: (pid, signal) => {
+        process.kill(pid, signal);
+        oldProcessAlive = false;
+      },
+    };
+
+    await startAll({ pidDir, dashboardPort: 18_791, processControl });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    expect(replacementPid).not.toBe(oldPid);
+    expect(readFileSync(targetFile, "utf-8")).toBe("18791");
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "argv:tunnel --url http://localhost:18791",
     );
   });
 

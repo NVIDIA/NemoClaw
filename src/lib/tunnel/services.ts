@@ -323,9 +323,12 @@ const CLOUDFLARED_DASHBOARD_PORT_FILE = "cloudflared.dashboard-port";
 
 function readCloudflaredDashboardPort(pidDir: string): number | null {
   const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
-  if (!existsSync(targetFile)) return null;
-  const port = Number(readFileSync(targetFile, "utf-8").trim());
-  return Number.isSafeInteger(port) && port >= 1 && port <= 65535 ? port : null;
+  try {
+    const port = Number(readFileSync(targetFile, "utf-8").trim());
+    return Number.isSafeInteger(port) && port >= 1 && port <= 65535 ? port : null;
+  } catch {
+    return null;
+  }
 }
 
 function writeCloudflaredDashboardPort(pidDir: string, dashboardPort: number): void {

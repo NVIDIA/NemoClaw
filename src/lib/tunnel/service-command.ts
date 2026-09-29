@@ -3,20 +3,20 @@
 
 export interface SandboxSummary {
   defaultSandbox?: string | null;
+  sandboxes?: readonly SandboxServiceTarget[];
 }
 
 export interface SandboxServiceTarget {
+  name: string;
   dashboardPort?: number | null;
 }
 
 export interface ServiceTargetDeps {
   listSandboxes: () => SandboxSummary;
-  getSandbox: (name: string) => SandboxServiceTarget | null;
 }
 
 export interface StartCommandDeps {
   listSandboxes: () => SandboxSummary;
-  getSandbox: (name: string) => SandboxServiceTarget | null;
   startAll: (options: { sandboxName?: string; dashboardPort?: number }) => Promise<void>;
 }
 
@@ -44,8 +44,11 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
   sandboxName?: string;
   dashboardPort?: number;
 } {
-  const sandboxName = resolveDefaultSandboxName(deps.listSandboxes);
-  const dashboardPort = sandboxName ? deps.getSandbox(sandboxName)?.dashboardPort : undefined;
+  const registrySnapshot = deps.listSandboxes();
+  const sandboxName = resolveDefaultSandboxName(() => registrySnapshot);
+  const dashboardPort = sandboxName
+    ? registrySnapshot.sandboxes?.find((sandbox) => sandbox.name === sandboxName)?.dashboardPort
+    : undefined;
   const validDashboardPort =
     typeof dashboardPort === "number" &&
     Number.isSafeInteger(dashboardPort) &&

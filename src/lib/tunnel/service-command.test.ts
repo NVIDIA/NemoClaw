@@ -69,8 +69,10 @@ describe("services command", () => {
   it("starts services for the default sandbox when present", async () => {
     const startAll = vi.fn(async () => {});
     await runStartCommand({
-      listSandboxes: () => ({ defaultSandbox: "alpha" }),
-      getSandbox: () => ({ dashboardPort: 18_791 }),
+      listSandboxes: () => ({
+        defaultSandbox: "alpha",
+        sandboxes: [{ name: "alpha", dashboardPort: 18_791 }],
+      }),
       startAll,
     });
     expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha", dashboardPort: 18_791 });
@@ -79,8 +81,7 @@ describe("services command", () => {
   it("keeps the service fallback when the selected sandbox is not registered", () => {
     expect(
       resolveDefaultSandboxServiceOptions({
-        listSandboxes: () => ({ defaultSandbox: "alpha" }),
-        getSandbox: () => null,
+        listSandboxes: () => ({ defaultSandbox: "alpha", sandboxes: [] }),
       }),
     ).toEqual({ sandboxName: "alpha" });
   });
@@ -90,8 +91,10 @@ describe("services command", () => {
     (dashboardPort) => {
       expect(
         resolveDefaultSandboxServiceOptions({
-          listSandboxes: () => ({ defaultSandbox: "alpha" }),
-          getSandbox: () => ({ dashboardPort }),
+          listSandboxes: () => ({
+            defaultSandbox: "alpha",
+            sandboxes: [{ name: "alpha", dashboardPort }],
+          }),
         }),
       ).toEqual({ sandboxName: "alpha" });
     },

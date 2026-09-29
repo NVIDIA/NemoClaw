@@ -56,8 +56,10 @@ describe("small CLI helper coverage", () => {
 
     const startCalls: Array<{ sandboxName?: string; dashboardPort?: number }> = [];
     await runStartCommand({
-      listSandboxes: () => ({ defaultSandbox: "alpha" }),
-      getSandbox: () => ({ dashboardPort: 18_791 }),
+      listSandboxes: () => ({
+        defaultSandbox: "alpha",
+        sandboxes: [{ name: "alpha", dashboardPort: 18_791 }],
+      }),
       startAll: async (options) => {
         startCalls.push(options);
       },
