@@ -1159,6 +1159,12 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/actions/inference-set.ts",
+      "src/lib/onboard/machine/final-flow-phases.ts",
+      "src/lib/onboard/machine/finalization-deps.ts",
+      "src/lib/onboard/machine/handlers/agent-setup.ts",
+      "src/lib/onboard/openclaw-setup.ts",
+      "src/lib/onboard/openclaw/initial-inference-route.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
       "scripts/patch-openclaw-device-self-approval.mts",
       "test/e2e/live/openclaw-admin-scope.ts",

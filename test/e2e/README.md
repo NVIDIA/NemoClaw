@@ -567,6 +567,10 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
+The `openclaw-inference-switch` target owns fresh custom-image route initialization.
+Its fixture contains only a different baked model and stale limits.
+The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 

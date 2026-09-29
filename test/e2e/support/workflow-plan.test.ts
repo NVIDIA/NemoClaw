@@ -301,6 +301,14 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("selects custom-image route evidence when the initial route owner changes (#12033)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["src/lib/onboard/openclaw/initial-inference-route.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("openclaw-inference-switch");
+  });
+
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {
     const plan = buildE2eWorkflowPlan(
       {},

@@ -81,8 +81,6 @@ const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
-const CUSTOM_CONTEXT_WINDOW = 131_072;
-const CUSTOM_MAX_TOKENS = 4_096;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -257,7 +255,7 @@ function commandEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
   };
 }
 
-function writeCustomOpenClawDockerfile(home: string, selectedModel: string): string {
+function writeCustomOpenClawDockerfile(home: string): string {
   const environment = commandEnv(home);
   const selectedCatalog = liveE2eManagedImageCatalog(environment)!;
   const contract = readLiveE2eManagedImageCatalogContracts(selectedCatalog).get("openclaw")!;
@@ -265,7 +263,6 @@ function writeCustomOpenClawDockerfile(home: string, selectedModel: string): str
   const buildContext = path.join(home, "custom-openclaw-image");
   const dockerfilePath = path.join(buildContext, "Dockerfile");
   fs.mkdirSync(buildContext, { recursive: true });
-  const selectedPrimary = `inference/${selectedModel}`;
   const bakeRoute = [
     'const fs = require("node:fs");',
     'const configPath = "/sandbox/.openclaw/openclaw.json";',
@@ -273,7 +270,7 @@ function writeCustomOpenClawDockerfile(home: string, selectedModel: string): str
     "config.agents ??= {}; config.agents.defaults ??= {}; config.agents.defaults.model ??= {};",
     'config.agents.defaults.model.primary = "inference/baked-wrong-model";',
     "config.models ??= {}; config.models.providers ??= {};",
-    `config.models.providers.inference = { baseUrl: "https://baked.invalid/v1", apiKey: "unused", api: "openai-completions", models: [{ id: "baked-wrong-model", name: "inference/baked-wrong-model", contextWindow: 8192, maxTokens: 128 }, { id: ${JSON.stringify(selectedModel)}, name: ${JSON.stringify(selectedPrimary)}, contextWindow: ${CUSTOM_CONTEXT_WINDOW}, maxTokens: ${CUSTOM_MAX_TOKENS} }] };`,
+    'config.models.providers.inference = { baseUrl: "https://baked.invalid/v1", apiKey: "unused", api: "openai-completions", models: [{ id: "baked-wrong-model", name: "inference/baked-wrong-model", contextWindow: 8192, maxTokens: 128 }] };',
     "fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\\n`);",
   ].join(" ");
   fs.writeFileSync(
@@ -596,8 +593,8 @@ async function assertOpenClawConfig(
     model: string;
     inferenceApi: string;
     artifactName: string;
-    contextWindow?: number;
-    maxTokens?: number;
+    contextWindow?: number | null;
+    maxTokens?: number | null;
   },
 ): Promise<void> {
   const configResult = await sandbox.exec(
@@ -626,9 +623,18 @@ async function assertOpenClawConfig(
   expect(provider?.apiKey).toBe("unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
-  expect(selectedModel?.contextWindow).toBe(expected.contextWindow ?? selectedModel?.contextWindow);
-  expect(selectedModel?.maxTokens).toBe(expected.maxTokens ?? selectedModel?.maxTokens);
-  expect(selectedModel?.maxTokens).toBeGreaterThan(0);
+  const expectedContextWindow =
+    expected.contextWindow === null
+      ? undefined
+      : (expected.contextWindow ?? selectedModel?.contextWindow);
+  const expectedMaxTokens =
+    expected.maxTokens === null ? undefined : (expected.maxTokens ?? selectedModel?.maxTokens);
+  expect(selectedModel?.contextWindow).toBe(expectedContextWindow);
+  expect(selectedModel?.maxTokens).toBe(expectedMaxTokens);
+  expect(
+    expected.maxTokens === null ||
+      (typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0),
+  ).toBe(true);
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -898,8 +904,8 @@ async function runInitialRouteLifecycle(options: {
     await assertOpenClawConfig(options.sandbox, options.home, {
       model: options.model,
       inferenceApi: "openai-completions",
-      contextWindow: CUSTOM_CONTEXT_WINDOW,
-      maxTokens: CUSTOM_MAX_TOKENS,
+      contextWindow: null,
+      maxTokens: null,
       artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
     });
     await checkOpenClawGatewayInference(
@@ -1090,7 +1096,7 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
-    const customDockerfile = writeCustomOpenClawDockerfile(home, baseline.model);
+    const customDockerfile = writeCustomOpenClawDockerfile(home);
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
