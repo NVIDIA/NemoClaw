@@ -146,7 +146,7 @@ jobs:
             --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
 
       - name: Build native PR image without publishing
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: managed-inference/images/llama-cpp
           file: managed-inference/images/llama-cpp/Dockerfile
@@ -394,7 +394,7 @@ jobs:
 
       - name: Publish exact platform digest
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: managed-inference/images/llama-cpp
           file: managed-inference/images/llama-cpp/Dockerfile
