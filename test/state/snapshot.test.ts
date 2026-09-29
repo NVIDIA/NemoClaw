@@ -809,6 +809,10 @@ describe("complete native home persistence", () => {
         [".openclaw/agents/child/history.jsonl", "child-agent"],
         [".nemoclaw/agent-owned-sibling.txt", "preserved-sibling"],
         [
+          "node_modules/combined-stream/yarn.lock",
+          '# yarn lockfile v1\n\ndelayed-stream@~1.0.0:\n  version "1.0.0"\n  resolved "https://registry.yarnpkg.com/delayed-stream/-/delayed-stream-1.0.0.tgz#df3ae199acadfb7d440aaae0b29e2272b24ec619"\n\nfar@~0.0.7:\n  version "0.0.7"\n  dependencies:\n    oop "0.0.3"\n',
+        ],
+        [
           "node_modules/example/package-lock.json",
           JSON.stringify({
             lockfileVersion: 3,
@@ -1110,15 +1114,8 @@ describe("complete native home persistence", () => {
     ],
     [
       "a dependency lockfile",
-      "package-lock.json",
-      JSON.stringify({
-        lockfileVersion: 3,
-        packages: {
-          "node_modules/example": {
-            resolved: `https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz`,
-          },
-        },
-      }),
+      "node_modules/example/yarn.lock",
+      `# yarn lockfile v1\n\nexample@1.0.0:\n  version "1.0.0"\n  resolved "https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz"\n`,
     ],
     [
       "an OpenClaw config credential outside machine-local gateway authority",
@@ -1232,6 +1229,9 @@ describe("complete native home persistence", () => {
       expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
       expect(commands).toContain('[ "$owner" = "$uid" ] && [ -w "$target_dir" ]');
       expect(commands).toContain('restore_dir "$source_item" "$target_item"');
+      expect(commands.indexOf('if [ -d "$target_item" ]')).toBeLessThan(
+        commands.indexOf('elif [ "$owner" = "$uid" ]'),
+      );
       expect(commands).toContain('mv -- "$source_item" "$target_dir"/');
       expect(commands).not.toContain("native restore symlink escapes root");
     } finally {

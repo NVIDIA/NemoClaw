@@ -1063,12 +1063,35 @@ function dependencyValueContainsCredential(value: unknown, parentField?: string)
   return false;
 }
 
+function yarnV1LockfileContainsCredentialOrIsMalformed(raw: string): boolean {
+  if (raw.includes("\uFFFD") || !/^# yarn lockfile v1\r?$/mu.test(raw)) return true;
+  let selectorSeen = false;
+  for (const line of raw.split(/\r?\n/u)) {
+    if (!line.trim() || line.startsWith("#")) continue;
+    if (!/^\s/u.test(line)) {
+      if (!line.endsWith(":")) return true;
+      selectorSeen = true;
+      continue;
+    }
+    if (!selectorSeen || /\t/u.test(line)) return true;
+    const property = /^ {2}([A-Za-z_][A-Za-z0-9_-]*)(?::|\s+)(.*)$/u.exec(line);
+    if (property) {
+      if (isDependencyCredentialField(property[1]!) && property[2]!.trim()) return true;
+      continue;
+    }
+    if (/^ {4,}(?:"[^"]+"|'[^']+'|\S+)\s+(?:"[^"]*"|'[^']*'|\S+)$/u.test(line)) continue;
+    return true;
+  }
+  return !selectorSeen;
+}
+
 function dependencyLockfileContainsCredential(name: string, raw: string): boolean {
   if (dependencyStringContainsCredential(raw)) return true;
   try {
     const parsed: unknown = name.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
     return dependencyValueContainsCredential(parsed);
   } catch {
+    if (name === "yarn.lock") return yarnV1LockfileContainsCredentialOrIsMalformed(raw);
     // A recognized lockfile must be structurally inspectable before its opaque
     // contents can cross the host-side persistence boundary.
     return true;
@@ -2433,15 +2456,15 @@ async function restoreNativeSandboxState(
         '    source_item="$source_dir/$name"',
         '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
         '    owner="$(stat -c %u -- "$target_item")"',
-        '    if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
+        '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
+        '      restore_dir "$source_item" "$target_item"',
+        '      rmdir -- "$source_item"',
+        '    elif [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
         '      rm -rf -- "$target_item"',
         '    elif [ -f "$target_item" ] && [ ! -L "$target_item" ] && [ -f "$source_item" ] && [ ! -L "$source_item" ] && cmp -s -- "$source_item" "$target_item"; then',
         '      rm -f -- "$source_item"',
         '    elif [ -L "$target_item" ] && [ -L "$source_item" ] && [ "$(readlink -- "$source_item")" = "$(readlink -- "$target_item")" ]; then',
         '      rm -f -- "$source_item"',
-        '    elif [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
-        '      restore_dir "$source_item" "$target_item"',
-        '      rmdir -- "$source_item"',
         "    else",
         '      echo "native restore could not preserve archived state at: $target_item" >&2',
         "      exit 22",
@@ -2460,8 +2483,9 @@ async function restoreNativeSandboxState(
         'restore_dir "$stage" "$root"',
       ].join("\n");
       // The target image's non-agent-owned entries remain authoritative. The
-      // recursive ownership merge replaces every agent-owned path without a
-      // path allowlist, while retaining image-owned trust scaffolding. If an
+      // recursive ownership merge replaces every archived agent-owned path
+      // without removing native mount roots, while retaining image-owned trust
+      // scaffolding. If an
       // archived child is absent below a non-writable scaffold, restoration
       // fails instead of silently dropping that archived state.
       const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
