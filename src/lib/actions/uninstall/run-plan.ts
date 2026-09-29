@@ -90,7 +90,6 @@ import {
 import {
   assertGatewayStatePathSafe,
   GATEWAYS_SUBDIR,
-  type GatewayRegistryDocument,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
   readGatewayRegistryFile,
@@ -1453,13 +1452,9 @@ function selectedRegistrySandboxState(
   };
 }
 
-function writeRegistryAtomic(
-  home: string,
-  registryFile: string,
-  registry: GatewayRegistryDocument,
-): void {
-  assertGatewayStatePathSafe(home, path.dirname(registryFile));
-  const tempFile = `${registryFile}.uninstall.${String(process.pid)}.${String(Date.now())}`;
+function writeUninstallStateAtomic(home: string, filePath: string, value: unknown): void {
+  assertGatewayStatePathSafe(home, path.dirname(filePath));
+  const tempFile = `${filePath}.uninstall.${String(process.pid)}.${String(Date.now())}`;
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -1467,11 +1462,11 @@ function writeRegistryAtomic(
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
       0o600,
     );
-    fs.writeFileSync(fd, `${JSON.stringify(registry, null, 2)}\n`);
+    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = null;
-    fs.renameSync(tempFile, registryFile);
+    fs.renameSync(tempFile, filePath);
   } finally {
     if (fd !== null) fs.closeSync(fd);
     try {
@@ -1516,7 +1511,7 @@ function pruneSelectedRowsFromRegistry(
         registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
           ? registry.defaultSandbox
           : (Object.keys(remainingSandboxes).sort()[0] ?? null);
-      writeRegistryAtomic(home, registryFile, {
+      writeUninstallStateAtomic(home, registryFile, {
         ...registry,
         defaultSandbox,
         sandboxes: remainingSandboxes,
@@ -1551,6 +1546,66 @@ async function finishScopedOpenShellCleanup(
     resolveGatewayPortFromName(options.gatewayName || resolveGatewayName(GATEWAY_PORT)) ??
       GATEWAY_PORT,
   );
+}
+
+// Legacy gateway destruction must precede Docker volume removal. Keep proof of
+// completed sandbox cleanup so a later failure can resume after deregistration
+// without changing the preserved registry or accepting an unrelated gateway.
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
+  action: "read" | "clear" | "complete",
+): boolean {
+  const home = runtime.env.HOME || os.homedir();
+  const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
+  const progressFile = path.join(paths.nemoclawStateDir, "uninstall-bulk-cleanup.json");
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 1,
+        gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        gatewayPort: GATEWAY_PORT,
+        gatewayStateDir: paths.selectedGatewayLocalStateDir,
+        registrations,
+      }),
+    )
+    .digest("hex");
+  try {
+    assertGatewayStatePathSafe(home, registryFile);
+    assertGatewayStatePathSafe(home, progressFile);
+    assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+    if (action !== "complete" && !fs.existsSync(progressFile)) return action === "clear";
+    if (action === "complete")
+      fs.mkdirSync(paths.nemoclawStateDir, { recursive: true, mode: 0o700 });
+    return withRegistryLockAt(registryFile, () => {
+      const registry = readGatewayRegistryFile(home, registryFile);
+      const selected = Object.fromEntries(
+        Object.entries(registry?.sandboxes ?? {}).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT,
+        ),
+      );
+      if (!isDeepStrictEqual(selected, registrations)) return false;
+      if (action === "read") {
+        const opened = openRegularFileNoFollow(progressFile);
+        try {
+          return JSON.parse(opened.readBytes(128).toString("utf8")) === fingerprint;
+        } finally {
+          opened.close();
+        }
+      }
+      if (action === "clear") {
+        fs.rmSync(progressFile, { force: true });
+      } else {
+        writeUninstallStateAtomic(home, progressFile, fingerprint);
+      }
+      return true;
+    });
+  } catch (error) {
+    runtime.warn(`Could not verify uninstall cleanup progress: ${formatError(error)}`);
+    return false;
+  }
 }
 
 async function removeOpenShellResources(
@@ -1615,6 +1670,22 @@ async function removeOpenShellResources(
       gatewayLabel,
       paths.selectedGatewayLocalStateDir,
     );
+    if (
+      runtimeSelection &&
+      bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read") &&
+      (await selectedGatewayRegistrationIsAbsent(options, {
+        ...runtime,
+        gatewayLifecycle: createUninstallGatewayLifecycle(
+          runtime.run,
+          runtime.env,
+          runtimeSelection,
+        ),
+      }))
+    ) {
+      runtime.log("Resuming verified sandbox cleanup for the removed gateway.");
+      return verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations);
+    }
+    if (!bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "clear")) return false;
     if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) return false;
   }
   // Retain connection and provider state until runtime cleanup is confirmed.
@@ -3185,7 +3256,8 @@ async function executeOpenShellResourceCleanup(
   if (
     !portableRuntimeCleanup &&
     !scopedToSelectedGateway &&
-    !(await finishBulkOpenShellCleanup(paths, options, runtime, externallySupervised))
+    (!bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "complete") ||
+      !(await finishBulkOpenShellCleanup(paths, options, runtime, externallySupervised)))
   ) {
     return false;
   }
