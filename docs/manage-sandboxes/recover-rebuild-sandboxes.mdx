@@ -304,7 +304,7 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 
 Before backing up a running OpenClaw sandbox, rebuild verifies its maintenance window through OpenShell command transport.
 It waits within the maintenance deadline when command transport is not ready.
-If verification fails, rebuild stops before replacement and prints lifecycle recovery steps.
+If verification fails, rebuild stops before replacement and reports the failed maintenance-window check.
 
 Rebuild restores the complete credential-sanitized native `openclaw.json` file from the pre-rebuild snapshot.
 NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
