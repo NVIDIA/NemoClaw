@@ -139,7 +139,7 @@ test(
         artifactName: "state-backup-restore-verify",
         env,
         redactionValues: redactions,
-        timeoutMs: 180_000,
+        timeoutMs: 330_000,
       },
     );
     assertExitZero(verify, "verify complete native-home restore and readiness");

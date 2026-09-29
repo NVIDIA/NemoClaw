@@ -3033,7 +3033,7 @@ A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
 <AgentOnly variant="hermes">
-Rebuild preserves supported values recorded through `config set`, excluding gateway settings, managed inference-route fields, and credential material.
+Rebuild transfers the complete Hermes native home/workspace, including configuration and unknown agent-written paths. NemoClaw then reapplies host-owned gateway, managed inference-route, credential, and policy settings from recorded host state.
 Refer to [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for capture, verification, and failure handling.
 </AgentOnly>
 
@@ -4425,7 +4425,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 | --- | --- | --- |
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Overrides the platform default (macOS unattended: cleanup; Linux/Windows: preserve) for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="hermes">
 | `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `$$nemoclaw <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |
 </AgentOnly>
 | `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | JSON array of sandbox names | Confirms to the installer that the listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |

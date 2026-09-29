@@ -997,15 +997,31 @@ describe("E2E workflow plan", () => {
     );
   });
 
-  it("recognizes known native-state risk jobs when the requested runtime filters them out", () => {
-    const plan = buildE2eWorkflowPlan(
+  it("retains known native-state catalogue targets for the requested runtime", () => {
+    const podmanPlan = buildE2eWorkflowPlan(
       {},
       { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["podman"] },
     );
-
-    expect(selectedWorkflowJobs(plan)).not.toEqual(
-      expect.arrayContaining(["onboard-repair", "onboard-resume"]),
+    const dockerPlan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["docker"] },
     );
+
+    const nativeStateRows = (plan: ReturnType<typeof buildE2eWorkflowPlan>) =>
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .filter((row) => ["onboard-repair", "onboard-resume"].includes(row.target_id));
+    const podmanRows = nativeStateRows(podmanPlan);
+    const dockerRows = nativeStateRows(dockerPlan);
+
+    expect(new Set(podmanRows.map((row) => row.target_id))).toEqual(
+      new Set(["onboard-repair", "onboard-resume"]),
+    );
+    expect(new Set(podmanRows.map((row) => row.runtime_provider))).toEqual(new Set(["podman"]));
+    expect(new Set(dockerRows.map((row) => row.target_id))).toEqual(
+      new Set(["onboard-repair", "onboard-resume"]),
+    );
+    expect(new Set(dockerRows.map((row) => row.runtime_provider))).toEqual(new Set(["docker"]));
   });
 
   it.each([
