@@ -104,8 +104,14 @@ pub(crate) fn collect(
                 })
                 .cloned()
                 .collect();
+            let valid = compatible
+                .iter()
+                .filter(|branch| schema_accepts(branch, values) == Some(true))
+                .collect::<Vec<_>>();
             if compatible.len() == 1 {
                 branches.extend(compatible);
+            } else if valid.len() == 1 && schema_accepts(schema, values) == Some(true) {
+                branches.push((*valid[0]).clone());
             } else if !path.is_empty() {
                 // Ambiguous unions stay one typed JSON question; never guess a branch.
                 fields.push(SettingQuestion {
@@ -118,10 +124,13 @@ pub(crate) fn collect(
                     required,
                     schema: schema.clone(),
                     choices: Vec::new(),
-                    suggestion: if !values.is_null() {
+                    suggestion: if schema_accepts(schema, values) == Some(true) {
                         Some(values.clone())
                     } else if required {
-                        schema.get("default").cloned()
+                        schema
+                            .get("default")
+                            .filter(|value| schema_accepts(schema, value) == Some(true))
+                            .cloned()
                     } else {
                         None
                     },
@@ -171,10 +180,13 @@ pub(crate) fn collect(
                         required: true,
                         schema: schema.clone(),
                         choices: Vec::new(),
-                        suggestion: if !values.is_null() {
+                        suggestion: if schema_accepts(schema, values) == Some(true) {
                             Some(values.clone())
                         } else if required {
-                            schema.get("default").cloned()
+                            schema
+                                .get("default")
+                                .filter(|value| schema_accepts(schema, value) == Some(true))
+                                .cloned()
                         } else {
                             None
                         },

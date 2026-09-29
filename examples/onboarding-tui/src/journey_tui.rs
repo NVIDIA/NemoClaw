@@ -153,7 +153,11 @@ impl JourneyWizard {
                 Ok(None)
             };
         }
-        if question.schema()["type"] == "string" || question.schema()["type"].is_null() {
+        if question.schema()["type"] == "string"
+            || (question.schema()["type"].is_null()
+                && question.schema().get("oneOf").is_none()
+                && question.schema().get("anyOf").is_none())
+        {
             Ok(Some(Value::String(raw)))
         } else {
             serde_json::from_str(&raw)
@@ -402,6 +406,9 @@ fn display_value(value: &Value) -> String {
 
 fn label(question: &JourneyQuestion) -> String {
     let id = question.id();
+    if id.starts_with("adapter:") && id.ends_with(':') {
+        return "Adapter settings".into();
+    }
     if question.kind() == JourneyQuestionKind::StructuralForm {
         return format!(
             "Choose {} form",
@@ -764,6 +771,43 @@ mod tests {
     use super::*;
     use crate::{Source, load_journey};
     use nemoclaw_authoring::{JourneyDefinition, PartialDocument, TargetPrerequisite};
+
+    #[test]
+    fn root_adapter_alternatives_accept_json_object_input() {
+        use nemoclaw_sdk::fabric_catalog::FabricCatalog;
+
+        let mut catalog = FabricCatalog::bundled();
+        let mut adapter = catalog.adapters[0].clone();
+        adapter.descriptor["adapter_id"] = serde_json::json!("fixture-root-agent");
+        adapter.descriptor["settings_schema"] = serde_json::json!({
+            "oneOf": [
+                {"type":"object", "properties":{"token":{"type":"string"}}, "required":["token"], "additionalProperties":false},
+                {"type":"object", "properties":{"port":{"type":"integer"}}, "required":["port"], "additionalProperties":false}
+            ]
+        });
+        catalog.adapters = vec![adapter];
+        let capabilities = Capabilities::from_catalog(&catalog);
+        let mut values: Value =
+            serde_saphyr::from_slice(include_bytes!("../../onboarding/openclaw.yaml")).unwrap();
+        values["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("fixture-root-agent");
+        values["spec"]["sandboxes"][0]["harness"]
+            .as_object_mut()
+            .unwrap()
+            .remove("settings");
+        let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+        let state = JourneyDefinition::new("root-alternatives", base)
+            .start(&capabilities)
+            .unwrap();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        let question = wizard.question().unwrap().unwrap();
+        assert_eq!(question.id(), "adapter:fixture-root-agent:");
+        assert_eq!(label(&question), "Adapter settings");
+        wizard.input = r#"{"port":443}"#.into();
+        assert_eq!(
+            wizard.answer_from_input(&question).unwrap(),
+            Some(serde_json::json!({"port":443}))
+        );
+    }
 
     #[test]
     fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {

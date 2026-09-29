@@ -437,6 +437,74 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
 }
 
 #[test]
+fn root_fabric_alternatives_are_answered_through_the_journey() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture-root-agent");
+    adapter.descriptor["settings_schema"] = json!({
+        "oneOf": [
+            {"type":"object", "properties":{"token":{"type":"string"}}, "required":["token"], "additionalProperties":false},
+            {"type":"object", "properties":{"port":{"type":"integer"}}, "required":["port"], "additionalProperties":false}
+        ]
+    });
+    catalog.adapters = vec![adapter];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-root-agent");
+    base["spec"]["sandboxes"][0]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("settings");
+    let mut state = JourneyDefinition::new(
+        "root-alternatives",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .start(&capabilities)
+    .unwrap();
+
+    let root = "adapter:fixture-root-agent:";
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution.question(root).expect("root settings question");
+    assert!(question.required());
+    assert_eq!(question.reason(), JourneyQuestionReason::Missing);
+    assert!(question.suggestion().is_none());
+    assert!(
+        state
+            .answer(&capabilities, root, Some(json!({"port":"bad"})))
+            .is_err()
+    );
+    state
+        .answer(&capabilities, root, Some(json!({"port":443})))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer("/spec/sandboxes/0/harness/settings"),
+        Some(&json!({"port":443}))
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+
+    let supplied = PartialDocument::from_yaml(state.values().to_string().as_bytes()).unwrap();
+    let review = JourneyDefinition::new("review-root", supplied)
+        .ask([root])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    let question = review
+        .question(root)
+        .expect("supplied root is deliberately asked");
+    assert_eq!(question.reason(), JourneyQuestionReason::ExplicitAsk);
+    assert_eq!(question.suggestion(), Some(&json!({"port":443})));
+}
+
+#[test]
 fn changed_adapter_schema_reopens_an_invalid_answer_without_rewriting_it() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();

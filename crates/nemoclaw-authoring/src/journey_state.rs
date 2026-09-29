@@ -827,25 +827,42 @@ impl JourneyState {
                 unverified.push(format!("adapter schema unverified for '{harness}'"));
                 return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
             };
-            let settings = self
-                .values
-                .pointer(&format!(
-                    "{}/settings",
-                    active_harness
-                        .as_deref()
-                        .expect("chosen harness has an owner")
-                ))
+            let settings_path = format!(
+                "{}/settings",
+                active_harness
+                    .as_deref()
+                    .expect("chosen harness has an owner")
+            );
+            let supplied_settings = self.values.pointer(&settings_path);
+            let settings = supplied_settings
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
             let mut fields = Vec::new();
             crate::settings::collect(schema, schema, &settings, "", false, &mut fields, 0)?;
+            let root_id = format!("adapter:{harness}:");
+            if self.definition.ask.contains(&root_id)
+                && !self.accepted.contains(&root_id)
+                && !fields.iter().any(|field| field.path.is_empty())
+            {
+                fields.clear();
+                fields.push(SettingQuestion {
+                    path: String::new(),
+                    title: "Adapter settings".into(),
+                    description: "Review the adapter settings object.".into(),
+                    required: true,
+                    schema: schema.clone(),
+                    choices: Vec::new(),
+                    suggestion: (schema_accepts(schema, &settings) == Some(true))
+                        .then_some(settings.clone()),
+                });
+            }
             for field in fields {
-                if field.path.is_empty() {
-                    unverified.push(format!("adapter '{harness}' needs a settings object answer; root alternatives are not yet supported"));
-                    continue;
-                }
                 let id = format!("adapter:{harness}:{}", field.path);
-                let value = settings.pointer(&field.path);
+                let value = if field.path.is_empty() && supplied_settings.is_none() {
+                    None
+                } else {
+                    settings.pointer(&field.path)
+                };
                 if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
                     omitted.push(id);
                     continue;

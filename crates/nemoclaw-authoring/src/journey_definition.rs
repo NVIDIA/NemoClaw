@@ -159,6 +159,9 @@ impl JourneyDefinition {
             let Some(schema) = adapter_schema(capabilities, adapter)? else {
                 continue;
             };
+            if pointer.is_empty() {
+                continue;
+            }
             if schema["properties"].get(&pointer[1..]).is_none() {
                 return Err(diagnostic(
                     "journey",
@@ -194,6 +197,12 @@ impl JourneyDefinition {
                     &format!("cannot omit '{field}' in this preview"),
                 ));
             };
+            if pointer.is_empty() {
+                return Err(diagnostic(
+                    "journey",
+                    "required adapter settings alternatives cannot be omitted",
+                ));
+            }
             let Some(property) = pointer.strip_prefix('/') else {
                 return Err(diagnostic(
                     "journey",
@@ -267,5 +276,5 @@ pub(crate) fn adapter_schema<'a>(
 pub(crate) fn adapter_field(field: &str) -> Option<(&str, &str)> {
     let suffix = field.strip_prefix("adapter:")?;
     let (adapter, path) = suffix.split_once(':')?;
-    path.starts_with('/').then_some((adapter, path))
+    (!adapter.is_empty() && (path.is_empty() || path.starts_with('/'))).then_some((adapter, path))
 }
