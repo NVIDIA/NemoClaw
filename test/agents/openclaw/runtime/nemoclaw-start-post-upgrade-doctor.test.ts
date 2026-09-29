@@ -6,11 +6,95 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
+
+describe("legacy empty approvals migration", () => {
+  let root: string;
+  let config: string;
+  let target: string;
+  let outside: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-approvals-"));
+    config = path.join(root, "config");
+    target = path.join(config, "exec-approvals.json");
+    outside = path.join(root, "outside");
+    fs.mkdirSync(config);
+    fs.writeFileSync(outside, "");
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  function runMigration(configPath = config) {
+    const fn = extractShellFunctionFromSource(
+      fs.readFileSync(START_SCRIPT, "utf8"),
+      "remove_empty_legacy_exec_approvals",
+    ).replaceAll("/sandbox/.openclaw", configPath);
+    return spawnSync(
+      "bash",
+      [
+        "-c",
+        // The temporary state belongs to the test process; image smoke tests cover root step-down.
+        `run_openclaw_config_as_owner() { "$@"; }\n${fn}\nremove_empty_legacy_exec_approvals`,
+      ],
+      { encoding: "utf8" },
+    );
+  }
+
+  it("rejects a linked config directory without deleting its empty approval file", () => {
+    const linked = path.join(root, "linked");
+    fs.writeFileSync(target, "");
+    fs.symlinkSync(config, linked);
+    expect(runMigration(linked).status).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
+  });
+
+  it("leaves a missing approvals file absent", () => {
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it("removes the empty legacy approvals placeholder", () => {
+    fs.writeFileSync(target, "");
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it.each([
+    { kind: "populated", content: '{"version":1,"agents":{"main":{}}}' },
+    { kind: "malformed", content: "{not valid" },
+    { kind: "whitespace", content: " \n" },
+  ])("preserves the $kind approvals file for native migration", ({ content }) => {
+    fs.writeFileSync(target, content);
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe(content);
+  });
+
+  it.each([
+    { kind: "symlink", create: fs.symlinkSync },
+    { kind: "hardlink", create: fs.linkSync },
+  ])("rejects a $kind without deleting or changing authorization data", ({ create }) => {
+    create(outside, target);
+    expect(runMigration().status).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
+    expect(fs.readFileSync(outside, "utf8")).toBe("");
+  });
+
+  it("rejects a directory in place of the approvals file", () => {
+    fs.mkdirSync(target);
+    expect(runMigration().status).toBe(1);
+    expect(fs.statSync(target).isDirectory()).toBe(true);
+  });
+});
 
 function doctorFunction(
   source: string,
@@ -19,9 +103,9 @@ function doctorFunction(
   rootMode = false,
 ): string {
   return [
-    'normalize_mutable_config_perms() { printf \'normalize\\n\' >>"$NORMALIZE_CALLS"; return "${NORMALIZE_EXIT_CODE:-0}"; }',
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "wait_for_openclaw_startup_migration_lease"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
@@ -44,13 +128,26 @@ function fixture() {
   const marker = path.join(configDir, ".nemoclaw-post-upgrade-doctor");
   const ready = path.join(root, "doctor-ready");
   const calls = path.join(root, "calls");
-  const normalizeCalls = path.join(root, "normalize-calls");
-  const openclaw = path.join(root, "openclaw-cli");
+  const nodeModules = path.join(root, "node_modules");
+  const packageRoot = path.join(nodeModules, "openclaw");
+  const openclaw = path.join(nodeModules, ".bin", "openclaw");
   const fakeBin = path.join(root, "bin");
   const stepDown = path.join(root, "step-down");
   const stepDownCalls = path.join(root, "step-down-calls");
+  const leaseActive = path.join(root, "lease-active");
+  const leaseViolation = path.join(root, "lease-violation");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
+  fs.mkdirSync(path.dirname(openclaw), { recursive: true });
+  fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({ name: "openclaw", type: "module" }),
+  );
+  fs.writeFileSync(
+    path.join(packageRoot, "dist", "startup-migration-checkpoint-test.js"),
+    `import fs from "node:fs";\nexport function hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\n`,
+  );
   fs.writeFileSync(
     openclaw,
     `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
@@ -63,15 +160,16 @@ function fixture() {
   );
   fs.writeFileSync(
     stepDown,
-    `#!/bin/sh\nprintf 'HOME=%s\\nPATH=%s\\n' "$HOME" "$PATH" >${JSON.stringify(stepDownCalls)}\nprintf 'ARG=%s\\n' "$@" >>${JSON.stringify(stepDownCalls)}\nexec "$@"\n`,
+    `#!/bin/sh\nprintf 'HOME=%s\\nPATH=%s\\n' "$HOME" "$PATH" >>${JSON.stringify(stepDownCalls)}\nprintf 'ARG=%s\\n' "$@" >>${JSON.stringify(stepDownCalls)}\nexec "$@"\n`,
     { mode: 0o755 },
   );
   return {
     calls,
     configDir,
     fakeBin,
+    leaseActive,
+    leaseViolation,
     marker,
-    normalizeCalls,
     openclaw,
     ready,
     root,
@@ -88,7 +186,6 @@ function fixtureEnv(
     ...process.env,
     ...extra,
     OPENCLAW: f.openclaw,
-    NORMALIZE_CALLS: f.normalizeCalls,
     PATH: `${f.fakeBin}:${process.env.PATH ?? ""}`,
     STEP_DOWN: f.stepDown,
   };
@@ -133,7 +230,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
-      expect(fs.existsSync(f.normalizeCalls)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -229,7 +325,44 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
-      expect(fs.readFileSync(f.normalizeCalls, "utf8")).toBe("normalize\n");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes doctor readiness only after OpenClaw releases its startup lease", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.leaseActive, "active\n");
+      const staged = `${f.marker}.release`;
+      const releaseAfterLease = [
+        `(while [ ! -f ${JSON.stringify(f.calls)} ]; do /bin/sleep 0.01; done`,
+        `/bin/sleep 0.5`,
+        `[ ! -e ${JSON.stringify(f.ready)} ] || : >${JSON.stringify(f.leaseViolation)}`,
+        `rm -f -- ${JSON.stringify(f.leaseActive)}`,
+        `while [ ! -f ${JSON.stringify(f.ready)} ]; do /bin/sleep 0.01; done`,
+        `printf '%s\\n' nemoclaw-openclaw-post-upgrade-doctor-release-v1 >${JSON.stringify(staged)}`,
+        `chmod 600 ${JSON.stringify(staged)}`,
+        `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}) &`,
+      ].join("; ");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nsleep() { /bin/sleep 0.01; }\n${releaseAfterLease}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.leaseViolation)).toBe(false);
+      expect(result.stderr).toContain(
+        "waiting for OpenClaw startup migrations to release their native lease",
+      );
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -339,33 +472,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
 
       expect(result.status).toBe(1);
       expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
-      expect(fs.existsSync(f.normalizeCalls)).toBe(false);
-    } finally {
-      fs.rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-
-  it("retains the marker when mutable permissions cannot be restored", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf8");
-    const f = fixture();
-    try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
-        ],
-        {
-          encoding: "utf8",
-          env: fixtureEnv(f, { NORMALIZE_EXIT_CODE: "8" }),
-        },
-      );
-
-      expect(result.status).toBe(1);
-      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
-      expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
-      expect(fs.readFileSync(f.normalizeCalls, "utf8")).toBe("normalize\n");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

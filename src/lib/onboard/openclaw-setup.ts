@@ -1,15 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  configSet,
-  extractDotpath,
-  readSandboxConfig,
-  resolveAgentConfig,
-} from "../sandbox/config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
-type WebSearchSelection = { fetchEnabled?: boolean } | null;
 const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
 
 export async function isOpenclawGatewayReady(
@@ -60,46 +53,6 @@ export function createOpenclawGatewayReadinessProbe(
     );
 }
 
-interface OpenClawWebSearchReuseDeps {
-  readEnabled(sandboxName: string): unknown;
-  disable(sandboxName: string): Promise<void>;
-}
-
-const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
-  readEnabled: (sandboxName) => {
-    const target = resolveAgentConfig(sandboxName);
-    if (target.agentName !== "openclaw") {
-      throw new Error(
-        `Cannot reconcile OpenClaw web search for '${sandboxName}': the sandbox runs '${target.agentName}'.`,
-      );
-    }
-    return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
-  },
-  disable: (sandboxName) =>
-    configSet(sandboxName, {
-      key: "tools.web.search.enabled",
-      value: "false",
-      restart: true,
-    }),
-};
-
-/**
- * Onboarding can reuse an already-ready sandbox without rerunning the image
- * generator. Apply a newly disabled web-search choice to the live OpenClaw
- * config through its guarded config writer on both fresh and resumed reuse.
- */
-export async function reconcileOpenClawWebSearchForReuse(
-  sandboxName: string,
-  webSearchConfig: WebSearchSelection,
-  revalidateSandboxIdentity?: (operation: string) => void,
-  deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
-): Promise<void> {
-  if (webSearchConfig?.fetchEnabled === true) return;
-  if (deps.readEnabled(sandboxName) !== true) return;
-  revalidateSandboxIdentity?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
-  await deps.disable(sandboxName);
-}
-
 export interface ConfigureOpenclawSandboxDeps {
   syncNemoClawConfigInSandbox(
     sandboxName: string,
@@ -108,11 +61,6 @@ export interface ConfigureOpenclawSandboxDeps {
     revalidateSandboxIdentity?: (operation: string) => void,
     managedProfileApplied?: boolean,
   ): Promise<void>;
-  reconcileWebSearch(
-    sandboxName: string,
-    webSearchConfig: WebSearchSelection,
-    revalidateSandboxIdentity?: (operation: string) => void,
-  ): Promise<void>;
 }
 
 export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDeps) {
@@ -120,7 +68,6 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
     managedProfileApplied = false,
   ): Promise<void> {
@@ -131,7 +78,6 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
       revalidateSandboxIdentity,
       managedProfileApplied,
     );
-    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
   };
 }
 
@@ -151,7 +97,6 @@ export interface OpenclawSetupDeps {
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void>;
 }
@@ -161,18 +106,11 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     sandboxName: string,
     model: string,
     provider: string,
-    webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    await deps.configureOpenclawSandbox(
-      sandboxName,
-      model,
-      provider,
-      webSearchConfig,
-      revalidateSandboxIdentity,
-    );
+    await deps.configureOpenclawSandbox(sandboxName, model, provider, revalidateSandboxIdentity);
     if (deps.shouldRestartNativeGateway(provider)) {
       revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
       const restart = await deps.restartNativeGateway(sandboxName);

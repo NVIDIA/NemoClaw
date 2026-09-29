@@ -112,7 +112,7 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
   });
 
-  it("omits the host Docker client config from the create process environment", async () => {
+  it("omits DOCKER_CONFIG from the create process environment when the request environment sets it", async () => {
     const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
 
     await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({

@@ -114,8 +114,6 @@ on:
         required: false
       NVIDIA_INFERENCE_API_KEY:
         required: false
-      BRAVE_API_KEY:
-        required: false
 
 permissions:
   contents: read
@@ -178,7 +176,7 @@ jobs:
           [[ "$TEST_FILE" =~ ^test/e2e/live/[A-Za-z0-9._-]+\.test\.ts$ ]] || fail "test file"
           [[ "$ARTIFACT_LAYOUT" == "target-shard" || "$ARTIFACT_LAYOUT" == "flat-shard" ]] || fail "artifact layout"
           [[ "$HOST_PREPARATION" == "none" || "$HOST_PREPARATION" == "hermes-swap" ]] || fail "host preparation"
-          [[ "$HOST_PACKAGES" == "" || "$HOST_PACKAGES" == "expect" || "$HOST_PACKAGES" == "iptables" || "$HOST_PACKAGES" == "expect iptables" ]] || fail "host packages"
+          [[ "$HOST_PACKAGES" == "" || "$HOST_PACKAGES" == "expect" || "$HOST_PACKAGES" == "iptables" || "$HOST_PACKAGES" == "expect iptables" || "$HOST_PACKAGES" == "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap" ]] || fail "host packages"
           [[ "$INSTALL_MODE" == "none" || "$INSTALL_MODE" == "authenticated" || "$INSTALL_MODE" == "credential-free" ]] || fail "install mode"
           if [[ "$ARTIFACT_LAYOUT" == "flat-shard" && "$SHARD" == "default" ]]; then
             fail "flat shard layout requires a named shard"
@@ -518,7 +516,6 @@ jobs:
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
-          BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
         run: |
           set -euo pipefail

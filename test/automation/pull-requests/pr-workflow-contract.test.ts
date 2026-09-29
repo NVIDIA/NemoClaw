@@ -27,6 +27,9 @@ type CiWorkflow = {
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
+const reviewedInstallerHashRef =
+  "${{ github.event.pull_request.base.sha == '241fcd199275fa1d1ac6bf9beddd991117398536' && " +
+  "'9daa989354dcdf3756165337877bf659d9d27dc6' || github.event.pull_request.base.sha }}";
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -235,11 +238,11 @@ function runWorkflowShellStepWithJobs(
 
 function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   const steps = workflow.jobs["check-hash"]?.steps ?? [];
-  const baseCheckout = steps.find(
-    (step) => step.name === "Checkout base-trusted installer hash action",
+  const reviewedCheckout = steps.find(
+    (step) => step.name === "Checkout reviewed installer hash action",
   );
   const prCheck = steps.find(
-    (step) => step.name === "Verify pull request installer hashes from base-trusted code",
+    (step) => step.name === "Verify pull request installer hashes from reviewed code",
   );
   const allowedExecutors = new Set([
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
@@ -247,20 +250,21 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   ]);
 
   return [
-    ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
-    ...(baseCheckout?.uses === trustedCheckoutAction
+    ...(reviewedCheckout ? [] : ["missing reviewed installer hash checkout"]),
+    ...(reviewedCheckout?.uses === trustedCheckoutAction
       ? []
-      : ["base-trusted installer hash checkout must use the pinned checkout action"]),
-    ...(baseCheckout?.with?.ref === "${{ github.event.pull_request.base.sha }}"
+      : ["reviewed installer hash checkout must use the pinned checkout action"]),
+    ...(reviewedCheckout?.with?.repository === "NVIDIA/NemoClaw" &&
+    reviewedCheckout.with.ref === reviewedInstallerHashRef
       ? []
-      : ["base-trusted installer hash checkout must use the PR base SHA"]),
-    ...(baseCheckout?.with?.path === ".trusted-installer-hash"
+      : ["reviewed installer hash checkout must use the exact NVIDIA-owned revision"]),
+    ...(reviewedCheckout?.with?.path === ".trusted-installer-hash"
       ? []
-      : ["base-trusted installer hash checkout must use the trusted action path"]),
+      : ["reviewed installer hash checkout must use the trusted action path"]),
     ...(prCheck?.if === "github.event_name == 'pull_request'" &&
     prCheck.uses === "./.trusted-installer-hash/.github/actions/ci-installer-hash-check"
       ? []
-      : ["pull request installer hashes must use only the base-trusted action"]),
+      : ["pull request installer hashes must use only the reviewed action"]),
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
       step.if !== "github.event_name != 'pull_request'"
@@ -771,28 +775,29 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     },
   );
 
-  // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
-  it("executes pull request installer hash checks only from the PR base SHA", () => {
+  // source-shape-contract: security -- An immutable reviewed revision prevents current pull-request code from authorizing installer hashes
+  it("executes pull request installer hash checks only from the reviewed revision", () => {
     expect(installerHashTrustViolations(installerHashWorkflow)).toEqual([]);
 
     const headCheckout = structuredClone(installerHashWorkflow);
     requiredWorkflowStep(
       headCheckout.jobs["check-hash"],
-      "Checkout base-trusted installer hash action",
+      "Checkout reviewed installer hash action",
     ).with = {
+      repository: "NVIDIA/NemoClaw",
       ref: "${{ github.event.pull_request.head.sha }}",
       path: ".trusted-installer-hash",
     };
 
-    const missingBaseCheckout = structuredClone(installerHashWorkflow);
-    missingBaseCheckout.jobs["check-hash"].steps = missingBaseCheckout.jobs[
+    const missingReviewedCheckout = structuredClone(installerHashWorkflow);
+    missingReviewedCheckout.jobs["check-hash"].steps = missingReviewedCheckout.jobs[
       "check-hash"
-    ].steps?.filter((step) => step.name !== "Checkout base-trusted installer hash action");
+    ].steps?.filter((step) => step.name !== "Checkout reviewed installer hash action");
 
     const mutableExecutor = structuredClone(installerHashWorkflow);
     requiredWorkflowStep(
       mutableExecutor.jobs["check-hash"],
-      "Verify pull request installer hashes from base-trusted code",
+      "Verify pull request installer hashes from reviewed code",
     ).uses = "./.github/actions/ci-installer-hash-check";
 
     const bootstrapExecutor = structuredClone(installerHashWorkflow);
@@ -809,13 +814,13 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     });
 
     expect(installerHashTrustViolations(headCheckout)).toContain(
-      "base-trusted installer hash checkout must use the PR base SHA",
+      "reviewed installer hash checkout must use the exact NVIDIA-owned revision",
     );
-    expect(installerHashTrustViolations(missingBaseCheckout)).toContain(
-      "missing base-trusted installer hash checkout",
+    expect(installerHashTrustViolations(missingReviewedCheckout)).toContain(
+      "missing reviewed installer hash checkout",
     );
     expect(installerHashTrustViolations(mutableExecutor)).toContain(
-      "pull request installer hashes must use only the base-trusted action",
+      "pull request installer hashes must use only the reviewed action",
     );
     expect(installerHashTrustViolations(bootstrapExecutor)).toContain(
       "unapproved installer hash executor: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",

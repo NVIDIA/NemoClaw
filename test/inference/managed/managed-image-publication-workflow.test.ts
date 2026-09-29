@@ -32,7 +32,7 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "8ed889c14ccd7e828a9fbc20606cc7c587e6ca31";
+const reviewedAuditSha = "d60ee0bb36e582f83846f41a1b7e94719fcd89f6";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -1291,12 +1291,12 @@ fi
     expect(promotion.run).toContain('"${descriptor_args[@]}"');
     expect(promotion.run).toContain('cmp -s "$expected_descriptors" "$actual_descriptors"');
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(promotion.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(promotion.run).toContain(
       'aliases+=("$(jq -r \'.image\' <<<"$cohort_manifest"):${GITHUB_SHA}")',
     );
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
-    expect(pointer.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(pointer.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(pointer.run).toContain(
       'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );

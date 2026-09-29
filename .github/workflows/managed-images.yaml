@@ -101,7 +101,7 @@ jobs:
       - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -121,7 +121,7 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEWED_AUDIT_SHA: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          REVIEWED_AUDIT_SHA: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -544,7 +544,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -572,7 +572,7 @@ jobs:
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
-          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '8ed889c14ccd7e828a9fbc20606cc7c587e6ca31'
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = 'd60ee0bb36e582f83846f41a1b7e94719fcd89f6'
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -3362,9 +3362,10 @@ jobs:
 
           # Record the intended root pointers for every shipped agent in its
           # exact contract. They are not moved until all v2 evidence artifacts
-          # are durable. Hermes ships alongside OpenClaw (#11228); Deep Agents
-          # Code stays cohort-only until its own publication decision.
-          shipped_agents=(openclaw hermes)
+          # are durable. Hermes ships alongside OpenClaw (#11228), and Deep
+          # Agents Code alongside both (#11341), matching
+          # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
+          shipped_agents=(openclaw hermes langchain-deepagents-code)
           release_tag="$(jq -r '.[0].release // empty' "$CANDIDATE_SET")"
 
           while IFS= read -r candidate; do
@@ -3608,12 +3609,14 @@ jobs:
             exit 1
           fi
           cohort="$PUBLICATION_COHORT"
-          # Root pointers move for every shipped agent: OpenClaw and, per
-          # #11228, Hermes. Deep Agents Code stays cohort-only. Every shipped
-          # agent's contract and exact cohort bytes are validated before any
-          # pointer moves. A registry failure can leave an earlier agent's
-          # pointers moved; rerunning this job reconciles them to this cohort.
-          shipped_agents=(openclaw hermes)
+          # Root pointers move for every shipped agent: OpenClaw, Hermes
+          # (#11228), and Deep Agents Code (#11341), matching
+          # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
+          # Every shipped agent's contract and exact cohort bytes are validated
+          # before any pointer moves. A registry failure can leave an earlier
+          # agent's pointers moved; rerunning this job reconciles them to this
+          # cohort.
+          shipped_agents=(openclaw hermes langchain-deepagents-code)
           release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
           if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: durable managed image pointer identity is invalid." >&2
@@ -3658,7 +3661,7 @@ jobs:
             expected_digest="$(jq -er --arg agent "$agent" '.agents[$agent].digest' "$cohort_contract")"
             expected_size="$(jq -er --arg agent "$agent" '.agents[$agent].descriptor.size | tostring' "$cohort_contract")"
             if [ "$image" != "ghcr.io/nvidia/nemoclaw/${agent}-sandbox" ] ||
-               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
+               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes|langchain-deepagents-code)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
                [ "${exact_reference%@*}" != "$image" ]; then
               echo "ERROR: durable managed image pointer identity is invalid for ${agent}." >&2
               exit 1

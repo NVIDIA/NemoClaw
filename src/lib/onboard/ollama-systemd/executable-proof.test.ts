@@ -24,6 +24,14 @@ const serviceUserAccessScript = [
   "/usr/bin/printf 'nemoclaw-service-user-access:%s\\n' \"$status\"",
   'exit "$status"',
 ].join("\n");
+const directServiceUserProofScript = [
+  '"$1" --version',
+  "status=$?",
+  'case "$status" in',
+  "  124|137) exit 1 ;;",
+  '  *) exit "$status" ;;',
+  "esac",
+].join("\n");
 const temporaryDirectories: string[] = [];
 
 function capture(
@@ -45,6 +53,14 @@ function isServiceUserAccessCommand(command: readonly string[]): boolean {
 
 function isServiceUserProofCommand(command: readonly string[]): boolean {
   return command.includes("/usr/bin/systemd-run") && command.at(-1) === "--version";
+}
+
+function isBoundedDirectServiceUserProofCommand(command: readonly string[]): boolean {
+  return (
+    command.includes("/usr/bin/timeout") &&
+    command.includes(directServiceUserProofScript) &&
+    command.at(-1) === executablePath
+  );
 }
 
 function expectServiceUserProofCommand(command: readonly string[], serviceUser: string): void {
@@ -69,6 +85,30 @@ function expectServiceUserProofCommand(command: readonly string[], serviceUser: 
     ]),
   );
   expect(command.slice(-2)).toEqual([executablePath, "--version"]);
+}
+
+function expectBoundedDirectServiceUserProofCommand(
+  command: readonly string[],
+  serviceUser: string,
+): void {
+  expect(command).toEqual([
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=0.25s",
+    "15s",
+    "/usr/bin/sudo",
+    "-n",
+    "-u",
+    serviceUser,
+    "--",
+    "/usr/bin/env",
+    "LC_ALL=C",
+    "/bin/sh",
+    "-c",
+    directServiceUserProofScript,
+    "nemoclaw-direct-service-user-proof",
+    executablePath,
+  ]);
 }
 
 type CommandCase = readonly [
@@ -244,6 +284,89 @@ describe("readElfInterpreterPath", () => {
   });
 });
 
+describe("bounded direct execution proof process ownership", () => {
+  it.each([124, 137])(
+    "does not confuse a completed child exit %i with deadline expiry (#12281)",
+    (exitCode) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-child-exit-"));
+      temporaryDirectories.push(directory);
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(scriptPath, `#!/bin/sh\nexit ${String(exitCode)}\n`, { mode: 0o755 });
+      const result = spawnSync(
+        "/bin/sh",
+        ["-c", directServiceUserProofScript, "nemoclaw-direct-service-user-proof", scriptPath],
+        { timeout: 3_000 },
+      );
+
+      expect(result.status).toBe(1);
+    },
+  );
+
+  it.runIf(process.platform === "linux" && fs.existsSync("/usr/bin/timeout"))(
+    "preserves GNU timeout's deadline status after wrapping the proof command (#12281)",
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-deadline-"));
+      temporaryDirectories.push(directory);
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(scriptPath, "#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n", {
+        mode: 0o755,
+      });
+
+      const result = spawnSync(
+        "/usr/bin/timeout",
+        [
+          "--signal=TERM",
+          "--kill-after=0.25s",
+          "0.1s",
+          "/bin/sh",
+          "-c",
+          directServiceUserProofScript,
+          "nemoclaw-direct-service-user-proof",
+          scriptPath,
+        ],
+        { timeout: 3_000 },
+      );
+
+      expect([124, 137]).toContain(result.status);
+    },
+  );
+
+  it.runIf(process.platform === "linux" && fs.existsSync("/usr/bin/timeout"))(
+    "kills a TERM-resistant descendant through GNU timeout's process group (#12281)",
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-timeout-group-"));
+      temporaryDirectories.push(directory);
+      const pidPath = path.join(directory, "descendant.pid");
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/bin/sh",
+          "trap '' TERM",
+          "/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' proof-descendant &",
+          'printf "%s\\n" "$!" > "$1"',
+          "wait",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "/usr/bin/timeout",
+        ["--signal=TERM", "--kill-after=0.25s", "3s", scriptPath, pidPath],
+        { timeout: 6_000 },
+      );
+      const descendantPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
+      const statPath = `/proc/${String(descendantPid)}/stat`;
+      const processState = fs.existsSync(statPath)
+        ? fs.readFileSync(statPath, "utf8").split(" ")[2]
+        : "";
+
+      expect(result.status).not.toBe(0);
+      expect(["", "Z"]).toContain(processState);
+    },
+  );
+});
+
 describe("proveOllamaSystemdServiceExecutable", () => {
   it("uses sudo's numeric UID form for every service-user command (#9728)", () => {
     const fixture = proofFixture(0o755, "997");
@@ -306,6 +429,70 @@ describe("proveOllamaSystemdServiceExecutable", () => {
       ["/usr/bin/sudo", "-n", "/usr/bin/chmod", "0755", "--", executablePath],
     ]);
     expect(commands.flat()).not.toContain("serve");
+  });
+
+  it("uses the bounded direct proof when post-repair systemd verification times out (#12281)", () => {
+    const fixture = proofFixture();
+    let systemdProofCount = 0;
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [
+          (candidate) => isServiceUserProofCommand(candidate),
+          () => {
+            systemdProofCount += 1;
+            return systemdProofCount === 1 ? capture(1) : capture(null, "", true);
+          },
+        ],
+        [
+          (candidate) =>
+            isServiceUserAccessCommand(candidate) && candidate.at(-1) === executablePath,
+          () => accessCapture(false),
+        ],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
+        [
+          (candidate) => candidate.includes("/usr/bin/chmod"),
+          (candidate) => {
+            fixture.setMode(
+              Number.parseInt(String(candidate[candidate.indexOf("/usr/bin/chmod") + 1]), 8),
+            );
+            return capture(0);
+          },
+        ],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => capture(0, "ollama version is 0.11.10\n"),
+        ],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      ok: true,
+      repaired: true,
+    });
+    const commands = fixture.runCaptureExImpl.mock.calls.map(
+      ([command]) => command as readonly string[],
+    );
+    expect(commands.filter(isServiceUserProofCommand)).toHaveLength(2);
+    const directProofs = commands.filter(isBoundedDirectServiceUserProofCommand);
+    expect(directProofs).toHaveLength(1);
+    expectBoundedDirectServiceUserProofCommand(directProofs[0] ?? [], "ollama");
+    expect(
+      fixture.runCaptureExImpl.mock.calls.find(([command]) =>
+        isBoundedDirectServiceUserProofCommand(command as readonly string[]),
+      )?.[1],
+    ).toEqual({ timeout: 17_000 });
+    expect(commands.filter((command) => command.includes("/usr/bin/chmod"))).toEqual([
+      ["/usr/bin/sudo", "-n", "/usr/bin/chmod", "0755", "--", executablePath],
+    ]);
   });
 
   it("restores the previous mode when the proof still fails after repair (#9728)", () => {
@@ -513,12 +700,6 @@ describe("proveOllamaSystemdServiceExecutable", () => {
         "could not verify that systemd User 'ollama' resolves to a host account within 5 seconds",
     },
     {
-      call: 3,
-      classification: "execution-timeout",
-      message:
-        "Ollama ExecStart did not complete '--version' as systemd User 'ollama' within 15 seconds",
-    },
-    {
       call: 4,
       classification: "executable-timeout",
       message: `could not verify that systemd User 'ollama' can execute Ollama ExecStart '${executablePath}' within 5 seconds`,
@@ -552,6 +733,72 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     },
   );
 
+  it("falls back to a bounded direct service-user proof after systemd-run times out (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => capture(0, "ollama version is 0.11.10\n"),
+        ],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      ok: true,
+      repaired: false,
+      serviceUser: "ollama",
+    });
+    const directCalls = fixture.runCaptureExImpl.mock.calls.filter(([command]) =>
+      isBoundedDirectServiceUserProofCommand(command as readonly string[]),
+    );
+    expect(directCalls).toHaveLength(1);
+    const [[command, options]] = directCalls;
+    expectBoundedDirectServiceUserProofCommand(command as readonly string[], "ollama");
+    expect(options).toEqual({ timeout: 17_000 });
+    expect(
+      fixture.runCaptureExImpl.mock.calls.some(([candidate]) =>
+        (candidate as readonly string[]).includes("/usr/bin/chmod"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when both bounded service-user proofs time out (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
+        [(candidate) => isBoundedDirectServiceUserProofCommand(candidate), () => capture(124)],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      classification: "execution-timeout",
+      message:
+        "systemd-run timed out after 15 seconds, and the direct service-user recovery proof also timed out after 15 seconds for Ollama ExecStart '--version' as systemd User 'ollama'",
+      ok: false,
+    });
+  });
+
   it("passes cgroup cleanup limits to systemd-run for the service-user proof (#10663)", () => {
     const fixture = proofFixture(0o755);
 
@@ -568,10 +815,12 @@ describe("proveOllamaSystemdServiceExecutable", () => {
   it("classifies the systemd cgroup runtime limit as an execution timeout (#10663)", () => {
     const fixture = proofFixture(0o755);
     fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
-      command.includes("/usr/bin/systemd-run")
+      command.includes("/usr/bin/systemd-run") || command.includes("/usr/bin/timeout")
         ? {
-            exitCode: 1,
-            stderr: "Finished with result: timeout\n",
+            exitCode: command.includes("/usr/bin/timeout") ? 124 : 1,
+            stderr: command.includes("/usr/bin/systemd-run")
+              ? "Finished with result: timeout\n"
+              : "",
             stdout: "",
             timedOut: false,
           }
@@ -627,6 +876,44 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     );
     expect(result.ok ? "" : result.message).not.toContain(credential);
     expect(result.ok ? "" : result.message).not.toContain("detail ".repeat(40));
+  });
+
+  it("retains the systemd timeout and direct fallback diagnostics (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [
+          (candidate) => isServiceUserProofCommand(candidate),
+          () => ({
+            ...capture(null, "", true),
+            stderr: "Finished with result: timeout\n",
+          }),
+        ],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => ({ ...capture(1), stderr: "direct proof failed\n" }),
+        ],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
+      ]),
+    );
+
+    const result = proveOllamaSystemdServiceExecutable(fixture.options);
+
+    expect(result).toMatchObject({ classification: "execution-failed", ok: false });
+    expect(result.ok ? "" : result.message).toContain("systemd-run timed out.");
+    expect(result.ok ? "" : result.message).toContain(
+      "systemd-run detail: Finished with result: timeout",
+    );
+    expect(result.ok ? "" : result.message).toContain("direct proof detail: direct proof failed");
   });
 
   it("accepts an initial service-user proof without changing permissions (#9728)", () => {

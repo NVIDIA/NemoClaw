@@ -12,8 +12,6 @@ vi.mock("../blueprint/state.js", () => ({
 
 vi.mock("../onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(),
-  describeOnboardEndpoint: vi.fn(),
-  describeOnboardProvider: vi.fn(),
 }));
 
 vi.mock("./config-show.js", () => ({
@@ -21,17 +19,12 @@ vi.mock("./config-show.js", () => ({
 }));
 
 import { loadState } from "../blueprint/state.js";
-import {
-  describeOnboardEndpoint,
-  describeOnboardProvider,
-  loadOnboardConfig,
-} from "../onboard/config.js";
+import { loadOnboardConfig } from "../onboard/config.js";
 import { handleSlashCommand } from "./slash.js";
+import { slashConfigShow } from "./config-show.js";
 
 const mockedLoadState = vi.mocked(loadState);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
-const mockedDescribeOnboardEndpoint = vi.mocked(describeOnboardEndpoint);
-const mockedDescribeOnboardProvider = vi.mocked(describeOnboardProvider);
 
 function makeCtx(args?: string): PluginCommandContext {
   return {
@@ -39,7 +32,12 @@ function makeCtx(args?: string): PluginCommandContext {
     isAuthorizedSender: true,
     args,
     commandBody: `/nemoclaw${args ? ` ${args}` : ""}`,
-    config: {},
+    config: {
+      agents: { defaults: { model: "inference/native-model" } },
+      models: {
+        providers: { inference: { baseUrl: "https://native.example/v1", apiKey: "${NATIVE_KEY}" } },
+      },
+    },
   };
 }
 
@@ -106,10 +104,46 @@ describe("commands/slash", () => {
 
   describe("config", () => {
     it("routes to config show handler", () => {
-      const result = handleSlashCommand(makeCtx("config"), makeApi());
+      const ctx = makeCtx("config");
+      const result = handleSlashCommand(ctx, makeApi());
       expect(result.text).toContain("Config");
+      expect(slashConfigShow).toHaveBeenCalledExactlyOnceWith(ctx.config);
     });
   });
+
+  it.each(["status", "onboard"])(
+    "reads native edits for each %s request without stale fallback",
+    (command) => {
+      const stale = {
+        profile: "default",
+        onboardedAt: "2026-09-23",
+        model: "stale/model",
+        provider: "stale",
+        endpointUrl: "https://stale.example/v1",
+        credentialEnv: "STALE_KEY",
+      };
+      mockedLoadOnboardConfig.mockReturnValue(stale);
+      const api = makeApi();
+      const ctx = makeCtx(command);
+      ctx.config = {
+        agents: { defaults: { model: "edited/new-model" } },
+        models: {
+          providers: { edited: { baseUrl: "https://edited.example/v1", apiKey: "${EDITED_KEY}" } },
+        },
+      };
+      const current = handleSlashCommand(ctx, api).text;
+      expect(current).toContain("Provider: edited");
+      expect(current).toContain("Model: edited/new-model");
+      expect(current).toContain("https://edited.example/v1");
+      expect(current).not.toContain("stale");
+      expect(current?.includes("EDITED_KEY")).toBe(command === "onboard");
+      ctx.config = {};
+      const missing = handleSlashCommand(ctx, api).text;
+      expect(missing).toContain("Model: (not configured)");
+      expect(missing).not.toContain("stale");
+      expect(missing).not.toContain("native-model");
+    },
+  );
 
   // -------------------------------------------------------------------------
   // status
@@ -117,49 +151,38 @@ describe("commands/slash", () => {
 
   describe("status", () => {
     const onboardConfig: NemoClawOnboardConfig = {
-      endpointType: "build",
-      endpointUrl: "https://api.build.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     };
 
-    it("reports the onboard hint when no onboard config exists", () => {
+    it("reports native routing even without onboarding metadata", () => {
       const result = handleSlashCommand(makeCtx("status"), makeApi());
-      expect(result.text).toContain("No onboard configuration found");
-      expect(result.text).toContain("nemoclaw onboard");
+      expect(result.text).toContain("Model: inference/native-model");
+      expect(result.text).toContain("(not recorded)");
     });
 
     it("reports sandbox, endpoint, provider, and model when onboarded", () => {
       mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
-      mockedDescribeOnboardEndpoint.mockReturnValue("build (https://api.build.nvidia.com/v1)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       const api = makeApi();
       api.pluginConfig = { sandboxName: "prachi-restricted" };
       const result = handleSlashCommand(makeCtx("status"), api);
       expect(result.text).toContain("NemoClaw Status");
       expect(result.text).toContain("Sandbox: prachi-restricted");
-      expect(result.text).toContain("Endpoint: build (https://api.build.nvidia.com/v1)");
-      expect(result.text).toContain("Provider: NVIDIA Endpoints");
-      expect(result.text).toContain("Model: nvidia/nemotron-3-super-120b-a12b");
+      expect(result.text).toContain("Endpoint: https://native.example/v1");
+      expect(result.text).toContain("Provider: inference");
+      expect(result.text).toContain("Model: inference/native-model");
       expect(result.text).toContain("Onboarded: 2026-03-01T00:00:00.000Z");
       expect(result.text).not.toContain("No operations performed yet");
     });
 
     it("falls back to default sandbox name when pluginConfig is empty", () => {
       mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
-      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       const result = handleSlashCommand(makeCtx("status"), makeApi());
       expect(result.text).toContain("Sandbox: openclaw");
     });
 
     it("includes rebuild info when present", () => {
       mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
-      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       mockedLoadState.mockReturnValue({
         ...blankState(),
         lastRebuildAt: "2026-04-15T10:00:00Z",
@@ -172,8 +195,6 @@ describe("commands/slash", () => {
 
     it("includes rollback snapshot when present", () => {
       mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
-      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       mockedLoadState.mockReturnValue({
         ...blankState(),
         migrationSnapshot: "/snapshots/snap-001",
@@ -247,45 +268,34 @@ describe("commands/slash", () => {
   describe("onboard", () => {
     it("shows setup instructions when no config exists", () => {
       const result = handleSlashCommand(makeCtx("onboard"), makeApi());
-      expect(result.text).toContain("No configuration found");
+      expect(result.text).toContain("Profile: (not recorded)");
       expect(result.text).toContain("nemoclaw onboard");
     });
 
     it("shows onboard status when config exists", () => {
       const config = {
-        endpointType: "build" as const,
-        endpointUrl: "https://api.build.nvidia.com/v1",
-        ncpPartner: null,
-        model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);
-      mockedDescribeOnboardEndpoint.mockReturnValue("build (https://api.build.nvidia.com/v1)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoint API");
       const result = handleSlashCommand(makeCtx("onboard"), makeApi());
       expect(result.text).toContain("NemoClaw Onboard Status");
-      expect(result.text).toContain("NVIDIA Endpoint API");
-      expect(result.text).toContain("nvidia/nemotron-3-super-120b-a12b");
-      expect(result.text).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(result.text).toContain("Provider: inference");
+      expect(result.text).toContain("inference/native-model");
+      expect(result.text).toContain("NATIVE_KEY");
     });
 
-    it("includes NCP partner when set", () => {
+    it("does not invent missing native primary from onboarding metadata", () => {
       const config: NemoClawOnboardConfig = {
-        endpointType: "ncp",
-        endpointUrl: "https://partner.example.com/v1",
-        ncpPartner: "PartnerCo",
-        model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);
-      mockedDescribeOnboardEndpoint.mockReturnValue("ncp (https://partner.example.com/v1)");
-      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Cloud Partner");
-      const result = handleSlashCommand(makeCtx("onboard"), makeApi());
-      expect(result.text).toContain("NCP Partner: PartnerCo");
+      const ctx = makeCtx("onboard");
+      ctx.config = {};
+      const result = handleSlashCommand(ctx, makeApi());
+      expect(result.text).toContain("Model: (not configured)");
+      expect(result.text).toContain("Credential: (not configured)");
     });
   });
 });
