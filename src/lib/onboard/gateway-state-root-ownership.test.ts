@@ -65,6 +65,22 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
+  it("names the mode and the chmod remedy when an owned ancestor is group-writable", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-group-writable-parent-"));
+    const stateDir = path.join(root, "gateway");
+    try {
+      fs.chmodSync(root, 0o775);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+        `ancestor '${root}' is not a trusted real directory owned by the current user or root without group or world write access. It has mode 0775; remove group and other write permission (chmod go-w '${root}'), then retry.`,
+      );
+      expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a private immediate parent beneath a replaceable ancestor", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-replaceable-gateway-parent-"));
     const replaceableAncestor = path.join(root, "replaceable");
