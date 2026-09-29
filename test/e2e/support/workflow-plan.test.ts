@@ -301,12 +301,17 @@ describe("E2E workflow plan", () => {
     );
   });
 
-  it("selects custom-image route evidence when the initial route owner changes (#12033)", () => {
-    expect(
-      catalogueTargetsForChangedFiles(["src/lib/onboard/openclaw/initial-inference-route.ts"]).map(
-        (target) => target.id,
-      ),
-    ).toContain("openclaw-inference-switch");
+  it.each([
+    "src/lib/onboard.ts",
+    "src/lib/onboard/machine/core-flow-phases.ts",
+    "src/lib/onboard/machine/flow-context.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+    "src/lib/onboard/openclaw/initial-inference-route.ts",
+    "src/lib/onboard/sandbox-recreate-transaction.ts",
+  ])("selects custom-image route evidence when %s changes (#12033)", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "openclaw-inference-switch",
+    );
   });
 
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {
