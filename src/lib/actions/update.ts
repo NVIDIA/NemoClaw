@@ -8,6 +8,11 @@ import path from "node:path";
 
 import { resolveAgentNameAlias } from "../agent/aliases";
 import { normalizeVersion } from "../domain/installer/version";
+import {
+  hasAcceptedUsageNotice,
+  loadUsageNoticeConfig,
+  NOTICE_ACCEPT_ENV,
+} from "../onboard/usage-notice";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
@@ -60,6 +65,20 @@ export interface RunUpdateDeps {
   prompt?: PromptFn;
   rootDir?: string;
   spawnSyncImpl?: SpawnSyncFn;
+  /** Whether the current third-party software notice is already accepted. */
+  usageNoticeAccepted?: () => boolean;
+  /** Whether the installer can prompt on a terminal (stdin or the controlling TTY). */
+  hasTerminal?: () => boolean;
+}
+
+function canPromptOnTerminal(): boolean {
+  if (process.stdin.isTTY) return true;
+  try {
+    fs.closeSync(fs.openSync("/dev/tty", "r"));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface RunUpdateResult {
@@ -535,6 +554,30 @@ export async function runUpdateAction(
     log(
       `  ${branding.displayName} is already up to date; reinstalling anyway (--fresh) for a clean re-clone.`,
     );
+  }
+
+  // The installer must show the third-party software notice unless it is already
+  // accepted. `--yes` only waives the update confirmation, so without a saved
+  // acceptance, the accept variable, or a terminal to prompt on, fail here instead
+  // of partway through the installer (#11976).
+  const noticeAccepted =
+    env[NOTICE_ACCEPT_ENV] === "1" ||
+    (deps.usageNoticeAccepted ?? (() => hasAcceptedUsageNotice(loadUsageNoticeConfig().version)))();
+  const canPrompt =
+    env.NEMOCLAW_NON_INTERACTIVE !== "1" && (deps.hasTerminal ?? canPromptOnTerminal)();
+  if (!noticeAccepted && !canPrompt) {
+    error(
+      "  The maintained installer must show the third-party software notice, and no terminal is available to accept it.",
+    );
+    error(`  Re-run in a terminal, or set ${NOTICE_ACCEPT_ENV}=1 to accept the notice.`);
+    return {
+      currentVersion,
+      installType,
+      latestVersion,
+      ranInstaller: false,
+      status: 1,
+      updateAvailable: available,
+    };
   }
 
   log(`  Running maintained ${branding.displayName} installer...`);

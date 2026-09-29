@@ -15,6 +15,13 @@ import {
   runUpdateAction,
 } from "./update";
 
+// Most cases exercise version and confirmation logic, so the third-party notice
+// counts as accepted unless a case injects its own answer.
+vi.mock("../onboard/usage-notice", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../onboard/usage-notice")>()),
+  hasAcceptedUsageNotice: vi.fn(() => true),
+}));
+
 const MAINTAINED_REVISION = "a".repeat(40);
 const maintainedTarget = (version: string | null) => ({
   revision: MAINTAINED_REVISION,
@@ -603,6 +610,68 @@ describe("runUpdateAction", () => {
       ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
       expect.objectContaining({ stdio: "inherit" }),
     );
+  });
+
+  describe("third-party software notice before the installer (#11976)", () => {
+    const run = (env: NodeJS.ProcessEnv, hasTerminal: boolean) => {
+      const error = vi.fn();
+      const spawnSyncImpl = vi.fn(
+        () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+      );
+      const result = runUpdateAction(
+        { fresh: true, yes: true },
+        {
+          currentVersion: () => "0.1.0",
+          env,
+          error,
+          getMaintainedTarget: () => maintainedTarget("0.2.0"),
+          hasTerminal: () => hasTerminal,
+          isSourceCheckout: () => false,
+          log: vi.fn(),
+          spawnSyncImpl,
+          usageNoticeAccepted: () => false,
+        },
+      );
+      return { error, result, spawnSyncImpl };
+    };
+
+    it("fails before the installer when the notice cannot be accepted", async () => {
+      const { error, result, spawnSyncImpl } = run({ HOME: "/tmp/nemoclaw-update-test" }, false);
+
+      await expect(result).resolves.toEqual(
+        expect.objectContaining({ ranInstaller: false, status: 1 }),
+      );
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1"),
+      );
+    });
+
+    it("treats NEMOCLAW_NON_INTERACTIVE=1 as unable to prompt", async () => {
+      const { result, spawnSyncImpl } = run({ NEMOCLAW_NON_INTERACTIVE: "1" }, true);
+
+      await expect(result).resolves.toEqual(expect.objectContaining({ status: 1 }));
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+    });
+
+    it("runs the installer with the accept variable and passes it through", async () => {
+      const { result, spawnSyncImpl } = run({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" }, false);
+
+      await expect(result).resolves.toEqual(expect.objectContaining({ ranInstaller: true }));
+      expect(spawnSyncImpl).toHaveBeenCalledWith(
+        "bash",
+        expect.any(Array),
+        expect.objectContaining({
+          env: expect.objectContaining({ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" }),
+        }),
+      );
+    });
+
+    it("runs the installer when a terminal can show the notice", async () => {
+      const { result } = run({}, true);
+
+      await expect(result).resolves.toEqual(expect.objectContaining({ ranInstaller: true }));
+    });
   });
 
   it("runs the maintained installer without prompting for --yes", async () => {
