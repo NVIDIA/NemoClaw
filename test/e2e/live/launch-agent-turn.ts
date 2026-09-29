@@ -1514,7 +1514,7 @@ wait_for_turn_count() {
   local evidence_status
   local session_active
   # Retain this phase's diagnostics if the final deadline probe has no stderr.
-  # fail_launch_session prints only their bounded tail.
+  # Bound the retained tail after each failed probe, before polling again.
   : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
     # Sample liveness first so an exited child receives one final evidence qualification.
@@ -1525,6 +1525,8 @@ wait_for_turn_count() {
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
         3) fail_provider_unavailable ;;
@@ -1549,6 +1551,8 @@ wait_for_pty_input_mode() {
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1569,6 +1573,8 @@ wait_for_pty_monitor_ready() {
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
     fi

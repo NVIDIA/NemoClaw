@@ -438,13 +438,20 @@ if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "$NEMOCLAW_FIX
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "monitor-ready" ]]; then
-  # Model a final deadline probe returning without a new diagnostic.
-  probe_marker="$NEMOCLAW_FIXTURE_BIN_ROOT/pty-monitor-probed"
-  if [[ -e "$probe_marker" ]]; then
-    : > "$NEMOCLAW_FIXTURE_BIN_ROOT/empty-pty-probe"
-    exit 1
-  fi
-  : > "$probe_marker"
+  # Model noisy failures followed by a deadline probe with no new diagnostic.
+  node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const sizesPath = path.join(process.env.NEMOCLAW_FIXTURE_BIN_ROOT, "retained-evidence-sizes.json");
+const sizes = fs.existsSync(sizesPath) ? JSON.parse(fs.readFileSync(sizesPath, "utf8")) : [];
+sizes.push(fs.fstatSync(2).size);
+fs.writeFileSync(sizesPath, JSON.stringify(sizes));
+if (sizes.length > 2) {
+  fs.writeFileSync(path.join(process.env.NEMOCLAW_FIXTURE_BIN_ROOT, "empty-pty-probe"), "");
+  process.exit(1);
+}
+process.stderr.write("x".repeat(16_384) + "\n");
+'
 fi
 if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MODE" == "provider-exit-after-recording" ) && "$4" == "qualify" && "$7" == "1" ]]; then
   set +e
@@ -542,6 +549,11 @@ exec "$@"
       canonicalRestored: existsSync(canonicalRestoredMarker),
       earlyInputObserved: existsSync(earlyInputMarker),
       emptyPtyProbeObserved: existsSync(join(fixtureRoot, "empty-pty-probe")),
+      retainedEvidenceSizes: existsSync(join(fixtureRoot, "retained-evidence-sizes.json"))
+        ? (JSON.parse(
+            readFileSync(join(fixtureRoot, "retained-evidence-sizes.json"), "utf8"),
+          ) as number[])
+        : [],
       hostSessionResidue: readdirSync(fixtureRoot).filter((name) =>
         name.startsWith("nemoclaw-launch-host."),
       ),
@@ -1046,12 +1058,19 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "retains the missing PTY socket diagnostic when a later deadline probe returns no stderr (#9160)",
+  "bounds repeated PTY errors and retains the diagnostic across a silent deadline probe (#9160)",
   async ({ expect }) => {
-    const { baselineRemoved, emptyPtyProbeObserved, ptyMonitorRemoved, result, ttyObserved } =
-      await runLaunchSessionFixture("pty-socket-timeout", "absent");
+    const {
+      baselineRemoved,
+      emptyPtyProbeObserved,
+      ptyMonitorRemoved,
+      result,
+      retainedEvidenceSizes,
+      ttyObserved,
+    } = await runLaunchSessionFixture("pty-socket-timeout", "absent");
     expect(ttyObserved).toBe(false);
     expect(emptyPtyProbeObserved).toBe(true);
+    expect(Math.max(...retainedEvidenceSizes)).toBe(2048);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
     expect(result.signal).toBeNull();
