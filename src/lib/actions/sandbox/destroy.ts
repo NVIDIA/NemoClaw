@@ -1272,6 +1272,7 @@ async function destroySandboxUnlocked(
         current.sandboxName === destroySession.sandboxName &&
         current.endpointUrl === destroySession.endpointUrl &&
         current.routerPid === destroySession.routerPid &&
+        (current.routerPort ?? null) === (destroySession.routerPort ?? null) &&
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;

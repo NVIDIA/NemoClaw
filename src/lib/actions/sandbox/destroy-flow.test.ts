@@ -745,6 +745,22 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("preserves the session when only its router port changes during destroy", async () => {
+    const harness = createDestroyHarness({ sessionRouterPid: 4242 });
+    harness.sessionState.routerPort = 4000;
+    const originalSession = { ...harness.sessionState };
+    const removeSandbox = harness.removeSandboxSpy.getMockImplementation()!;
+    harness.removeSandboxSpy.mockImplementationOnce((...args) => {
+      harness.sessionState.routerPort = 14000;
+      return removeSandbox(...args);
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.compareAndSwapSessionSpy).toHaveReturnedWith("mismatch");
+    expect(harness.sessionState).toEqual({ ...originalSession, routerPort: 14000 });
+  });
+
   it("leaves an active same-name replacement onboarding session unchanged", async () => {
     const harness = createDestroyHarness({
       provider: "nvidia-router",
