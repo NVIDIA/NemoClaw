@@ -761,8 +761,9 @@ The report also groups repeated observable outcomes. Those rows are retained onl
 ## Full E2E inference availability
 
 `live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
-It requires a successful response containing the expected answer; support tests
-in `support/full-e2e-inference-probe.test.ts` own parsing and retry decisions.
+It requires a successful response containing the expected answer.
+`live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
+`support/full-e2e-inference-probe.test.ts` verifies that behavior.
 The stateless request has no tools or conversation persistence, so repeating it
 has no application mutation. It may consume another inference request.
 
