@@ -562,6 +562,7 @@ async function isOpenClawDoctorSandboxStopped(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 ): Promise<boolean> {
   try {
     const observed = await openClawDoctorSandboxLookup(
@@ -572,7 +573,7 @@ async function isOpenClawDoctorSandboxStopped(
       target: runtimeSelection
         ? namedOpenShellGateway(runtimeSelection.gatewayName)
         : selectedOpenShellGateway(),
-      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+      timeoutMs: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs))),
     });
     if (!observed.result.ok || observed.result.value.state !== "present") return false;
     const sandbox = observed.result.value.sandbox;
@@ -992,6 +993,7 @@ async function releaseAndVerifyOpenClawMaintenanceWindow(
   if (!released.ok) return released;
 
   const { sandboxName, runtimeSelection } = window;
+  let stoppedSandboxRestartAttempted = false;
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(
@@ -1010,7 +1012,42 @@ async function releaseAndVerifyOpenClawMaintenanceWindow(
         beforeTimeout,
         runtimeSelection,
       );
-      if (markersBefore?.status !== 0) return false;
+      if (markersBefore?.status !== 0) {
+        const stoppedLookupRemainingMs = reconciliationDeadlineMs - deps.now();
+        if (
+          Number.isFinite(stoppedLookupRemainingMs) &&
+          stoppedLookupRemainingMs > 0 &&
+          !stoppedSandboxRestartAttempted &&
+          (await isOpenClawDoctorSandboxStopped(
+            sandboxName,
+            runtimeSelection,
+            deps,
+            stoppedLookupRemainingMs,
+          ))
+        ) {
+          const restartRemainingMs = reconciliationDeadlineMs - deps.now();
+          if (!Number.isFinite(restartRemainingMs) || restartRemainingMs <= 0) return false;
+          stoppedSandboxRestartAttempted = true;
+          captureOpenClawDoctorLifecycle(
+            deps,
+            ["sandbox", "start", sandboxName],
+            withSelectedOpenShellCommandOptions(
+              {
+                ignoreError: true,
+                includeStderr: true,
+                killProcessTreeOnTimeout: true,
+                killSignal: "SIGKILL" as const,
+                timeout: Math.min(
+                  OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+                  Math.max(1, Math.floor(restartRemainingMs)),
+                ),
+              },
+              runtimeSelection,
+            ),
+          );
+        }
+        return false;
+      }
 
       const healthTimeout = probeTimeout();
       if (healthTimeout === null) return false;

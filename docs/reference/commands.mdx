@@ -3233,8 +3233,8 @@ The retry is complete when the command exits zero and reports that the sandbox w
 
 Back up registered sandboxes that are running or have an eligible stopped Docker-driver container to `~/.nemoclaw/rebuild-backups/`. A registered docker-driver sandbox whose container is stopped is started for the duration of the backup and returned to its stopped state afterward. If the container cannot be returned to the stopped state, the command fails and reports that the container was left running. Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
-For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation.
+After OpenShell accepts the start, one lifecycle transaction covers readiness, state capture, and returning the sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 ```bash

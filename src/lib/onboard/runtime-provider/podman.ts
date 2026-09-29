@@ -263,7 +263,7 @@ export function createPodmanRuntimeProviderBundle(
             providerId,
             supported: true,
             services: ["ollama", "nim", "vllm"],
-            createOperation: ({ env, acceleration }) => {
+            createOperation: ({ env, acceleration, deadlineMs }) => {
               if (publishedRecoveryOperation) {
                 if (
                   env !== publishedRecoveryOperation.environment ||
@@ -278,6 +278,7 @@ export function createPodmanRuntimeProviderBundle(
                 engine: inferenceEngine,
                 env,
                 acceleration,
+                ...(deadlineMs === undefined ? {} : { deadlineMs }),
                 authorityStore: inferenceOptions.authorityStore,
                 routeAuthorityStore: inferenceOptions.routeAuthorityStore,
                 onFailureEvidence: inferenceOptions.onFailureEvidence,
@@ -287,7 +288,9 @@ export function createPodmanRuntimeProviderBundle(
                   : {}),
                 ...(inferenceOptions.authority ? { authority: inferenceOptions.authority } : {}),
                 ...(inferenceOptions.authorityQualification
-                  ? { authorityQualification: inferenceOptions.authorityQualification }
+                  ? {
+                      authorityQualification: inferenceOptions.authorityQualification,
+                    }
                   : {}),
                 ...(inferenceOptions.hermesPortablePublishedEngineAuthority
                   ? {
@@ -296,7 +299,9 @@ export function createPodmanRuntimeProviderBundle(
                     }
                   : {}),
                 ...(inferenceOptions.publishedResumeTiming
-                  ? { publishedResumeTiming: inferenceOptions.publishedResumeTiming }
+                  ? {
+                      publishedResumeTiming: inferenceOptions.publishedResumeTiming,
+                    }
                   : {}),
               });
             },
