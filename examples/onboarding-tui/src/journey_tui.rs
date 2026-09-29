@@ -770,6 +770,55 @@ mod tests {
     }
 
     #[test]
+    fn back_restores_the_previous_answer_without_rewriting_the_template() {
+        let capabilities = Capabilities::available();
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let original_name = state.values().pointer("/metadata/name").cloned();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        wizard
+            .submit(Some(serde_json::json!("chosen-name")))
+            .unwrap();
+        assert_eq!(
+            wizard.question().unwrap().id(),
+            "/spec/sandboxes/0/harness/kind"
+        );
+        wizard.back();
+        assert_eq!(wizard.question().unwrap().id(), "/metadata/name");
+        assert_eq!(
+            wizard.state.values().pointer("/metadata/name"),
+            original_name.as_ref()
+        );
+    }
+
+    #[test]
+    fn optional_question_can_be_omitted_through_the_new_wizard() {
+        let capabilities = Capabilities::available();
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        for _ in 0..30 {
+            if wizard
+                .question()
+                .is_some_and(|question| !question.required())
+            {
+                let id = wizard.question().unwrap().id().to_owned();
+                wizard.submit(None).unwrap();
+                assert!(
+                    wizard
+                        .state
+                        .resolve(&wizard.capabilities)
+                        .unwrap()
+                        .omitted()
+                        .contains(&id)
+                );
+                return;
+            }
+            wizard.advance();
+            assert!(wizard.error.is_none(), "{:?}", wizard.error);
+        }
+        panic!("the default journey has no optional question");
+    }
+
+    #[test]
     fn default_path_reaches_a_valid_document_through_the_new_wizard() {
         let capabilities = Capabilities::available();
         let state = load_journey(Source::Defaults, &capabilities).unwrap();

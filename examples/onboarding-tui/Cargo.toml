@@ -17,13 +17,10 @@ crossterm.workspace = true
 ratatui.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
-serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]
-
-[target.'cfg(unix)'.dependencies]
-rustix.workspace = true
+serde-saphyr.workspace = true
 
 [[bin]]
 name = "nemoclaw-onboarding"

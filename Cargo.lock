@@ -2156,7 +2156,6 @@ dependencies = [
  "nemoclaw-authoring",
  "nemoclaw-sdk",
  "ratatui",
- "rustix",
  "serde-saphyr",
  "serde_json",
  "tempfile",

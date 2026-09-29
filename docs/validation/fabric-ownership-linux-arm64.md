@@ -29,8 +29,8 @@ The local images and bundle were not published.
 | Image packaging | Install Fabric and snapshot its actual installed discovery output |
 
 The adapter fixture lives solely in Fabric at `tests/fixtures/discovery`.
-The [onboarding acceptance test](../../examples/onboarding-tui/src/tui/tests.rs) invokes production terminal discovery through `DiscoverySession`, the verified bundle and its provider.
-It discovers that installed adapter, asks its conditional settings questions and saves/reopens the resulting YAML.
+The [onboarding acceptance test at the validated source revision](https://github.com/NVIDIA/NemoClaw/blob/ee9c19908409e72bfa7ebea16e5e4a9b6225fc57/examples/onboarding-tui/src/tui/tests.rs) invoked production terminal discovery through `DiscoverySession`, the verified bundle and its provider.
+It discovered that installed adapter, asked its conditional settings questions and saved/reopened the resulting YAML.
 The [planning acceptance test](../../crates/nemoclaw-e2e/tests/discovery.rs) consumes the saved document, requires an actual OpenTofu plan to report `supported`, then passes the compiled public configuration through the generic host to Fabric's real fixture runner.
 Removing the required conditional setting makes that plan fail.
 The engine and model endpoints are isolated fixtures; only their addresses and the fixture image reference change between the onboarding and planning tests.
