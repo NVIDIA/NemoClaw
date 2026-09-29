@@ -369,7 +369,6 @@ async function runOnboard(
     skip: SkipFn;
     tier: "balanced" | "open" | "personal";
     extraEnv?: NemoEnv;
-    extraRedactionValues?: string[];
   },
 ): Promise<ShellProbeResult> {
   const onboard = await host.command(
@@ -386,13 +385,16 @@ async function runOnboard(
       cwd: REPO_ROOT,
       env: commandEnv({
         ...args.hosted.env,
+        BRAVE_API_KEY: "",
+        TAVILY_API_KEY: "",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
         ...args.extraEnv,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
         NEMOCLAW_SANDBOX_NAME: args.sandboxName,
       }),
-      redactionValues: [args.hosted.apiKey, ...(args.extraRedactionValues ?? [])],
+      redactionValues: [args.hosted.apiKey],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
@@ -606,13 +608,12 @@ describe.sequential("common-egress agent live targets", () => {
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
-      const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         contract: [
-          "OpenClaw balanced onboarding applies exactly six expected presets without weather",
+          "OpenClaw balanced onboarding applies exactly five expected presets without weather",
           "explicit policy-add weather applies the weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
           "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
@@ -627,8 +628,6 @@ describe.sequential("common-egress agent live targets", () => {
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         skip,
         tier: "balanced",
-        extraEnv: { BRAVE_API_KEY: braveApiKey },
-        extraRedactionValues: [braveApiKey],
       });
 
       await approveOpenClawAdminScope(
@@ -643,7 +642,6 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
       ).toEqual([
-        { name: "brave", provenance: "from openclaw agent" },
         { name: "brew", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
@@ -662,7 +660,6 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
       ).toEqual([
-        { name: "brave", provenance: "from openclaw agent" },
         { name: "brew", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
