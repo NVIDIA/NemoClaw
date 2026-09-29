@@ -313,6 +313,9 @@ When managed OpenClaw uses direct tool disclosure, the export includes `tools.di
 It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
 It never includes collector credentials.
+Before applying the export, run an OTLP/HTTP collector on port `4318` of the destination host.
+The sandbox must reach it as `host.openshell.internal:4318`.
+The export does not install or configure that collector. Verify trace delivery after applying the configuration.
 It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
 It preserves Hermes dashboard and browser terminal UI behavior, including explicit disabled values when omission would enable them, plus nondefault interface ports.
