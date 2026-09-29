@@ -100,6 +100,8 @@ const {
   expectNativeStateKept,
   errorOutput,
   createSourceInput,
+  writeDesktopCredsStore,
+  captureCreateEnv,
   setupHarness,
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
@@ -500,6 +502,23 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ waitForReadyTermination: false }),
     );
     expect(patch.ensureApplied).toHaveBeenCalled();
+  });
+
+  it("creates a WSL managed-image sandbox without a credential-free Docker config when the Desktop helper is unavailable", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    input.sandboxEnv = {
+      PATH: "/usr/bin",
+      WSL_DISTRO_NAME: "Ubuntu",
+      DOCKER_CONFIG: writeDesktopCredsStore(),
+    };
+    const captured = captureCreateEnv();
+
+    await runSandboxGpuCreateFlow(input, createDeps());
+
+    expect(captured.env).toEqual({ PATH: "/usr/bin" });
+    expect(mocks.helperResponds).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("credential-free");
   });
 
   it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
