@@ -16,6 +16,7 @@ const TRACKED_ENV_KEYS = [
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
+  "NEMOCLAW_AGENT",
   "NEMOCLAW_MODEL",
   "NEMOCLAW_NON_INTERACTIVE",
   "NEMOCLAW_PROVIDER",
@@ -26,12 +27,13 @@ const TRACKED_ENV_KEYS = [
   "OPENAI_API_KEY",
 ];
 
-function runSetupNimBridgeScenario(env: Record<string, string>) {
+function runSetupNimBridgeScenario(env: Record<string, string>, agentName: string | null = null) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-key-bridge-"));
   const fakeBin = path.join(tmpDir, "bin");
   const home = path.join(tmpDir, "home");
   const scriptPath = path.join(tmpDir, "bridge-check.cjs");
   const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+  const agentDefsPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "agent", "defs.ts"));
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
@@ -59,6 +61,8 @@ printf '200'
     scriptPath,
     String.raw`
 const { setupNim } = require(${onboardPath});
+const { loadAgent } = require(${agentDefsPath});
+const agentName = ${JSON.stringify(agentName)};
 const env = ${JSON.stringify(env)};
 const trackedKeys = ${JSON.stringify(TRACKED_ENV_KEYS)};
 for (const key of trackedKeys) delete process.env[key];
@@ -80,7 +84,7 @@ Object.assign(process.env, env, {
     throw error;
   };
   try {
-    const result = await setupNim(null, null, null);
+    const result = await setupNim(null, null, agentName ? loadAgent(agentName) : null);
     originalLog(JSON.stringify({ outcome: "completed", result, env: Object.fromEntries(trackedKeys.map((key) => [key, process.env[key] || null])), lines }));
   } catch (error) {
     originalLog(JSON.stringify({ outcome: "exit", exitCode: error.exitCode ?? null, message: error.message, env: Object.fromEntries(trackedKeys.map((key) => [key, process.env[key] || null])), lines }));
@@ -193,6 +197,43 @@ describe("onboard provider-key compatibility bridges", () => {
       assert.equal(payload.result?.provider, "openai-api");
       assert.equal(payload.result?.credentialEnv, "OPENAI_API_KEY");
       assert.equal(payload.env.OPENAI_API_KEY, "sk-explicit-openai");
+    },
+  );
+
+  it(
+    "restages NEMOCLAW_PROVIDER_KEY as COMPATIBLE_API_KEY when setupNim receives Deep Agents Code without NEMOCLAW_AGENT",
+    testTimeoutOptions(90_000),
+    () => {
+      const payload = runSetupNimBridgeScenario(
+        {
+          NEMOCLAW_ENDPOINT_URL: "https://93.184.216.34/v1",
+          NEMOCLAW_PROVIDER_KEY: "sk-hosted-fallback",
+        },
+        "langchain-deepagents-code",
+      );
+
+      assert.equal(payload.outcome, "completed");
+      assert.equal(payload.result?.provider, "compatible-endpoint");
+      assert.equal(payload.result?.credentialEnv, "COMPATIBLE_API_KEY");
+      assert.equal(payload.env.COMPATIBLE_API_KEY, "sk-hosted-fallback");
+      assert.equal(payload.env.NVIDIA_INFERENCE_API_KEY, null);
+    },
+  );
+
+  it(
+    "bridges NEMOCLAW_PROVIDER_KEY to NVIDIA_INFERENCE_API_KEY when setupNim receives OpenClaw and NEMOCLAW_AGENT names Deep Agents Code",
+    testTimeoutOptions(90_000),
+    () => {
+      const payload = runSetupNimBridgeScenario({
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "sk-hosted-fallback",
+      });
+
+      assert.equal(payload.outcome, "exit");
+      assert.equal(payload.env.NVIDIA_INFERENCE_API_KEY, "sk-hosted-fallback");
+      assert.equal(payload.env.COMPATIBLE_API_KEY, null);
+      assert.ok(payload.lines.includes("  [non-interactive] Provider: build"));
+      assert.ok(payload.lines.includes("  Invalid NVIDIA API key. Must start with nvapi-"));
     },
   );
 

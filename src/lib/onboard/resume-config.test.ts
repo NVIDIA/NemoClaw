@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { normalizeSession } from "../state/onboard-session";
@@ -166,5 +166,53 @@ describe("authoritative rebuild resume config", () => {
       requested: "nvidia-prod",
       recorded: "vllm-local",
     });
+  });
+});
+
+describe("resume provider conflict from the Deep Agents Code provider key", () => {
+  const session = {
+    sandboxName: "dcode",
+    provider: "nvidia-prod",
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    agent: "langchain-deepagents-code",
+  };
+
+  beforeEach(() => {
+    for (const key of [
+      "COMPATIBLE_API_KEY",
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+      "NEMOCLAW_COMPAT_MODEL",
+      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+      "NEMOCLAW_PREFERRED_API",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_PROVIDER_MODEL",
+      "NVIDIA_INFERENCE_API_KEY",
+    ]) {
+      vi.stubEnv(key, undefined);
+    }
+    vi.stubEnv("NEMOCLAW_PROVIDER_KEY", "repo-hosted-key");
+  });
+
+  it.each(["langchain-deepagents-code", "dcode"])(
+    "reports a compatible-endpoint provider conflict when the resumed run selects Deep Agents Code as %s",
+    (agent) => {
+      expect(getResumeConfigConflicts(session, { nonInteractive: true, agent })).toContainEqual({
+        field: "provider",
+        requested: "compatible-endpoint",
+        recorded: "nvidia-prod",
+      });
+    },
+  );
+
+  it("reports no provider conflict when the resumed run selects Hermes and NEMOCLAW_AGENT names Deep Agents Code", () => {
+    vi.stubEnv("NEMOCLAW_AGENT", "langchain-deepagents-code");
+
+    expect(getResumeConfigConflicts(session, { nonInteractive: true, agent: "hermes" })).toEqual(
+      [],
+    );
+    expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
   });
 });

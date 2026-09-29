@@ -94,8 +94,13 @@ export function getResumeSandboxConflict(
 export function getRequestedProviderHint(
   nonInteractive = false,
   allowHostedInferenceStaging = true,
+  agentName: string | null = null,
 ): string | null {
-  return onboardProviders.getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
+  return onboardProviders.getRequestedProviderHint(
+    nonInteractive,
+    allowHostedInferenceStaging,
+    agentName,
+  );
 }
 
 /**
@@ -126,8 +131,13 @@ export function preflightEarlyOnboardEnvForResume(
 export function getRequestedModelHint(
   nonInteractive = false,
   allowHostedInferenceStaging = true,
+  agentName: string | null = null,
 ): string | null {
-  return onboardProviders.getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
+  return onboardProviders.getRequestedModelHint(
+    nonInteractive,
+    allowHostedInferenceStaging,
+    agentName,
+  );
 }
 
 export function getResumeConfigConflicts(
@@ -151,6 +161,7 @@ export function getResumeConfigConflicts(
   const conflicts: ResumeConfigConflict[] = [];
   const nonInteractive = opts.nonInteractive ?? false;
   const allowHostedInferenceStaging = opts.authoritativeResumeConfig !== true;
+  const agentName = opts.agent ?? null;
 
   const sandboxConflict = getResumeSandboxConflict(session, { sandboxName: opts.sandboxName });
   if (sandboxConflict) {
@@ -161,7 +172,11 @@ export function getResumeConfigConflicts(
     });
   }
 
-  const requestedProvider = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
+  const requestedProvider = getRequestedProviderHint(
+    nonInteractive,
+    allowHostedInferenceStaging,
+    agentName,
+  );
   const effectiveRequestedProvider =
     session?.vllmInstallModel && requestedProvider === "install-vllm"
       ? "vllm-local"
@@ -183,7 +198,7 @@ export function getResumeConfigConflicts(
   const requestedModel =
     session?.vllmInstallModel && requestedVllmModel
       ? requestedVllmModel
-      : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
+      : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging, agentName);
   const recordedModel = session?.vllmInstallModel ?? session?.model;
   if (
     requestedModel &&

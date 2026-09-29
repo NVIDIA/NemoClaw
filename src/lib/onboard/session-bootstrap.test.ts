@@ -688,6 +688,37 @@ describe("prepareOnboardSession", () => {
     expect(initial.metadata.hostMounts).toEqual([recordedMount]);
   });
 
+  it.each([
+    ["the --agent flag", { agentFlag: "hermes", envAgent: "dcode" }, "hermes"],
+    ["NEMOCLAW_AGENT", { agentFlag: null, envAgent: "dcode" }, "dcode"],
+    ["the recorded session", { agentFlag: null, envAgent: null }, "langchain-deepagents-code"],
+  ])(
+    "passes the agent from %s to the resume conflict check (flag, then NEMOCLAW_AGENT, then recorded session)",
+    async (_source, agentInput, expectedAgent) => {
+      const getResumeConfigConflicts = vi.fn(() => []);
+      const initial = createSession({ agent: "langchain-deepagents-code" });
+      const { deps } = createDeps(initial, { getResumeConfigConflicts });
+
+      await prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: false,
+          nonInteractive: true,
+          ...agentInput,
+        },
+        deps,
+      );
+
+      expect(getResumeConfigConflicts).toHaveBeenCalledWith(
+        initial,
+        expect.objectContaining({ agent: expectedAgent }),
+      );
+    },
+  );
+
   it("still exits on resume conflicts when diagnostic recording fails", async () => {
     const conflict: ResumeConfigConflict = {
       field: "sandbox",
