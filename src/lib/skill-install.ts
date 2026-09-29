@@ -174,6 +174,17 @@ function readBoundedFile(descriptor: number, remainingBytes: number): Buffer | n
   }
 }
 
+function prepareSnapshotParentDirectory(snapshotDirectory: string, relativePath: string): void {
+  const relativeDirectory = path.dirname(relativePath);
+  if (relativeDirectory === ".") return;
+  let currentDirectory = snapshotDirectory;
+  for (const segment of relativeDirectory.split(path.sep)) {
+    currentDirectory = path.join(currentDirectory, segment);
+    if (!fs.existsSync(currentDirectory)) fs.mkdirSync(currentDirectory, { mode: 0o755 });
+    fs.chmodSync(currentDirectory, 0o755);
+  }
+}
+
 /** Create a private, bounded snapshot using only no-follow regular-file reads. */
 export function createStatelessSkillSnapshot(
   sourceDirectory: string,
@@ -200,6 +211,7 @@ export function createStatelessSkillSnapshot(
   try {
     fs.chmodSync(hostDirectory, 0o700);
     fs.mkdirSync(snapshotDirectory, { mode: 0o700 });
+    fs.chmodSync(snapshotDirectory, 0o700);
     const rootStat = fs.lstatSync(sourceDirectory);
     const sourceRoot = fs.realpathSync(sourceDirectory);
     if (!matchesRootIdentity(rootStat, expectedRootIdentity)) {
@@ -245,14 +257,15 @@ export function createStatelessSkillSnapshot(
           return { success: false, reason: "source-changed" };
         }
         const destination = path.join(snapshotDirectory, relativePath);
-        fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o755 });
+        prepareSnapshotParentDirectory(snapshotDirectory, relativePath);
+        const normalizedMode = (opened.mode & 0o111) === 0 ? 0o644 : 0o755;
         fs.writeFileSync(destination, content, {
           flag: "wx",
-          mode: (opened.mode & 0o111) === 0 ? 0o644 : 0o755,
+          mode: normalizedMode,
         });
-        const normalizedMode = (opened.mode & 0o111) === 0 ? "644" : "755";
+        fs.chmodSync(destination, normalizedMode);
         const fileDigest = createHash("sha256").update(content).digest("hex");
-        digestManifest.push(`${normalizedMode} ${fileDigest}  ${relativePath}\n`);
+        digestManifest.push(`${normalizedMode.toString(8)} ${fileDigest}  ${relativePath}\n`);
         totalBytes += content.length;
       } catch {
         return { success: false, reason: "source-changed" };

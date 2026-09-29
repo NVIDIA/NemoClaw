@@ -157,6 +157,33 @@ describe("stateless skill snapshots", () => {
     changedSnapshot.cleanup();
   });
 
+  it("normalizes snapshot modes when the process umask removes execute bits (#8470)", () => {
+    const root = skill();
+    const script = path.join(root, "nested", "tool.sh");
+    fs.mkdirSync(path.dirname(script));
+    fs.writeFileSync(script, "#!/bin/sh\n", { mode: 0o755 });
+    const previousUmask = process.umask(0o111);
+    const result = (() => {
+      try {
+        return createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root));
+      } finally {
+        process.umask(previousUmask);
+      }
+    })();
+
+    expect(result.success).toBe(true);
+    assert(result.success);
+    roots.push(result.snapshot.hostDirectory);
+    expect(fs.statSync(result.snapshot.skillDirectory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(result.snapshot.skillDirectory, "nested")).mode & 0o777).toBe(
+      0o755,
+    );
+    expect(
+      fs.statSync(path.join(result.snapshot.skillDirectory, "nested", "tool.sh")).mode & 0o777,
+    ).toBe(0o755);
+    result.snapshot.cleanup();
+  });
+
   it("rejects a source that exceeds the byte bound before copying it", () => {
     const root = skill();
     fs.writeFileSync(path.join(root, "large.bin"), "");
@@ -217,6 +244,20 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).not.toContain("Content digest (SHA-256)");
     expect(script).toContain(digest);
   });
+
+  it.runIf(process.platform === "linux")(
+    "publishes a verified snapshot with matching content (#8470)",
+    () => {
+      const { destination, result } = runCanonicalSkillAddWithMoveShim(
+        'exec "$NEMOCLAW_REAL_MV" "$@"',
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toBe(
+        "---\nname: demo-skill\n---\n# Demo\n",
+      );
+    },
+  );
 
   it.runIf(process.platform === "linux")(
     "rolls back publication when the tree changes during the move (#8470)",
