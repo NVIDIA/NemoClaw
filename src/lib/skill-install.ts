@@ -12,7 +12,7 @@ import YAML from "yaml";
 
 import { isObjectRecord } from "./core/json-types";
 import { shellQuote } from "./core/shell-quote";
-import { validateSkillName } from "./skill-name";
+import { MAX_SKILL_NAME_LENGTH, validateSkillName } from "./skill-name";
 
 export { validateSkillName } from "./skill-name";
 
@@ -48,7 +48,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
   if (!name) throw new Error("SKILL.md frontmatter is missing required 'name' field");
   if (!validateSkillName(name)) {
     throw new Error(
-      `SKILL.md name '${name}' is invalid. Use [A-Za-z0-9._-] and do not use '.' or '..'.`,
+      `SKILL.md name '${name}' is invalid. Use [A-Za-z0-9._-], at most ${MAX_SKILL_NAME_LENGTH} characters, and do not use '.' or '..'.`,
     );
   }
   return { name };

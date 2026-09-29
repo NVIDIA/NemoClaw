@@ -15,6 +15,7 @@ import {
   parseFrontmatter,
   SKILL_SNAPSHOT_MAX_BYTES,
   validateRelativePath,
+  validateSkillName,
 } from "./skill-install";
 
 const roots: string[] = [];
@@ -35,6 +36,12 @@ describe("stateless skill snapshots", () => {
   it("parses the declared name and rejects traversal names", () => {
     expect(parseFrontmatter("---\nname: demo-skill\n---\n")).toEqual({ name: "demo-skill" });
     expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid");
+  });
+
+  it("accepts a 64-character name and rejects a 65-character name", () => {
+    expect(validateSkillName("a".repeat(64))).toBe(true);
+    expect(validateSkillName("a".repeat(65))).toBe(false);
+    expect(() => parseFrontmatter(`---\nname: ${"a".repeat(65)}\n---\n`)).toThrow("64");
   });
 
   it.each(["nested/file.txt", "a_b-c.1"])("accepts safe relative path %s", (candidate) => {
