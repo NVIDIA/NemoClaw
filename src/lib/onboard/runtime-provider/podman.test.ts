@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -306,6 +306,12 @@ function readyObserver(sandboxName: string): OpenShellSandboxObserver {
 }
 
 describe("managed Podman runtime provider", () => {
+  beforeAll(() => {
+    // startSandbox lazily loads connect. Load its source graph during suite setup
+    // so cold compilation does not consume the first lifecycle test's budget.
+    require("../../actions/sandbox/connect");
+  });
+
   it.each(AGENTS)(
     "runs basic CPU start and stop for %s through an injected bundle",
     async (agent) => {

@@ -1633,6 +1633,19 @@ Validate phase coverage without executing test bodies with:
 npm run test:e2e-phases:check
 ```
 
+### Managed vLLM final-consumer lifecycle
+
+The existing `gpu-e2e` target runs its managed vLLM case twice. Each cycle onboards
+the supported fixed profile on port 18000, exports its configuration, then checks
+status, doctor, and connect with the port override cleared. Normal cleanup destroys
+the final sandbox and checks actual container and listener absence before any
+fixture fallback cleanup. The second cycle proves that onboarding can reacquire
+the released GPU resources.
+
+Source tests own shared-consumer retention, receipt ownership, invalid recorded
+routes, and interrupted-cleanup recovery. The physical Spark Express test retains
+its existing platform-specific qualification.
+
 ### DGX Spark Express vLLM
 
 `spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.

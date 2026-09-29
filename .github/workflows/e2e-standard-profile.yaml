@@ -508,6 +508,25 @@ jobs:
             -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY -u GITHUB_TOKEN \
             -u COMPATIBLE_API_KEY bash scripts/install-openshell.sh
 
+      - name: Prepare GPU launch-readiness runtime directory
+        id: gpu_runtime_directory
+        if: ${{ inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          uid="$(/usr/bin/id -u)"
+          unit="user@${uid}.service"
+          prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"
+          if [[ "$prior_state" != "active" ]]; then
+            [[ "$prior_state" == "inactive" ]]
+            printf 'started=true\n' >> "$GITHUB_OUTPUT"
+            /usr/bin/sudo -n /usr/bin/systemctl start "$unit"
+          fi
+          /usr/bin/systemctl is-active --quiet "$unit"
+          runtime_directory="/run/user/$uid"
+          [[ -d "$runtime_directory" && ! -L "$runtime_directory" ]]
+          [[ "$(/usr/bin/stat -c '%u:%a' "$runtime_directory")" == "${uid}:700" ]]
+
       - name: Run catalogue E2E target
         env:
           INSTALL_MODE: ${{ inputs.install_mode }}
@@ -634,6 +653,14 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
         with:
           enabled: "true"
+
+      - name: Restore GPU launch-readiness runtime directory
+        if: ${{ always() && inputs.catalogue_id == 'gpu-e2e' && inputs.runtime_provider == 'docker' && steps.gpu_runtime_directory.outputs.started == 'true' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          uid="$(/usr/bin/id -u)"
+          /usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"
 
       - name: Clean up Docker auth
         if: always()
