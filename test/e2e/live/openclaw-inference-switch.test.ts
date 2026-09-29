@@ -50,7 +50,7 @@ import {
   runInferenceSetWithRetry,
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -1022,7 +1022,7 @@ test(
       e2ePhases: [
         "confirm the selected runtime and choose the baseline provider",
         "clear existing inference-switch state",
-        "install and onboard a custom-image baseline OpenClaw",
+        "onboard a custom-image baseline OpenClaw",
         "prove the selected route after custom-image onboarding",
         "prove the selected route after gateway restart",
         "prove the selected route after rebuild",
@@ -1044,7 +1044,7 @@ test(
       switchInferenceApi: SWITCH_INFERENCE_API,
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
-        "install.sh --non-interactive onboards an OpenClaw sandbox from a custom Dockerfile",
+        "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
         "fresh custom-image onboarding replaces the baked primary route with the selected model",
         "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
@@ -1131,19 +1131,11 @@ test(
     progress.phase("clear existing inference-switch state");
     await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
-    progress.phase("install and onboard a custom-image baseline OpenClaw");
-    const install = await host.command(
-      "bash",
-      [
-        "install.sh",
-        "--non-interactive",
-        "--yes-i-accept-third-party-software",
-        "--from",
-        customDockerfile,
-      ],
+    progress.phase("onboard a custom-image baseline OpenClaw");
+    const onboard = await host.nemoclaw(
+      ["onboard", "--non-interactive", "--yes", "--from", customDockerfile],
       {
-        artifactName: "install-and-onboard-openclaw-inference-switch",
-        cwd: REPO_ROOT,
+        artifactName: "onboard-custom-image-openclaw-inference-switch",
         env: commandEnv(home, {
           ...baseline.env,
           NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -1152,17 +1144,17 @@ test(
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
-    const installText = resultText(install);
-    if (install.exitCode !== 0 && isExternalProviderValidationFailure(installText)) {
+    const onboardText = resultText(onboard);
+    if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
       await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-inference-switch",
-        installExitCode: install.exitCode,
+        onboardExitCode: onboard.exitCode,
       });
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
-    expect(install.exitCode, installText).toBe(0);
+    expect(onboard.exitCode, onboardText).toBe(0);
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
     await approveOpenClawAdminScope(
@@ -1302,7 +1294,7 @@ test(
       status: "passed",
       assertions: {
         runtimeProviderAvailable: true,
-        installCompleted: install.exitCode === 0,
+        customImageOnboardingCompleted: onboard.exitCode === 0,
         customImageInitialRouteSelected: true,
         customImageModelMetadataPreserved: true,
         customImageRouteSurvivedGatewayRestart: true,
