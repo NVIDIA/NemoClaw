@@ -87,12 +87,7 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(troubleshootingSection).toMatch(
       /`exec` command streams the native command output and normally returns its\s+native exit status/,
     );
-    expect(troubleshootingSection).toMatch(
-      /If required post-command OpenClaw permission cleanup fails,\s+`exec` returns 1/,
-    );
-    expect(troubleshootingSection).toMatch(
-      /OpenClaw permission cleanup failed \(command exit\s+<code>; cleanup exit 1\)/,
-    );
+    expect(troubleshootingSection).not.toContain("OpenClaw permission cleanup failed");
     expect(troubleshootingSection).not.toContain(
       "The `exec` command preserves the native command output and exit status.",
     );

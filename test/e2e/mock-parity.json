@@ -3,6 +3,15 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/brave-search.test.ts",
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
+      "fast": [
+        "test/onboarding/brave-search-integration.test.ts",
+        "test/e2e/support/brave-search-isolation.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/deferred-onboarding.test.ts",
       "fast": [
         "src/lib/actions/installer/deferred-onboarding.test.ts",
@@ -192,6 +201,7 @@
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/full-e2e-native-model.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
         "test/e2e/live/pr-base-comparison.ts",
@@ -208,6 +218,7 @@
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/full-e2e-native-model.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
@@ -417,6 +428,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/openclaw-container-diagnostics.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts"
       ]
     },
@@ -473,23 +485,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": ["test/e2e/live/brave-search-helpers.ts"],
-      "fast": [
-        "src/lib/adapters/config/live-export-source.test.ts",
-        "src/lib/config/config.test.ts",
-        "src/lib/adapters/openshell/sandbox-identity.test.ts",
-        "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
-        "src/lib/onboard/machine/handlers/agent-setup.test.ts",
-        "src/lib/onboard/openclaw-setup.test.ts",
-        "src/lib/onboard/policy-resume-selection.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/brave-search-config.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
@@ -540,6 +535,7 @@
       ],
       "fast": [
         "src/lib/policy/policy-live-state.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
@@ -560,7 +556,8 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "test/e2e/support/openclaw-container-diagnostics.test.ts"
       ]
     },
     {
@@ -772,6 +769,7 @@
         "test/e2e/fixtures/installed-telegram-runtime-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -831,6 +829,7 @@
       ],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "src/lib/actions/inference-set-openclaw-run.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -917,6 +916,7 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
+        "src/lib/state/state-file-restore-mode.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts",
@@ -1024,6 +1024,7 @@
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-cleanup.test.ts",
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-proof.test.ts",
@@ -1039,6 +1040,7 @@
       "fast": [
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
+        "test/agents/hermes/hermes-start-config-integrity.test.ts",
         "test/runtime/sandbox/sandbox-init.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -1087,6 +1089,7 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/phases/onboarding.ts",
         "test/e2e/live/cloud-experimental-check-list.ts",
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
@@ -1106,16 +1109,6 @@
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/e2e/support/platform-parity-cloud-experimental.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/runtime-overrides.test.ts",
-      "fast": [
-        "test/generation/generate-openclaw-config.test.ts",
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

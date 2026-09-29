@@ -1,15 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const configMocks = vi.hoisted(() => ({
+  readSandboxConfig: vi.fn(),
+  restartSandboxAgentAfterConfigSet: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  setOpenClawConfigValue: vi.fn(),
+}));
+
+vi.mock("../sandbox/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox/config")>()),
+  readSandboxConfig: configMocks.readSandboxConfig,
+  restartSandboxAgentAfterConfigSet: configMocks.restartSandboxAgentAfterConfigSet,
+  resolveAgentConfig: configMocks.resolveAgentConfig,
+  setOpenClawConfigValue: configMocks.setOpenClawConfigValue,
+}));
 import {
   createConfigureOpenclawSandbox,
   createOpenclawSetup,
   isOpenclawGatewayReady,
-  reconcileOpenClawWebSearchForReuse,
 } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it.each([200, 401])("accepts OpenClaw gateway HTTP %i as ready", async (httpCode) => {
     const runBuffered = vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: 0 },
@@ -58,24 +76,22 @@ describe("OpenClaw sandbox setup", () => {
     );
   });
 
-  it("waits for config sync before web-search reconciliation", async () => {
+  it("waits for onboarding metadata sync before completing setup", async () => {
     let finishConfigSync!: () => void;
     const configSync = new Promise<void>((resolve) => {
       finishConfigSync = resolve;
     });
     const syncNemoClawConfigInSandbox = vi.fn(() => configSync);
-    const reconcileWebSearch = vi.fn(async () => undefined);
+    const completed = vi.fn();
     const revalidateSandboxIdentity = vi.fn();
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
-      reconcileWebSearch,
     });
 
     const configuring = configureOpenclawSandbox(
       "spark-box",
       "model",
       "provider",
-      null,
       revalidateSandboxIdentity,
     );
 
@@ -86,33 +102,26 @@ describe("OpenClaw sandbox setup", () => {
       revalidateSandboxIdentity,
       false,
     );
-    expect(reconcileWebSearch).not.toHaveBeenCalled();
+    void configuring.then(completed);
+    expect(completed).not.toHaveBeenCalled();
 
     finishConfigSync();
     await configuring;
 
-    expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
-      "spark-box",
-      null,
-      revalidateSandboxIdentity,
-    );
+    expect(completed).toHaveBeenCalledOnce();
   });
 
-  it("propagates config sync failure before web-search reconciliation", async () => {
+  it("propagates onboarding metadata sync failure", async () => {
     const syncNemoClawConfigInSandbox = vi.fn(async () => {
       throw new Error("config sync failed");
     });
-    const reconcileWebSearch = vi.fn(async () => undefined);
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
-      reconcileWebSearch,
     });
 
-    await expect(configureOpenclawSandbox("spark-box", "model", "provider", null)).rejects.toThrow(
+    await expect(configureOpenclawSandbox("spark-box", "model", "provider")).rejects.toThrow(
       "config sync failed",
     );
-
-    expect(reconcileWebSearch).not.toHaveBeenCalled();
   });
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
@@ -127,13 +136,12 @@ describe("OpenClaw sandbox setup", () => {
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "nvidia-router", null, revalidateSandboxIdentity);
+    await setup("spark-box", "model", "nvidia-router", revalidateSandboxIdentity);
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "model",
       "nvidia-router",
-      null,
       revalidateSandboxIdentity,
     );
     expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
@@ -150,7 +158,7 @@ describe("OpenClaw sandbox setup", () => {
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "compatible-endpoint", null);
+    await setup("spark-box", "model", "compatible-endpoint");
 
     expect(restartNativeGateway).not.toHaveBeenCalled();
   });
@@ -168,7 +176,7 @@ describe("OpenClaw sandbox setup", () => {
         shouldRestartNativeGateway: () => false,
       });
 
-      await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
+      await expect(setup("spark-box", "model", "provider")).rejects.toThrow(
         "sandbox identity changed",
       );
 
@@ -193,7 +201,7 @@ describe("OpenClaw sandbox setup", () => {
         shouldRestartNativeGateway: () => true,
       });
 
-      await expect(setup("spark-box", "model", "nvidia-router", null)).rejects.toThrow(
+      await expect(setup("spark-box", "model", "nvidia-router")).rejects.toThrow(
         /native gateway restart failed.*restart rejected/,
       );
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
@@ -203,71 +211,35 @@ describe("OpenClaw sandbox setup", () => {
   });
 });
 
-describe("fresh OpenClaw reuse web search reconciliation", () => {
-  it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => true,
-      disable,
-    });
-
-    expect(disable).toHaveBeenCalledExactlyOnceWith("alpha");
+describe("OpenClaw reuse preserves native configuration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it("leaves an already-disabled live config unchanged (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
+  it.each([false, true])(
+    "preserves native web search with managed profile applied=%s (#11764)",
+    async (managedProfileApplied) => {
+      const nativeConfig = { tools: { web: { search: { enabled: true } } } };
+      configMocks.resolveAgentConfig.mockReturnValue({ agentName: "openclaw" });
+      configMocks.readSandboxConfig.mockReturnValue(nativeConfig);
+      configMocks.setOpenClawConfigValue.mockImplementation(() => {
+        nativeConfig.tools.web.search.enabled = false;
+      });
+      const syncNemoClawConfigInSandbox = vi.fn(async () => undefined);
+      const configure = createConfigureOpenclawSandbox({ syncNemoClawConfigInSandbox });
 
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => false,
-      disable,
-    });
+      await configure("alpha", "model", "provider", undefined, managedProfileApplied);
 
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("leaves a config without a stale enabled flag unchanged (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => undefined,
-      disable,
-    });
-
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("does not disable the live config when web search remains selected (#10404)", async () => {
-    const readEnabled = vi.fn(() => true);
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", { fetchEnabled: true }, undefined, {
-      readEnabled,
-      disable,
-    });
-
-    expect(readEnabled).not.toHaveBeenCalled();
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("does not mutate when sandbox identity changes after the live-config read (#10404)", async () => {
-    const readEnabled = vi.fn(() => true);
-    const disable = vi.fn(async () => undefined);
-    const revalidateSandboxIdentity = vi.fn(() => {
-      throw new Error("sandbox identity changed");
-    });
-
-    await expect(
-      reconcileOpenClawWebSearchForReuse("alpha", null, revalidateSandboxIdentity, {
-        readEnabled,
-        disable,
-      }),
-    ).rejects.toThrow("sandbox identity changed");
-
-    expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha");
-    expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
-      "disable OpenClaw web search in sandbox 'alpha'",
-    );
-    expect(disable).not.toHaveBeenCalled();
-  });
+      expect(nativeConfig.tools.web.search.enabled).toBe(true);
+      expect(configMocks.setOpenClawConfigValue).not.toHaveBeenCalled();
+      expect(configMocks.restartSandboxAgentAfterConfigSet).not.toHaveBeenCalled();
+      expect(syncNemoClawConfigInSandbox).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        "provider",
+        "model",
+        undefined,
+        managedProfileApplied,
+      );
+    },
+  );
 });
