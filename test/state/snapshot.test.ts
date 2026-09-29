@@ -229,6 +229,24 @@ describe("listBackups computes virtual versions", () => {
     expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(false);
   });
+  it("keeps a retained failed recovery backup out of listing and restore selection", () => {
+    const published = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      name: "strict-recovery",
+      backupComplete: true,
+    });
+    expect(sandboxState.listBackups("test-sandbox")).toHaveLength(1);
+
+    const incomplete = sandboxState.markRebuildBackupIncomplete(published as never);
+
+    expect(incomplete.backupComplete).toBe(false);
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+    expect(sandboxState.findBackup("test-sandbox", "strict-recovery").match).toBeNull();
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(String(published.backupPath), "rebuild-manifest.json"), "utf8"),
+      ),
+    ).toMatchObject({ backupComplete: false });
+  });
   it.each([
     {
       scenario: "an explicit directory failure",

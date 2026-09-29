@@ -68,10 +68,14 @@ describe("incomplete backup cleanup", () => {
 
   it("retains the manifest and operation diagnostic when bounded removal fails", () => {
     vi.spyOn(sandboxState, "removeSandboxStateBackup").mockReturnValue(false);
+    const markIncomplete = vi
+      .spyOn(sandboxState, "markRebuildBackupIncomplete")
+      .mockImplementation((manifest) => ({ ...manifest, backupComplete: false }));
     expect(discardIncompleteBackup("alpha", failed, 12_345, "rebuild")).toMatchObject({
-      manifest: failed.manifest,
+      manifest: { ...failed.manifest, backupComplete: false },
       error: expect.stringContaining("Failed rebuild backup"),
     });
+    expect(markIncomplete).toHaveBeenCalledWith(failed.manifest);
   });
 });
 

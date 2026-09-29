@@ -6,18 +6,40 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import { observeMcpStateForRebuild } from "../rebuild-mcp-phase";
 
+function failClosedRetentionResult(
+  result: sandboxState.BackupResult,
+  retentionError: string,
+): sandboxState.BackupResult {
+  let manifest = result.manifest;
+  let invalidationError: string | null = null;
+  if (manifest) {
+    try {
+      manifest = sandboxState.markRebuildBackupIncomplete(manifest);
+    } catch (markError) {
+      invalidationError = markError instanceof Error ? markError.message : String(markError);
+    }
+  }
+  const failClosedError = invalidationError
+    ? `${retentionError}. The retained backup could not be marked incomplete: ${invalidationError}`
+    : retentionError;
+  return {
+    ...result,
+    success: false,
+    ...(manifest ? { manifest } : {}),
+    error: result.error ? `${result.error}. ${failClosedError}` : failClosedError,
+  };
+}
+
 function failedRetentionResult(
   result: sandboxState.BackupResult,
   observation: string,
   error: unknown,
 ): sandboxState.BackupResult {
   const detail = error instanceof Error ? error.message : String(error);
-  const retentionError = `Strict pre-upgrade recovery retention could not complete the ${observation}: ${detail}`;
-  return {
-    ...result,
-    success: false,
-    error: result.error ? `${result.error}. ${retentionError}` : retentionError,
-  };
+  return failClosedRetentionResult(
+    result,
+    `Strict pre-upgrade recovery retention could not complete the ${observation}: ${detail}`,
+  );
 }
 
 function expiredRetentionResult(
@@ -25,11 +47,7 @@ function expiredRetentionResult(
   observation: string,
 ): sandboxState.BackupResult {
   const deadlineError = `Strict pre-upgrade recovery retention did not complete the ${observation} before the backup deadline`;
-  return {
-    ...result,
-    success: false,
-    error: result.error ? `${result.error}. ${deadlineError}` : deadlineError,
-  };
+  return failClosedRetentionResult(result, deadlineError);
 }
 
 type ObservationOutcome<T> =

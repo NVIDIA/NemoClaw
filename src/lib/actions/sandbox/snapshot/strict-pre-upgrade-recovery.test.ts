@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   captureRecordedSandboxBasePolicy: vi.fn(),
   observeMcpStateForRebuild: vi.fn(),
+  markRebuildBackupIncomplete: vi.fn(),
   removeSandboxStateBackup: vi.fn(),
   writeRebuildMcpHandoff: vi.fn(),
   writeRebuildPolicyHandoff: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("../../../policy", () => ({
   captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
 }));
 vi.mock("../../../state/sandbox", () => ({
+  markRebuildBackupIncomplete: mocks.markRebuildBackupIncomplete,
   removeSandboxStateBackup: mocks.removeSandboxStateBackup,
   writeRebuildMcpHandoff: mocks.writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff: mocks.writeRebuildPolicyHandoff,
@@ -37,6 +39,10 @@ describe("strict pre-upgrade recovery retention", () => {
     mocks.removeSandboxStateBackup.mockReturnValue(true);
     mocks.captureRecordedSandboxBasePolicy.mockResolvedValue("version: 1\n");
     mocks.observeMcpStateForRebuild.mockResolvedValue({ entries: [] });
+    mocks.markRebuildBackupIncomplete.mockImplementation((manifest) => ({
+      ...manifest,
+      backupComplete: false,
+    }));
     mocks.writeRebuildPolicyHandoff.mockImplementation((manifest) => ({
       ...manifest,
       rebuildPolicyHandoff: { file: "policy.yaml", sha256: "a".repeat(64) },
@@ -156,9 +162,11 @@ describe("strict pre-upgrade recovery retention", () => {
       ),
     ).resolves.toMatchObject({
       success: false,
+      manifest: { backupComplete: false },
       error:
         "Strict pre-upgrade recovery retention did not complete the policy capture before the backup deadline",
     });
+    expect(mocks.markRebuildBackupIncomplete).toHaveBeenCalledWith(result.manifest);
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
     expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
@@ -344,9 +352,12 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(failed).toMatchObject({
       success: false,
       error: expect.stringContaining("MCP handoff write failed"),
-      manifest: { backupPath: "/backups/alpha/timestamp" },
+      manifest: { backupPath: "/backups/alpha/timestamp", backupComplete: false },
     });
     expect(mocks.writeRebuildPolicyHandoff).toHaveBeenCalledOnce();
+    expect(mocks.markRebuildBackupIncomplete).toHaveBeenCalledWith(
+      expect.objectContaining({ rebuildPolicyHandoff: expect.any(Object) }),
+    );
   });
 
   it("returns a failed result for a non-timeout policy error", async () => {

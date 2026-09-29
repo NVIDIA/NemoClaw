@@ -3234,6 +3234,18 @@ function writeManifest(
 
 export const __test = { writeManifest, readManifest };
 
+/** Persist a failed rebuild backup as nonselectable before bounded cleanup.
+ *
+ * Cleanup can fail or time out, so callers must not rely on directory removal
+ * as the only barrier between an incomplete recovery transaction and restore
+ * selection. */
+export function markRebuildBackupIncomplete(manifest: RebuildManifest): RebuildManifest {
+  const incomplete = { ...manifest, backupComplete: false };
+  writeManifest(manifest.backupPath, incomplete);
+  Object.assign(manifest, incomplete);
+  return incomplete;
+}
+
 function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;
   try {

@@ -73,14 +73,29 @@ export function discardIncompleteBackup(
   cleanupDeadlineMs: number,
   operation: string,
 ): sandboxState.BackupResult {
-  const backupPath = result.manifest?.backupPath;
-  if (!backupPath) return result;
+  const publishedManifest = result.manifest;
+  const backupPath = publishedManifest?.backupPath;
+  if (!publishedManifest || !backupPath) return result;
   if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, cleanupDeadlineMs)) {
     const { manifest: _removedManifest, ...withoutPartialBackup } = result;
     return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
   }
   const cleanupError = `Failed ${operation} backup at '${backupPath}' could not be removed`;
-  return { ...result, error: result.error ? `${result.error}. ${cleanupError}` : cleanupError };
+  let manifest = publishedManifest;
+  let invalidationError: string | null = null;
+  try {
+    manifest = sandboxState.markRebuildBackupIncomplete(manifest);
+  } catch (error) {
+    invalidationError = error instanceof Error ? error.message : String(error);
+  }
+  const retainedError = invalidationError
+    ? `${cleanupError}; the retained manifest could not be marked incomplete: ${invalidationError}`
+    : cleanupError;
+  return {
+    ...result,
+    ...(manifest ? { manifest } : {}),
+    error: result.error ? `${result.error}. ${retainedError}` : retainedError,
+  };
 }
 
 function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number | null {
