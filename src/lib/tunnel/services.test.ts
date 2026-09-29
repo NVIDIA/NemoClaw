@@ -629,14 +629,15 @@ describe("stopAll", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      stopAll({ pidDir, processControl: control });
-    } finally {
-      logSpy.mockRestore();
-    }
+    stopAll({ pidDir, processControl: control });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
 
     expect(signals).toEqual([]);
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("cloudflared PID 4242 was not stopped");
+    expect(output).toContain("Restore process inspection access, then retry this command");
+    expect(output).not.toContain("All services stopped");
   });
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
@@ -658,6 +659,24 @@ describe("stopAll", () => {
 
     expect(signals.map((entry) => entry.sig)).toEqual(["SIGTERM"]);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("does not escalate to SIGKILL when PID identity becomes unavailable", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, false, true],
+      cmdlines: ["cloudflared tunnel run", null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals.map((entry) => entry.sig)).toEqual(["SIGTERM"]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
   });
 
   it("escalates to SIGKILL when cloudflared remains live after the grace period (#7644)", () => {

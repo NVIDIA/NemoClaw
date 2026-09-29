@@ -322,6 +322,8 @@ function removePid(pidDir: string, name: string): void {
 type ServiceName = "cloudflared";
 const SERVICE_NAMES: readonly ServiceName[] = ["cloudflared"];
 
+type StopServiceOutcome = { kind: "complete" } | { kind: "unverified-pid-process"; pid: number };
+
 function startService(
   pidDir: string,
   name: ServiceName,
@@ -370,39 +372,27 @@ function startService(
   info(`${name} started (PID ${String(pid)})`);
 }
 
-/**
- * The recorded process may have exited and had its PID recycled by the OS to an
- * unrelated (possibly system) process. Signalling it would terminate a
- * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. A null/unreadable command line stays conservative and is
- * treated as ours, matching the established stop contract.
- */
-function pidIsOurs(pid: number, pc: ProcessControl): boolean {
-  const cmdline = pc.commandLine(pid);
-  return cmdline === null || commandLineNamesCloudflared(cmdline);
-}
-
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
 function stopService(
   pidDir: string,
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): void {
+): StopServiceOutcome {
   const state = readCloudflaredState(pidDir, pc);
   if (state.kind === "stopped") {
     info(`${name} was not running`);
-    return;
+    return { kind: "complete" };
   }
   if (state.kind === "stale-pid-file" || state.kind === "stale-pid-process") {
     info(`${name} was not running`);
     removePid(pidDir, name);
-    return;
+    return { kind: "complete" };
   }
   if (state.kind === "unverified-pid-process") {
     warn(
-      `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to signal it`,
+      `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to signal it. Restore process inspection access, then retry this command`,
     );
-    return;
+    return state;
   }
   const pid = state.pid;
 
@@ -413,7 +403,7 @@ function stopService(
     // Already dead between the check and the signal
     removePid(pidDir, name);
     info(`${name} stopped (PID ${String(pid)})`);
-    return;
+    return { kind: "complete" };
   }
 
   // Poll for exit (up to 3 seconds)
@@ -426,23 +416,29 @@ function stopService(
     }
   }
 
-  // Escalate to SIGKILL if still alive. Re-verify identity first: the PID could
-  // have exited and been recycled to an unrelated process during the poll.
-  if (pc.isAlive(pid)) {
-    if (!pidIsOurs(pid, pc)) {
-      removePid(pidDir, name);
-      info(`${name} was not running`);
-      return;
-    }
+  // Re-read the same identity-aware state before escalation: the PID could
+  // have exited and been recycled, or process inspection could have become
+  // unavailable, while SIGTERM was draining.
+  const postTermState = readCloudflaredState(pidDir, pc);
+  if (postTermState.kind === "unverified-pid-process") {
+    warn(
+      `${name} process identity became unavailable for PID ${String(pid)}; refusing to send SIGKILL. Restore process inspection access, then retry this command`,
+    );
+    return postTermState;
+  }
+  if (postTermState.kind === "running") {
     try {
       pc.signal(pid, "SIGKILL");
     } catch {
       /* already dead */
     }
+  } else if (postTermState.kind === "stale-pid-process") {
+    info(`${name} was not running`);
   }
 
   removePid(pidDir, name);
   info(`${name} stopped (PID ${String(pid)})`);
+  return { kind: "complete" };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,8 +590,13 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
+  let cloudflaredStopOutcome: StopServiceOutcome = { kind: "complete" };
   if (pidDir) {
-    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+    cloudflaredStopOutcome = stopService(
+      pidDir,
+      "cloudflared",
+      opts.processControl ?? REAL_PROCESS_CONTROL,
+    );
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
@@ -620,16 +621,30 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn(
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
-    info("Host services stopped; managed gateway not released.");
+    info(
+      cloudflaredStopOutcome.kind === "unverified-pid-process"
+        ? "Host service cleanup remains incomplete; cloudflared and the managed gateway were not released."
+        : "Host services stopped; managed gateway not released.",
+    );
     return finishOllamaCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
-    info("Host services stopped; managed gateway release was not confirmed.");
+    info(
+      cloudflaredStopOutcome.kind === "unverified-pid-process"
+        ? "Host service cleanup remains incomplete; cloudflared was not stopped and managed gateway release was not confirmed."
+        : "Host services stopped; managed gateway release was not confirmed.",
+    );
     return finishOllamaCleanup();
   }
 
-  if (ollamaCleanupIncomplete) {
+  if (cloudflaredStopOutcome.kind === "unverified-pid-process") {
+    info(
+      `Host service cleanup remains incomplete; cloudflared PID ${String(cloudflaredStopOutcome.pid)} was not stopped${
+        ollamaCleanupIncomplete ? " and Ollama model cleanup also remains incomplete" : ""
+      }.`,
+    );
+  } else if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
   } else {
     info("All services stopped.");

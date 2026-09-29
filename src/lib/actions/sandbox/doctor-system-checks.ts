@@ -18,7 +18,7 @@ import {
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState } from "../../tunnel/services";
+import { readCloudflaredState, type ProcessControl } from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -167,8 +167,14 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+export function cloudflaredDoctorCheck(
+  sandboxName: string,
+  processControl?: ProcessControl,
+): DoctorCheck {
+  const state = readCloudflaredState(
+    path.join("/tmp", `nemoclaw-services-${sandboxName}`),
+    processControl,
+  );
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();
