@@ -215,6 +215,7 @@ export default async function create_nemoclaw_pr(input: {
       assignee,
       commitCount,
       verificationPending: false,
+      blocker: publication.blocker,
       unverified: publication.commits
         .filter((c) => !c.verified)
         .map((c) => ({ sha: c.sha, reason: c.reason })),

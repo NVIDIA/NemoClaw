@@ -487,9 +487,10 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
   it("returns an explicit maintenance recovery after inconclusive initial verification", async () => {
     publicationTools("success", "absent", undefined, true, true, false);
 
-    await expect(publishInitial()).resolves.toMatchObject({
-      allVerified: false,
-      guardedFallbackEvidence: null,
+    await expect(createInitial()).resolves.toMatchObject({
+      ok: false,
+      step: "verification",
+      verificationPending: false,
       blocker: expect.stringContaining("Maintainer recovery required"),
     });
   });
