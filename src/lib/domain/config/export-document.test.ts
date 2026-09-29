@@ -49,6 +49,39 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each([true, false])(
+    "omits the gateway credential marker %s without changing authored policy or source (#12138)",
+    (providerCredentialed) => {
+      const endpoint = {
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+        rules: [{ allow: { method: "POST", path: "/search" } }],
+      };
+      const original = {
+        ...policy,
+        network_policies: {
+          api: {
+            ...policy.network_policies.api,
+            endpoints: [{ ...endpoint, provider_credentialed: providerCredentialed }],
+          },
+        },
+      };
+      const result = buildExportConfig(
+        { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+        api: { ...policy.network_policies.api, endpoints: [endpoint] },
+      });
+      expect(original.network_policies.api.endpoints[0]?.provider_credentialed).toBe(
+        providerCredentialed,
+      );
+    },
+  );
+
   it.each([
     { compatibility: "strict", expected: "hard_requirement" },
     { compatibility: "best_effort", expected: "best_effort" },
