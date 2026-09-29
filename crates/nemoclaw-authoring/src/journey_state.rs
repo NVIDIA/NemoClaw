@@ -633,6 +633,11 @@ impl JourneyState {
             }
         }
         if harness_open {
+            if let Some(harness) = chosen
+                && adapter_schema(capabilities, harness)?.is_none()
+            {
+                unverified.push(format!("adapter schema unverified for '{harness}'"));
+            }
             if capabilities.harnesses().is_empty() {
                 unverified
                     .push("no harness choices are advertised by the current Fabric catalog".into());

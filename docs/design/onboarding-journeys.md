@@ -23,9 +23,8 @@ No separate journey YAML format is needed for this prototype.
 | Question | One currently applicable unresolved decision, with choices and a suggestion where known. |
 | Validation result | Invalid supplied value, pending decision, SDK-valid document, or target compatibility still unverified. |
 
-The current `PartialTemplate` starts from complete OpenClaw defaults and governs only guided fields.
-Its name does not imply a partial SDK document today.
-The prototype should grow this API toward `JourneyDefinition` rather than add a serialization layer first.
+`JourneyDefinition` owns the sparse template and its question guidance.
+The example TUI and tree preview start the same `JourneyState` resolver from it.
 The SDK owns complete document validation; Fabric owns adapter compatibility; target probes supply evidence without changing authored intent.
 
 ## Partial document
@@ -114,7 +113,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 - SDK field choices are derived from finite schema alternatives. A runtime change fills a managed gateway engine only when the template did not supply one. An explicitly supplied engine remains authored intent.
 - Endpoint observations add model suggestions for the current route without restricting custom text. Bulk acceptance of remaining suggestions requires current compatible engine and image observations, an advertised selected model, and observed credentials. Target evidence never changes the desired state.
 - SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. Target compatibility remains a separate check.
-- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its materialized SDK document. `Draft` and `JourneyFlow` remain compiled under tests as a comparison harness during this prototype; the executable path does not use them. The repeatable tmux replay and single-sandbox example test exercise the new path.
+- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its materialized SDK document. The repeatable tmux replay and single-sandbox example tests exercise this path.
 
 ## Alignment to the intended model
 
@@ -126,7 +125,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance | Reopened questions identify their state, but do not yet explain which earlier answer changed them. |
 | Visual inspection uses the same resolver | The tree prints current questions and branches over harness and inference preset choices | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |
 
-The temporary `JourneyFlow` bridge remains available to old tests, but the executable no longer calls it. Retire that test-only comparison harness after its scenario coverage is transferred to direct journey tests. The current direct suite covers the default replay, all complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation.
+The direct suite covers the default replay, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
 
 ## Decisions to revisit after the prototype
 
