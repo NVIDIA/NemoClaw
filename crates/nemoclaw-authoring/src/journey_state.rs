@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use nemoclaw_sdk::config::Document;
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use serde_json::{Map, Value};
 
@@ -12,7 +13,7 @@ use crate::{
     Capabilities, Diagnostics, PartialAssessment, PartialDocument, PartialIssueKind,
     diagnostics::diagnostic,
     journey_definition::{
-        HARNESS, JourneyDefinition, NAME, SETTINGS, adapter_field, adapter_schema,
+        HARNESS, JourneyDefinition, NAME, SETTINGS, adapter_field, adapter_schema, sdk_field_schema,
     },
 };
 
@@ -88,6 +89,17 @@ impl JourneyResolution {
     pub fn assessment(&self) -> &PartialAssessment {
         &self.assessment
     }
+
+    /// SDK-valid desired state only after every question in this resolver's
+    /// current surface is answered and no Fabric schema is unverified.
+    /// Target compatibility remains a separate check.
+    pub fn materialized_document(&self) -> Option<&Document> {
+        if self.questions.is_empty() && self.unverified.is_empty() {
+            self.assessment.document()
+        } else {
+            None
+        }
+    }
 }
 
 /// Mutable answers and explicit omissions over a journey definition's sparse base.
@@ -116,8 +128,8 @@ impl JourneyState {
         &self.values
     }
 
-    /// Resolve only the current identity, harness, and top-level adapter setting
-    /// surface. SDK and Fabric constraints outside that surface remain explicit.
+    /// Resolve identity, harness, guided SDK field guidance, and top-level adapter
+    /// settings. Unasked SDK requirements and conditional Fabric branches remain explicit.
     pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
         self.definition.validate_guidance(capabilities)?;
         let assessment = PartialDocument::from_value(self.values.clone()).assess();
@@ -148,6 +160,37 @@ impl JourneyState {
                 suggestion: name.cloned(),
                 schema: serde_json::json!({"type":"string"}),
             });
+        }
+
+        for field in &self.definition.ask {
+            if field == NAME || field == HARNESS || adapter_field(field).is_some() {
+                continue;
+            }
+            if self.omitted.contains(field) {
+                omitted.push(field.clone());
+                continue;
+            }
+            let Some((schema, required)) = sdk_field_schema(field) else {
+                continue;
+            };
+            let value = self.values.pointer(field);
+            let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
+            if value.is_none() || !valid || !self.accepted.contains(field) {
+                questions.push(JourneyQuestion {
+                    id: field.clone(),
+                    reason: if value.is_some() && !valid {
+                        JourneyQuestionReason::InvalidSupplied
+                    } else if value.is_none() {
+                        JourneyQuestionReason::Missing
+                    } else {
+                        JourneyQuestionReason::ExplicitAsk
+                    },
+                    required,
+                    choices: schema["enum"].as_array().cloned().unwrap_or_default(),
+                    suggestion: value.cloned().or_else(|| schema.get("default").cloned()),
+                    schema,
+                });
+            }
         }
 
         let chosen = self.values.pointer(HARNESS).and_then(Value::as_str);
@@ -198,25 +241,13 @@ impl JourneyState {
         } else if let Some(harness) = chosen {
             let Some(schema) = adapter_schema(capabilities, harness)? else {
                 unverified.push(format!("adapter schema unverified for '{harness}'"));
-                return Ok(JourneyResolution {
-                    questions,
-                    omitted,
-                    warnings,
-                    unverified,
-                    assessment,
-                });
+                return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
             };
             let Some(properties) = schema["properties"].as_object() else {
                 unverified.push(format!(
                     "adapter '{harness}' has no enumerable top-level settings"
                 ));
-                return Ok(JourneyResolution {
-                    questions,
-                    omitted,
-                    warnings,
-                    unverified,
-                    assessment,
-                });
+                return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
             };
             for (property, property_schema) in properties {
                 let pointer = format!("/{}", escape(property));
@@ -276,13 +307,31 @@ impl JourneyState {
             }
         }
 
-        Ok(JourneyResolution {
+        Ok(self.resolution(questions, omitted, warnings, unverified, assessment))
+    }
+
+    fn resolution(
+        &self,
+        mut questions: Vec<JourneyQuestion>,
+        omitted: Vec<String>,
+        warnings: Vec<String>,
+        unverified: Vec<String>,
+        assessment: PartialAssessment,
+    ) -> JourneyResolution {
+        questions.sort_by_key(|question| {
+            self.definition
+                .ask_order
+                .iter()
+                .position(|id| id == question.id())
+                .unwrap_or(usize::MAX)
+        });
+        JourneyResolution {
             questions,
             omitted,
             warnings,
             unverified,
             assessment,
-        })
+        }
     }
 
     /// Accept or omit an active answer. Previously accepted fields may be
@@ -353,6 +402,13 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
+        } else if self.definition.ask.contains(id) && sdk_field_schema(id).is_some() {
+            candidate.put_sdk_field(id, value.clone())?;
+            if value.is_none() {
+                candidate.omitted.insert(id.into());
+            } else {
+                candidate.omitted.remove(id);
+            }
         } else {
             return Err(diagnostic("journey", "This question is not supported."));
         }
@@ -400,6 +456,8 @@ impl JourneyState {
                 .cloned();
             previous.put_setting(pointer, None)?;
             value
+        } else if sdk_field_schema(id).is_some() {
+            previous.values.pointer(id).cloned()
         } else {
             return Err(diagnostic(
                 "journey",
@@ -490,6 +548,24 @@ impl JourneyState {
             settings.insert(property, value);
         } else {
             settings.remove(&property);
+        }
+        Ok(())
+    }
+
+    fn put_sdk_field(&mut self, pointer: &str, value: Option<Value>) -> Result<(), Diagnostics> {
+        let (parent, property) = pointer
+            .rsplit_once('/')
+            .ok_or_else(|| diagnostic("journey", "Invalid SDK field path."))?;
+        let property = property.replace("~1", "/").replace("~0", "~");
+        let object = self
+            .values
+            .pointer_mut(parent)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| diagnostic("journey", "The SDK field's parent is not an object."))?;
+        if let Some(value) = value {
+            object.insert(property, value);
+        } else {
+            object.remove(&property);
         }
         Ok(())
     }

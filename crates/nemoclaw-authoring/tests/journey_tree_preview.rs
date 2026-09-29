@@ -42,9 +42,31 @@ fn unsupported_guidance_is_rejected_instead_of_disappearing_from_preview() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let journey = JourneyDefinition::new("unsupported", base).ask(["/spec/gateway/engine"]);
+    let journey = JourneyDefinition::new("unsupported", base).ask(["/spec/gateway/notAField"]);
 
     assert!(journey.print_tree(&Capabilities::available()).is_err());
+}
+
+#[test]
+fn guided_sdk_questions_are_visible_in_the_tree_without_printing_suggestions() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let journey = JourneyDefinition::new("guided-sdk", base).ask([
+        "/spec/inferenceProviders/0/api",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+    ]);
+    let tree = journey.print_tree(&Capabilities::available()).unwrap();
+    assert!(tree.contains("/spec/inferenceProviders/0/api"), "{tree}");
+    assert!(
+        tree.contains("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+        "{tree}"
+    );
+    assert!(
+        !tree.contains("nvidia/nemotron-3-super-120b-a12b"),
+        "{tree}"
+    );
+    assert!(!tree.contains("No configuration questions"), "{tree}");
 }
 
 #[test]

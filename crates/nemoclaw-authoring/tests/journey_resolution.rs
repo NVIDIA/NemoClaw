@@ -98,6 +98,138 @@ fn accepting_a_supplied_suggestion_resolves_an_explicit_ask() {
 }
 
 #[test]
+fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
+    let capabilities = Capabilities::available();
+    let mut sparse: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    sparse
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("model");
+    let base = PartialDocument::from_yaml(sparse.to_string().as_bytes()).unwrap();
+    let fields = [
+        "/metadata/name",
+        "/spec/sandboxes/0/harness/kind",
+        "/spec/sandboxes/0/runtime/provider",
+        "/spec/inferenceProviders/0/provider",
+        "/spec/inferenceProviders/0/api",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+    ];
+    let definition = JourneyDefinition::new("guided", base).ask(fields).omit([
+        "adapter:nvidia.fabric.openclaw:/agent_name",
+        "adapter:nvidia.fabric.openclaw:/cli",
+        "adapter:nvidia.fabric.openclaw:/home",
+        "adapter:nvidia.fabric.openclaw:/native_config",
+        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+    ]);
+    let mut state = definition.start(&capabilities).unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_none()
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_none()
+    );
+    for field in fields {
+        assert!(
+            state
+                .resolve(&capabilities)
+                .unwrap()
+                .question(field)
+                .is_some(),
+            "{field}"
+        );
+    }
+    let mut seen = Vec::new();
+    for _ in fields {
+        let question = state
+            .resolve(&capabilities)
+            .unwrap()
+            .next_question()
+            .cloned()
+            .unwrap();
+        let field = question.id();
+        seen.push(field.to_owned());
+        let value = match field {
+            "/metadata/name" => json!("new-deployment"),
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model" => {
+                let before = state.values().clone();
+                assert!(
+                    state
+                        .answer(&capabilities, field, Some(json!("bad model")))
+                        .is_err()
+                );
+                assert_eq!(state.values(), &before);
+                json!("nvidia/another-model")
+            }
+            _ => question.suggestion().cloned().unwrap(),
+        };
+        state.answer(&capabilities, field, Some(value)).unwrap();
+    }
+    assert_eq!(seen, fields);
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(
+        resolved.questions().is_empty(),
+        "{:?}",
+        resolved.questions()
+    );
+    assert!(
+        resolved.unverified().is_empty(),
+        "{:?}",
+        resolved.unverified()
+    );
+    let document = resolved.materialized_document().unwrap();
+    assert_eq!(document.metadata.name, "new-deployment");
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+        Some(&json!("nvidia/another-model"))
+    );
+}
+
+#[test]
+fn optional_sdk_question_can_be_deliberately_omitted() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("optional-api", base)
+        .ask(["/spec/inferenceProviders/0/api"])
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .next_question()
+        .cloned()
+        .unwrap();
+    assert!(!question.required());
+    state.answer(&capabilities, question.id(), None).unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(resolved.omitted().contains(&question.id().to_owned()));
+    assert!(resolved.materialized_document().is_some());
+}
+
+#[test]
 fn invalid_answer_does_not_mutate_a_sparse_journey() {
     let capabilities = Capabilities::available();
     let mut state = JourneyDefinition::new("minimum", minimum())
@@ -315,6 +447,21 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
         ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert_eq!(state.resolve(&capabilities).unwrap().questions().len(), 2);
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_none()
+    );
 
     state
         .answer(
@@ -334,6 +481,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
 
     assert!(resolved.questions().is_empty());
     assert!(resolved.unverified().is_empty());
+    assert!(resolved.materialized_document().is_some());
     assert_eq!(
         resolved.assessment().document().unwrap().metadata.name,
         "guided-complete"

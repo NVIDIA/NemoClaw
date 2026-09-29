@@ -36,10 +36,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("{}", express.print_tree(&capabilities)?);
 
-    let guided =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))?;
+    let mut guided_values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))?;
+    guided_values
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("bundled example has one model route")
+        .remove("model");
+    let guided = PartialDocument::from_yaml(guided_values.to_string().as_bytes())?;
     let guided = JourneyDefinition::new("guided preview", guided)
-        .ask(["/metadata/name", "/spec/sandboxes/0/harness/kind"]);
+        .ask([
+            "/metadata/name",
+            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/0/runtime/provider",
+            "/spec/inferenceProviders/0/provider",
+            "/spec/inferenceProviders/0/api",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        ])
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ]);
     println!();
     println!("{}", guided.print_tree(&capabilities)?);
     Ok(())

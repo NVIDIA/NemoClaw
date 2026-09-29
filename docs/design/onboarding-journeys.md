@@ -95,7 +95,7 @@ The express preview reports zero questions only in its inspected surface; model 
 
 The prototype now also exposes `JourneyDefinition::start`, `JourneyState::answer`, and `JourneyState::resolve`.
 Each open question reports whether a value is missing, deliberately asked, or invalid for its current field schema.
-The tree printer uses this same resolver for its identity, harness, and top-level adapter-setting questions.
+The tree printer uses this same resolver for its identity, harness, asked SDK fields, and top-level adapter-setting questions.
 A supplied complete template can finish a guided journey through that surface and materialize an SDK document after its prompted answers and omissions.
 The minimum-values case still stops at the unresolved SDK frontier.
 
@@ -103,13 +103,14 @@ The minimum-values case still stops at the unresolved SDK frontier.
 
 - The SDK exposes a bounded YAML value parser so sparse authoring input uses the same syntax limits as complete documents.
 - The first partial assessment preserves supplied values and classifies full-schema errors. A compound rule remains deferred unless branch errors prove that adding values cannot satisfy it. This classification is a probe, not the final partial evaluator.
-- The first tree preview names its inspected surface and prints an unresolved SDK frontier. It does not yet qualify the complete journey or drive the TUI.
+- The tree preview names its inspected surface and prints an unresolved SDK frontier. It shows asked SDK fields symbolically but does not branch on their choices or drive the TUI.
 - Explicit omission guidance currently covers top-level optional adapter settings with an advertised schema. Conditional omissions need the later resolver slice.
 - The tree preview redacts suggestion values because native settings may contain sensitive data.
 - Invalid supplied SDK fields stay visible in the preview even when their paths are in the question surface. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.
 - The first mutable journey state keeps accepted answers and explicit omissions separate from supplied values. It preserves each adapter's settings while changing harnesses and recomputes active questions after every answer. Missing catalog schemas leave guidance in place with a warning.
-- SDK materialization and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. The caller must also consider unresolved Fabric and target evidence before treating the journey as ready.
-- The example TUI now takes its next guided, route, Fabric-setting, deployment, or review decision from `JourneyFlow` in authoring. `JourneyFlow` reads the existing complete-document `Draft`, which remains the sole answer state for imported templates and the built-in example. The TUI still owns navigation history and route/deployment progress. This bridge preserves current behavior while the sparse `JourneyState` grows to cover guided inference, model settings, conditional Fabric fields, and deployment fields. It is not yet the single resolver described in the goal.
+- Guidance can ask SDK fields found through object properties, array items, and references in the generated input schema. The resolver preserves authored question order, validates each answer against that field schema, and can complete a partially supplied onboarding document without constructing `Draft`. A missing model in the example is filled through this path before SDK materialization. This does not yet discover all missing required fields automatically or resolve conditional SDK branches.
+- SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. Target compatibility remains a separate check.
+- The example TUI still takes its next guided, route, Fabric-setting, deployment, or review decision from the temporary `JourneyFlow` adapter over complete-document `Draft`. The new sparse-state proof does not use this adapter. The final TUI migration must replace it with `JourneyState`, including composite inference preset choices, conditional Fabric fields, route handling, and deployment fields; it is not yet the single resolver described in the goal.
 
 ## Decisions to revisit after the prototype
 
