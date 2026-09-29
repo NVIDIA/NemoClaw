@@ -314,6 +314,23 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).not.toContain("weather");
   });
 
+  it("selects the Balanced common-egress presets without search for OpenClaw", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: [...known, "openclaw-pricing"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: false,
+    });
+    expect([...suggestions].sort()).toEqual([
+      "brew-balanced",
+      "huggingface",
+      "npm",
+      "openclaw-pricing",
+      "pypi",
+    ]);
+  });
+
   it("adds openclaw-pricing to tier suggestions when agent is openclaw", () => {
     const knownWithPricing = [...known, "openclaw-pricing"];
     const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
