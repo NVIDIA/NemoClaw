@@ -33,6 +33,7 @@ import {
   installerReleaseTemplate,
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
+import { prospectiveIssue12192BrevTemplate } from "../helpers/issue-12192-brev-template";
 
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
 
@@ -47,10 +48,6 @@ const BREV_TEMPLATE = fs.readFileSync(
 );
 const ISSUE_12192_BREV_TEMPLATE_SHA256 =
   "49ec7db2590c7499e391b281c6816575951c4ec10a75b2e7589b2371865234ed";
-const ISSUE_12192_BREV_TEMPLATE = fs.readFileSync(
-  path.join(import.meta.dirname, "fixtures/issue-12192-brev-template.sh"),
-  "utf8",
-);
 const ASSET_DIGESTS = V00116_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
@@ -940,7 +937,8 @@ describe("installer hash verification", () => {
   it("binds the trusted digest to the exact prospective Brev template (#12192)", () => {
     const fixtureRoot = createFixture("0.0.116");
     const brevInstaller = path.join(fixtureRoot, "scripts/brev-launchable-ci-cpu.sh");
-    fs.writeFileSync(brevInstaller, ISSUE_12192_BREV_TEMPLATE);
+    const prospectiveTemplate = prospectiveIssue12192BrevTemplate(BREV_TEMPLATE);
+    fs.writeFileSync(brevInstaller, prospectiveTemplate);
 
     const accepted = extractFixturePins(fixtureRoot);
     expect(accepted.status, accepted.stderr).toBe(0);
@@ -956,11 +954,11 @@ describe("installer hash verification", () => {
     expect(brevTemplateDigests.size).toBe(1);
     expect(brevTemplateDigests.has(ISSUE_12192_BREV_TEMPLATE_SHA256)).toBe(true);
 
-    const mutated = ISSUE_12192_BREV_TEMPLATE.replace(
+    const mutated = prospectiveTemplate.replace(
       "npm_command=(npm install --ignore-scripts)",
       "npm_command=(npm install --ignore-scripts --audit=false)",
     );
-    expect(mutated).not.toBe(ISSUE_12192_BREV_TEMPLATE);
+    expect(mutated).not.toBe(prospectiveTemplate);
     fs.writeFileSync(brevInstaller, mutated);
 
     const rejected = extractFixturePins(fixtureRoot);
