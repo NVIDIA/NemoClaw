@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, JourneyQuestionReason, PartialDocument};
+use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
 
 fn minimum() -> PartialDocument {
@@ -9,6 +10,95 @@ fn minimum() -> PartialDocument {
         b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - {}\n",
     )
     .unwrap()
+}
+
+#[test]
+fn sparse_journey_follows_nested_fabric_conditionals() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture-schema-agent");
+    adapter.descriptor["settings_schema"] = json!({
+        "type":"object", "properties":{"mode":{"type":"string","enum":["basic","remote"],"default":"basic"}}, "required":["mode"],
+        "if":{"properties":{"mode":{"const":"remote"}},"required":["mode"]},
+        "then":{"properties":{"region":{"type":"string","enum":["west","east"]}},"required":["region"]}
+    });
+    catalog.adapters = vec![adapter];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    let mut state = JourneyDefinition::new(
+        "conditional",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .start(&capabilities)
+    .unwrap();
+    let mode = "adapter:fixture-schema-agent:/mode";
+    let region = "adapter:fixture-schema-agent:/region";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(mode)
+            .is_some()
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(region)
+            .is_none()
+    );
+    state
+        .answer(&capabilities, mode, Some(json!("remote")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(region)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, region, Some(json!("west")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+}
+
+#[test]
+fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/spark/remote-vllm.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("deployment", base)
+        .ask_deployment_fields()
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/services/qwen/serving/contextTokens";
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.question(path).is_some());
+    let before = state.values().clone();
+    assert!(state.answer(&capabilities, path, Some(json!(-1))).is_err());
+    assert_eq!(state.values(), &before);
+    state
+        .answer(&capabilities, path, Some(json!(16384)))
+        .unwrap();
+    assert_eq!(state.values().pointer(path), Some(&json!(16384)));
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(path)
+            .is_none()
+    );
 }
 
 #[test]

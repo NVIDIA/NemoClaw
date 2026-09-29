@@ -331,31 +331,26 @@ impl JourneyState {
                 unverified.push(format!("adapter schema unverified for '{harness}'"));
                 return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
             };
-            let Some(properties) = schema["properties"].as_object() else {
-                unverified.push(format!(
-                    "adapter '{harness}' has no enumerable top-level settings"
-                ));
-                return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
-            };
-            for (property, property_schema) in properties {
-                let pointer = format!("/{}", escape(property));
-                let id = format!("adapter:{harness}:{pointer}");
-                let value = self.values.pointer(&format!("{SETTINGS}{pointer}"));
-                let required = schema["required"]
-                    .as_array()
-                    .is_some_and(|items| items.iter().any(|item| item == property));
+            let settings = self
+                .values
+                .pointer(SETTINGS)
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            let mut fields = Vec::new();
+            crate::settings::collect(schema, schema, &settings, "", false, &mut fields, 0)?;
+            for field in fields {
+                if field.path.is_empty() {
+                    unverified.push(format!("adapter '{harness}' needs a settings object answer; root alternatives are not yet supported"));
+                    continue;
+                }
+                let id = format!("adapter:{harness}:{}", field.path);
+                let value = settings.pointer(&field.path);
                 if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
                     omitted.push(id);
                     continue;
                 }
-                let mut field_schema = property_schema.clone();
-                if let Some(defs) = schema.get("$defs")
-                    && field_schema.is_object()
-                {
-                    field_schema["$defs"] = defs.clone();
-                }
                 let valid =
-                    value.is_some_and(|value| schema_accepts(&field_schema, value) == Some(true));
+                    value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
                 if value.is_none()
                     || !valid
                     || (self.definition.ask.contains(&id) && !self.accepted.contains(&id))
@@ -369,29 +364,41 @@ impl JourneyState {
                         } else {
                             JourneyQuestionReason::ExplicitAsk
                         },
-                        required,
-                        choices: property_schema["enum"]
-                            .as_array()
-                            .cloned()
-                            .unwrap_or_default(),
-                        suggestion: value
-                            .cloned()
-                            .or_else(|| property_schema.get("default").cloned()),
-                        schema: field_schema,
+                        required: field.required,
+                        choices: field.choices,
+                        suggestion: field.suggestion,
+                        schema: field.schema,
                     });
                 }
             }
-            let settings = self
-                .values
-                .pointer(SETTINGS)
-                .cloned()
-                .unwrap_or_else(|| Value::Object(Map::new()));
             if questions
                 .iter()
                 .all(|question| !question.id.starts_with("adapter:"))
                 && schema_accepts(schema, &settings) != Some(true)
             {
-                unverified.push(format!("adapter '{harness}' settings do not satisfy the complete Fabric schema; nested or conditional questions are not expanded"));
+                unverified.push(format!(
+                    "adapter '{harness}' settings do not satisfy the complete Fabric schema"
+                ));
+            }
+        }
+
+        if self.definition.ask_deployment
+            && let Some(document) = assessment.document()
+        {
+            for field in crate::deployment::deployment_questions_for_document(document)? {
+                if self.accepted.contains(&field.path)
+                    || questions.iter().any(|question| question.id == field.path)
+                {
+                    continue;
+                }
+                questions.push(JourneyQuestion {
+                    id: field.path,
+                    reason: JourneyQuestionReason::ExplicitAsk,
+                    required: true,
+                    choices: field.choices,
+                    suggestion: field.suggestion,
+                    schema: field.schema,
+                });
             }
         }
 
@@ -518,10 +525,28 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if (self.definition.ask.contains(id) || id == PROVIDER_ENDPOINT)
-            && sdk_field_schema(id).is_some()
+        } else if ((self.definition.ask.contains(id) || id == PROVIDER_ENDPOINT)
+            && sdk_field_schema(id).is_some())
+            || self.definition.ask_deployment && id.starts_with('/')
         {
             candidate.put_sdk_field(id, value.clone())?;
+            if self.definition.ask_deployment
+                && !self.definition.ask.contains(id)
+                && self.resolve(capabilities)?.question(id).is_some()
+                && PartialDocument::from_value(self.values.clone())
+                    .assess()
+                    .document()
+                    .is_some()
+                && PartialDocument::from_value(candidate.values.clone())
+                    .assess()
+                    .document()
+                    .is_none()
+            {
+                return Err(diagnostic(
+                    "journey",
+                    "The deployment answer invalidates the SDK document.",
+                ));
+            }
             if value.is_none() {
                 candidate.omitted.insert(id.into());
             } else {
@@ -577,7 +602,9 @@ impl JourneyState {
         } else if id == INFERENCE_PRESET {
             self.current_preset()
                 .map(|preset| Value::String(preset.id().into()))
-        } else if sdk_field_schema(id).is_some() {
+        } else if sdk_field_schema(id).is_some()
+            || (self.definition.ask_deployment && self.values.pointer(id).is_some())
+        {
             previous.values.pointer(id).cloned()
         } else {
             return Err(diagnostic(
@@ -649,11 +676,6 @@ impl JourneyState {
     }
 
     fn put_setting(&mut self, pointer: &str, value: Option<Value>) -> Result<(), Diagnostics> {
-        let property = pointer
-            .strip_prefix('/')
-            .ok_or_else(|| diagnostic("journey", "Invalid adapter setting path."))?
-            .replace("~1", "/")
-            .replace("~0", "~");
         let harness = self
             .values
             .pointer_mut("/spec/sandboxes/0/harness")
@@ -662,15 +684,7 @@ impl JourneyState {
         let settings = harness
             .entry("settings")
             .or_insert_with(|| Value::Object(Map::new()));
-        let settings = settings
-            .as_object_mut()
-            .ok_or_else(|| diagnostic("journey", "Adapter settings must be an object."))?;
-        if let Some(value) = value {
-            settings.insert(property, value);
-        } else {
-            settings.remove(&property);
-        }
-        Ok(())
+        crate::settings::put(settings, pointer, value)
     }
 
     fn put_inference_preset(&mut self, preset: ProviderPreset) -> Result<(), Diagnostics> {
@@ -800,8 +814,4 @@ impl JourneyState {
         }
         Ok(())
     }
-}
-
-fn escape(part: &str) -> String {
-    part.replace('~', "~0").replace('/', "~1")
 }

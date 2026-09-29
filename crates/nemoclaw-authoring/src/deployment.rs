@@ -12,60 +12,7 @@ impl Draft {
     /// Existing deployment fields that can be edited without changing native adapter settings.
     /// Paths identify their actual locations in the SDK document, including service names.
     pub fn deployment_questions(&self) -> Result<Vec<SettingQuestion>, Diagnostics> {
-        if self.document.spec.sandboxes.len() != 1 {
-            return Err(diagnostic(
-                "deployment",
-                "Deployment questions require one sandbox.",
-            ));
-        }
-        let values = serde_json::to_value(&self.document)
-            .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?;
-        static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-        let schema = SCHEMA.get_or_init(input_schema);
-        let mut questions = Vec::new();
-        collect(schema, schema, &values, "", &mut questions, 0)?;
-        let sandbox = &self.document.spec.sandboxes[0];
-        let harness = self
-            .document
-            .sandbox_harness(sandbox)
-            .map_err(|error| diagnostic("deployment", &error.to_string()))?;
-        let inference = self
-            .document
-            .sandbox_inference(sandbox)
-            .map_err(|error| diagnostic("deployment", &error.to_string()))?;
-        let mut harness_paths = vec!["/spec/sandboxes/0/harness".to_owned()];
-        let mut inference_paths = vec!["/spec/sandboxes/0/agent/inference".to_owned()];
-        for (base, definitions) in [
-            ("/spec/harnesses", &self.document.spec.harnesses),
-            ("/spec/sandboxes/0/harnesses", &sandbox.harnesses),
-        ] {
-            for (name, definition) in definitions {
-                if std::ptr::eq(definition, harness) {
-                    harness_paths.push(format!("{base}/{}", escaped(name)));
-                }
-            }
-        }
-        for (base, definitions) in [
-            ("/spec/inferences", &self.document.spec.inferences),
-            ("/spec/sandboxes/0/inferences", &sandbox.inferences),
-        ] {
-            for (name, definition) in definitions {
-                if std::ptr::eq(definition, inference) {
-                    inference_paths.push(format!("{base}/{}", escaped(name)));
-                }
-            }
-        }
-        questions.retain(|question| {
-            (!question.path.contains("/execution/")
-                || harness_paths
-                    .iter()
-                    .any(|base| question.path.starts_with(&format!("{base}/execution/"))))
-                && (!question.path.contains("/routes/")
-                    || inference_paths
-                        .iter()
-                        .any(|base| question.path.starts_with(&format!("{base}/routes/"))))
-        });
-        Ok(questions)
+        deployment_questions_for_document(&self.document)
     }
 
     /// Validate the entire proposed document before accepting an active question's answer.
@@ -102,6 +49,63 @@ impl Draft {
         }
         self.replace_document(document)
     }
+}
+
+pub(crate) fn deployment_questions_for_document(
+    document: &Document,
+) -> Result<Vec<SettingQuestion>, Diagnostics> {
+    if document.spec.sandboxes.len() != 1 {
+        return Err(diagnostic(
+            "deployment",
+            "Deployment questions require one sandbox.",
+        ));
+    }
+    let values = serde_json::to_value(document)
+        .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?;
+    static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    let schema = SCHEMA.get_or_init(input_schema);
+    let mut questions = Vec::new();
+    collect(schema, schema, &values, "", &mut questions, 0)?;
+    let sandbox = &document.spec.sandboxes[0];
+    let harness = document
+        .sandbox_harness(sandbox)
+        .map_err(|error| diagnostic("deployment", &error.to_string()))?;
+    let inference = document
+        .sandbox_inference(sandbox)
+        .map_err(|error| diagnostic("deployment", &error.to_string()))?;
+    let mut harness_paths = vec!["/spec/sandboxes/0/harness".to_owned()];
+    let mut inference_paths = vec!["/spec/sandboxes/0/agent/inference".to_owned()];
+    for (base, definitions) in [
+        ("/spec/harnesses", &document.spec.harnesses),
+        ("/spec/sandboxes/0/harnesses", &sandbox.harnesses),
+    ] {
+        for (name, definition) in definitions {
+            if std::ptr::eq(definition, harness) {
+                harness_paths.push(format!("{base}/{}", escaped(name)));
+            }
+        }
+    }
+    for (base, definitions) in [
+        ("/spec/inferences", &document.spec.inferences),
+        ("/spec/sandboxes/0/inferences", &sandbox.inferences),
+    ] {
+        for (name, definition) in definitions {
+            if std::ptr::eq(definition, inference) {
+                inference_paths.push(format!("{base}/{}", escaped(name)));
+            }
+        }
+    }
+    questions.retain(|question| {
+        (!question.path.contains("/execution/")
+            || harness_paths
+                .iter()
+                .any(|base| question.path.starts_with(&format!("{base}/execution/"))))
+            && (!question.path.contains("/routes/")
+                || inference_paths
+                    .iter()
+                    .any(|base| question.path.starts_with(&format!("{base}/routes/"))))
+    });
+    Ok(questions)
 }
 
 fn escaped(part: &str) -> String {

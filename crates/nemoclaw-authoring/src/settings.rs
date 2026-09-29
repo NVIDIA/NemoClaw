@@ -408,7 +408,7 @@ impl Draft {
         ))
     }
 }
-fn put(root: &mut Value, path: &str, value: Option<Value>) -> Result<(), Diagnostics> {
+pub(crate) fn put(root: &mut Value, path: &str, value: Option<Value>) -> Result<(), Diagnostics> {
     if path.is_empty() {
         *root = value.unwrap_or_else(|| Value::Object(Map::new()));
         return Ok(());
@@ -440,7 +440,7 @@ fn put(root: &mut Value, path: &str, value: Option<Value>) -> Result<(), Diagnos
     }
     Ok(())
 }
-fn collect(
+pub(crate) fn collect(
     root: &Value,
     schema: &Value,
     values: &Value,
