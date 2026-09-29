@@ -40,6 +40,11 @@ const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
 const INTEGRATION_ENV_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_ENV_SANDBOX}`;
 const INTEGRATION_REGISTRY_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_REGISTRY_SANDBOX}`;
+const ALIVE_CLOUDFLARED_CONTROL: ProcessControl = {
+  isAlive: () => true,
+  commandLine: () => "/usr/local/bin/cloudflared tunnel run",
+  signal: () => {},
+};
 
 function resetIntegrationPidDirs(): void {
   for (const dir of [INTEGRATION_ENV_PID_DIR, INTEGRATION_REGISTRY_PID_DIR]) {
@@ -122,6 +127,13 @@ describe("getServiceStatuses", () => {
     expect(cf?.pid).toBeNull();
   });
 
+  it("does not report a live PID owned by another process as cloudflared", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    const statuses = getServiceStatuses({ pidDir });
+    const cf = statuses.find((s) => s.name === "cloudflared");
+    expect(cf).toEqual({ name: "cloudflared", running: false, pid: null });
+  });
+
   it("ignores invalid PID file contents", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
     const statuses = getServiceStatuses({ pidDir });
@@ -195,7 +207,10 @@ describe("status host service PID dir matches start/stop env (#1077)", () => {
     }));
     expect(resolved).toBe(INTEGRATION_ENV_SANDBOX);
 
-    const statuses = getServiceStatuses({ sandboxName: resolved });
+    const statuses = getServiceStatuses({
+      sandboxName: resolved,
+      processControl: ALIVE_CLOUDFLARED_CONTROL,
+    });
     const cloudflared = statuses.find((service) => service.name === "cloudflared");
     expect(cloudflared?.running).toBe(true);
     expect(cloudflared?.pid).toBe(process.pid);
@@ -271,7 +286,7 @@ describe("showStatus", () => {
   // asked for a "no cloudflared process; restart with ..." shape — a cause
   // phrase plus a single-command recovery. All three failure modes surface
   // "no cloudflared process" and point at `nemoclaw tunnel start`, which
-  // overwrites a stale PID file when isRunning() is false (see startService).
+  // overwrites a stale PID file when the identity-aware state is not running.
   it("prints `tunnel start` remediation when the PID file is missing (stopped)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showStatus({ pidDir });
@@ -395,6 +410,34 @@ describe("startAll", () => {
     expect(log).toContain("token-env-present");
     expect(log).not.toContain("named-secret");
     expect(output).toContain("https://agent.example.com");
+  });
+
+  it("replaces a stale PID owned by another live process instead of reusing its URL", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      ["#!/usr/bin/env sh", "echo 'https://fresh.trycloudflare.com'", "sleep 20"].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid), { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://stale.trycloudflare.com\n", {
+      mode: 0o600,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345 });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(replacementPid).not.toBe(process.pid);
+    expect(output).toContain("https://fresh.trycloudflare.com");
+    expect(output).not.toContain("https://stale.trycloudflare.com");
+    expect(() => process.kill(process.pid, 0)).not.toThrow();
   });
 });
 

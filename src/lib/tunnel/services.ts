@@ -114,15 +114,9 @@ function isAlive(pid: number): boolean {
   }
 }
 
-function isRunning(pidDir: string, name: string): boolean {
-  const pid = readPid(pidDir, name);
-  if (pid === null) return false;
-  return isAlive(pid);
-}
-
 // ---------------------------------------------------------------------------
-// Cloudflared state — finer-grained than isRunning() so callers (status,
-// doctor) can distinguish stopped / stale-pid-file / stale-pid-process and
+// Cloudflared state combines liveness and process identity so callers (status,
+// doctor, start) agree on stopped / stale-pid-file / stale-pid-process and can
 // emit a targeted remediation. Issue #2604.
 // ---------------------------------------------------------------------------
 
@@ -275,7 +269,10 @@ export function getTunnelUrl(pidDir: string, dashboardPort: number): string {
   return extractNamedCloudflareUrl(log, dashboardPort) ?? extractTryCloudflareUrl(log) ?? "";
 }
 
-export function readCloudflaredState(pidDir: string): CloudflaredState {
+export function readCloudflaredState(
+  pidDir: string,
+  pc: ProcessControl = REAL_PROCESS_CONTROL,
+): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
   let raw: string;
@@ -287,13 +284,10 @@ export function readCloudflaredState(pidDir: string): CloudflaredState {
   if (raw.length === 0) return { kind: "stopped" };
   const pid = Number(raw);
   if (!Number.isFinite(pid) || pid <= 0) return { kind: "stale-pid-file" };
-  try {
-    process.kill(pid, 0);
-  } catch {
+  if (!pc.isAlive(pid)) {
     return { kind: "stale-pid-process", pid };
   }
-  const cmdline = readProcessCommandLine(pid);
-  if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
+  if (!pidIsOurs(pid, pc)) {
     return { kind: "stale-pid-process", pid };
   }
   return { kind: "running", pid };
@@ -332,10 +326,11 @@ function startService(
   command: string,
   args: string[],
   env?: Record<string, string>,
+  pc: ProcessControl = REAL_PROCESS_CONTROL,
 ): void {
-  if (isRunning(pidDir, name)) {
-    const pid = readPid(pidDir, name);
-    info(`${name} already running (PID ${String(pid)})`);
+  const state = readCloudflaredState(pidDir, pc);
+  if (state.kind === "running") {
+    info(`${name} already running (PID ${String(state.pid)})`);
     return;
   }
 
@@ -464,7 +459,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   ensurePidDir(pidDir);
 
   console.log("");
-  const state = readCloudflaredState(pidDir);
+  const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
   // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
   // surface the matching remediation. The previous "(stopped)" line was
   // emitted in all three failure modes with no recovery hint.
@@ -643,7 +638,7 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared");
+  stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
 }
 
 /**
@@ -665,6 +660,7 @@ function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+  const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
 
   ensurePidDir(pidDir);
 
@@ -683,22 +679,32 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       stdio: ["ignore", "ignore", "ignore"],
     });
     if (tunnelToken) {
-      startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
-        TUNNEL_TOKEN: tunnelToken,
-      });
+      startService(
+        pidDir,
+        "cloudflared",
+        "cloudflared",
+        ["tunnel", "run"],
+        {
+          TUNNEL_TOKEN: tunnelToken,
+        },
+        processControl,
+      );
     } else {
-      startService(pidDir, "cloudflared", "cloudflared", [
-        "tunnel",
-        "--url",
-        `http://localhost:${String(dashboardPort)}`,
-      ]);
+      startService(
+        pidDir,
+        "cloudflared",
+        "cloudflared",
+        ["tunnel", "--url", `http://localhost:${String(dashboardPort)}`],
+        undefined,
+        processControl,
+      );
     }
   } catch {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
   // Wait for cloudflared URL
-  if (isRunning(pidDir, "cloudflared")) {
+  if (readCloudflaredState(pidDir, processControl).kind === "running") {
     info("Waiting for tunnel URL...");
     for (let i = 0; i < 15; i++) {
       if (getTunnelUrl(pidDir, dashboardPort)) {
@@ -711,7 +717,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   let tunnelUrl = "";
-  if (isRunning(pidDir, "cloudflared")) {
+  if (readCloudflaredState(pidDir, processControl).kind === "running") {
     tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
   }
 
@@ -754,11 +760,12 @@ export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   return SERVICE_NAMES.map((name) => {
-    const running = isRunning(pidDir, name);
+    const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
+    const running = state.kind === "running";
     return {
       name,
       running,
-      pid: running ? readPid(pidDir, name) : null,
+      pid: running ? state.pid : null,
     };
   });
 }
