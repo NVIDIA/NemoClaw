@@ -441,11 +441,11 @@
               "x-nemoclaw-default-rule": "Omitted or empty selects the default."
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
               "description": "Managed gateway image pinned by the SDK.",
               "enum": [
                 "",
-                "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"
+                "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"
               ],
               "type": "string",
               "x-nemoclaw-default-rule": "Omitted or empty selects the default."
@@ -1600,10 +1600,8 @@
           "type": "array"
         },
         "tls": {
-          "description": "terminate, passthrough, or skip, subject to protocol validation.",
+          "description": "Omit for automatic TLS handling, or use skip for a raw tunnel.",
           "enum": [
-            "terminate",
-            "passthrough",
             "skip"
           ],
           "type": "string"

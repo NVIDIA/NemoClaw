@@ -296,6 +296,72 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
 }
 
 #[tokio::test]
+async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity() {
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let binding = binding.unwrap();
+    assert_ne!(binding["workspace"], "default");
+    let command = vec!["fixture".into()];
+    assert_eq!(
+        client
+            .exec_bound(&binding, command.clone(), Default::default(), 5)
+            .await
+            .unwrap(),
+        (0, Vec::new())
+    );
+    let key = format!("{}/{}", binding["workspace"], binding["name"]);
+    let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
+    for field in ["id", "owner", "generation"] {
+        let mut changed = original.clone();
+        let metadata = changed.metadata.as_mut().unwrap();
+        match field {
+            "id" => metadata.id = "replacement".into(),
+            "owner" => {
+                metadata.labels.remove(nemoclaw_provider::openshell::OWNER);
+            }
+            _ => {
+                metadata
+                    .labels
+                    .remove(nemoclaw_provider::openshell::GENERATION);
+            }
+        }
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .insert(key.clone(), changed);
+        assert!(
+            client
+                .exec_bound(&binding, command.clone(), Default::default(), 5)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(fixture.state.lock().unwrap().exec_calls, vec![command]);
+}
+
+#[tokio::test]
 async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
     let fixture = Fixture::start().await;
     let mut document = Document::parse(

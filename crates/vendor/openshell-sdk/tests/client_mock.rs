@@ -13,7 +13,8 @@ use openshell_core::proto::open_shell_server::{OpenShell, OpenShellServer};
 use openshell_sdk::{
     AuthConfig, ClientConfig, ExecOptions, ListOptions, OpenShellClient, Refresh, RefreshError,
     RefreshedToken, SandboxPhase, SandboxSpec, SandboxTemplateCreateSpec,
-    SandboxTemplateListOptions, ServiceStatus as SdkServiceStatus,
+    SandboxTemplateListOptions, ServiceExposure, ServiceStatus as SdkServiceStatus, WatchEvent,
+    WatchOptions,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tokio_stream::StreamExt;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Response, Status};
 
@@ -72,6 +74,25 @@ struct MockState {
     require_bearer: Option<String>,
     /// Count of requests rejected by the `require_bearer` gate.
     unauth_hits: AtomicU32,
+    last_watch_requests: Mutex<Vec<proto::WatchSandboxRequest>>,
+    watch_calls: AtomicU32,
+    // Per-dial script. Outer Vec index = dial number. Inner = events to send,
+    // then how to end that dial.
+    watch_script: Vec<WatchDial>,
+}
+
+#[derive(Debug, Clone)]
+struct WatchDial {
+    events: Vec<proto::SandboxStreamEvent>,
+    end: DialEnd,
+}
+
+#[derive(Debug, Clone)]
+enum DialEnd {
+    Clean,
+    Err(tonic::Code),
+    /// The dial itself fails before any stream opens (pre-stream RPC error).
+    FailDial(tonic::Code),
 }
 
 #[derive(Clone)]
@@ -110,6 +131,53 @@ fn sandbox_with_phase_ws(
             ..Default::default()
         }),
         created_from_workload_template,
+    }
+}
+
+/// Encode the wire cursor for `seq`, spelled out rather than built with the
+/// server's encoder.
+///
+/// The SDK treats cursors as opaque, so nothing in this crate can produce one.
+/// Writing the format by hand also pins it independently: the padding is what
+/// makes the SDK's byte-wise high-water comparison agree with sequence order,
+/// and a server-side change that dropped it would have to break this literal
+/// before it could break a client.
+fn test_cursor(seq: u64) -> String {
+    format!("v1:11111111-1111-4111-8111-111111111111:{seq:020}")
+}
+
+fn log_event(seq: u64, msg: &str) -> proto::SandboxStreamEvent {
+    proto::SandboxStreamEvent {
+        payload: Some(proto::sandbox_stream_event::Payload::Log(
+            proto::SandboxLogLine {
+                sandbox_id: "id-my-box".into(),
+                event_time: None,
+                level: "INFO".into(),
+                target: "t".into(),
+                message: msg.into(),
+                source: "sandbox".into(),
+                fields: HashMap::new(),
+            },
+        )),
+        cursor: test_cursor(seq),
+    }
+}
+
+fn warning_event(msg: &str) -> proto::SandboxStreamEvent {
+    proto::SandboxStreamEvent {
+        payload: Some(proto::sandbox_stream_event::Payload::Warning(
+            proto::SandboxStreamWarning {
+                message: msg.into(),
+            },
+        )),
+        cursor: String::new(),
+    }
+}
+
+fn watch_opts() -> WatchOptions {
+    WatchOptions {
+        follow_logs: true,
+        ..Default::default()
     }
 }
 
@@ -161,6 +229,27 @@ fn workload_template_proto(name: &str, workspace: &str) -> proto::SandboxWorkloa
 
 #[tonic::async_trait]
 impl OpenShell for TestOpenShell {
+    async fn peer_report_provider_readiness(
+        &self,
+        _request: tonic::Request<proto::ReportProviderReadinessRequest>,
+    ) -> Result<Response<proto::ReportProviderReadinessResponse>, Status> {
+        Err(Status::unimplemented("not used by this test server"))
+    }
+
+    async fn peer_report_endpoint_status(
+        &self,
+        _request: tonic::Request<proto::ReportEndpointStatusRequest>,
+    ) -> Result<Response<proto::ReportEndpointStatusResponse>, Status> {
+        Err(Status::unimplemented("not used by this test server"))
+    }
+
+    async fn peer_get_sandbox_provider_status(
+        &self,
+        _request: tonic::Request<proto::GetSandboxProviderStatusRequest>,
+    ) -> Result<Response<proto::GetSandboxProviderStatusResponse>, Status> {
+        Err(Status::unimplemented("not used by this test server"))
+    }
+
     async fn report_endpoint_status(
         &self,
         _request: tonic::Request<proto::ReportEndpointStatusRequest>,
@@ -224,6 +313,7 @@ impl OpenShell for TestOpenShell {
             status: proto::ServiceStatus::Healthy.into(),
             gateway_version: "test-1.2.3".to_string(),
             compute_drivers: Vec::new(),
+            extensions: Vec::new(),
         }))
     }
 
@@ -246,9 +336,20 @@ impl OpenShell for TestOpenShell {
         } else {
             req.name.clone()
         };
+        let service_urls = req
+            .service_exposures
+            .iter()
+            .map(|exposure| {
+                (
+                    exposure.service.clone(),
+                    format!("https://{}.example.test/", exposure.service),
+                )
+            })
+            .collect();
         *self.state.last_create.lock().await = Some(req);
         Ok(Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox_with_phase(&name, proto::SandboxPhase::Provisioning)),
+            service_urls,
         }))
     }
 
@@ -272,7 +373,7 @@ impl OpenShell for TestOpenShell {
         request: tonic::Request<proto::GetSandboxTemplateRequest>,
     ) -> Result<Response<proto::SandboxTemplateResponse>, Status> {
         let request = request.into_inner();
-        let workspace = selected_workspace(&request.workspace_scope).unwrap_or("default");
+        let workspace = selected_workspace(&request.workspace_scope).unwrap_or_default();
         let template = workload_template_proto(&request.name, workspace);
         *self.state.last_template_get.lock().await = Some(request);
         Ok(Response::new(proto::SandboxTemplateResponse {
@@ -311,13 +412,14 @@ impl OpenShell for TestOpenShell {
     ) -> Result<Response<proto::SandboxResponse>, Status> {
         let request = request.into_inner();
         let sandbox = sandbox_with_phase_ws(
-            &request.name,
+            request.name.as_str(),
             proto::SandboxPhase::Stopped,
-            selected_workspace(&request.workspace_scope).unwrap_or("default"),
+            selected_workspace(&request.workspace_scope).unwrap_or_default(),
         );
         *self.state.last_stop.lock().await = Some(request);
         Ok(Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox),
+            service_urls: HashMap::new(),
         }))
     }
 
@@ -327,13 +429,14 @@ impl OpenShell for TestOpenShell {
     ) -> Result<Response<proto::SandboxResponse>, Status> {
         let request = request.into_inner();
         let sandbox = sandbox_with_phase_ws(
-            &request.name,
+            request.name.as_str(),
             proto::SandboxPhase::Starting,
-            selected_workspace(&request.workspace_scope).unwrap_or("default"),
+            selected_workspace(&request.workspace_scope).unwrap_or_default(),
         );
         *self.state.last_start.lock().await = Some(request);
         Ok(Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox),
+            service_urls: HashMap::new(),
         }))
     }
 
@@ -342,10 +445,10 @@ impl OpenShell for TestOpenShell {
         request: tonic::Request<proto::GetSandboxRequest>,
     ) -> Result<Response<proto::SandboxResponse>, Status> {
         let req = request.into_inner();
-        let name = req.name;
+        let name = req.name.clone();
         *self.state.last_get_name.lock().await = Some(name.clone());
         *self.state.last_get_workspace.lock().await =
-            selected_workspace(&req.workspace_scope).map(str::to_string);
+            selected_workspace(&req.workspace_scope).map(ToString::to_string);
         let count = self.state.get_calls.fetch_add(1, Ordering::SeqCst);
 
         if let Some(error) = &self.state.get_error {
@@ -374,6 +477,7 @@ impl OpenShell for TestOpenShell {
         }
         Ok(Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox),
+            service_urls: HashMap::new(),
         }))
     }
 
@@ -444,9 +548,9 @@ impl OpenShell for TestOpenShell {
         request: tonic::Request<proto::DeleteSandboxRequest>,
     ) -> Result<Response<proto::DeleteSandboxResponse>, Status> {
         let req = request.into_inner();
-        *self.state.last_delete_name.lock().await = Some(req.name);
+        *self.state.last_delete_name.lock().await = Some(req.name.clone());
         *self.state.last_delete_workspace.lock().await =
-            selected_workspace(&req.workspace_scope).map(str::to_string);
+            selected_workspace(&req.workspace_scope).map(ToString::to_string);
         if let Some(response) = &self.state.delete_response {
             return Ok(Response::new(response.clone()));
         }
@@ -546,6 +650,16 @@ impl OpenShell for TestOpenShell {
         &self,
         _: tonic::Request<tonic::Streaming<proto::TcpForwardFrame>>,
     ) -> Result<Response<Self::ForwardTcpStream>, Status> {
+        Err(Status::unimplemented("unused"))
+    }
+
+    type PeerRelayStream =
+        tokio_stream::wrappers::ReceiverStream<Result<proto::PeerRelayFrame, Status>>;
+
+    async fn peer_relay(
+        &self,
+        _: tonic::Request<tonic::Streaming<proto::PeerRelayFrame>>,
+    ) -> Result<Response<Self::PeerRelayStream>, Status> {
         Err(Status::unimplemented("unused"))
     }
 
@@ -701,6 +815,13 @@ impl OpenShell for TestOpenShell {
         Err(Status::unimplemented("unused"))
     }
 
+    async fn report_sandbox_configuration(
+        &self,
+        _: tonic::Request<proto::ReportSandboxConfigurationRequest>,
+    ) -> Result<Response<proto::ReportSandboxConfigurationResponse>, Status> {
+        Err(Status::unimplemented("not implemented in test"))
+    }
+
     async fn report_policy_status(
         &self,
         _: tonic::Request<proto::ReportPolicyStatusRequest>,
@@ -754,9 +875,48 @@ impl OpenShell for TestOpenShell {
 
     async fn watch_sandbox(
         &self,
-        _: tonic::Request<proto::WatchSandboxRequest>,
+        request: tonic::Request<proto::WatchSandboxRequest>,
     ) -> Result<Response<Self::WatchSandboxStream>, Status> {
-        Err(Status::unimplemented("unused"))
+        let dial = self.state.watch_calls.fetch_add(1, Ordering::SeqCst) as usize;
+        let req = request.into_inner();
+
+        // The gateway resolves `sandbox` as a workspace-scoped canonical name,
+        // so an object ID here is NOT_FOUND rather than a silent no-op stream.
+        // Mirrored so every watch test fails on ID-addressed requests.
+        let resolved = self.state.last_get_name.lock().await.clone();
+        if let Some(resolved) = resolved
+            && req.sandbox != resolved
+        {
+            return Err(Status::not_found(format!(
+                "sandbox '{}' not found",
+                req.sandbox
+            )));
+        }
+
+        self.state.last_watch_requests.lock().await.push(req);
+
+        let script = self.state.watch_script.get(dial).cloned();
+        if let Some(WatchDial {
+            end: DialEnd::FailDial(code),
+            ..
+        }) = script
+        {
+            return Err(Status::new(code, "scripted dial failure"));
+        }
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        tokio::spawn(async move {
+            let Some(dial) = script else { return };
+            for ev in dial.events {
+                let _ = tx.send(Ok(ev)).await;
+            }
+            if let DialEnd::Err(code) = dial.end {
+                let _ = tx.send(Err(Status::new(code, "scripted"))).await;
+            }
+            // tx dropped here → stream ends
+        });
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     async fn submit_policy_analysis(
@@ -976,17 +1136,28 @@ async fn create_sandbox_passes_spec_through() {
         image: Some("ghcr.io/foo:bar".to_string()),
         labels: labels.clone(),
         gpu: true,
+        service_exposures: vec![ServiceExposure {
+            service: "web".to_string(),
+            target_port: 8080,
+        }],
         ..Default::default()
     };
 
     let result = client.create_sandbox(spec).await.unwrap();
     assert_eq!(result.name, "my-box");
     assert_eq!(result.phase, SandboxPhase::Provisioning);
+    assert_eq!(
+        result.service_urls.get("web").map(String::as_str),
+        Some("https://web.example.test/")
+    );
 
     let observed = state.last_create.lock().await.clone().unwrap();
     assert_eq!(observed.name, "my-box");
     assert_eq!(observed.labels, labels);
     assert!(observed.annotations.is_empty());
+    assert_eq!(observed.service_exposures.len(), 1);
+    assert_eq!(observed.service_exposures[0].service, "web");
+    assert_eq!(observed.service_exposures[0].target_port, 8080);
     let observed_spec = observed.spec.unwrap();
     assert!(
         observed_spec
@@ -1026,7 +1197,7 @@ async fn create_sandbox_from_template_passes_template_name() {
 
     let observed = state.last_create.lock().await.clone().unwrap();
     assert_eq!(observed.name, "from-template");
-    assert_eq!(observed.workload_template_name, "python");
+    assert_eq!(observed.workload_template, "python");
     let observed_spec = observed.spec.unwrap();
     assert_eq!(observed_spec.providers, vec!["openai".to_string()]);
     assert_eq!(observed_spec.command, vec!["python", "-m", "agent"]);
@@ -1233,7 +1404,7 @@ async fn stop_and_start_map_requests_and_phases() {
     let stopped = client.stop_sandbox("sleepy").await.unwrap();
     assert_eq!(stopped.phase, SandboxPhase::Stopped);
     let stop = state.last_stop.lock().await.clone().unwrap();
-    assert_eq!(stop.name, "sleepy");
+    assert_eq!(Some(stop.name.as_str()), Some("sleepy"));
     assert_eq!(selected_workspace(&stop.workspace_scope), Some("default"));
 
     let started = client
@@ -1243,7 +1414,7 @@ async fn stop_and_start_map_requests_and_phases() {
         .unwrap();
     assert_eq!(started.phase, SandboxPhase::Starting);
     let start = state.last_start.lock().await.clone().unwrap();
-    assert_eq!(start.name, "sleepy");
+    assert_eq!(Some(start.name.as_str()), Some("sleepy"));
     assert_eq!(selected_workspace(&start.workspace_scope), Some("team-a"));
 }
 
@@ -1511,7 +1682,7 @@ async fn exec_buffers_stdout_stderr_and_exit() {
     assert_eq!(result.stderr, b"warn\n");
 
     let observed = state.last_exec_request.lock().await.clone().unwrap();
-    assert_eq!(observed.sandbox_id, "id-my-box");
+    assert_eq!(observed.sandbox, "my-box");
     assert_eq!(
         observed.command,
         vec!["echo".to_string(), "hello".to_string()]
@@ -1660,7 +1831,7 @@ async fn workspace_scoped_create_from_template_passes_workspace() {
         selected_workspace(&observed.workspace_scope),
         Some("staging")
     );
-    assert_eq!(observed.workload_template_name, "python");
+    assert_eq!(observed.workload_template, "python");
     assert_eq!(observed.spec.unwrap().policy.unwrap().version, 2);
 }
 
@@ -1848,7 +2019,7 @@ async fn delete_workspace_returns_ack() {
 }
 
 #[tokio::test]
-async fn sandbox_ref_includes_workspace_field() {
+async fn sandbox_result_includes_workspace_field() {
     let state = Arc::new(MockState {
         phase_sequence: vec![proto::SandboxPhase::Ready],
         ..Default::default()
@@ -1913,4 +2084,288 @@ async fn raw_grpc_fresh_refreshes_before_raw_call() {
         1,
         "raw_grpc_fresh must refresh the near-expiry token exactly once"
     );
+}
+
+#[tokio::test]
+async fn watch_logs_forwards_logs_and_warnings() {
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![WatchDial {
+            events: vec![
+                log_event(1, "a"),
+                warning_event("lagged"),
+                log_event(2, "b"),
+            ],
+            end: DialEnd::Clean,
+        }],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+
+    match stream.next().await.unwrap().unwrap() {
+        WatchEvent::Log { line, cursor } => {
+            assert_eq!(cursor, test_cursor(1));
+            assert_eq!(line.message, "a");
+        }
+        e => panic!("expected log, got {e:?}"),
+    }
+
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        WatchEvent::Warning { .. }
+    ));
+    match stream.next().await.unwrap().unwrap() {
+        WatchEvent::Log { cursor, .. } => assert_eq!(cursor, test_cursor(2)),
+        e => panic!("expected log, got {e:?}"),
+    }
+    assert!(stream.next().await.is_none());
+}
+
+#[tokio::test]
+async fn watch_logs_resumes_after_reconnect() {
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![
+            WatchDial {
+                events: vec![log_event(1, "a"), log_event(2, "b")],
+                end: DialEnd::Err(tonic::Code::Unavailable),
+            },
+            WatchDial {
+                events: vec![log_event(3, "c")],
+                end: DialEnd::Clean,
+            },
+        ],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    for want in [1u64, 2, 3] {
+        assert!(
+            matches!(stream.next().await.unwrap().unwrap(), WatchEvent::Log { cursor, .. } if cursor == test_cursor(want))
+        );
+    }
+    assert!(stream.next().await.is_none());
+
+    let reqs = state.last_watch_requests.lock().await;
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[0].resume_after_cursor, "");
+    // Resumed from the highest delivered cursor, forwarded verbatim.
+    assert_eq!(reqs[1].resume_after_cursor, test_cursor(2));
+}
+
+#[tokio::test]
+async fn watch_logs_resumes_from_highest_cursor_when_arrival_is_unordered() {
+    // The gateway reads the log and platform sources independently during live
+    // delivery, so arrival order can differ from cursor order. The resume point
+    // must be the highest cursor seen, not the last one.
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![
+            WatchDial {
+                events: vec![log_event(3, "c"), log_event(1, "a")],
+                end: DialEnd::Err(tonic::Code::Unavailable),
+            },
+            WatchDial {
+                events: vec![log_event(4, "d")],
+                end: DialEnd::Clean,
+            },
+        ],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    for want in [3u64, 1, 4] {
+        assert!(
+            matches!(stream.next().await.unwrap().unwrap(), WatchEvent::Log { cursor, .. } if cursor == test_cursor(want))
+        );
+    }
+    assert!(stream.next().await.is_none());
+
+    let reqs = state.last_watch_requests.lock().await;
+    assert_eq!(reqs.len(), 2);
+    // Cursor 1 arrived last but must not rewind the resume point to 1, which
+    // would make the gateway replay cursors 2 and 3 all over again.
+    assert_eq!(reqs[1].resume_after_cursor, test_cursor(3));
+}
+
+#[tokio::test]
+async fn watch_logs_resume_cursor_is_padded_high_water() {
+    // The high-water mark is a byte-wise string comparison on an opaque token,
+    // so it is only correct while the sequence segment is a fixed width. Seq 9
+    // then seq 10 is the case that catches an unpadded encoding: "...:9" sorts
+    // above "...:10", so the resume point would rewind to 9 and the gateway
+    // would replay an event the client already has.
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![
+            WatchDial {
+                events: vec![log_event(9, "i"), log_event(10, "j")],
+                end: DialEnd::Err(tonic::Code::Unavailable),
+            },
+            WatchDial {
+                events: vec![],
+                end: DialEnd::Clean,
+            },
+        ],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    for want in [9u64, 10] {
+        assert!(
+            matches!(stream.next().await.unwrap().unwrap(), WatchEvent::Log { cursor, .. } if cursor == test_cursor(want))
+        );
+    }
+    assert!(stream.next().await.is_none());
+
+    let reqs = state.last_watch_requests.lock().await;
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[1].resume_after_cursor, test_cursor(10));
+}
+
+#[tokio::test]
+async fn watch_logs_normalizes_empty_log_source_to_gateway() {
+    let mut event = log_event(1, "a");
+    if let Some(proto::sandbox_stream_event::Payload::Log(ref mut line)) = event.payload {
+        line.source = String::new();
+    }
+
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![WatchDial {
+            events: vec![event],
+            end: DialEnd::Clean,
+        }],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    let WatchEvent::Log { line, .. } = stream.next().await.unwrap().unwrap() else {
+        panic!("expected a log event");
+    };
+    // The wire contract treats an omitted source as "gateway".
+    assert_eq!(line.source, "gateway");
+}
+
+#[tokio::test]
+async fn watch_logs_retries_initial_dial_failure() {
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![
+            // First dial fails before the stream opens.
+            WatchDial {
+                events: vec![],
+                end: DialEnd::FailDial(tonic::Code::Unavailable),
+            },
+            // Second dial succeeds and delivers.
+            WatchDial {
+                events: vec![log_event(1, "a")],
+                end: DialEnd::Clean,
+            },
+        ],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        WatchEvent::Log { ref cursor, .. } if *cursor == test_cursor(1)
+    ));
+    assert!(stream.next().await.is_none());
+
+    let reqs = state.last_watch_requests.lock().await;
+    assert_eq!(reqs.len(), 2); // dialed twice: failed, then reconnected
+    assert_eq!(reqs[0].resume_after_cursor, "");
+    assert_eq!(reqs[1].resume_after_cursor, ""); // nothing delivered yet on retry
+}
+
+#[tokio::test]
+async fn watch_logs_gap_terminates_out_of_range() {
+    let state = Arc::new(MockState {
+        phase_sequence: vec![proto::SandboxPhase::Ready],
+        watch_script: vec![WatchDial {
+            events: vec![log_event(1, "a")],
+            end: DialEnd::Err(tonic::Code::OutOfRange),
+        }],
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let client = connect(&endpoint).await;
+
+    let stream = client.watch_logs("my-box", watch_opts());
+    tokio::pin!(stream);
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        WatchEvent::Log { ref cursor, .. } if *cursor == test_cursor(1)
+    ));
+    let err = stream.next().await.unwrap().unwrap_err();
+    assert_eq!(err.code(), "out_of_range");
+    assert!(stream.next().await.is_none());
+
+    // No redial. OUT_OF_RANGE is terminal for every cause the gateway uses it
+    // for -- a trimmed cursor or one from a retired cursor space -- because
+    // reconnecting would silently paper over events that are already lost.
+    assert_eq!(state.last_watch_requests.lock().await.len(), 1);
+}
+
+// `sandbox` addresses a workspace-scoped canonical name, and the mock's
+// `id-{name}` ids differ from the names, so sending a resolved object id here
+// reaches the gateway as NOT_FOUND and the watch never streams.
+#[tokio::test]
+async fn watch_logs_addresses_the_sandbox_by_canonical_name() {
+    for workspace in ["default", "production"] {
+        let state = Arc::new(MockState {
+            phase_sequence: vec![proto::SandboxPhase::Ready],
+            watch_script: vec![WatchDial {
+                events: vec![log_event(1, "a")],
+                end: DialEnd::Clean,
+            }],
+            ..Default::default()
+        });
+        let endpoint = start_mock(state.clone()).await;
+        let client = connect(&endpoint).await;
+
+        let scoped = client.workspace(workspace);
+        let mut stream: std::pin::Pin<Box<dyn tokio_stream::Stream<Item = _>>> =
+            if workspace == "default" {
+                Box::pin(client.watch_logs("watched", watch_opts()))
+            } else {
+                Box::pin(scoped.watch_logs("watched", watch_opts()))
+            };
+
+        assert!(
+            matches!(
+                stream.next().await.unwrap().unwrap(),
+                WatchEvent::Log { ref cursor, .. } if *cursor == test_cursor(1)
+            ),
+            "{workspace}: first event must stream"
+        );
+
+        let reqs = state.last_watch_requests.lock().await;
+        assert_eq!(reqs.len(), 1, "{workspace}");
+        assert_eq!(reqs[0].sandbox, "watched", "{workspace}: name, not id");
+        assert_eq!(
+            selected_workspace(&reqs[0].workspace_scope),
+            Some(workspace)
+        );
+    }
 }

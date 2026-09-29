@@ -39,7 +39,6 @@ spec:
                   - host: docs.example.com
                     port: 443
                     protocol: rest
-                    tls: terminate
                     enforcement: enforce
                     rules:
                       - allow:

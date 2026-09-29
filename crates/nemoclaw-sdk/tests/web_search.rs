@@ -423,7 +423,7 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         let endpoint = &policy["network_policies"]["nemoclaw-tavily"]["endpoints"][0];
         assert_eq!(endpoint["host"], "api.tavily.com");
         assert_ne!(endpoint["request_body_credential_rewrite"], true);
-        assert_eq!(endpoint["tls"], "terminate");
+        assert!(endpoint.get("tls").is_none());
         assert_eq!(endpoint["enforcement"], "enforce");
         assert_eq!(
             endpoint["rules"],

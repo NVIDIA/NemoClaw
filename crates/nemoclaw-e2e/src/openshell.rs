@@ -534,6 +534,7 @@ fn create_sandbox(
     state.created("sandbox");
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
+        ..Default::default()
     })
 }
 fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
@@ -546,6 +547,7 @@ fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::Sandbox
                 .ok_or_else(|| Status::not_found("absent"))?
                 .clone(),
         ),
+        ..Default::default()
     })
 }
 fn delete_sandbox(
@@ -572,7 +574,7 @@ fn policy_status(
     state.read("policy")?;
     let sandbox = state
         .sandboxes
-        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox))
         .ok_or_else(|| Status::not_found("absent"))?;
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
@@ -606,14 +608,14 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
     fn call(&mut self, request: Request<p::ExecSandboxRequest>) -> Self::Future {
         let request = request.into_inner();
         let mut state = self.0.lock().unwrap();
-        if !state.sandboxes.values().any(|sandbox| {
-            sandbox
-                .metadata
-                .as_ref()
-                .is_some_and(|m| m.id == request.sandbox_id)
-        }) {
+        let scope = match workspace(&request.workspace_scope) {
+            Ok(scope) => scope,
+            Err(error) => return std::future::ready(Err(error)),
+        };
+        let Some(sandbox) = state.sandboxes.get(&format!("{scope}/{}", request.sandbox)) else {
             return std::future::ready(Err(Status::not_found("absent")));
-        }
+        };
+        let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
         if state.exec_stalled {
             return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
@@ -658,7 +660,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         }
         if request.command.get(2).is_some_and(|c| c == "configure") && state.exec_exit == 0 {
             state.fabric_configurations.insert(
-                request.sandbox_id.clone(),
+                sandbox_id.clone(),
                 serde_json::from_str(&request.command[4]).unwrap(),
             );
             state.fabric_stopped = false;
@@ -668,7 +670,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             .get(2)
             .is_some_and(|c| c.contains("Read the existing Fabric host status"))
         {
-            let model = state.fabric_configurations.get(&request.sandbox_id);
+            let model = state.fabric_configurations.get(&sandbox_id);
             let config = model.cloned();
             let status = serde_json::json!({"ready":model.is_some() && !state.fabric_stopped,"runtime_id":"pi-runtime","config":config});
             events.push(Ok(p::ExecSandboxEvent {
@@ -709,7 +711,7 @@ fn get_profile(
         profile: Some(
             state
                 .profiles
-                .get(&format!("{}/{}", q.workspace, q.id))
+                .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.id))
                 .ok_or_else(|| Status::not_found("absent"))?
                 .clone(),
         ),
@@ -724,7 +726,7 @@ fn import_profiles(
         let mut profile = item
             .profile
             .ok_or_else(|| Status::invalid_argument("missing profile"))?;
-        let key = format!("{}/{}", q.workspace, profile.id);
+        let key = format!("{}/{}", workspace(&q.workspace_scope)?, profile.id);
         if state.profiles.contains_key(&key) {
             return Err(Status::already_exists("collision"));
         }
@@ -753,23 +755,21 @@ fn delete_profile(
     state: &mut State,
     q: p::DeleteProviderProfileRequest,
 ) -> Result<p::DeleteProviderProfileResponse, Status> {
-    if !state
-        .profiles
-        .contains_key(&format!("{}/{}", q.workspace, q.id))
-    {
+    let scope = workspace(&q.workspace_scope)?;
+    if !state.profiles.contains_key(&format!("{}/{}", scope, q.id)) {
         return Err(Status::not_found("absent"));
     }
     // The pinned gateway refuses deletion while a registration uses the profile.
     if state
         .providers
         .values()
-        .any(|provider| provider.profile_workspace == q.workspace && provider.r#type == q.id)
+        .any(|provider| provider.profile_workspace == scope && provider.r#type == q.id)
     {
         return Err(Status::failed_precondition("profile is in use"));
     }
     let deleted = state
         .profiles
-        .remove(&format!("{}/{}", q.workspace, q.id))
+        .remove(&format!("{}/{}", scope, q.id))
         .is_some();
     if state.lose_delete {
         state.lose_delete = false;

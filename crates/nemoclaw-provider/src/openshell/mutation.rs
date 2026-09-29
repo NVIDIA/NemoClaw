@@ -229,7 +229,7 @@ impl OpenShell {
                 .delete_provider_profile(self.request(proto::DeleteProviderProfileRequest {
                     allow_missing: false,
                     id: name.into(),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                     ..Default::default()
                 }))
                 .await

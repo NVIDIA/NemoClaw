@@ -15,7 +15,7 @@ fn input() -> Value {
             "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
             "landlock": {"compatibility": "best_effort"},
             "process": {"run_as_user": "1000", "run_as_group": "1000"},
-            "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
+            "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
         }}
     });
     value
@@ -111,10 +111,10 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
     let endpoints = [
         json!({"host": "docs.example.com", "ports": [80,443]}),
         json!({"allowed_ips": ["10.50.0.0/24"], "port": 8443}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "access": "read-only"}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "tls": "terminate", "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "json-rpc", "tls": "terminate", "json_rpc": {"max_body_bytes": 65536}, "rules": [{"allow": {"method": "ping"}}]}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "mcp", "tls": "terminate", "mcp": {"strict_tool_names": true}, "rules": [{"allow": {"method": "tools/call", "params": {"name": "read_*"}}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "rest", "access": "read-only"}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "json-rpc", "json_rpc": {"max_body_bytes": 65536}, "rules": [{"allow": {"method": "ping"}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "mcp", "mcp": {"strict_tool_names": true}, "rules": [{"allow": {"method": "tools/call", "params": {"name": "read_*"}}}]}),
     ];
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for endpoint in endpoints {
@@ -360,5 +360,31 @@ fn policy_choice_preserves_the_export_shape() {
             serde_json::from_value::<Network>(expected).unwrap(),
             network
         );
+    }
+}
+
+#[test]
+fn removed_tls_modes_are_rejected_and_automatic_tls_round_trips() {
+    let mut value = input();
+    let endpoint = "/spec/sandboxes/0/network/policy/explicit/network_policies/docs/endpoints/0";
+    value
+        .pointer_mut(endpoint)
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("tls");
+    let document = parse(&value).expect("omitted TLS selects automatic handling");
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for removed in ["terminate", "passthrough"] {
+        value.pointer_mut(endpoint).unwrap()["tls"] = json!(removed);
+        assert!(
+            parse(&value).is_err(),
+            "must reject removed TLS mode {removed}"
+        );
+        assert!(!validator.is_valid(&value), "schema must reject {removed}");
     }
 }

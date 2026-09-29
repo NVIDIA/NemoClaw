@@ -57,7 +57,7 @@ pub fn search_policy(provider: SearchProvider) -> super::PolicyRule {
         ),
     };
     let endpoint = json!({
-        "host": host, "port":443, "protocol":"rest", "tls":"terminate",
+        "host": host, "port":443, "protocol":"rest",
         "enforcement":"enforce", "rules": rules
     });
     serde_json::from_value(json!({

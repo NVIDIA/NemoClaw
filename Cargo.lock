@@ -2474,7 +2474,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
 dependencies = [
  "hyper-util",
  "serde",
@@ -2521,7 +2521,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -2535,7 +2535,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
 dependencies = [
  "miette",
  "noyalib",
@@ -2547,6 +2547,7 @@ dependencies = [
 name = "openshell-sdk"
 version = "0.0.0"
 dependencies = [
+ "async-stream",
  "async-trait",
  "futures",
  "hyper",

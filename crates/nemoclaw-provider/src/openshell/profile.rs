@@ -197,7 +197,7 @@ impl OpenShell {
                 .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
                     id: name.into(),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await,
         )?
@@ -220,7 +220,7 @@ impl OpenShell {
             .client
             .raw_grpc()
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
-                workspace: want["workspace"].clone(),
+                workspace_scope: Some(proto::workspace_selector(&want["workspace"])),
                 profiles: vec![proto::ProviderProfileImportItem {
                     profile: Some(if let Some(search) = search {
                         definition(search, &want["owner"], &want["generation"])

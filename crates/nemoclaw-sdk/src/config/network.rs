@@ -193,7 +193,7 @@ pub struct PolicyEndpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub protocol: Option<String>,
-    /// terminate, passthrough, or skip, subject to protocol validation.
+    /// Omit for automatic TLS handling, or use skip for a raw tunnel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub tls: Option<String>,
@@ -367,7 +367,7 @@ impl Network {
     }
 }
 pub(crate) const POLICY_PROTOCOLS: &[&str] = &["rest", "websocket", "json-rpc", "mcp"];
-pub(crate) const POLICY_TLS: &[&str] = &["terminate", "passthrough", "skip"];
+pub(crate) const POLICY_TLS: &[&str] = &["skip"];
 pub(crate) const POLICY_ENFORCEMENT: &[&str] = &["enforce", "audit"];
 pub(crate) const POLICY_ACCESS: &[&str] = &["full", "read-only"];
 pub(crate) const POLICY_BODY_MAX: u32 = 1_048_576;

@@ -301,7 +301,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 |---|---|---|---|---|
 | `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local gateway HTTP origin with an unprivileged loopback port. Constraints: `""` or pattern `^http://127\.0\.0\.1:[0-9]+/?$`. Omitted or empty selects the default. |
 | `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects the default. |
-| `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"`. Omitted or empty selects the default. |
+| `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2"`. Omitted or empty selects the default. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
@@ -709,7 +709,7 @@ Paths:
 | `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
 | `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
-| `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
+| `tls` | string | No | — | Omit for automatic TLS handling, or use skip for a raw tunnel. Constraints: `"skip"`. |
 | `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
 
 ## PolicyFilesystem

@@ -105,9 +105,12 @@ impl OpenShell {
         environment: Row,
         seconds: u32,
     ) -> Result<(i32, Vec<u8>), Error> {
+        // Exec is name-addressed upstream; verify the retained identity immediately
+        // before sending and never retry an ambiguous invocation.
         let sandbox = self.bound_sandbox(binding).await?;
         let mut request = self.request(proto::ExecSandboxRequest {
-            sandbox_id: sandbox.metadata.ok_or(ObservationError::Incomplete)?.id,
+            sandbox: sandbox.metadata.ok_or(ObservationError::Incomplete)?.name,
+            workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
             command,
             environment: environment.into_iter().collect(),
             execution_timeout: Some(

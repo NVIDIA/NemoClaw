@@ -55,6 +55,11 @@ integers where practical. Reusable template resources are exposed as
 portable workload shape and driver config. Failures map to a typed `SdkError`
 with a discriminable kind.
 
+Set `SandboxSpec::service_exposures` to register named or unnamed loopback HTTP
+services during creation. Each `ServiceExposure` contains a service name and a
+target port; an empty name selects the unnamed endpoint. The returned
+`SandboxRef::service_urls` map contains each routed URL under the same name.
+
 Curated calls without a workspace argument explicitly select the `default`
 workspace. Cross-workspace listing uses the separate `*_all_workspaces`
 methods and requires Platform Admin access.
@@ -76,9 +81,11 @@ if deletion.outcome == openshell_sdk::DeletionOutcome::Accepted {
 ```
 
 Curated `list_*` methods return a lazy `Pager<T>`. Each `next_page()` call
-issues at most one RPC and returns a `Page<T>` with its opaque continuation
-token. The explicit `list_all_*` conveniences exhaust that pager; `page_size`
-always controls one gateway request, and `page_token` resumes a saved traversal.
+fetches one logical page and returns a `Page<T>` with its opaque continuation
+token. OIDC authentication can retry that page once after an `Unauthenticated`
+response. The explicit `list_all_*` conveniences exhaust that pager;
+`page_size` always controls one gateway request, and `page_token` resumes a
+saved traversal.
 
 ```rust
 let mut pages = client.list_sandboxes(ListOptions {
@@ -108,7 +115,7 @@ client
         }),
         spec: Some(SandboxWorkloadTemplateSpec {
             workload: Some(SandboxWorkloadConfig {
-                image: "ghcr.io/nvidia/openshell-community/sandboxes/python:latest".to_string(),
+                image: "registry.example.com/agents/python:latest".to_string(),
                 ..Default::default()
             }),
             ..Default::default()

@@ -51,7 +51,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
 These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 

@@ -128,7 +128,7 @@ impl OpenShell {
                         .raw_grpc()
                         .get_sandbox_policy_status(self.request(
                             proto::GetSandboxPolicyStatusRequest {
-                                name: name.into(),
+                                sandbox: name.into(),
                                 workspace_scope: Some(proto::workspace_selector(workspace)),
                                 ..Default::default()
                             },

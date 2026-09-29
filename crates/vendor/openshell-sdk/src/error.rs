@@ -104,6 +104,19 @@ pub enum SdkError {
         /// Original gateway status, including unknown details and metadata.
         status: Box<tonic::Status>,
     },
+
+    /// Gateway could not honor a resume cursor because the requested position
+    /// was already trimmed from its buffer (gRPC `OutOfRange`). The stream is
+    /// terminated; restart observation and, if needed, read missing lines from
+    /// the sandbox log files.
+    #[error("out of range: {message}")]
+    #[diagnostic(code(openshell::sdk::out_of_range))]
+    OutOfRange {
+        /// Error message.
+        message: String,
+        /// Original gateway status, including details and metadata.
+        status: Box<tonic::Status>,
+    },
 }
 
 impl SdkError {
@@ -155,6 +168,7 @@ impl SdkError {
         match code {
             tonic::Code::NotFound => Self::NotFound { message, status },
             tonic::Code::AlreadyExists => Self::AlreadyExists { message, status },
+            tonic::Code::OutOfRange => Self::OutOfRange { message, status },
             tonic::Code::InvalidArgument => Self::InvalidConfig {
                 message,
                 status: Some(status),
@@ -178,6 +192,7 @@ impl SdkError {
             Self::InvalidConfig { status, .. } | Self::Auth { status, .. } => status.as_deref(),
             Self::NotFound { status, .. }
             | Self::AlreadyExists { status, .. }
+            | Self::OutOfRange { status, .. }
             | Self::Rpc { status, .. } => Some(status),
             _ => None,
         }
@@ -228,6 +243,7 @@ impl SdkError {
             Self::NotFound { .. } => "not_found",
             Self::AlreadyExists { .. } => "already_exists",
             Self::Rpc { .. } => "rpc",
+            Self::OutOfRange { .. } => "out_of_range",
         }
     }
 }
