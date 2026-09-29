@@ -179,3 +179,11 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   If authority or inventory verification fails, it preserves the downstream state for a retry.
   Related change: [PR #12308](https://github.com/NVIDIA/NemoClaw/pull/12308).
   Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for retry conditions.
+- For a stopped sandbox that `backup-all` or `rebuild` starts, NemoClaw waits for SSH readiness before it captures the backup.
+  It reserves time to return the sandbox to `Stopped`, and stops without replacement if backup or return-to-stopped verification fails.
+  Related change: [PR #12250](https://github.com/NVIDIA/NemoClaw/pull/12250).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for recovery limits.
+- When an OpenClaw inference-route change lacks context-window evidence, NemoClaw removes the prior route's context-window value so OpenClaw uses its default.
+  A same-route retry preserves its existing value; a retry after incomplete native configuration synchronization removes a stale value.
+  Related change: [PR #12336](https://github.com/NVIDIA/NemoClaw/pull/12336).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-inference-set).

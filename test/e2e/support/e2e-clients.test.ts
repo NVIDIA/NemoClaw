@@ -338,7 +338,7 @@ describe("E2E fixture clients", () => {
       expect(runner.calls.map(({ args }) => args)).toEqual([
         ["install.sh", "--non-interactive", "--fresh"],
         ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
-        ["-lc", LAUNCH_TURN_SCRIPT],
+        ["-c", LAUNCH_TURN_SCRIPT],
       ]);
       expect(runner.calls[2]?.options?.env?.NEMOCLAW_OPENSHELL_COMMAND).toBe(
         "/home/runner/.local/bin/openshell",
