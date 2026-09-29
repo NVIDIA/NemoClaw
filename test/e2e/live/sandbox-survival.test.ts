@@ -172,7 +172,7 @@ test(
       artifactName: "cleanup-openshell-gateway-destroy",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [apiKey],
-      timeoutMs: 120_000,
+      timeoutMs: SANDBOX_SURVIVAL_GATEWAY_DESTROY_TIMEOUT_MS,
     };
     cleanup.trackGateway(
       {
