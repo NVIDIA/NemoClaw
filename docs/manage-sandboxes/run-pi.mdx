@@ -73,10 +73,11 @@ Pi stores runtime state under `/sandbox/.pi/agent`:
 | `themes/` | Read-only user resources | Preserved |
 | `tools/` | Executable resource state | Reconstructed, not restored |
 | `bin/` | Executable resource state | Reconstructed, not restored |
-| `settings.json` | User preferences | Restores only accepted keys |
+| `settings.json` | User preferences and global trust default | Preserved after credential sanitization |
+| `trust.json` | Per-path project-trust decisions | Excluded |
 | `models.json` | Managed inference configuration | Reconstructed, not restored |
 
-The accepted `settings.json` restore keys are `theme`, `hideThinkingBlock`, `showCacheMissNotices`, `quietStartup`, `steeringMode`, `followUpMode`, and `defaultThinkingLevel`. Unknown keys, managed routing, authentication, project trust, and executable extension state are not restored.
+NemoClaw restores the native `settings.json` file without filtering Pi setting names. Before restore, the snapshot credential sanitizer removes or replaces credential-shaped content, so preservation applies to the resulting sanitized file. Pi's global `defaultProjectTrust` setting is part of that file; a value of `"always"` remains the fallback for paths without a saved decision. Per-path decisions live in `trust.json` and are not backed up.
 
 ## Create and Restore Snapshots
 
@@ -87,7 +88,7 @@ nemoclaw <sandbox-name> snapshot create --name before-change
 nemoclaw <sandbox-name> snapshot list
 ```
 
-Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, project trust decisions, or executable tool and extension state.
+Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, `trust.json` per-path decisions, or executable tool and extension state.
 
 Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, a snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
 
@@ -173,7 +174,7 @@ Run `nemoclaw <sandbox-name> status` and `nemoclaw <sandbox-name> doctor`. Confi
 
 ### Load a Project Resource
 
-Headless `--no-approve` intentionally ignores project-local skills, extensions, prompts, and packages. Use an interactive session to make an explicit Pi project-trust decision. A restored backup never raises project trust automatically.
+Headless `--no-approve` intentionally ignores project-local skills, extensions, prompts, and packages. Interactive Pi uses a saved per-path decision from `trust.json` when one exists and otherwise falls back to `defaultProjectTrust` from `settings.json`. Snapshots do not transfer per-path decisions, but a restored global default of `"always"` can trust a path with no saved decision.
 
 ### Diagnose Direct Internet Access
 

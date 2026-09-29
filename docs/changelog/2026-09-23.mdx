@@ -8,6 +8,10 @@
 NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
 It also strengthens host OS reporting and Windows WSL GPU verification.
 
+- Fresh OpenClaw sandboxes created with a custom Dockerfile apply the selected OpenShell inference route through OpenClaw's native configuration before onboarding completes.
+  If the selected model differs from the image's model, OpenClaw uses its own defaults for any inherited context-window and output-token limits.
+  Related change: [PR #12421](https://github.com/NVIDIA/NemoClaw/pull/12421).
+  Refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) for OpenClaw configuration ownership.
 - OpenClaw owns `/sandbox/.openclaw/openclaw.json` after first launch.
   Configure it inside the sandbox with `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
   Rebuild and snapshot restore preserve only credential-sanitized native configuration; they do not reconcile OpenShell inference routes, credential bindings, or network policy.

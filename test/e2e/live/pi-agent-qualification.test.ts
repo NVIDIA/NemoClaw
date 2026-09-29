@@ -45,6 +45,7 @@ const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_PROVIDER_MAX_ATTEMPTS = 2;
 const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
+const PI_TRUST_EXCLUSION_MARKER = "NEMOCLAW_PI_TRUST_MUST_NOT_SURVIVE";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -221,13 +222,21 @@ async function runReadTask(
   return proof;
 }
 
-async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
+async function persistentStateInventory(
+  sandbox: SandboxClient,
+  env: NodeJS.ProcessEnv,
+  phase: string,
+  options: { seedNativeState?: boolean } = {},
+) {
+  const stateFixture = options.seedNativeState
+    ? `printf '%s\\n' '{"defaultProjectTrust":"always","futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_EXCLUSION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
+    : "";
   const result = await execPiShell(
     sandbox,
     trustedSandboxShellScript(
-      "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
+      `${stateFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; find /sandbox/.pi/agent -maxdepth 1 -type f -name trust.json -exec grep -F '${PI_TRUST_EXCLUSION_MARKER}' {} +; } | sort`,
     ),
-    { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
+    { artifactName: `pi-${phase}-persistent-state-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   return result.stdout.trim();
@@ -282,7 +291,7 @@ test(
       e2ePhases: [
         "validate the exact Pi candidate receipt",
         "onboard Pi without a Dockerfile build",
-        "run interactive Pi and preserve its session through rebuild",
+        "run interactive Pi and preserve its native state through rebuild",
         "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
@@ -399,14 +408,32 @@ test(
     });
 
     const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
-    const sessionsAfterOnboard = await sessionInventory(sandbox, env, "after-onboard");
+    const stateAfterOnboard = await persistentStateInventory(sandbox, env, "after-onboard");
 
-    progress.phase("run interactive Pi and preserve its session through rebuild");
+    progress.phase("run interactive Pi and preserve its native state through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
-    const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
-    expect(sessionsBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
-      sessionsAfterOnboard.split("\n").filter(Boolean).length,
+    const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", {
+      seedNativeState: true,
+    });
+    const stateBeforeRebuildEntries = stateBeforeRebuild.split("\n").filter(Boolean);
+    const trustMarkersBeforeRebuild = stateBeforeRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
     );
+    const persistentStateBeforeRebuild = stateBeforeRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
+    const sessionsBeforeRebuild = stateBeforeRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    const stateEntryGrowth =
+      persistentStateBeforeRebuild.split("\n").filter(Boolean).length -
+      stateAfterOnboard.split("\n").filter(Boolean).length;
+    expect(
+      Math.min(sessionsBeforeRebuild.length, stateEntryGrowth),
+      "Pi must create a JSONL session and add persistent state before rebuild",
+    ).toBeGreaterThan(0);
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
@@ -415,8 +442,27 @@ test(
       timeoutMs: 20 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    const sessionsAfterRebuild = await sessionInventory(sandbox, env, "after-rebuild");
-    expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
+    const stateAfterRebuild = await persistentStateInventory(sandbox, env, "after-rebuild");
+    const stateAfterRebuildEntries = stateAfterRebuild.split("\n").filter(Boolean);
+    const trustMarkersAfterRebuild = stateAfterRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
+    );
+    const persistentStateAfterRebuild = stateAfterRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
+    const sessionsAfterRebuild = stateAfterRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    expect(
+      JSON.stringify([
+        sessionsAfterRebuild,
+        persistentStateAfterRebuild,
+        trustMarkersBeforeRebuild.length,
+        trustMarkersAfterRebuild.length,
+      ]),
+    ).toBe(JSON.stringify([sessionsBeforeRebuild, persistentStateBeforeRebuild, 1, 0]));
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after sandbox and gateway restarts");
@@ -566,6 +612,9 @@ test(
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,
+        nativeDefaultProjectTrustPreservedAcrossRebuild: true,
+        nativeSettingsPreservedAcrossRebuild: true,
+        perPathTrustExcludedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],

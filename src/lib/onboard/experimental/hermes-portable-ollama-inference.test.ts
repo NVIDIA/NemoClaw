@@ -10,14 +10,21 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { createSession } from "../../state/onboard-session";
+import { withPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
 import { runOnboardCommand } from "../command";
 import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "../resume-hint";
 import { handleProviderInferenceState } from "../machine/handlers/provider-inference";
-import { baseOptions, createDeps } from "../machine/handlers/provider-inference.test-support";
 import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "../machine/handlers/provider-inference.test-support";
+import {
+  HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   type HostLocalInferenceGatewayMutation,
   type HostLocalInferenceStartupSelection,
   prepareHostLocalInferenceStartup,
@@ -46,7 +53,10 @@ import {
   prepareHermesPortableOllamaPublishedInferenceAuthority,
   prepareHermesPortableOllamaPublishedReceiptAuthority,
 } from "./hermes-portable-ollama-gateway-transaction";
-import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
+import {
+  createHermesPortableOllamaInferenceResolver,
+  retireHermesPortableOllamaFreshState,
+} from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
 function exactTestFileIdentity(metadata: fs.BigIntStats): string {
@@ -160,9 +170,180 @@ async function publishPortableInference(fixture: ReturnType<typeof createRuntime
   return gatewayJournal(fixture);
 }
 
+function retireFreshPortableInference(
+  fixture: ReturnType<typeof createRuntimeFixture>,
+  input = freshPortableInput,
+) {
+  return withPortableHostFence(fixture.homeDir, () =>
+    retireHermesPortableOllamaFreshState(fixture.resolverOptions, input),
+  );
+}
+
 afterEach(resetOnboardResumeHintForTests);
 
 describe("Hermes Portable Ollama inference activation", () => {
+  it("retires exact abandoned publication state before a same-name fresh retry (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    expect(() => fixture.resolve()).toThrow(
+      "Hermes Portable Ollama publication authority is inconsistent",
+    );
+
+    await expect(retireFreshPortableInference(fixture)).resolves.toBe(true);
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+    const rebound = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => "portable-session-retry",
+    })(freshPortableInput);
+    expect(rebound?.request).not.toHaveProperty("resumeReceipt");
+  });
+
+  it("retires the recorded model before a fresh retry selects a different model (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+
+    await expect(
+      retireFreshPortableInference(fixture, {
+        ...freshPortableInput,
+        model: "llama3.2:1b",
+      }),
+    ).resolves.toBe(true);
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  it("rejects fresh retirement outside the Portable host fence (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput),
+    ).rejects.toThrow("Portable host authority mutation requires the current HOME fence");
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+  });
+
+  it("serializes concurrent same-name retirement after authority capture (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    let releaseFirst!: () => void;
+    const firstMayContinue = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let reportCaptured!: () => void;
+    const authorityCaptured = new Promise<void>((resolve) => {
+      reportCaptured = resolve;
+    });
+    let secondEntered = false;
+
+    const first = withPortableHostFence(fixture.homeDir, async () => {
+      prepareHermesPortableOllamaPublishedReceiptAuthority({
+        directory,
+        gatewayName: fixture.resolverOptions.gatewayName,
+        sandboxName: freshPortableInput.sandboxName,
+        credentialEnv: fixture.resolverOptions.credentialEnv,
+      });
+      reportCaptured();
+      await firstMayContinue;
+      return retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput);
+    });
+    await authorityCaptured;
+    const second = withPortableHostFence(fixture.homeDir, async () => {
+      secondEntered = true;
+      return retireHermesPortableOllamaFreshState(fixture.resolverOptions, freshPortableInput);
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(secondEntered).toBe(false);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toEqual([true, false]);
+    expect(secondEntered).toBe(true);
+  });
+
+  it("preserves abandoned publication state when live provider ownership changed (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    fixture.gatewayProvider.bumpResourceVersion();
+    const directory = path.dirname(gatewayJournalPath(fixture));
+
+    await expect(retireFreshPortableInference(fixture)).rejects.toThrow(
+      "gateway provider authority changed before uninstall",
+    );
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(fs.existsSync(directory)).toBe(true);
+  });
+
+  it("preserves private state when receipt authority changes during provider retirement (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const receiptPath = inferenceReceiptPath(fixture);
+    const directory = path.dirname(receiptPath);
+    const mutateAfterCommand: Readonly<Record<string, () => void>> = Object.freeze({
+      "provider delete": () => fs.appendFileSync(receiptPath, "\n"),
+    });
+    const runGatewayOpenshell: typeof fixture.resolverOptions.runGatewayOpenshell = vi.fn(
+      (args, options) => {
+        const result = fixture.gatewayProvider.run(args, options);
+        mutateAfterCommand[`${String(args[0])} ${String(args[1])}`]?.();
+        return result;
+      },
+    );
+
+    await expect(
+      withPortableHostFence(fixture.homeDir, () =>
+        retireHermesPortableOllamaFreshState(
+          { ...fixture.resolverOptions, runGatewayOpenshell },
+          freshPortableInput,
+        ),
+      ),
+    ).rejects.toThrow("published receipt authority changed");
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(fs.existsSync(directory)).toBe(true);
+  });
+
+  it("resumes fresh retirement after the exact provider was already removed (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    fixture.gatewayProvider.setPresent(false);
+
+    await expect(retireFreshPortableInference(fixture)).resolves.toBe(true);
+
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  it("finishes fresh retirement after exact provider and runtime removal (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+    const container = fixture.harness.container();
+    expect(container).not.toBeNull();
+    fixture.gatewayProvider.setPresent(false);
+    expect(fixture.harness.engine.capture(["rm", "--force", container!.id], 30_000).status).toBe(0);
+    expect(fixture.harness.container()).toBeNull();
+
+    await expect(retireFreshPortableInference(fixture)).resolves.toBe(true);
+
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
   it("binds committed receipt and journal without another live provider observation", async () => {
     const fixture = createRuntimeFixture();
     const journal = await publishPortableInference(fixture);
@@ -443,15 +624,21 @@ describe("Hermes Portable Ollama inference activation", () => {
       fixture.events.push(`complete:${stepName}`);
       return session;
     });
+    const retireHostLocalInferenceFreshState = vi.fn(async () => {
+      fixture.events.push("retire-fresh-state");
+      return false;
+    });
     const { deps, calls } = createDeps({
       setupNim: setupNim as never,
       setupInference: setupInference as never,
       resolveHostLocalInferenceStartupSelection: resolver,
+      retireHostLocalInferenceFreshState,
       recordStepComplete: recordStepComplete as never,
     });
 
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
+      fresh: true,
       agent: { name: "hermes" },
       gpu: { type: "nvidia" },
       gpuPassthrough: true,
@@ -459,6 +646,10 @@ describe("Hermes Portable Ollama inference activation", () => {
     });
 
     expect(fixture.events.some((event) => event.startsWith("host-probe:"))).toBe(false);
+    expect(retireHostLocalInferenceFreshState).toHaveBeenCalledWith(freshPortableInput);
+    expect(fixture.events.indexOf("retire-fresh-state")).toBeLessThan(
+      fixture.events.indexOf("setup-inference"),
+    );
     expect(fixture.events.indexOf("provider-operation")).toBeLessThan(
       fixture.events.indexOf("complete:provider_selection"),
     );
@@ -519,6 +710,44 @@ describe("Hermes Portable Ollama inference activation", () => {
     await expect(published.prepareGatewayMutation(gatewayMutationInput)).rejects.toThrow(
       "gateway mutation authority changed",
     );
+  });
+
+  it("preserves an active same-name Portable sandbox during a fresh flow (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    const session = createSession();
+    const resolver = createHermesPortableOllamaInferenceResolver({
+      ...fixture.resolverOptions,
+      getReservationSessionId: () => session.sessionId,
+    });
+    const retireHostLocalInferenceFreshState = vi.fn(async () => true);
+    const hasSandboxLifecycleAuthority = vi.fn(
+      (sandboxName: string) => sandboxName === "portable-hermes",
+    );
+    const { deps } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+        credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      })) as never,
+      setupInference: vi.fn(async () => ({ ok: true as const })) as never,
+      resolveHostLocalInferenceStartupSelection: resolver,
+      retireHostLocalInferenceFreshState,
+      hasSandboxLifecycleAuthority,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      agent: { name: "hermes" },
+      gpu: { type: "nvidia" },
+      gpuPassthrough: true,
+      sandboxName: "portable-hermes",
+    });
+
+    expect(hasSandboxLifecycleAuthority).toHaveBeenCalledWith("portable-hermes");
+    expect(retireHostLocalInferenceFreshState).not.toHaveBeenCalled();
   });
 
   it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {

@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import {
+  initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute,
+  type InitializeOpenclawInferenceRoute,
+} from "./openclaw/initial-inference-route";
 
 const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
 
@@ -99,6 +103,7 @@ export interface OpenclawSetupDeps {
     provider: string,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void>;
+  initializeOpenclawInferenceRoute?: InitializeOpenclawInferenceRoute;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {
@@ -107,11 +112,26 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     model: string,
     provider: string,
     revalidateSandboxIdentity?: (operation: string) => void,
+    preferredInferenceApi: string | null = null,
+    initializeNativeInferenceRoute = false,
+    gatewayName?: string,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
     await deps.configureOpenclawSandbox(sandboxName, model, provider, revalidateSandboxIdentity);
-    if (deps.shouldRestartNativeGateway(provider)) {
+    if (initializeNativeInferenceRoute) {
+      if (!gatewayName) {
+        throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
+      await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+        sandboxName,
+        model,
+        provider,
+        preferredInferenceApi,
+        gatewayName,
+        revalidateSandboxIdentity,
+      );
+    } else if (deps.shouldRestartNativeGateway(provider)) {
       revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
       const restart = await deps.restartNativeGateway(sandboxName);
       if (!restart.ok) {
