@@ -604,24 +604,27 @@ describe("managed llama.cpp operation probe strategy", () => {
       typeof provider.hostLocalInference,
       { supported: true }
     >;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const operation = hostLocalInference.createOperation({
       env: {
         DOCKER_HOST: "unix:///tmp/nemoclaw-deadline-test.sock",
         HOME: executableRoot,
         PATH: executableRoot,
       },
-      deadlineMs: Date.now() + 500,
+      deadlineMs: 1_500,
     });
 
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const result = operation.engine.captureHost(["info"], 5_000);
     expect(result.status).toBe(1);
-    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(performance.now() - startedAt).toBeLessThan(1_500);
     expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
+    now.mockReturnValue(1_500);
     expect(() => operation.engine.captureHost(["late-info"])).toThrow(
       "host-local inference authority deadline expired",
     );
     expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
+    now.mockRestore();
   });
 
   it("bounds streamed Docker commands to the same operation deadline", () => {

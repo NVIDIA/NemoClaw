@@ -1828,7 +1828,10 @@ function backupCapturedAgentState(request: CapturedAgentBackupRequest): BackupRe
     }
     return request.finish();
   } catch {
-    const removed = removeBackupEntryWithinDeadline(request.backupPath, request.deadlineMs);
+    // The work deadline can already be exhausted here. Give cleanup its own
+    // bounded window so an unpublished, unsanitized partial copy is not left behind.
+    const cleanupDeadlineMs = request.deadlineMs === undefined ? undefined : Date.now() + 30_000;
+    const removed = removeBackupEntryWithinDeadline(request.backupPath, cleanupDeadlineMs);
     return {
       success: false,
       backedUpDirs: [],
