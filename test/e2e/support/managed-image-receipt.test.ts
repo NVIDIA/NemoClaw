@@ -21,6 +21,7 @@ import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-st
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import {
   assertStockManagedImageReceipt,
+  selectedE2eManagedImageReference,
   shouldAssertStockManagedImageReceipt,
 } from "../fixtures/managed-image-receipt.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -168,6 +169,58 @@ function writeRegistry(
   );
   return home;
 }
+
+describe("selected E2E managed-image reference", () => {
+  it("uses the main-run cohort receipt when no candidate catalog exists (#12421)", () => {
+    const home = writeRegistry(managedReceipt());
+    const environment = {
+      ...selectedEnvironment(home),
+      GITHUB_ACTIONS: "true",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+    };
+
+    expect(
+      selectedE2eManagedImageReference({
+        environment,
+        expectedAgent: "openclaw",
+        nodeArchitecture: "x64",
+      }),
+    ).toBe(REFERENCE);
+  });
+
+  it("uses the trusted candidate catalog when no cohort revision exists (#12421)", () => {
+    const home = writeRegistry(managedReceipt());
+
+    expect(
+      selectedE2eManagedImageReference({
+        environment: candidateInlineCatalogEnvironment(home),
+        expectedAgent: "openclaw",
+        nodeArchitecture: "x64",
+      }),
+    ).toBe(REFERENCE);
+  });
+
+  it("rejects a main-run revision without its cohort receipt (#12421)", () => {
+    expect(() =>
+      selectedE2eManagedImageReference({
+        environment: { E2E_MANAGED_IMAGE_REVISION: REVISION },
+        expectedAgent: "openclaw",
+        nodeArchitecture: "x64",
+      }),
+    ).toThrow("complete selected managed-image cohort receipt");
+  });
+
+  it("rejects a host architecture that has no managed image (#12421)", () => {
+    expect(() =>
+      selectedE2eManagedImageReference({
+        environment: selectedEnvironment("/tmp/unused"),
+        expectedAgent: "openclaw",
+        nodeArchitecture: "riscv64",
+      }),
+    ).toThrow("does not support host architecture 'riscv64'");
+  });
+});
 
 describe("stock E2E managed-image receipt assertion", () => {
   it.each([
