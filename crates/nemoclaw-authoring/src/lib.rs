@@ -39,4 +39,5 @@ pub use journey_state::{JourneyQuestion, JourneyQuestionReason, JourneyResolutio
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;
 
+mod sdk_schema;
 mod settings;

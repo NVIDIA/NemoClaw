@@ -17,8 +17,9 @@ use crate::{
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
-        adapter_schema, sdk_field_schema,
+        adapter_schema,
     },
+    sdk_schema::{sdk_discriminator, sdk_field_schema, sdk_field_schema_for, sdk_selected_branch},
     settings::SettingQuestion,
 };
 
@@ -463,7 +464,7 @@ impl JourneyState {
                 omitted.push(field.clone());
                 continue;
             }
-            let Some((mut schema, required)) = sdk_field_schema(field) else {
+            let Some((mut schema, required)) = sdk_field_schema_for(&self.values, field) else {
                 continue;
             };
             if field == PROVIDER_API
@@ -512,29 +513,30 @@ impl JourneyState {
             let supplied = self.values.pointer(issue.path());
             match issue.kind() {
                 PartialIssueKind::Missing if supplied.is_none() => {}
-                PartialIssueKind::Invalid if supplied.is_some() => {}
+                PartialIssueKind::Invalid | PartialIssueKind::Deferred if supplied.is_some() => {}
                 _ => continue,
             }
             let Some((parent, _)) = issue.path().rsplit_once('/') else {
                 continue;
             };
-            let Some((schema, required)) = sdk_field_schema(issue.path()) else {
+            let Some((schema, required)) = sdk_field_schema_for(&self.values, issue.path()) else {
                 continue;
             };
+            if issue.kind() == PartialIssueKind::Deferred && sdk_discriminator(&schema).is_none() {
+                continue;
+            }
             if self.values.pointer(parent).is_none() {
                 continue;
             }
             let choices = finite_choices(&schema);
             if !scalar_question(&schema, &choices) {
-                if issue.kind() == PartialIssueKind::Missing {
-                    collect_required_leaf_questions(
-                        &self.values,
-                        issue.path(),
-                        &schema,
-                        &mut questions,
-                        0,
-                    );
-                }
+                collect_required_leaf_questions(
+                    &self.values,
+                    issue.path(),
+                    &schema,
+                    &mut questions,
+                    0,
+                );
                 continue;
             }
             questions.push(JourneyQuestion {
@@ -1084,13 +1086,7 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if (id.starts_with('/') && sdk_field_schema(id).is_some())
-            || self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::DeploymentFields)
-                && id.starts_with('/')
-        {
+        } else if id.starts_with('/') {
             let previous = candidate.values.pointer(id).cloned();
             let provider_for_dependency = candidate.provider_path().and_then(|path| {
                 (id == format!("{path}/api") || id == format!("{path}/endpoint"))
@@ -1207,7 +1203,7 @@ impl JourneyState {
         } else if id == INFERENCE_PRESET {
             self.current_preset()
                 .map(|preset| Value::String(preset.id().into()))
-        } else if sdk_field_schema(id).is_some()
+        } else if sdk_field_schema_for(&self.values, id).is_some()
             || (self
                 .definition
                 .ask_scopes
@@ -1221,10 +1217,15 @@ impl JourneyState {
                 "This question is no longer applicable.",
             ));
         };
-        let mut question = previous
-            .resolve(capabilities)?
-            .question(id)
-            .cloned()
+        let mut question = previous.resolve(capabilities)?.question(id).cloned();
+        if question.is_none() && id.starts_with('/') {
+            // An implicit missing-field question disappears after its first
+            // answer. Recreate the gap in this temporary copy to recover its
+            // current schema without changing the accepted document.
+            previous.put_sdk_field(id, None)?;
+            question = previous.resolve(capabilities)?.question(id).cloned();
+        }
+        let mut question = question
             .ok_or_else(|| diagnostic("journey", "This question is no longer applicable."))?;
         if suggestion.is_some() {
             question.suggestion = suggestion;
@@ -1612,8 +1613,8 @@ fn scalar_question(schema: &Value, choices: &[Value]) -> bool {
     ) || !choices.is_empty()
 }
 
-/// Walk only unconditional required properties. Alternatives and array shape
-/// remain unresolved until another answer makes their structure concrete.
+/// Walk unconditional required leaves and one-of branches selected by a
+/// required constant discriminator. Structural alternatives remain deferred.
 fn collect_required_leaf_questions(
     values: &Value,
     path: &str,
@@ -1624,28 +1625,67 @@ fn collect_required_leaf_questions(
     if depth >= 16 {
         return;
     }
+    if let Some((discriminator, _)) = sdk_discriminator(schema) {
+        let escaped = discriminator.replace('~', "~0").replace('/', "~1");
+        let choice_path = format!("{path}/{escaped}");
+        if let Some((choice_schema, _)) = sdk_field_schema_for(values, &choice_path) {
+            let supplied = values.pointer(&choice_path);
+            if !supplied.is_some_and(|value| schema_accepts(&choice_schema, value) == Some(true)) {
+                if !questions.iter().any(|question| question.id == choice_path) {
+                    questions.push(JourneyQuestion {
+                        id: choice_path,
+                        reason: if supplied.is_some() {
+                            JourneyQuestionReason::InvalidSupplied
+                        } else {
+                            JourneyQuestionReason::Missing
+                        },
+                        required: true,
+                        choices: finite_choices(&choice_schema),
+                        suggestion: supplied.cloned(),
+                        schema: choice_schema,
+                    });
+                }
+                return;
+            }
+        }
+        if let Some(branch) = values
+            .pointer(path)
+            .and_then(|supplied| sdk_selected_branch(schema, supplied))
+        {
+            collect_required_leaf_questions(values, path, branch, questions, depth + 1);
+        }
+        return;
+    }
     let Some(required) = schema["required"].as_array() else {
         return;
     };
     for name in required.iter().filter_map(Value::as_str) {
         let escaped = name.replace('~', "~0").replace('/', "~1");
         let child_path = format!("{path}/{escaped}");
-        if values.pointer(&child_path).is_some()
-            || questions.iter().any(|question| question.id == child_path)
-        {
+        if questions.iter().any(|question| question.id == child_path) {
             continue;
         }
-        let Some((child_schema, _)) = sdk_field_schema(&child_path) else {
+        let Some((child_schema, _)) = sdk_field_schema_for(values, &child_path) else {
             continue;
         };
+        let supplied = values.pointer(&child_path);
+        if supplied.is_some_and(|value| schema_accepts(&child_schema, value) == Some(true)) {
+            continue;
+        }
         let choices = finite_choices(&child_schema);
         if scalar_question(&child_schema, &choices) {
             questions.push(JourneyQuestion {
                 id: child_path,
-                reason: JourneyQuestionReason::Missing,
+                reason: if supplied.is_some() {
+                    JourneyQuestionReason::InvalidSupplied
+                } else {
+                    JourneyQuestionReason::Missing
+                },
                 required: true,
                 choices,
-                suggestion: child_schema.get("default").cloned(),
+                suggestion: supplied
+                    .cloned()
+                    .or_else(|| child_schema.get("default").cloned()),
                 schema: child_schema,
             });
         } else {

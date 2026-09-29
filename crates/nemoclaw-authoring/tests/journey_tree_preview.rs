@@ -282,3 +282,22 @@ fn tree_does_not_print_supplied_route_names_as_choice_labels() {
     assert!(tree.contains("route:selection"), "{tree}");
     assert!(!tree.contains("private-route-name"), "{tree}");
 }
+
+#[test]
+fn tree_exposes_schema_derived_gateway_branches_without_supplied_values() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["gateway"] = serde_json::json!({});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let tree = JourneyDefinition::new("gateway-branches", base)
+        .print_tree(&Capabilities::available())
+        .unwrap();
+    assert!(
+        tree.contains("Choices for /spec/gateway/management"),
+        "{tree}"
+    );
+    assert!(tree.contains("├─ managed"), "{tree}");
+    assert!(tree.contains("├─ external"), "{tree}");
+    assert!(tree.contains("/spec/gateway/endpoint"), "{tree}");
+}

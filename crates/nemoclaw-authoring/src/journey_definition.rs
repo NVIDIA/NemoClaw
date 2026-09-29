@@ -3,13 +3,13 @@
 
 //! Sparse values and deliberate question guidance for one onboarding journey.
 
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
-
-use nemoclaw_sdk::config::schema::input_schema;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
-use crate::{Capabilities, Diagnostics, PartialDocument, diagnostics::diagnostic};
+use crate::{
+    Capabilities, Diagnostics, PartialDocument, diagnostics::diagnostic,
+    sdk_schema::sdk_field_schema_for,
+};
 
 pub(crate) const NAME: &str = "/metadata/name";
 pub(crate) const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
@@ -147,7 +147,7 @@ impl JourneyDefinition {
             if field == NAME || field == HARNESS || field == INFERENCE_PRESET {
                 continue;
             }
-            if sdk_field_schema(field).is_some() {
+            if sdk_field_schema_for(self.base.supplied(), field).is_some() {
                 continue;
             }
             let Some((adapter, pointer)) = adapter_field(field) else {
@@ -222,54 +222,6 @@ impl JourneyDefinition {
     pub fn print_tree(&self, capabilities: &Capabilities) -> Result<String, Diagnostics> {
         crate::journey_tree::print_tree(self, capabilities)
     }
-}
-
-/// Find a field in the SDK input schema without maintaining a parallel list of
-/// document constraints. The v1 journey supports existing object properties,
-/// named map entries, and array elements; conditional branches remain a
-/// separate resolution problem.
-pub(crate) fn sdk_field_schema(path: &str) -> Option<(Value, bool)> {
-    static SCHEMA: OnceLock<Value> = OnceLock::new();
-    let root = SCHEMA.get_or_init(input_schema);
-    let mut node = root;
-    let mut required = false;
-    for part in path.strip_prefix('/')?.split('/') {
-        node = follow_ref(root, node)?;
-        if part.parse::<usize>().is_ok() {
-            node = node.get("items")?;
-            required = true;
-        } else {
-            let name = part.replace("~1", "/").replace("~0", "~");
-            if let Some(property) = node
-                .get("properties")
-                .and_then(|properties| properties.get(&name))
-            {
-                required = node
-                    .get("required")
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| items.iter().any(|item| item == &name));
-                node = property;
-            } else {
-                node = node.get("additionalProperties")?;
-                required = true;
-            }
-        }
-    }
-    let mut field = follow_ref(root, node)?.clone();
-    if let Some(object) = field.as_object_mut() {
-        object.insert("$defs".into(), root.get("$defs")?.clone());
-    }
-    Some((field, required))
-}
-
-fn follow_ref<'a>(root: &'a Value, mut node: &'a Value) -> Option<&'a Value> {
-    for _ in 0..16 {
-        let Some(reference) = node.get("$ref").and_then(Value::as_str) else {
-            return Some(node);
-        };
-        node = root.pointer(reference.strip_prefix('#')?)?;
-    }
-    None
 }
 
 pub(crate) fn adapter_schema<'a>(

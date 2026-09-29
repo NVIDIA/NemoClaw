@@ -905,13 +905,7 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
         state.values().pointer(hosted_model),
         Some(&json!("replacement-model"))
     );
-    assert!(
-        resolved.materialized_document().is_some(),
-        "questions={:?} unverified={:?} issues={:?}",
-        resolved.questions(),
-        resolved.unverified(),
-        resolved.assessment().issues()
-    );
+    assert!(resolved.materialized_document().is_some());
 }
 
 #[test]
@@ -2115,5 +2109,179 @@ fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
                 Some(json!("nvidia.fabric.openclaw"))
             )
             .is_err()
+    );
+}
+
+#[test]
+fn missing_gateway_asks_for_the_schema_discriminator() {
+    let base = PartialDocument::from_yaml(
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - {}\n",
+    )
+    .unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("gateway", base)
+        .start(&capabilities)
+        .unwrap();
+    let question = journey
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/gateway/management")
+        .cloned()
+        .expect("gateway discriminator from SDK schema");
+    assert!(question.required());
+    assert_eq!(question.choices(), &[json!("managed"), json!("external")]);
+    journey
+        .answer(&capabilities, question.id(), Some(json!("managed")))
+        .unwrap();
+    assert_eq!(
+        journey.values().pointer("/spec/gateway/management"),
+        Some(&json!("managed"))
+    );
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/gateway/management")
+            .is_none()
+    );
+}
+
+#[test]
+fn external_gateway_choice_reveals_its_required_endpoint() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["gateway"] = json!({});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("external-gateway", base)
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/gateway/management")
+            .is_some()
+    );
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    let endpoint = journey
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/gateway/endpoint")
+        .cloned()
+        .expect("external gateway endpoint");
+    assert!(endpoint.required());
+    journey
+        .answer(
+            &capabilities,
+            endpoint.id(),
+            Some(json!("https://gateway.example.com")),
+        )
+        .unwrap();
+    let resolution = journey.resolve(&capabilities).unwrap();
+    assert!(
+        resolution.materialized_document().is_some(),
+        "questions={:?} unverified={:?} issues={:?}",
+        resolution.questions(),
+        resolution.unverified(),
+        resolution.assessment().issues()
+    );
+}
+
+#[test]
+fn supplied_gateway_discriminator_can_be_deliberately_asked() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let capabilities = Capabilities::available();
+    let journey = JourneyDefinition::new("gateway-choice", base)
+        .ask(["/spec/gateway/management"])
+        .start(&capabilities)
+        .unwrap();
+    let question = journey
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/gateway/management")
+        .cloned()
+        .expect("explicit gateway question");
+    assert_eq!(question.suggestion(), Some(&json!("managed")));
+    assert_eq!(question.choices(), &[json!("managed"), json!("external")]);
+}
+
+#[test]
+fn invalid_supplied_gateway_discriminator_is_a_repair_question() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["gateway"]["management"] = json!("unknown");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("repair-gateway", base)
+        .start(&capabilities)
+        .unwrap();
+    let question = journey
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/gateway/management")
+        .cloned()
+        .expect("invalid discriminator is editable");
+    assert_eq!(question.reason(), JourneyQuestionReason::InvalidSupplied);
+    journey
+        .answer(&capabilities, question.id(), Some(json!("managed")))
+        .unwrap();
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/gateway/management")
+            .is_none()
+    );
+}
+
+#[test]
+fn accepted_implicit_gateway_choice_can_be_revisited() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["gateway"] = json!({});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("revisit-gateway", base)
+        .start(&capabilities)
+        .unwrap();
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("managed")),
+        )
+        .unwrap();
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/gateway/endpoint")
+            .is_some()
     );
 }
