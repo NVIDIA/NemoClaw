@@ -35,6 +35,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   blocker: string | null;
   remoteState: "not-checked" | "expected-commit" | "unchanged" | "unknown";
   recoveredPullUrl: string | null;
+  guardedFallbackValidationPaths: string[];
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
@@ -56,6 +57,22 @@ export default async function publish_nemoclaw_pr_branch(input: {
     // key and fails closed until the reviewed allowlist is updated.
     ".github/workflows/pr-review-advisor.yaml\0d7bbfae8fd59660ab146ef1cc52ce69964720146\0review-specialists",
   ]);
+  const validationSurfacePaths = [
+    ".pre-commit-config.yaml",
+    "package.json",
+    "package-lock.json",
+    "scripts/checks",
+    "oxlint.config.ts",
+    "oxfmt.config.ts",
+    "vitest.config.ts",
+    "tsconfig.cli.json",
+    "tsconfig.src.json",
+    "nemoclaw/tsconfig.json",
+    "nemoclaw/tsconfig.test.json",
+    "nemoclaw/tsconfig.shared.json",
+    "nemoclaw/tsconfig.runner.json",
+  ];
+  let guardedFallbackValidationPaths = [];
   if (bypass !== undefined) {
     if (
       typeof bypass !== "object" ||
@@ -144,6 +161,21 @@ export default async function publish_nemoclaw_pr_branch(input: {
     ).stdout.text.trim();
     if (workflowBlob !== bypass.workflowBlobSha)
       throw new Error("The guarded fallback workflow does not match its base-bound receipt");
+    guardedFallbackValidationPaths = (
+      await run(
+        "git diff --name-only --diff-filter=ACDMRTUXB -z " +
+          q(bypass.canonicalBaseSha + ".." + input.expectedHeadSha) +
+          " -- " +
+          validationSurfacePaths.map(q).join(" "),
+        "Read changed validation surface",
+      )
+    ).stdout.text
+      .split("\0")
+      .filter(Boolean);
+    if (guardedFallbackValidationPaths.length === 0)
+      throw new Error(
+        "Hook-free publication is not allowed when the trusted validation surface is unchanged",
+      );
   }
   const pushUrls = (
     await run("git remote get-url --push --all " + q(remote), "Read publication push URLs")
@@ -257,6 +289,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       blocker: null,
       remoteState: "not-checked",
       recoveredPullUrl: null,
+      guardedFallbackValidationPaths,
     };
   const beforePush = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -386,6 +419,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       blocker: detail.text || "Publication result is uncertain",
       remoteState,
       recoveredPullUrl,
+      guardedFallbackValidationPaths,
     };
   }
   const changedRemote = remoteBeforeReadOk && remoteBefore !== input.expectedHeadSha;
@@ -431,6 +465,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     allVerified,
     remoteState,
     recoveredPullUrl,
+    guardedFallbackValidationPaths,
     blocker: allVerified
       ? null
       : verificationError

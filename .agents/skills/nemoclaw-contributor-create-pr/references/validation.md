@@ -82,16 +82,20 @@ guarded hook-free mode. Record a structured fallback receipt bound to the candid
 base SHA, workflow path and blob, trusted job, draft state, and expected remote commit. The
 publication operation accepts only a checked-in fallback allowlist entry whose workflow blob and job
 were reviewed for the trigger, effective permissions, action sources, and credential flow above. A
-caller assertion cannot add an eligible job. The operation verifies the receipt bindings and updates
-the exact source ref with an atomic lease for the expected prior commit, or an absent-ref lease for
-its first publication. It also proves that an existing expected commit is an ancestor of the
-candidate. Reconcile the remote branch and commit verification after the write. A later invocation
-may recover only after independently observing the exact matching draft PR; an unchanged branch by
-itself cannot prove the absent-ref lease. Keep the PR in draft until the base-controlled job validates
-the published commit. Disclose the skipped local validation, the differing machinery, and the
-canonical base SHA in `Verification`. This fallback needs no additional publication approval. Stop
-when no base-controlled job meets these conditions or when another publication gate independently
-fails.
+caller assertion cannot add an eligible job. The operation independently compares the candidate
+with the canonical base across the checked-in pre-push configuration, validation helpers,
+dependency-resolution inputs, formatter and linter configuration, Vitest configuration, and
+TypeScript build configuration. Reject hook-free publication when none of those paths differs. The
+operation verifies the receipt bindings and updates the exact source ref with an atomic lease for the
+expected prior commit, or an absent-ref lease for its first publication. It also proves that an
+existing expected commit is an ancestor of the candidate. Reconcile the remote branch and commit
+verification after the write. A later invocation may recover only after independently observing the
+exact matching draft PR; an unchanged branch by itself cannot prove the absent-ref lease. Keep the
+PR in draft until the base-controlled job validates the published commit. Supply the PR-body renderer
+the complete typed fallback receipt and the independently observed differing validation paths. It
+renders the skipped local validation, differing machinery, and canonical base SHA in `Verification`
+and `Review notes`. This fallback needs no additional publication approval. Stop when no
+base-controlled job meets these conditions or when another publication gate independently fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal
 `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication

@@ -293,11 +293,15 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       | "candidate-draft"
       | "candidate-wrong-base" = "existing",
     observed = { baseSha, workflowBlobSha },
+    validationSurfaceChanged = true,
   ) {
     const bash = vi.fn(
       async ({ command: _command, description }: { command: string; description: string }) => {
         const outputs: Record<string, string> = {
           "Verify guarded fallback workflow": observed.workflowBlobSha + "\n",
+          "Read changed validation surface": validationSurfaceChanged
+            ? ".pre-commit-config.yaml\0"
+            : "",
           "Read publication push URLs": "git@github.com:NVIDIA/NemoClaw.git\n",
           "Read commit sign-off trailers": HEAD_SHA + "\tContributor <contributor@example.com>\n",
           "Count publication commits": "1\n",
@@ -493,6 +497,22 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         apply: true,
       }),
     ).rejects.toThrow(error);
+    expect(
+      bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
+    ).toHaveLength(0);
+  });
+
+  it("rejects hook-free publication when the trusted validation surface is unchanged", async () => {
+    const { bash } = publicationTools("success", "absent", undefined, false);
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: { ...receipt, expectedRemoteSha: null },
+        apply: true,
+      }),
+    ).rejects.toThrow("trusted validation surface is unchanged");
     expect(
       bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
     ).toHaveLength(0);
