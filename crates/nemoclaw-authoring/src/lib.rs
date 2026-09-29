@@ -17,6 +17,7 @@ mod facts;
 mod identity;
 mod journey_definition;
 mod journey_state;
+mod journey_tree;
 mod partial_document;
 mod provider_presets;
 
