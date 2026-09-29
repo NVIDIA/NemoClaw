@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { shellQuote } from "../core/shell-quote.js";
@@ -91,4 +92,100 @@ export function buildRestoreCleanupCommand(
     commands.push(buildStaleStateDirContentsCleanupCommand(dir, dirName));
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
+}
+
+/** Internal capture capability; never populated from command arguments or a persisted manifest. */
+export interface CapturedAgentState {
+  readonly sandboxName: string;
+  readonly agentName: "openclaw" | "langchain-deepagents-code";
+  readonly directory: string;
+  assertCurrent(): void;
+}
+
+export function copyCapturedAgentState(
+  source: CapturedAgentState,
+  destination: string,
+  directories: readonly string[],
+  prefixes: readonly string[],
+  files: readonly { path: string; strategy: string }[],
+): { directories: string[]; files: string[] } {
+  source.assertCurrent();
+  const root = fs.lstatSync(source.directory);
+  if (
+    !root.isDirectory() ||
+    root.isSymbolicLink() ||
+    (root.mode & 0o077) !== 0 ||
+    root.uid !== process.getuid?.()
+  ) {
+    throw new Error("Stopped state capture is not an owned private directory.");
+  }
+  const inspectTree = (relative: string): void => {
+    const location = path.join(source.directory, relative);
+    const entry = fs.lstatSync(location);
+    if (entry.isSymbolicLink()) {
+      if (
+        source.agentName !== "openclaw" ||
+        !isAllowedStateSymlink(relative.split(path.sep).join("/"), fs.readlinkSync(location))
+      ) {
+        throw new Error("Stopped state contains an unsupported symbolic link.");
+      }
+      return;
+    }
+    if (entry.isDirectory()) {
+      for (const child of fs.readdirSync(location)) inspectTree(path.join(relative, child));
+    } else if (!entry.isFile() || entry.nlink !== 1) {
+      throw new Error("Stopped state contains an unsupported filesystem entry.");
+    }
+  };
+  const copiedDirectories: string[] = [];
+  const copiedFiles: string[] = [];
+  const selectedDirectories = new Set([
+    ...directories,
+    ...fs
+      .readdirSync(source.directory)
+      .filter((name) => prefixes.some((prefix) => name.startsWith(prefix))),
+  ]);
+  const selectedPaths = new Set([...selectedDirectories, ...files.map((file) => file.path)]);
+  for (const relative of selectedPaths) {
+    const parts = relative.split("/");
+    if (parts.some((part) => !/^[A-Za-z0-9._-]+$/u.test(part) || part === "." || part === "..")) {
+      throw new Error("Stopped state contains an invalid declared state path.");
+    }
+    let absent = false;
+    for (let index = 1; index <= parts.length; index += 1) {
+      const current = path.join(source.directory, ...parts.slice(0, index));
+      let entry: fs.Stats;
+      try {
+        entry = fs.lstatSync(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        absent = true;
+        break;
+      }
+      if (index < parts.length && (!entry.isDirectory() || entry.isSymbolicLink()))
+        throw new Error("Stopped state contains an unsafe declared path parent.");
+    }
+    if (absent) continue;
+    const entry = fs.lstatSync(path.join(source.directory, relative));
+    const selectedDirectory = selectedDirectories.has(relative);
+    const selectedFile = files.find((file) => file.path === relative);
+    if (
+      (selectedDirectory && !entry.isDirectory()) ||
+      (selectedFile && (!entry.isFile() || selectedFile.strategy !== "copy"))
+    ) {
+      throw new Error("Stopped state does not match the declared agent backup contract.");
+    }
+    inspectTree(relative);
+    fs.mkdirSync(path.dirname(path.join(destination, relative)), { recursive: true, mode: 0o700 });
+    fs.cpSync(path.join(source.directory, relative), path.join(destination, relative), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+      force: false,
+      errorOnExist: true,
+    });
+    (selectedDirectory ? copiedDirectories : copiedFiles).push(relative);
+  }
+  source.assertCurrent();
+  return { directories: copiedDirectories, files: copiedFiles };
 }

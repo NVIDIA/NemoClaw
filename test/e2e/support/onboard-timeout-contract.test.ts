@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
   DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
@@ -67,6 +68,12 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("contains every bounded pinned config consumer operation", () => {
+    expect(CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      30_000 + 30_000 + 8 * MINUTE_MS + 30_000,
+    );
+  });
+
   it("reserves job headroom after the Deep Agents Code lifecycle and export refusal", () => {
     expect(dcodeExpectedRefusalTimeout.testTimeoutMs).toBe(
       DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
@@ -91,6 +98,7 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
+      configExportPinnedV1ConsumerMinutes: CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS / MINUTE_MS,
       configExportPolicyMinutes: CONFIG_EXPORT_POLICY_TIMEOUT_MS / MINUTE_MS,
       dcodeLifecycleMinutes: DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS / MINUTE_MS,
       dcodeExpectedRefusalTestMinutes: dcodeExpectedRefusalTimeout.testTimeoutMs! / MINUTE_MS,
@@ -105,6 +113,7 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: 75,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
+      configExportPinnedV1ConsumerMinutes: 10,
       configExportPolicyMinutes: 1,
       dcodeLifecycleMinutes: 20,
       dcodeExpectedRefusalTestMinutes: 132,
@@ -165,7 +174,7 @@ describe("onboard final-handoff timeout contract", () => {
 
   it.each(CONFIG_EXPORT_EXPECTATIONS)("assigns an explicit timeout to %s", (expectation) => {
     const expected = {
-      required: { testTimeoutMs: 33 * MINUTE_MS, targetTimeoutMinutes: 53 },
+      required: { testTimeoutMs: 43 * MINUTE_MS, targetTimeoutMinutes: 63 },
       "expected-refusal": { testTimeoutMs: 32 * MINUTE_MS, targetTimeoutMinutes: 52 },
       "no-usable-sandbox": { targetTimeoutMinutes: 45 },
     };
@@ -180,7 +189,7 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it.each([
-    { lifecycle: undefined, expectation: "required", minimumMinutes: 33 },
+    { lifecycle: undefined, expectation: "required", minimumMinutes: 43 },
     { lifecycle: undefined, expectation: "expected-refusal", minimumMinutes: 32 },
     {
       lifecycle: "dcode-rebuild-invalid-credential",
@@ -210,7 +219,9 @@ describe("onboard final-handoff timeout contract", () => {
     const expectation = target.configExport.expectation;
     const configExportBudgetMs =
       CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
-      (expectation === "required" ? CONFIG_EXPORT_POLICY_TIMEOUT_MS : 0);
+      (expectation === "required"
+        ? CONFIG_EXPORT_POLICY_TIMEOUT_MS + CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS
+        : 0);
     const contract = liveTargetTimeoutContract(target.environment.lifecycle, expectation);
     const lifecycleTestBudgetMs =
       target.environment.lifecycle === "dcode-rebuild-invalid-credential"
@@ -247,6 +258,7 @@ describe("onboard final-handoff timeout contract", () => {
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+    CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
     CONFIG_EXPORT_POLICY_TIMEOUT_MS,
     DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
     LIVE_TARGET_BASE_TEST_TIMEOUT_MS,

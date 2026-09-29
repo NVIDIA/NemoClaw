@@ -27,8 +27,10 @@ import {
 } from "../managed-startup/onboard-profile";
 export {
   applyProviderManagedStartupRootRequest,
+  completeProviderManagedStartup,
   finalizeProviderManagedStartupSharedState,
   releaseProviderManagedStartupHold,
+  refreshManagedStartupCorporateCaTrust,
   type ProviderManagedStartupTransaction,
 } from "../runtime-provider/access";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";

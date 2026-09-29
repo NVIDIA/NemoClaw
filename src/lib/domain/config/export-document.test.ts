@@ -49,6 +49,24 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each([
+    { compatibility: "strict", expected: "hard_requirement" },
+    { compatibility: "best_effort", expected: "best_effort" },
+  ])(
+    "exports Landlock $compatibility as $expected without changing source policy",
+    ({ compatibility, expected }) => {
+      const original = { ...policy, landlock: { compatibility } };
+      const result = buildExportConfig(
+        { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
+        landlock: { compatibility: expected },
+      });
+      expect(original.landlock.compatibility).toBe(compatibility);
+    },
+  );
+
   it.each(["openclaw", "hermes"] as const)(
     "emits one singular %s agent for the v1alpha1 consumer (#12131)",
     (agent) => {
@@ -88,7 +106,6 @@ describe("export config builder", () => {
         sandboxes: [
           {
             name: "alpha",
-            image: null,
             runtime: {
               provider: "docker",
             },
@@ -182,7 +199,7 @@ describe("export config builder", () => {
     );
 
     expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
-    expect(result.spec.sandboxes[0]?.image).toBeNull();
+    expect(result.spec.sandboxes[0]).not.toHaveProperty("image");
     expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
       process: { run_as_user: "1000", run_as_group: "1000" },

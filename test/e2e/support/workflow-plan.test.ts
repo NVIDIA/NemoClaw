@@ -30,7 +30,6 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
-  withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { runOnboardProcessAsync } from "../../helpers/onboard-child-process-harness";
@@ -103,9 +102,8 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(76);
+    expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
-      "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
       "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
@@ -134,6 +132,23 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
+  it("runs deferred onboarding for both accepted agents on both managed runtimes", () => {
+    const plan = buildE2eWorkflowPlan(
+      { jobs: "deferred-onboarding-hermes,deferred-onboarding-langchain-deepagents-code" },
+      { gatewayRuntimes: ["docker", "podman"] },
+    );
+    expect(
+      plan.catalogueMatrices["nvidia-api"].map((row) => [row.id, row.runtime_provider]),
+    ).toEqual([
+      ["deferred-onboarding-hermes", "docker"],
+      ["deferred-onboarding-hermes", "podman"],
+      ["deferred-onboarding-langchain-deepagents-code", "docker"],
+      ["deferred-onboarding-langchain-deepagents-code", "podman"],
+    ]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+  });
+
   it("selects only native Podman-eligible executions when explicitly requested", () => {
     const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
     const catalogueIds = Object.values(plan.catalogueMatrices)
@@ -145,7 +160,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(45);
+    expect(catalogueIds).toHaveLength(46);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -156,7 +171,6 @@ describe("E2E workflow plan", () => {
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
-      "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
       "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
@@ -170,15 +184,22 @@ describe("E2E workflow plan", () => {
       "openshell-credential-generation-window",
     ]);
   });
-  it("omits only targets whose optional credential is unavailable", () => {
-    const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
-    const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
-
-    expect(braveRows).not.toContain("brave-search");
-    expect(braveRows).not.toContain("common-egress-agent-openclaw-balanced-weather");
-    expect(braveRows).toContain("common-egress-agent-openclaw-open-reference");
-    expect(braveRows).toContain("common-egress-agent-hermes-open-reference");
-    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+  it("keeps Brave isolation and common egress coverage without a Brave credential", () => {
+    const plan = buildE2eWorkflowPlan();
+    const rows = plan.catalogueMatrices["nvidia-inference"].map((row) => row.id);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        "brave-search",
+        "common-egress-agent-openclaw-balanced-weather",
+        "common-egress-agent-openclaw-open-reference",
+        "common-egress-agent-hermes-open-reference",
+      ]),
+    );
+    const brave = buildE2eWorkflowPlan({ targets: "brave-search" });
+    expect(brave.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "brave-search",
+    );
+    expect(selectedWorkflowJobs(brave)).toEqual(["catalogue-nvidia-inference"]);
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
@@ -284,9 +305,50 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/onboard.ts",
+    "src/lib/onboard/machine/core-flow-phases.ts",
+    "src/lib/onboard/machine/flow-context.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+    "src/lib/onboard/openclaw/initial-inference-route.ts",
+    "src/lib/onboard/sandbox-recreate-transaction.ts",
+  ])("selects custom-image route evidence when %s changes (#12033)", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "openclaw-inference-switch",
+    );
+  });
+
+  it("selects ordinary agent consumers and inference restart for a scope patch", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: ["scripts/patch-openclaw-device-self-approval.mts"],
+        gatewayRuntimes: ["docker", "podman"],
+      },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.execution_id)
+        .sort(),
+    ).toEqual([
+      "agent-turn-latency-default-docker",
+      "agent-turn-latency-default-podman",
+      "full-e2e-default-docker",
+      "full-e2e-default-podman",
+      "llama-cpp-generic-gpu-default-docker",
+      "messaging-compatible-endpoint-default-docker",
+      "messaging-compatible-endpoint-default-podman",
+      "openclaw-inference-switch-default-docker",
+      "openclaw-inference-switch-default-podman",
+      "openclaw-skill-cli-default-docker",
+      "openclaw-skill-cli-default-podman",
+    ]);
+  });
+
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
@@ -303,10 +365,6 @@ describe("E2E workflow plan", () => {
           install_non_interactive: true,
           shard: "live-probes",
           timeout_minutes: 90,
-        }),
-        expect.objectContaining({
-          id: "openclaw-tui-chat-correlation",
-          host_packages: "expect",
         }),
         expect.objectContaining({
           id: "sandbox-operations",
@@ -352,6 +410,41 @@ describe("E2E workflow plan", () => {
     });
   });
 
+  it("plans native Podman packages only for GPU re-onboarding and Hermes Slack", () => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker", "podman"] });
+    const packages =
+      "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap";
+    expect(
+      Object.values(validateE2eWorkflowPlan(plan).catalogueMatrices)
+        .flat()
+        .filter((row) => row.host_packages !== "")
+        .map((row) => [row.id, row.runtime_provider, row.host_packages])
+        .sort(),
+    ).toEqual(
+      [
+        ["gpu-double-onboard", "podman", packages],
+        ["hermes-slack", "podman", packages],
+      ].sort(),
+    );
+  });
+
+  it.each([
+    ["gpu-double-onboard", "docker", "podman-packages"],
+    ["hermes-slack", "docker", "podman-packages"],
+    ["network-policy", "podman", "podman-packages"],
+    ["gpu-double-onboard", "podman", ""],
+    ["hermes-slack", "podman", "runc"],
+  ])("rejects altered host packages for %s on %s", (id, runtime, packages) => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker", "podman"] });
+    const rows = Object.values(plan.catalogueMatrices).flat();
+    const nativePackages = rows.find(
+      (row) => row.id === "gpu-double-onboard" && row.runtime_provider === "podman",
+    )!.host_packages;
+    rows.find((row) => row.id === id && row.runtime_provider === runtime)!.host_packages =
+      packages === "podman-packages" ? nativePackages : packages;
+    expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
+  });
+
   it("rejects unreviewed catalogue execution metadata", () => {
     const target = catalogueTarget("network-policy");
     expect(() => validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }])).toThrow(
@@ -359,6 +452,9 @@ describe("E2E workflow plan", () => {
     );
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
+    ).toThrow("invalid or duplicate host packages");
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, podmanHostPackages: ["runc"] as never }]),
     ).toThrow("invalid or duplicate host packages");
     expect(() => validateE2eTargetCatalogue([{ ...target, selector: "safe; sudo true" }])).toThrow(
       "invalid test selector",
@@ -603,7 +699,6 @@ describe("E2E workflow plan", () => {
       "nvidia-api": false,
       "nvidia-inference": false,
       "github-read": false,
-      "brave-nvidia-inference": false,
     });
   });
 
@@ -676,16 +771,6 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it("selects Brave export qualification when its helper changes", () => {
-    const plan = buildE2eWorkflowPlan(
-      {},
-      { changedFiles: ["test/e2e/live/brave-search-helpers.ts"] },
-    );
-    const rows = Object.values(plan.catalogueMatrices).flat();
-
-    expect(rows.map((row) => row.id)).toEqual(["brave-search"]);
-  });
-
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -703,6 +788,17 @@ describe("E2E workflow plan", () => {
 
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("onboard-resume");
     expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
+  });
+
+  it("selects both stopped-recovery consumers when the shared proof changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-stopped-recovery.ts"] },
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "rebuild-openclaw",
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
   it("selects only catalogue targets that own changed files", () => {
@@ -724,6 +820,9 @@ describe("E2E workflow plan", () => {
     "src/lib/actions/upgrade-sandboxes.ts",
   ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      ...(changedFile === "scripts/install.sh"
+        ? ["deferred-onboarding-hermes", "deferred-onboarding-langchain-deepagents-code"]
+        : []),
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
     ]);
@@ -1038,7 +1137,6 @@ describe("E2E workflow plan", () => {
           "nvidia-api": [],
           "nvidia-inference": [],
           "github-read": [],
-          "brave-nvidia-inference": [],
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],

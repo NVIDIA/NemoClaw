@@ -53,6 +53,9 @@ export type RecorderOverrides = {
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
+  setupOpenclaw?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["setupOpenclaw"];
   mergePolicyMessagingChannels?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
@@ -208,7 +211,7 @@ export function createPhases(
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
       }),
-      agentSetupContext: () => ({}),
+      agentSetupContext: () => ({ gatewayName: "nemoclaw-19090" }),
       ensureAgentDashboardForward: vi.fn(() => {
         order.push("agent-forward");
         return 45123;
@@ -220,9 +223,11 @@ export function createPhases(
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
-      setupOpenclaw: vi.fn(async () => {
-        order.push("openclaw");
-      }),
+      setupOpenclaw:
+        recorders.setupOpenclaw ??
+        vi.fn(async () => {
+          order.push("openclaw");
+        }),
       configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??

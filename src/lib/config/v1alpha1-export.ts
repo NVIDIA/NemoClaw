@@ -116,12 +116,12 @@ export type V1Alpha1ExportSandbox = V1Alpha1ExportSandboxBase &
       }>
     | Readonly<{
         harness: V1Alpha1ExportHarness & Readonly<{ kind: "hermes" | "openclaw" }>;
-        image: null;
+        image?: never;
         agent: Readonly<V1Alpha1ExportAgent>;
       }>
   );
 
-/** Producer-owned pre-release v1 shape emitted by v0. Null placeholders are resolved at v1 release. */
+/** Producer-owned pre-release v1 shape emitted by v0. */
 export interface V1Alpha1Export {
   readonly apiVersion: typeof V1ALPHA1_EXPORT_API_VERSION;
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;

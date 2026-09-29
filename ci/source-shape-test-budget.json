@@ -137,6 +137,41 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "runs the Hermes root-entrypoint recovery proof for the copied PR revision",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a Hermes runtime change",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a Hermes lifecycle source-only change",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a copied Hermes runtime source",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed files cannot be fetched",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed-file discovery is incomplete",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "skips Hermes qualification for unrelated documentation",
+      "category": "security"
+    },
+    {
       "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
@@ -263,7 +298,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "executes pull request installer hash checks only from the PR base SHA",
+      "test": "executes pull request installer hash checks only from the reviewed revision",
       "category": "security"
     },
     {
@@ -369,21 +404,6 @@
     {
       "file": "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test": "publishes the verified native manifest digest",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
       "category": "security"
     },
     {

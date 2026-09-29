@@ -1,15 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const configMocks = vi.hoisted(() => ({
+  readSandboxConfig: vi.fn(),
+  restartSandboxAgentAfterConfigSet: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  setOpenClawConfigValue: vi.fn(),
+}));
+
+vi.mock("../sandbox/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox/config")>()),
+  readSandboxConfig: configMocks.readSandboxConfig,
+  restartSandboxAgentAfterConfigSet: configMocks.restartSandboxAgentAfterConfigSet,
+  resolveAgentConfig: configMocks.resolveAgentConfig,
+  setOpenClawConfigValue: configMocks.setOpenClawConfigValue,
+}));
 import {
   createConfigureOpenclawSandbox,
   createOpenclawSetup,
   isOpenclawGatewayReady,
-  reconcileOpenClawWebSearchForReuse,
 } from "./openclaw-setup";
+import { createInitialOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 
 describe("OpenClaw sandbox setup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it.each([200, 401])("accepts OpenClaw gateway HTTP %i as ready", async (httpCode) => {
     const runBuffered = vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: 0 },
@@ -58,24 +77,22 @@ describe("OpenClaw sandbox setup", () => {
     );
   });
 
-  it("waits for config sync before web-search reconciliation", async () => {
+  it("waits for onboarding metadata sync before completing setup", async () => {
     let finishConfigSync!: () => void;
     const configSync = new Promise<void>((resolve) => {
       finishConfigSync = resolve;
     });
     const syncNemoClawConfigInSandbox = vi.fn(() => configSync);
-    const reconcileWebSearch = vi.fn(async () => undefined);
+    const completed = vi.fn();
     const revalidateSandboxIdentity = vi.fn();
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
-      reconcileWebSearch,
     });
 
     const configuring = configureOpenclawSandbox(
       "spark-box",
       "model",
       "provider",
-      null,
       revalidateSandboxIdentity,
     );
 
@@ -86,33 +103,26 @@ describe("OpenClaw sandbox setup", () => {
       revalidateSandboxIdentity,
       false,
     );
-    expect(reconcileWebSearch).not.toHaveBeenCalled();
+    void configuring.then(completed);
+    expect(completed).not.toHaveBeenCalled();
 
     finishConfigSync();
     await configuring;
 
-    expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
-      "spark-box",
-      null,
-      revalidateSandboxIdentity,
-    );
+    expect(completed).toHaveBeenCalledOnce();
   });
 
-  it("propagates config sync failure before web-search reconciliation", async () => {
+  it("propagates onboarding metadata sync failure", async () => {
     const syncNemoClawConfigInSandbox = vi.fn(async () => {
       throw new Error("config sync failed");
     });
-    const reconcileWebSearch = vi.fn(async () => undefined);
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
-      reconcileWebSearch,
     });
 
-    await expect(configureOpenclawSandbox("spark-box", "model", "provider", null)).rejects.toThrow(
+    await expect(configureOpenclawSandbox("spark-box", "model", "provider")).rejects.toThrow(
       "config sync failed",
     );
-
-    expect(reconcileWebSearch).not.toHaveBeenCalled();
   });
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
@@ -123,17 +133,17 @@ describe("OpenClaw sandbox setup", () => {
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
+      initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "nvidia-router", null, revalidateSandboxIdentity);
+    await setup("spark-box", "model", "nvidia-router", revalidateSandboxIdentity);
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "model",
       "nvidia-router",
-      null,
       revalidateSandboxIdentity,
     );
     expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
@@ -146,13 +156,51 @@ describe("OpenClaw sandbox setup", () => {
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox: vi.fn(async () => undefined),
+      initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "compatible-endpoint", null);
+    await setup("spark-box", "model", "compatible-endpoint");
 
     expect(restartNativeGateway).not.toHaveBeenCalled();
+  });
+
+  it("initializes a fresh custom-image route before reporting setup success (#12033)", async () => {
+    const order: string[] = [];
+    const initializeOpenclawInferenceRoute = vi.fn(async () => {
+      order.push("initialize");
+    });
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox: vi.fn(async () => {
+        order.push("configure");
+      }),
+      initializeOpenclawInferenceRoute,
+      restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+      shouldRestartNativeGateway: () => false,
+    });
+
+    await setup(
+      "spark-box",
+      "selected/model",
+      "compatible-endpoint",
+      undefined,
+      "openai-completions",
+      true,
+      "nemoclaw-19090",
+    );
+
+    expect(order).toEqual(["configure", "initialize"]);
+    expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      "spark-box",
+      "selected/model",
+      "compatible-endpoint",
+      "openai-completions",
+      "nemoclaw-19090",
+      undefined,
+    );
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
@@ -164,11 +212,12 @@ describe("OpenClaw sandbox setup", () => {
         configureOpenclawSandbox: async () => {
           throw new Error("sandbox identity changed");
         },
+        initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
         restartNativeGateway: vi.fn(),
         shouldRestartNativeGateway: () => false,
       });
 
-      await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
+      await expect(setup("spark-box", "model", "provider")).rejects.toThrow(
         "sandbox identity changed",
       );
 
@@ -185,6 +234,7 @@ describe("OpenClaw sandbox setup", () => {
         step: vi.fn(),
         agentProductName: () => "OpenClaw",
         configureOpenclawSandbox: vi.fn(async () => undefined),
+        initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
         restartNativeGateway: vi.fn(async () => ({
           ok: false as const,
           failureLayer: "native agent command",
@@ -193,7 +243,7 @@ describe("OpenClaw sandbox setup", () => {
         shouldRestartNativeGateway: () => true,
       });
 
-      await expect(setup("spark-box", "model", "nvidia-router", null)).rejects.toThrow(
+      await expect(setup("spark-box", "model", "nvidia-router")).rejects.toThrow(
         /native gateway restart failed.*restart rejected/,
       );
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
@@ -203,71 +253,106 @@ describe("OpenClaw sandbox setup", () => {
   });
 });
 
-describe("fresh OpenClaw reuse web search reconciliation", () => {
-  it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => true,
-      disable,
+describe("initial OpenClaw inference route", () => {
+  it("applies the selected route natively before a confirmed gateway restart (#12033)", async () => {
+    const order: string[] = [];
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    const config = { agents: {}, models: {} };
+    const route = {
+      providerKey: "inference",
+      primaryModelRef: "inference/selected/model",
+      inferenceBaseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    };
+    const patchOpenclawInferenceConfig = vi.fn(() => ({ route }));
+    const initialize = createInitialOpenclawInferenceRoute({
+      readOpenclawConfig: vi.fn((_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        return config;
+      }),
+      patchOpenclawInferenceConfig,
+      writeOpenclawInferenceConfigNatively: vi.fn((_sandbox, _config, _route, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        order.push("write");
+      }),
+      restartNativeGateway: vi.fn(async (_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        order.push("restart");
+        return { ok: true as const };
+      }),
     });
 
-    expect(disable).toHaveBeenCalledExactlyOnceWith("alpha");
+    await initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090");
+
+    expect(order).toEqual(["write", "restart"]);
+    expect(patchOpenclawInferenceConfig).toHaveBeenCalledExactlyOnceWith(
+      config,
+      "compatible-endpoint",
+      "selected/model",
+      null,
+      undefined,
+      "compatible-endpoint",
+      { effort: null, explicit: false },
+      false,
+    );
   });
 
-  it("leaves an already-disabled live config unchanged (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => false,
-      disable,
-    });
-
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("leaves a config without a stale enabled flag unchanged (#10404)", async () => {
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
-      readEnabled: () => undefined,
-      disable,
-    });
-
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("does not disable the live config when web search remains selected (#10404)", async () => {
-    const readEnabled = vi.fn(() => true);
-    const disable = vi.fn(async () => undefined);
-
-    await reconcileOpenClawWebSearchForReuse("alpha", { fetchEnabled: true }, undefined, {
-      readEnabled,
-      disable,
-    });
-
-    expect(readEnabled).not.toHaveBeenCalled();
-    expect(disable).not.toHaveBeenCalled();
-  });
-
-  it("does not mutate when sandbox identity changes after the live-config read (#10404)", async () => {
-    const readEnabled = vi.fn(() => true);
-    const disable = vi.fn(async () => undefined);
-    const revalidateSandboxIdentity = vi.fn(() => {
-      throw new Error("sandbox identity changed");
+  it("fails initialization when the gateway restart is not confirmed (#12033)", async () => {
+    const initialize = createInitialOpenclawInferenceRoute({
+      readOpenclawConfig: vi.fn(() => ({ agents: {}, models: {} })),
+      patchOpenclawInferenceConfig: vi.fn(() => ({
+        route: {
+          providerKey: "inference",
+          primaryModelRef: "inference/selected/model",
+          inferenceBaseUrl: "https://inference.local/v1",
+          inferenceApi: "openai-completions",
+          inferenceCompat: null,
+        },
+      })),
+      writeOpenclawInferenceConfigNatively: vi.fn(),
+      restartNativeGateway: vi.fn(async () => ({
+        ok: false as const,
+        failureLayer: "native agent command",
+        detail: "restart rejected",
+      })),
     });
 
     await expect(
-      reconcileOpenClawWebSearchForReuse("alpha", null, revalidateSandboxIdentity, {
-        readEnabled,
-        disable,
-      }),
-    ).rejects.toThrow("sandbox identity changed");
-
-    expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha");
-    expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
-      "disable OpenClaw web search in sandbox 'alpha'",
-    );
-    expect(disable).not.toHaveBeenCalled();
+      initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090"),
+    ).rejects.toThrow(/restart failed after initial inference configuration.*restart rejected/u);
   });
+});
+
+describe("OpenClaw reuse preserves native configuration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([false, true])(
+    "preserves native web search with managed profile applied=%s (#11764)",
+    async (managedProfileApplied) => {
+      const nativeConfig = { tools: { web: { search: { enabled: true } } } };
+      configMocks.resolveAgentConfig.mockReturnValue({ agentName: "openclaw" });
+      configMocks.readSandboxConfig.mockReturnValue(nativeConfig);
+      configMocks.setOpenClawConfigValue.mockImplementation(() => {
+        nativeConfig.tools.web.search.enabled = false;
+      });
+      const syncNemoClawConfigInSandbox = vi.fn(async () => undefined);
+      const configure = createConfigureOpenclawSandbox({ syncNemoClawConfigInSandbox });
+
+      await configure("alpha", "model", "provider", undefined, managedProfileApplied);
+
+      expect(nativeConfig.tools.web.search.enabled).toBe(true);
+      expect(configMocks.setOpenClawConfigValue).not.toHaveBeenCalled();
+      expect(configMocks.restartSandboxAgentAfterConfigSet).not.toHaveBeenCalled();
+      expect(syncNemoClawConfigInSandbox).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        "provider",
+        "model",
+        undefined,
+        managedProfileApplied,
+      );
+    },
+  );
 });

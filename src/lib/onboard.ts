@@ -456,8 +456,7 @@ const {
   withDashboardPortReservationScope: withSandboxPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const rebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
-const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
-  require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
+const preflightPorts: typeof import("./onboard/preflight-ports") = require("./onboard/preflight-ports");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { runPreflightGatewaySequence } =
@@ -508,7 +507,6 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") = require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./onboard/openshell-pin");
-
 import type { AgentDefinition } from "./agent/defs";
 import { isWebSearchEnabled } from "./inference/web-search";
 import {
@@ -1134,6 +1132,7 @@ const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGateway
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
+  sandboxName: string | null = null,
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
   const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
@@ -1183,21 +1182,13 @@ async function preflight(
     warn: console.warn,
   });
 
-  // Required ports — gateway, plus the dashboard port when an explicit one
-  // is requested. envVar is the override env var documented in
-  // src/lib/core/ports.ts; surfacing it in the preflight error gives users a clear
-  // escape hatch when an unrelated process is holding the default port
-  // (closes #2497). When --control-ui-port is set, check that port instead
-  // of the default. When auto-allocation is possible (no explicit port),
-  // skip the dashboard port check entirely — ensureDashboardForward will
-  // find a free port.
-  const dashboardPortToCheck = _preflightDashboardPort ?? null;
-  // #4984 — fail fast on an explicit reserved dashboard port; deferred paths
-  // (CHAT_UI_URL / persisted) are caught at createSandbox.
-  assertDashboardPortNotReserved(dashboardPortToCheck);
-  const requiredPorts = buildRequiredPreflightPorts({
+  // Check explicit dashboard ports here; automatic allocation runs at sandbox
+  // creation. Provider-owned reuse still requires a verified dashboard forward.
+  // Reject explicit reserved ports; sandbox creation checks deferred ports (#4984).
+  preflightPorts.assertDashboardPortNotReserved(_preflightDashboardPort);
+  const requiredPorts = preflightPorts.buildRequiredPreflightPorts({
     gatewayPort: GATEWAY_PORT,
-    dashboardPort: dashboardPortToCheck,
+    dashboardPort: _preflightDashboardPort,
     dashboardLabel: `${cliDisplayName()} dashboard`,
   });
   for (const { kind, port, label, envVar } of requiredPorts) {
@@ -1216,6 +1207,11 @@ async function preflight(
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
         managedGatewayObservationAuthoritative,
+        verifyDashboardForward: (dashboardPort) =>
+          preflightPorts.isRegisteredDashboardForwardOwned(sandboxName, dashboardPort, {
+            getSandbox: registry.getSandbox.bind(registry),
+            createForwardPortObserver,
+          }),
         portCheckOptions,
         supportsLifecycleCommands,
         destroyGateway,
@@ -1233,11 +1229,8 @@ async function preflight(
       );
       const managedListenerAccepted = entryDecisions.acceptManagedListener(
         managedListenerPid,
-        (pid) => {
-          rememberDockerDriverGatewayPid(pid);
-          console.log(
-            `  ✓ Port ${port} already owned by NemoClaw OpenShell Docker gateway (${label})`,
-          );
+        () => {
+          console.log(`  ✓ Port ${port} already owned by NemoClaw OpenShell gateway (${label})`);
         },
       );
       if (managedListenerAccepted) {
@@ -2443,7 +2436,6 @@ const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: san
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
-  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
@@ -2835,6 +2827,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
+      const preflightSandboxName = entryDecisions.selectPreflightSandboxName(
+        initialFlowContext.sandboxName,
+        isNonInteractive(),
+        () => getSandboxPromptDefault(agent),
+      );
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -2856,7 +2853,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getResumeSandboxGpuOverrides,
           detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
           detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
-          runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
+          runPreflight: (preflightOptions) =>
+            preflight({ ...opts, ...preflightOptions }, preflightSandboxName),
           assessHost,
           providerNameToOptionKey: providerKey,
           assertOnboardHostReadiness: (host, gpu, options) =>
@@ -2969,6 +2967,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
+            withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
             setupNim: (
@@ -2995,14 +2994,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 revalidateSandboxIdentity,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection:
-              setupNimFlow.createHermesPortableOllamaInferenceResolver({
-                runtimeContext: lockedRuntime.portableRuntimeContext,
-                gatewayName: GATEWAY_NAME,
-                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
-                getReservationSessionId: () => session?.sessionId,
-                runGatewayOpenshell: runCoreGatewayOpenshell,
-              }),
+            ...setupNimFlow.createHermesPortableOllamaInferenceBindings({
+              runtimeContext: lockedRuntime.portableRuntimeContext,
+              gatewayName: GATEWAY_NAME,
+              credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+              getReservationSessionId: () => session?.sessionId,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+            }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3028,6 +3026,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               hydrateCredentialEnv,
             }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+            hasSandboxLifecycleAuthority: registry.hasSandboxLifecycleAuthority,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
             promptValidatedSandboxName,
@@ -3182,10 +3181,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: (): import("./agent/onboard").OnboardContext => ({
+          agentSetupContext: () => ({
             step,
             sandboxCommandExecutor: sandboxExec,
-            gatewayName: GATEWAY_NAME,
+            gatewayName: GATEWAY_NAME!,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,
@@ -3246,7 +3245,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...component.finalDeps(GATEWAY_NAME, onboardSession, registry, runCaptureOpenshell),
           verifyWebSearchInsideSandbox,
           toSessionUpdates,
-          removeLegacyCredentialsFile,
+          removeLegacyCredentialsFile: () => removeLegacyCredentialsFile(stagedLegacyValues),
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
@@ -3258,25 +3257,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
                   executeSandboxCommandForVerification(sandbox, script, sandboxExec),
-                probeHostPort: (port: number, probePath: string) => {
-                  const result = runCapture(
-                    [
-                      "curl",
-                      "-so",
-                      "/dev/null",
-                      "-w",
-                      "%{http_code}",
-                      "--max-time",
-                      "3",
-                      `http://127.0.0.1:${port}${probePath}`,
-                    ],
-                    { ignoreError: true },
-                  );
-                  return parseInt(result.trim(), 10) || 0;
-                },
+                probeHostPort: onboardDashboard.probeVerificationHostPort,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
+                probeInferenceInvocation: () =>
+                  verifyDeploymentModule.probeOnboardInferenceInvocation({
+                    ...liveFinalFlowContext,
+                    sandboxName: name,
+                    gatewayName: GATEWAY_NAME,
+                    agentName: agent?.name,
+                  }),
               },
               {
                 diagnoseCustomOpenClawRuntime:
@@ -3284,6 +3275,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
+                inferenceRouteContext: {
+                  agentName: agent?.name,
+                  provider: liveFinalFlowContext.provider,
+                },
               },
             );
           },
@@ -3417,7 +3412,7 @@ module.exports = {
   startDockerDriverGateway,
   startGatewayForRecovery,
   managedWorkloadOnboard,
-  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
+  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds, createForwardPortObserver },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

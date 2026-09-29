@@ -81,6 +81,16 @@ function runBaseResolution(jobId: string, stepName: string) {
   mkdirSync(runnerTemp);
   writeFileSync(outputPath, "");
   writeFileSync(
+    path.join(fixture, "prepared-inputs"),
+    [
+      HEAD_SHA,
+      "linux/amd64",
+      `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
+      `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
+      DCODE_BASE_REF,
+    ].join(" ") + "\n",
+  );
+  writeFileSync(
     path.join(fixture, "agents", "hermes", "Dockerfile"),
     `ARG BASE_IMAGE=${REVIEWED_HERMES_INDEX}\n`,
   );
@@ -124,11 +134,14 @@ printf '%s  %s\n' "$digest" "$1"
       encoding: "utf8",
       env: {
         ...process.env,
+        CHECKOUT_SHA: HEAD_SHA,
         DCODE_BASE_CONTRACT: JSON.stringify({
           platformReferences: { "linux/amd64": DCODE_BASE_REF },
         }),
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
+        HERMES_BASE_REF: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
+        NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: fixture,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",
         RUNNER_TEMP: runnerTemp,

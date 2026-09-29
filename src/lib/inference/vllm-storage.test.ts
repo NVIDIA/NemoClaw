@@ -500,7 +500,7 @@ describe("Docker image-storage detection", () => {
     });
   });
 
-  it("honors a named DOCKER_CONTEXT over DOCKER_HOST (#6757)", () => {
+  it("honors a local DOCKER_HOST over a named DOCKER_CONTEXT (#12223)", () => {
     expect(
       resolveDockerStorageLocations(nativeDockerInfo(), {
         ...nativeHost,
@@ -508,13 +508,12 @@ describe("Docker image-storage detection", () => {
         dockerHost: "unix:///run/docker.sock",
       }),
     ).toEqual({
-      ok: false,
-      reason:
-        "Docker uses a named context (remote-builder) whose host filesystem cannot be inspected",
+      ok: true,
+      locations: [{ path: "/var/lib/docker", source: "Docker root directory" }],
     });
   });
 
-  it("honors an explicit default DOCKER_CONTEXT over a remote DOCKER_HOST (#6757)", () => {
+  it("honors a remote DOCKER_HOST over an explicit default DOCKER_CONTEXT (#12223)", () => {
     expect(
       resolveDockerStorageLocations(nativeDockerInfo(), {
         ...nativeHost,
@@ -522,8 +521,8 @@ describe("Docker image-storage detection", () => {
         dockerHost: "ssh://builder.example.test",
       }),
     ).toEqual({
-      ok: true,
-      locations: [{ path: "/var/lib/docker", source: "Docker root directory" }],
+      ok: false,
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
     });
   });
 
@@ -546,7 +545,10 @@ describe("Docker image-storage detection", () => {
         ...nativeHost,
         platform: "darwin",
       }),
-    ).toEqual({ ok: false, reason: "Docker runs behind a darwin host boundary" });
+    ).toEqual({
+      ok: false,
+      reason: "Docker runs behind a darwin host boundary",
+    });
     expect(
       resolveDockerStorageLocations(nativeDockerInfo({ OSType: "windows" }), nativeHost),
     ).toEqual({ ok: false, reason: "Docker is not using a Linux engine" });

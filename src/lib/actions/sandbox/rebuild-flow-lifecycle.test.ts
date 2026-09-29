@@ -19,6 +19,7 @@ import {
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
+import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
@@ -40,6 +41,83 @@ function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSn
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
+
+  it.each([undefined, "/srv/nemoclaw/recreated-gateway"])(
+    "uses the recorded gateway directory during rebuild unless explicitly overridden (%s)",
+    async (explicitStateDir) => {
+      const originalStateDir = "/srv/nemoclaw/original-gateway";
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      try {
+        process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = explicitStateDir ?? "";
+        const observed: (string | undefined)[] = [];
+        const harness = createRebuildFlowHarness({
+          sandboxEntry: { openshellGatewayStateDir: originalStateDir },
+          preflightAuthoritativeRebuildTarget: () => {
+            observed.push(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR);
+          },
+          onboard: () => {
+            const actualStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+            observed.push(actualStateDir);
+            registry.updateSandbox("alpha", { openshellGatewayStateDir: actualStateDir });
+          },
+        });
+        await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+        expect(observed).toEqual([
+          explicitStateDir ?? originalStateDir,
+          explicitStateDir ?? originalStateDir,
+        ]);
+        expect(harness.getSandboxEntry().openshellGatewayStateDir).toBe(
+          explicitStateDir ?? originalStateDir,
+        );
+        expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(explicitStateDir ?? "");
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
+  it("restores the caller gateway directory after rebuild preflight fails", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    try {
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = "";
+      let observed: string | undefined;
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { openshellGatewayStateDir: "/srv/nemoclaw/original-gateway" },
+        preflightAuthoritativeRebuildTarget: () => {
+          observed = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+          throw new Error("injected preflight failure");
+        },
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Replacement onboarding preflight failed");
+      expect(observed).toBe("/srv/nemoclaw/original-gateway");
+      expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it.each(["relative/gateway", "/"])(
+    "rejects an unsafe recorded gateway directory before rebuild effects (%s)",
+    async (openshellGatewayStateDir) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      try {
+        delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+        const harness = createRebuildFlowHarness({ sandboxEntry: { openshellGatewayStateDir } });
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow(/gateway state directory|shared NemoClaw state root/u);
+        expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+        expectNoSandboxDelete(harness.runOpenshellSpy);
+        expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
 
   it("rejects schema-5 before rebuild effects and rechecks under the lifecycle lock (#9203)", async () => {
     const guard = vi
@@ -367,7 +445,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
       sandboxName: "alpha",
       kind: "backup",
       runtimeSelection: {
@@ -404,27 +482,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(harness.getSandboxEntry().stopped).toBe(true);
-  });
-
-  it("retains removed immutability state when mutable config verification fails", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["permission verification failed"],
-      }),
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
-      stateRecord: "/tmp/shields-alpha.json",
-      recoveryArtifacts: [],
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/state was retained.*mutable config posture was not verified/u);
-
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
   });
 
   it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {
@@ -640,7 +697,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -664,7 +721,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -688,7 +745,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 

@@ -24,6 +24,12 @@ export const googlechatManifest = {
       kind: "secret",
       required: true,
       envKey: "GOOGLECHAT_SERVICE_ACCOUNT",
+      // A downloaded SA JSON key file is pretty-printed (or a caller may `cat`
+      // it verbatim into the env var), so it legitimately contains embedded
+      // newlines. Safe to allow here only because this value is never
+      // rendered into an env-lines file or JSON-fragment string — see the
+      // "No credentials/secretFiles here" comment on `credentials` below.
+      allowLineBreaks: true,
       // Cap the mask — a ~2 KB SA JSON would otherwise echo thousands of stars.
       maskCap: 40,
       // Validate the paste now (token-paste hook re-prompts, then skips the
@@ -31,7 +37,7 @@ export const googlechatManifest = {
       // The googlechat.tokenPaste hook parses the paste as JSON; a truncated or
       // malformed paste is re-prompted here instead of failing later at minting.
       formatHint:
-        "Paste the entire service-account JSON key on one line (minified) — the whole downloaded JSON file.",
+        "Paste the entire service-account JSON key on one line (minified), or set GOOGLECHAT_SERVICE_ACCOUNT to the downloaded JSON, including line breaks.",
       // Re-prompt on a bad paste — an SA JSON is long and easy to truncate.
       maxTokenAttempts: 3,
       prompt: {
@@ -43,6 +49,7 @@ export const googlechatManifest = {
           "┃    → your bot's SA → Keys → Add key → Create new key → JSON",
           "┃",
           "┃  A .json file downloads. Paste its contents below as ONE line (minified).",
+          "┃  Alternatively, GOOGLECHAT_SERVICE_ACCOUNT accepts the formatted JSON file contents.",
           "",
         ].join("\n"),
       },
@@ -233,9 +240,9 @@ export const googlechatManifest = {
       //           route → inbound 404s, bot goes silent ~60s after every start.
       // 3. Alts:  none in-sandbox — the self-write is OpenClaw's; a periodic restart
       //           only resets the timer. Real fix is upstream (5).
-      // 4. Risk:  low — the sandbox openclaw.json is build-time-sealed (0600 +
-      //           integrity hash), so nothing legitimately reloads it at runtime;
-      //           NemoClaw still restarts the gateway explicitly on rebuild/restart.
+      // 4. Risk:  bounded — this sets only the initial managed configuration.
+      //           OpenClaw owns the file after launch, so native changes may
+      //           re-enable reload; NemoClaw still restarts the gateway explicitly.
       // 5. Exit:  upstream reload re-mounts channels (not just plugins) on config
       //           reload → drop this fragment.
       id: "googlechat-openclaw-gateway-reload-off",

@@ -683,6 +683,7 @@ describe("sandbox registry normalization", () => {
       state: "verified-create" as const,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      openshellGatewayStateDir: "/home/tester/custom-gateway-state",
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
@@ -707,6 +708,7 @@ describe("sandbox registry normalization", () => {
       state: "verified-create",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      openshellGatewayStateDir: "/home/tester/custom-gateway-state",
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
@@ -718,6 +720,9 @@ describe("sandbox registry normalization", () => {
   });
 
   it.each([
+    ["a relative gateway state directory", { openshellGatewayStateDir: "relative/state" }],
+    ["a noncanonical gateway state directory", { openshellGatewayStateDir: "/custom/../state" }],
+    ["a non-string gateway state directory", { openshellGatewayStateDir: 7 }],
     ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
     ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
     ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],

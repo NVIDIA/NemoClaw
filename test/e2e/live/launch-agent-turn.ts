@@ -730,6 +730,13 @@ function sqliteSessionStoreStats(missingReason) {
       (stats.mode & 0o777n) === 0o600n &&
       stats.nlink === 1n,
     "sqlite_session_store_invalid",
+    {
+      check: "metadata",
+      regularFile: stats.isFile() && !stats.isSymbolicLink(),
+      ownerMatches: stats.uid === BigInt(process.getuid()),
+      privateMode: (stats.mode & 0o777n) === 0o600n,
+      singleLink: stats.nlink === 1n,
+    },
   );
   return stats;
 }
@@ -756,7 +763,7 @@ function readExistingSqliteTranscriptSnapshot(before) {
         "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'transcript_events'",
       )
       .get();
-    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid");
+    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid", { check: "transcript_table" });
     rows = database
       .prepare(
         "SELECT session_id AS sessionId, seq, event_json AS eventJson " +
@@ -1506,15 +1513,20 @@ wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
   local session_active
+  # Retain this phase's diagnostics if the final deadline probe has no stderr.
+  # Bound the retained tail after each failed probe, before polling again.
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
     # Sample liveness first so an exited child receives one final evidence qualification.
     session_active=1
     kill -0 "$session_pid" 2>/dev/null || session_active=0
-    if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
+    if session_evidence qualify "$expected_turns" >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
         3) fail_provider_unavailable ;;
@@ -1532,12 +1544,15 @@ wait_for_turn_count() {
 
 wait_for_pty_input_mode() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
+    if session_evidence input-mode >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1551,12 +1566,15 @@ wait_for_pty_input_mode() {
 
 wait_for_pty_monitor_ready() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence monitor-ready >/dev/null 2>"$evidence_error"; then
+    if session_evidence monitor-ready >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
+    tail -c 2048 "$evidence_error" > "$evidence_error.tmp"
+    mv "$evidence_error.tmp" "$evidence_error"
     if [[ "$evidence_status" != 1 ]]; then
       fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
     fi
