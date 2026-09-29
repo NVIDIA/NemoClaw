@@ -20,6 +20,8 @@ mod facts;
 mod graph;
 mod guided;
 mod journey;
+mod journey_definition;
+mod partial_document;
 mod projection;
 
 pub use answers::{
@@ -37,6 +39,8 @@ pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvide
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use journey::{PartialTemplate, TargetFacts, TargetStatus};
+pub use journey_definition::JourneyDefinition;
+pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use projection::Session;
 
 mod settings;

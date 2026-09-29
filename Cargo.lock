@@ -2075,6 +2075,7 @@ name = "nemoclaw-authoring"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "jsonschema 0.56.0",
  "nemoclaw-sdk",
  "serde-saphyr",
  "serde_json",

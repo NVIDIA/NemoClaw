@@ -47,32 +47,38 @@ pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 /// Configuration diagnostics omit credentials and arbitrary source values.
 pub use nemoclaw_runtime::config::ConfigError;
 
+/// Parse a bounded YAML value without claiming it is a complete configuration.
+/// Authoring can inspect sparse input before constructing a [`Document`].
+pub fn parse_yaml_value(input: impl Read) -> Result<serde_json::Value, ConfigError> {
+    let mut bytes = Vec::new();
+    input
+        .take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ConfigError::new("cannot read configuration"))?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(ConfigError::new("configuration exceeds 1 MiB"));
+    }
+    let text =
+        std::str::from_utf8(&bytes).map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+    let mut options = serde_saphyr::Options::default();
+    let mut budget = serde_saphyr::Budget::default();
+    budget.max_aliases = 0;
+    budget.max_anchors = 0;
+    budget.max_merge_keys = 0;
+    options.budget = Some(budget);
+    options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+    options.reject_unsupported_tags = true;
+    serde_saphyr::from_str_with_options(text, options)
+        .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))
+}
+
 impl Document {
     /// Read, default, and validate a configuration document.
     ///
     /// # Errors
     /// Returns an error for unreadable, oversized, malformed, or invalid input.
     pub fn parse(input: impl Read) -> Result<Self, ConfigError> {
-        let mut bytes = Vec::new();
-        input
-            .take(MAX_DOCUMENT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| ConfigError::new("cannot read configuration"))?;
-        if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(ConfigError::new("configuration exceeds 1 MiB"));
-        }
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
-        let mut options = serde_saphyr::Options::default();
-        let mut budget = serde_saphyr::Budget::default();
-        budget.max_aliases = 0;
-        budget.max_anchors = 0;
-        budget.max_merge_keys = 0;
-        options.budget = Some(budget);
-        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
-        options.reject_unsupported_tags = true;
-        let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
+        let tree = parse_yaml_value(input)?;
         schema::validate_input(&tree)?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
