@@ -35,7 +35,9 @@ pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
 };
-pub use journey_state::{JourneyQuestion, JourneyQuestionReason, JourneyResolution, JourneyState};
+pub use journey_state::{
+    JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason, JourneyResolution, JourneyState,
+};
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;
 

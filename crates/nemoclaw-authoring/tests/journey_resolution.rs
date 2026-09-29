@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    Capabilities, JourneyDefinition, JourneyQuestionReason, JourneyScope, PartialDocument,
+    Capabilities, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason, JourneyScope,
+    PartialDocument,
 };
 use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
@@ -588,14 +589,30 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         ..Default::default()
     };
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let discovered = state.resolve_with_facts(&capabilities, &facts).unwrap();
+    let question = discovered.question(model).unwrap();
     assert!(
-        state
-            .resolve_with_facts(&capabilities, &facts)
-            .unwrap()
-            .question(model)
-            .unwrap()
+        question
             .choices()
             .contains(&json!("vendor/discovered-model"))
+    );
+    assert!(question.allows_custom_answer());
+    assert_eq!(question.kind(), JourneyQuestionKind::InferenceModel);
+    let preset = JourneyDefinition::new(
+        "preset",
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap(),
+    )
+    .ask(["inference:preset"])
+    .start(&capabilities)
+    .unwrap()
+    .resolve(&capabilities)
+    .unwrap();
+    assert!(
+        !preset
+            .question("inference:preset")
+            .unwrap()
+            .allows_custom_answer()
     );
     let mut stale = facts.clone();
     stale.endpoint.as_mut().unwrap().request.endpoint = "https://other.example/v1".into();

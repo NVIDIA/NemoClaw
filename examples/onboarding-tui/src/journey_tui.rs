@@ -8,8 +8,8 @@ use std::{io, time::Duration};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
     AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryEvidence,
-    EndpointEvidence, GatewayEvidence, HardwareEvidence, JourneyQuestion, JourneyState,
-    discovery_key_for_document, inference_request_for_document,
+    EndpointEvidence, GatewayEvidence, HardwareEvidence, JourneyQuestion, JourneyQuestionKind,
+    JourneyState, discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
@@ -34,7 +34,7 @@ pub(crate) struct JourneyWizard {
     history: Vec<JourneyState>,
     selected: usize,
     selection_changed: bool,
-    custom_model: bool,
+    custom_answer: bool,
     facts: AuthoringFacts,
     discovery: Option<DiscoveryEvidence>,
     host_os: &'static str,
@@ -56,7 +56,7 @@ impl JourneyWizard {
             history: Vec::new(),
             selected: 0,
             selection_changed: false,
-            custom_model: false,
+            custom_answer: false,
             facts: AuthoringFacts::default(),
             discovery: None,
             host_os,
@@ -78,10 +78,6 @@ impl JourneyWizard {
             .ok()?
             .next_question()
             .cloned()
-    }
-
-    fn is_model_question(question: &JourneyQuestion) -> bool {
-        question.id().contains("/inference/routes/") && question.id().ends_with("/overrides/model")
     }
 
     fn choice_index(&self, question: &JourneyQuestion) -> usize {
@@ -113,7 +109,7 @@ impl JourneyWizard {
         self.history.push(previous);
         self.selected = 0;
         self.selection_changed = false;
-        self.custom_model = false;
+        self.custom_answer = false;
         self.input.clear();
         self.error = None;
         Ok(())
@@ -124,7 +120,7 @@ impl JourneyWizard {
             self.state = previous;
             self.selected = 0;
             self.selection_changed = false;
-            self.custom_model = false;
+            self.custom_answer = false;
             self.input.clear();
             self.error = None;
         } else {
@@ -140,7 +136,7 @@ impl JourneyWizard {
 
     fn answer_from_input(&self, question: &JourneyQuestion) -> Result<Option<Value>, String> {
         if !question.choices().is_empty() {
-            if Self::is_model_question(question) && self.custom_model {
+            if question.allows_custom_answer() && self.custom_answer {
                 return if self.input.trim().is_empty() {
                     Err("Enter a model identifier.".into())
                 } else {
@@ -214,12 +210,12 @@ impl JourneyWizard {
                 Some("Podman onboarding requires a Linux host. Choose Docker here.".into());
             return;
         }
-        if Self::is_model_question(&question)
+        if question.allows_custom_answer()
             && !question.choices().is_empty()
             && self.choice_index(&question) == question.choices().len()
-            && !self.custom_model
+            && !self.custom_answer
         {
-            self.custom_model = true;
+            self.custom_answer = true;
             self.input.clear();
             return;
         }
@@ -276,7 +272,7 @@ impl JourneyWizard {
                 question.id()
             )));
             lines.push(Line::from(""));
-            if question.choices().is_empty() || self.custom_model {
+            if question.choices().is_empty() || self.custom_answer {
                 let input = if self.input.is_empty() {
                     self.suggested_input(&question)
                 } else {
@@ -307,7 +303,7 @@ impl JourneyWizard {
                         if unavailable { " (Linux only)" } else { "" }
                     )));
                 }
-                if Self::is_model_question(&question) {
+                if question.allows_custom_answer() {
                     lines.push(Line::from(format!(
                         "{} Type another model",
                         if self.choice_index(&question) == question.choices().len() {
@@ -470,7 +466,7 @@ pub(crate) async fn run(
             && wizard
                 .question()
                 .as_ref()
-                .is_some_and(JourneyWizard::is_model_question)
+                .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
             && let Some(document) = wizard
                 .state
                 .resolve(&wizard.capabilities)?
@@ -523,7 +519,7 @@ pub(crate) async fn run(
             continue;
         }
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_model {
+            if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_answer {
                 let document = wizard
                     .state
                     .resolve(&wizard.capabilities)?
@@ -625,9 +621,7 @@ pub(crate) async fn run(
                 {
                     wizard.selected = (wizard.choice_index(&question) + 1).min(
                         question.choices().len()
-                            - usize::from(
-                                question.required() && !JourneyWizard::is_model_question(&question),
-                            ),
+                            - usize::from(question.required() && !question.allows_custom_answer()),
                     );
                     wizard.selection_changed = true;
                 }
@@ -1021,7 +1015,7 @@ mod tests {
             if wizard
                 .question()
                 .as_ref()
-                .is_some_and(JourneyWizard::is_model_question)
+                .is_some_and(|question| question.allows_custom_answer())
             {
                 break;
             }
@@ -1057,7 +1051,7 @@ mod tests {
         wizard.selected = question.choices().len();
         wizard.selection_changed = true;
         wizard.advance();
-        assert!(wizard.custom_model);
+        assert!(wizard.custom_answer);
         wizard.input = "private/custom".into();
         wizard.advance();
         assert_eq!(

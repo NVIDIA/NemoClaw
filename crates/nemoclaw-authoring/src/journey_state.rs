@@ -36,6 +36,13 @@ pub enum JourneyQuestionReason {
     InvalidSupplied,
 }
 
+/// The domain decision a frontend is presenting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JourneyQuestionKind {
+    Field,
+    InferenceModel,
+}
+
 /// One currently applicable decision in the bounded journey surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JourneyQuestion {
@@ -43,6 +50,7 @@ pub struct JourneyQuestion {
     reason: JourneyQuestionReason,
     required: bool,
     choices: Vec<Value>,
+    kind: JourneyQuestionKind,
     suggestion: Option<Value>,
     schema: Value,
 }
@@ -59,6 +67,13 @@ impl JourneyQuestion {
     }
     pub fn choices(&self) -> &[Value] {
         &self.choices
+    }
+    pub fn kind(&self) -> JourneyQuestionKind {
+        self.kind
+    }
+    /// Suggested model choices do not restrict an otherwise schema-valid answer.
+    pub fn allows_custom_answer(&self) -> bool {
+        self.kind == JourneyQuestionKind::InferenceModel
     }
     pub fn suggestion(&self) -> Option<&Value> {
         self.suggestion.as_ref()
@@ -437,6 +452,7 @@ impl JourneyState {
             || (self.definition.ask.contains(NAME) && !self.accepted.contains(NAME))
         {
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: NAME.into(),
                 reason: if invalid_name {
                     JourneyQuestionReason::InvalidSupplied
@@ -483,6 +499,7 @@ impl JourneyState {
             let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
             if value.is_none() || !valid || !self.accepted.contains(field) {
                 questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::Field,
                     id: field.clone(),
                     reason: if value.is_some() && !valid {
                         JourneyQuestionReason::InvalidSupplied
@@ -540,6 +557,7 @@ impl JourneyState {
                 continue;
             }
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: issue.path().into(),
                 reason: if issue.kind() == PartialIssueKind::Missing {
                     JourneyQuestionReason::Missing
@@ -565,6 +583,7 @@ impl JourneyState {
             {
                 let value = self.values.pointer(&path);
                 questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::InferenceModel,
                     id: path,
                     reason: if value.is_some() {
                         JourneyQuestionReason::ExplicitAsk
@@ -605,6 +624,7 @@ impl JourneyState {
                     };
                     if !choices.is_empty() {
                         questions.push(JourneyQuestion {
+                            kind: JourneyQuestionKind::Field,
                             id: ROUTE_SELECTION.into(),
                             reason: JourneyQuestionReason::Missing,
                             required: true,
@@ -627,6 +647,7 @@ impl JourneyState {
                 .current_preset()
                 .map(|preset| Value::String(preset.id().into()));
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: INFERENCE_PRESET.into(),
                 reason: if suggestion.is_some() {
                     JourneyQuestionReason::ExplicitAsk
@@ -663,6 +684,7 @@ impl JourneyState {
                 }
                 let value = self.values.pointer(&path);
                 questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::Field,
                     id: path,
                     reason: if value.is_some() {
                         JourneyQuestionReason::ExplicitAsk
@@ -697,6 +719,7 @@ impl JourneyState {
                 .expect("external provider endpoint is in the SDK schema")
                 .0;
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: endpoint.clone(),
                 reason: JourneyQuestionReason::ExplicitAsk,
                 required: true,
@@ -742,6 +765,7 @@ impl JourneyState {
                     .push("no harness choices are advertised by the current Fabric catalog".into());
             }
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: HARNESS.into(),
                 reason: if chosen.is_none() {
                     JourneyQuestionReason::Missing
@@ -797,6 +821,7 @@ impl JourneyState {
                         && !self.accepted.contains(&id))
                 {
                     questions.push(JourneyQuestion {
+                        kind: JourneyQuestionKind::Field,
                         id,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
@@ -836,6 +861,7 @@ impl JourneyState {
                     continue;
                 }
                 questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::Field,
                     id: field.path,
                     reason: JourneyQuestionReason::ExplicitAsk,
                     required: true,
@@ -878,6 +904,7 @@ impl JourneyState {
                     omitted.push(field.path);
                 } else if !valid || !accepted {
                     questions.push(JourneyQuestion {
+                        kind: JourneyQuestionKind::Field,
                         id: field.path,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
@@ -985,6 +1012,7 @@ impl JourneyState {
         if let Some(value) = &value
             && !question.choices.is_empty()
             && !question.choices.contains(value)
+            && !question.allows_custom_answer()
         {
             return Err(diagnostic(
                 "journey",
@@ -1633,6 +1661,7 @@ fn collect_required_leaf_questions(
             if !supplied.is_some_and(|value| schema_accepts(&choice_schema, value) == Some(true)) {
                 if !questions.iter().any(|question| question.id == choice_path) {
                     questions.push(JourneyQuestion {
+                        kind: JourneyQuestionKind::Field,
                         id: choice_path,
                         reason: if supplied.is_some() {
                             JourneyQuestionReason::InvalidSupplied
@@ -1675,6 +1704,7 @@ fn collect_required_leaf_questions(
         let choices = finite_choices(&child_schema);
         if scalar_question(&child_schema, &choices) {
             questions.push(JourneyQuestion {
+                kind: JourneyQuestionKind::Field,
                 id: child_path,
                 reason: if supplied.is_some() {
                     JourneyQuestionReason::InvalidSupplied

@@ -26,6 +26,7 @@ No separate journey YAML format is needed for this prototype.
 `JourneyDefinition` owns the sparse template and its question guidance.
 The minimum-inline fixture fixes topology in the partial document; the definition's guidance decides which supplied values to revisit, and `JourneyState` derives missing leaf questions from the SDK and Fabric schemas.
 The example TUI and tree preview start the same `JourneyState` resolver from it.
+A resolved question identifies its domain kind so terminal presentation can request model discovery and offer custom model text without inferring meaning from a document path.
 The SDK owns complete document validation; Fabric owns adapter compatibility; target probes supply evidence without changing authored intent.
 
 ## Partial document
