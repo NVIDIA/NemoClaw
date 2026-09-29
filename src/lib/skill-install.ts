@@ -359,7 +359,7 @@ function assertCanonicalSkillRoot(writableRoot: string): void {
   }
 }
 
-/** Place one snapshot in the declared root after optional pre-publication verification. */
+/** Place one snapshot in the declared root after optional publication verification. */
 export function buildCanonicalSkillAddCommand(
   writableRoot: string,
   skillName: string,
@@ -376,17 +376,7 @@ export function buildCanonicalSkillAddCommand(
       ? []
       : [
           `expected=${shellQuote(expectedDigest)}`,
-          'verification="$(mktemp -d "$root/.nemoclaw-skill-verify.$name.XXXXXX")"',
-          'chmod 700 "$verification"',
-          'find "$temporary" -mindepth 1 -fprintf "$verification/entries" "%P\\n"',
-          'while IFS= read -r rel; do safe_rel "$rel"; done < "$verification/entries"',
-          'find "$temporary" -type f -fprintf "$verification/unsorted-files" "%P\\n"',
-          'LC_ALL=C sort "$verification/unsorted-files" > "$verification/files"',
-          ': > "$verification/manifest"',
-          'while IFS= read -r rel; do candidate="$temporary/$rel"; [ -f "$candidate" ] && [ ! -L "$candidate" ]; if [ -n "$(find "$candidate" -maxdepth 0 -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum -- "$candidate")"; hash="${hash%% *}"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$verification/manifest"; done < "$verification/files"',
-          'actual="$(sha256sum -- "$verification/manifest")"',
-          'actual="${actual%% *}"',
-          '[ "$actual" = "$expected" ]',
+          'verify_tree() { tree="$1"; verification="$(mktemp -d "$root/.nemoclaw-skill-verify.$name.XXXXXX")"; chmod 700 "$verification"; [ -z "$(find "$tree" -mindepth 1 ! -type d ! -type f -print -quit)" ]; find "$tree" -mindepth 1 -fprintf "$verification/entries" "%P\\n"; while IFS= read -r rel; do safe_rel "$rel"; done < "$verification/entries"; find "$tree" -type f -fprintf "$verification/unsorted-files" "%P\\n"; LC_ALL=C sort "$verification/unsorted-files" > "$verification/files"; : > "$verification/manifest"; while IFS= read -r rel; do candidate="$tree/$rel"; [ -f "$candidate" ] && [ ! -L "$candidate" ]; if [ -n "$(find "$candidate" -maxdepth 0 -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum -- "$candidate")"; hash="${hash%% *}"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$verification/manifest"; done < "$verification/files"; actual="$(sha256sum -- "$verification/manifest")"; actual="${actual%% *}"; rm -rf -- "$verification"; verification=""; [ "$actual" = "$expected" ]; }',
         ];
   return [
     "/bin/sh",
@@ -401,6 +391,7 @@ export function buildCanonicalSkillAddCommand(
         : [
             'safe_rel() { case "$1" in ""|/*|*//*|*[!A-Za-z0-9._/-]*) return 1 ;; esac; case "/$1/" in *"/./"*|*"/../"*) return 1 ;; esac; }',
           ]),
+      ...verificationCommands,
       ...canonicalRootCreationCommands(writableRoot),
       '[ "$(pwd -P)" = "$root" ]',
       '[ -d "$source" ] && [ ! -L "$source" ] && [ "$(realpath -e -- "$source")" = "$source" ]',
@@ -414,14 +405,18 @@ export function buildCanonicalSkillAddCommand(
           ]
         : [
             'verification=""',
-            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; if [ -n "${verification:-}" ] && [ -d "$verification" ] && [ ! -L "$verification" ]; then rm -rf -- "$verification"; fi; }',
+            'published=""',
+            'cleanup() { if [ -n "${temporary:-}" ] && [ -d "$temporary" ] && [ ! -L "$temporary" ]; then rm -rf -- "$temporary"; fi; if [ -n "${published:-}" ] && [ -d "$published" ] && [ ! -L "$published" ]; then rm -rf -- "$published"; fi; if [ -n "${verification:-}" ] && [ -d "$verification" ] && [ ! -L "$verification" ]; then rm -rf -- "$verification"; fi; }',
           ]),
       "trap cleanup EXIT HUP INT TERM",
       'cp -a -- "$source/." "$temporary/"',
       '[ -z "$(find "$temporary" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
-      ...verificationCommands,
+      ...(expectedDigest === undefined ? [] : ['verify_tree "$temporary"']),
       'mv -T -- "$temporary" "$destination"',
       'temporary=""',
+      ...(expectedDigest === undefined
+        ? []
+        : ['published="$destination"', 'verify_tree "$destination"', 'published=""']),
       'printf "Placed %s in the canonical writable skill root. Native skill list and new sessions remain authoritative.\\n" "$name"',
     ].join("; "),
   ];

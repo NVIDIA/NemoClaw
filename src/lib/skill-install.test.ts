@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -141,7 +143,7 @@ describe("stateless skill snapshots", () => {
 });
 
 describe("canonical writable-root fallbacks", () => {
-  it("verifies Deep Agents content before atomic publication (#8470)", () => {
+  it("verifies Deep Agents content before and after atomic publication (#8470)", () => {
     const digest = "a".repeat(64);
     const command = buildCanonicalSkillAddCommand(
       "/sandbox/.deepagents/agent/skills",
@@ -155,13 +157,65 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).toContain('LC_ALL=C sort "$verification/unsorted-files"');
     expect(script).toContain("mode=755");
     expect(script).toContain('sha256sum -- "$candidate"');
-    expect(script).toContain('[ "$actual" = "$expected" ]');
-    expect(script.indexOf('[ "$actual" = "$expected" ]')).toBeLessThan(
+    expect(script).toContain('verify_tree "$temporary"');
+    expect(script.indexOf('verify_tree "$temporary"')).toBeLessThan(
       script.indexOf('mv -T -- "$temporary" "$destination"'),
     );
+    expect(script.indexOf('verify_tree "$destination"')).toBeGreaterThan(
+      script.indexOf('mv -T -- "$temporary" "$destination"'),
+    );
+    expect(script).toContain('published="$destination"');
     expect(script).not.toContain("Content digest (SHA-256)");
     expect(script).toContain(digest);
   });
+
+  it.runIf(process.platform === "linux")(
+    "rolls back publication when the tree changes during the move (#8470)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-publication-test-"));
+      roots.push(root);
+      const sandboxRoot = path.join(root, "sandbox");
+      const source = path.join(sandboxRoot, ".nemoclaw-skill-stage.receipt", "demo-skill");
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(path.join(source, "SKILL.md"), "---\nname: demo-skill\n---\n# Demo\n");
+      const snapshot = createStatelessSkillSnapshot(source, "demo-skill", fs.lstatSync(source));
+      expect(snapshot.success).toBe(true);
+      assert(snapshot.success);
+      roots.push(snapshot.snapshot.hostDirectory);
+
+      const command = buildCanonicalSkillAddCommand(
+        "/sandbox/.deepagents/agent/skills",
+        "demo-skill",
+        "/sandbox/.nemoclaw-skill-stage.receipt/demo-skill",
+        snapshot.snapshot.contentDigest,
+      );
+      expect(root).not.toMatch(/['\n\r]/u);
+      const script = (command[2] ?? "").replaceAll("/sandbox", sandboxRoot);
+      const shimDirectory = path.join(root, "bin");
+      fs.mkdirSync(shimDirectory);
+      fs.writeFileSync(
+        path.join(shimDirectory, "mv"),
+        '#!/bin/sh\nprintf "changed during publication\\n" >> "$3/SKILL.md"\nexec "$NEMOCLAW_REAL_MV" "$@"\n',
+        { mode: 0o755 },
+      );
+      const realMv = spawnSync("sh", ["-c", "command -v mv"], { encoding: "utf8" }).stdout.trim();
+      expect(realMv).not.toBe("");
+      const result = spawnSync(command[0], [command[1], script], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REAL_MV: realMv,
+          PATH: `${shimDirectory}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(result.status, result.stderr).not.toBe(0);
+      expect(fs.existsSync(path.join(sandboxRoot, ".deepagents/agent/skills/demo-skill"))).toBe(
+        false,
+      );
+    },
+  );
 
   it.each(["invalid", "A".repeat(64), "a".repeat(63)])(
     "rejects invalid skill content digest %j",

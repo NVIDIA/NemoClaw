@@ -2723,7 +2723,7 @@ Hermes plugins are different from agent skills. Because the pinned Hermes CLI ha
 <AgentOnly variant="deepagents">
 
 Because the pinned Deep Agents Code CLI has no native local-add verb, NemoClaw places the skill only at `/sandbox/.deepagents/agent/skills/<name>`.
-Before placement, NemoClaw verifies the private copy against the host snapshot.
+Before placement, NemoClaw verifies the private copy against the host snapshot. After placement, it verifies the canonical-root copy again and rolls it back if the content changed during publication.
 The command prints `Content digest (SHA-256): <digest>` only after the verified copy is placed and private staging cleanup succeeds.
 The digest covers sorted relative paths, normalized executable modes, and each file's SHA-256 digest.
 It attests the placed canonical-root copy at that time.
