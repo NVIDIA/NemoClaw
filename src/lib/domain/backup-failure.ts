@@ -39,6 +39,22 @@ export function classifyFailedDirsFromTarStderr(
   return failed;
 }
 
+/**
+ * Record a failed backup directory once. Keep the first known reason when
+ * the audit path and a later tar-error path both report the same directory.
+ */
+export function recordFailedBackupDir(
+  failedDirs: string[],
+  name: string,
+  failedDirReasons?: Record<string, string>,
+  reason?: string,
+): void {
+  if (!failedDirs.includes(name)) failedDirs.push(name);
+  if (failedDirReasons !== undefined && reason !== undefined) {
+    failedDirReasons[name] ??= reason;
+  }
+}
+
 /** Render failed items with any known per-directory cause. */
 export function formatFailedBackupItems(
   failedItems: readonly string[],
@@ -47,4 +63,35 @@ export function formatFailedBackupItems(
   return failedItems
     .map((item) => (reasons?.[item] ? `${item} (${reasons[item]})` : item))
     .join(", ");
+}
+
+/**
+ * Map an absolute pre-backup audit path onto a backup-relative directory.
+ * Accepts a path only when it equals a declared directory or is nested under
+ * one at a path boundary. Rejects undeclared paths, traversal, and absolute leftovers.
+ */
+export function relativeFailedBackupDir(
+  absPath: string,
+  dirPrefix: string,
+  existingDirs: readonly string[],
+): string | null {
+  if (!absPath || absPath.includes("\0")) return null;
+  const relative =
+    dirPrefix && absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
+  if (
+    !relative ||
+    relative.startsWith("/") ||
+    relative.includes("\\") ||
+    relative === "." ||
+    relative === ".." ||
+    relative.startsWith("../") ||
+    relative.includes("/../") ||
+    relative.endsWith("/..")
+  ) {
+    return null;
+  }
+  const declared = existingDirs.some(
+    (dirName) => relative === dirName || relative.startsWith(`${dirName}/`),
+  );
+  return declared ? relative : null;
 }

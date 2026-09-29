@@ -453,6 +453,35 @@ describe("backupAll", () => {
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (credentials (permission denied))",
     );
+    expect(mocks.retainStrictPreUpgradeRecoveryState).not.toHaveBeenCalled();
+  });
+
+  it("names an unreadable nested directory in backup-all (#12069)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    readySandboxNames = new Set(["alpha"]);
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: ["workspace"],
+      failedDirs: ["workspace/restricted"],
+      failedDirReasons: { "workspace/restricted": "permission denied" },
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup failed (workspace/restricted (permission denied))",
+    );
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
