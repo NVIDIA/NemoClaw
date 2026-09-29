@@ -5042,6 +5042,12 @@ EOF
   # a fresh one only after doctor succeeds.
   rm -f -- "$ready" || return 1
 
+  # Backup quiesce is promoted to the doctor request only after the restored
+  # native home is in place. Rotate machine-local legacy authority here as
+  # well as during ordinary startup so a post-quiesce restore cannot put the
+  # retired sandbox identity back after the earlier migration pass.
+  remove_restored_legacy_device_identity || return 1
+
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
   if [ "$(id -u)" -eq 0 ]; then
     doctor_command=(

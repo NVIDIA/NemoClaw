@@ -237,8 +237,13 @@ function doctorFunction(
   rootMode = false,
 ): string {
   return [
+    'run_openclaw_config_as_owner() { "$@"; }',
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "remove_restored_legacy_device_identity").replaceAll(
+      "/sandbox/.openclaw",
+      configDir,
+    ),
     extractShellFunctionFromSource(source, "repair_openclaw_shared_state_schema")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
@@ -391,6 +396,8 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const f = fixture();
     try {
       fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const restoredIdentity = path.join(f.configDir, "identity", "device.json");
+      fs.mkdirSync(path.dirname(restoredIdentity));
       const result = spawnSync(
         "bash",
         [
@@ -400,6 +407,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
             doctorFunction(source, f.configDir, f.ready),
             promoteAfterReady(f),
             "run_requested_openclaw_backup_quiesce || exit $?",
+            `printf '%s' '{"version":1,"deviceId":"retired-sandbox","privateKeyPem":"private"}' >${JSON.stringify(restoredIdentity)}`,
             `printf 'restored-before-doctor\\n' >${JSON.stringify(f.calls)}`,
             releaseAfterReady(f),
             "run_requested_openclaw_post_upgrade_doctor",
@@ -411,6 +419,10 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(f.calls, "utf8")).toBe(
         "restored-before-doctor\ndoctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
+      expect(fs.existsSync(restoredIdentity)).toBe(false);
+      expect(result.stderr).toContain(
+        "Removed restored legacy device identity for post-upgrade rotation",
       );
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
