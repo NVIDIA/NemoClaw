@@ -16,10 +16,6 @@ export default async function publish_nemoclaw_pr_branch(input: {
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
-    workflowSource: "canonical-base";
-    effectivePermissions: "read-only";
-    candidateLocalActions: false;
-    candidateCredentialInputs: false;
     draftOnly: true;
     expectedRemoteSha: string | null;
   };
@@ -52,6 +48,13 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (input.expectedPullHeadSha !== undefined && !/^[0-9a-f]{40}$/.test(input.expectedPullHeadSha))
     throw new Error("expectedPullHeadSha must be a full commit SHA");
   const bypass = input.hookBypassReceipt;
+  const trustedFallbackJobs = new Set([
+    // The canonical Advisor specialist job checks out the candidate as inert data inside
+    // OpenShell. It has actions:read only, uses no candidate-local action, and exposes no
+    // GitHub credential to candidate-controlled commands. A workflow edit changes this blob
+    // key and fails closed until the reviewed allowlist is updated.
+    ".github/workflows/pr-review-advisor.yaml\0d7bbfae8fd59660ab146ef1cc52ce69964720146\0review-specialists",
+  ]);
   if (bypass !== undefined) {
     if (
       typeof bypass !== "object" ||
@@ -65,14 +68,14 @@ export default async function publish_nemoclaw_pr_branch(input: {
       typeof bypass.workflowJob !== "string" ||
       !bypass.workflowJob.trim() ||
       bypass.workflowJob.length > 200 ||
-      bypass.workflowSource !== "canonical-base" ||
-      bypass.effectivePermissions !== "read-only" ||
-      bypass.candidateLocalActions !== false ||
-      bypass.candidateCredentialInputs !== false ||
       bypass.draftOnly !== true ||
       (bypass.expectedRemoteSha !== null && !/^[0-9a-f]{40}$/.test(bypass.expectedRemoteSha))
     )
       throw new Error("hookBypassReceipt is not a valid trusted fallback record");
+    const fallbackKey =
+      bypass.workflowPath + "\0" + bypass.workflowBlobSha + "\0" + bypass.workflowJob;
+    if (!trustedFallbackJobs.has(fallbackKey))
+      throw new Error("hookBypassReceipt does not name a trusted fallback job");
     if (
       input.expectedPullHeadSha !== undefined &&
       bypass.expectedRemoteSha !== input.expectedPullHeadSha
@@ -286,11 +289,14 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const remoteBefore = remoteBeforeReadOk
     ? remoteBeforeRead.stdout.text.trim().split(/\s+/u)[0]
     : "";
+  let reconcileExistingInitialPublication = false;
   if (bypass !== undefined) {
     if (!remoteBeforeReadOk)
       throw new Error("Could not verify the publication branch before guarded publication");
     const expectedRemote = bypass.expectedRemoteSha ?? "";
-    if (remoteBefore !== expectedRemote)
+    reconcileExistingInitialPublication =
+      bypass.expectedRemoteSha === null && remoteBefore === input.expectedHeadSha;
+    if (remoteBefore !== expectedRemote && !reconcileExistingInitialPublication)
       throw new Error("Publication branch changed before guarded publication");
     if (bypass.expectedRemoteSha !== null) {
       const ancestor = await run(
@@ -306,22 +312,26 @@ export default async function publish_nemoclaw_pr_branch(input: {
     }
   }
   let pushError = null;
-  try {
-    await run(
-      "git push " +
-        (bypass !== undefined
-          ? "--no-verify " +
-            q("--force-with-lease=refs/heads/" + branch + ":" + (bypass.expectedRemoteSha ?? "")) +
-            " "
-          : "") +
-        "--set-upstream " +
-        q(remote) +
-        " " +
-        q(input.expectedHeadSha + ":refs/heads/" + branch),
-      "Push pull request candidate branch",
-    );
-  } catch (error) {
-    pushError = error;
+  if (!reconcileExistingInitialPublication) {
+    try {
+      await run(
+        "git push " +
+          (bypass !== undefined
+            ? "--no-verify " +
+              q(
+                "--force-with-lease=refs/heads/" + branch + ":" + (bypass.expectedRemoteSha ?? ""),
+              ) +
+              " "
+            : "") +
+          "--set-upstream " +
+          q(remote) +
+          " " +
+          q(input.expectedHeadSha + ":refs/heads/" + branch),
+        "Push pull request candidate branch",
+      );
+    } catch (error) {
+      pushError = error;
+    }
   }
   const remoteRead = await run(
     "git ls-remote --heads " + q(remote) + " " + q("refs/heads/" + branch),

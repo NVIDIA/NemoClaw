@@ -17,10 +17,6 @@ export default async function commit_push_refresh_pr(input: {
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
-    workflowSource: "canonical-base";
-    effectivePermissions: "read-only";
-    candidateLocalActions: false;
-    candidateCredentialInputs: false;
     draftOnly: true;
   };
   refreshBody?: boolean;
