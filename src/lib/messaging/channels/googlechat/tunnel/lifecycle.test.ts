@@ -30,6 +30,21 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     );
   });
 
+  it("preserves the proxy and recovery state when tunnel identity is unavailable", () => {
+    const stopGooglechatWebhookProxy = vi.fn();
+
+    expect(() =>
+      stopGooglechatWebhookTunnel("alpha", {
+        services: {
+          resolveServicePidDir: () => "/tmp/nemoclaw-services-alpha",
+          stopCloudflared: () => ({ kind: "unverified-pid-process", pid: 321 }),
+        },
+        webhookProxy: { stopGooglechatWebhookProxy },
+      }),
+    ).toThrow("Cannot stop cloudflared PID 321 while its process identity is unavailable");
+    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
+  });
+
   it("uses the same real sandbox-scoped PID resolver for enrollment and teardown", () => {
     const readCloudflaredState = vi.fn(() => ({ kind: "running", pid: 123 }) as const);
     const readGooglechatWebhookProxyState = vi.fn(
