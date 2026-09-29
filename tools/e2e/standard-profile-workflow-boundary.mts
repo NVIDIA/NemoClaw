@@ -79,14 +79,6 @@ const PROFILE_JOBS = {
     githubToken: true,
     maxParallel: undefined,
   },
-  "brave-nvidia-inference": {
-    job: "catalogue-brave-nvidia-inference",
-    matrix: "catalogue_brave_nvidia_inference_matrix",
-    credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
-    githubToken: false,
-    maxParallel: 2,
-  },
 } as const;
 
 function record(value: unknown): WorkflowRecord {
@@ -279,14 +271,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
-    "BRAVE_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its five optional profile secrets");
+    errors.push("standard E2E profile must accept only its four optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -632,7 +623,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {
