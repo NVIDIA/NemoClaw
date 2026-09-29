@@ -2437,7 +2437,6 @@ const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: san
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
-  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,

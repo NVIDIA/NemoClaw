@@ -222,6 +222,10 @@ Its durable entry points are `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-cont
 The `nemoclaw/src/commands/` directory contains in-sandbox `/nemoclaw` command handlers and migration helpers.
 The `nemoclaw/src/blueprint/` directory contains runner, state, snapshot, SSRF, and private-network validation code.
 
+NemoClaw writes the initial managed inference route and OpenShell credential placeholders to `openclaw.json` during onboarding.
+After first launch, OpenClaw owns the complete file.
+NemoClaw snapshots and restores its credential-sanitized contents without maintaining a second config authority.
+
 Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
 This guidance stays out of the visible chat transcript.
 When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
@@ -390,9 +394,6 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 |---|---|
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata for the default gateway port, including the default sandbox selection. |
 | `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
-<AgentOnly variant="openclaw">
-| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
-</AgentOnly>
 
 The following environment variables configure optional services and local access.
 

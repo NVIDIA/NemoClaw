@@ -12,6 +12,29 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
+import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
+
+export function buildDeepAgentsConfigProbe(
+  mcpUrl: string,
+  serverName: string,
+  hostSecret: string,
+): string {
+  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
+  return [
+    "set -eu",
+    "python3 - <<'PY'",
+    "import json, pathlib, re",
+    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
+    "text = path.read_text(encoding='utf-8')",
+    "data = json.loads(text)",
+    `entry = data['mcpServers'][${JSON.stringify(serverName)}]`,
+    "assert entry['type'] == 'http'",
+    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
+    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
+    `assert ${JSON.stringify(hostSecret)} not in text`,
+    "PY",
+  ].join("\n");
+}
 
 export interface AuthenticatedMcpDiscoveryTarget {
   server: FakeMcpHttpsServer;
@@ -221,6 +244,71 @@ export function buildMcpStatusRequestEvidence(
             : "other",
     })),
   };
+}
+
+export function buildHermesGatewayIdentityProbe() {
+  return trustedSandboxShellScript(
+    [
+      "set -eu",
+      "/usr/bin/python3 -I -S - <<'PY'",
+      "import json, pathlib",
+      "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+      "pid = record if isinstance(record, int) else record['pid']",
+      "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+      "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+      "PY",
+    ].join("\n"),
+  );
+}
+
+// Adapted from the diagnostic approach in #12172; this does not retry the tool call.
+export async function withMcpToolCallFailureEvidence(
+  operation: () => Promise<void>,
+  host: Pick<HostCliClient, "nemoclaw">,
+  options: {
+    artifacts: Pick<ArtifactSink, "writeJson">;
+    artifactPrefix: string;
+    sandboxName: string;
+    serverName: string;
+    credentialEnvName: string;
+    requests: readonly FakeMcpRequest[];
+    expectedSecret: string;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  const requestOffset = options.requests.length;
+  const call = Promise.resolve().then(operation);
+  await call.catch(async () => {
+    // Snapshot before the diagnostic probe creates requests of its own.
+    const evidence = buildMcpStatusRequestEvidence(
+      options.requests.slice(requestOffset),
+      options.expectedSecret,
+      `openshell:resolve:env:${options.credentialEnvName}`,
+    );
+    await Promise.allSettled([
+      Promise.resolve().then(() =>
+        options.artifacts.writeJson(
+          `${options.artifactPrefix}-failed-call-requests.json`,
+          evidence,
+        ),
+      ),
+      Promise.resolve().then(() =>
+        host.nemoclaw(
+          [options.sandboxName, "mcp", "status", options.serverName, "--tools", "--json"],
+          {
+            artifactName: `${options.artifactPrefix}-failure-status-tools`,
+            env: buildAvailabilityProbeEnv(),
+            redactionValues: options.redactionValues,
+            captureLimitBytes: 16 * 1024,
+            timeoutMs: 60_000,
+            killGraceMs: 1_000,
+          },
+        ),
+      ),
+    ]);
+  });
+  // Re-observe the original result; diagnostics cannot turn a failed call into success.
+  await call;
 }
 
 export async function assertAuthenticatedMcpRediscovery(

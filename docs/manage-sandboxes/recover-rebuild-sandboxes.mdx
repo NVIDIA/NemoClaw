@@ -157,10 +157,12 @@ The host does not start the in-sandbox processes independently. Refer to [`$$nem
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
-Recovery repairs supported agent processes and host forwards inside the registered sandbox. When the
-sandbox itself is stopped, `start` submits that lifecycle mutation to OpenShell; recovery does not
-take independent ownership of the provider container. If the native supervisor remains absent after
-bounded recovery, NemoClaw leaves the sandbox unchanged and directs you to rebuild or re-onboard.
+`recover` verifies the built-in native agent gateway and repairs supported state for a running gateway and host forwards inside the registered sandbox.
+When the sandbox itself is stopped, `start` submits that lifecycle mutation to OpenShell.
+Recovery does not take independent ownership of the provider container.
+If the built-in native agent gateway is stopped, `recover` reports it and does not relaunch it.
+Run `$$nemoclaw <sandbox-name> gateway restart` to request a supported gateway restart.
+For an ordinary process or health failure that persists, correct the cause, then run `$$nemoclaw <sandbox-name> stop` and `$$nemoclaw <sandbox-name> start`.
 
 For the lifecycle trust boundary and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot verify a sandbox that needs current credentials or native lifecycle support, rebuild it.
@@ -213,7 +215,13 @@ Refer to the [probe timing reference](../../reference/commands#$$nemoclaw-name-c
 <AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
 
-`recover` and `start` repair the in-sandbox agent gateway and the host-side port forwards for one named sandbox. `connect --probe-only` waits for that sandbox to become ready, rechecks it on its recorded gateway, and then verifies or repairs the same sandbox-scoped processes and forwards. These commands do not restart, replace, or reap the shared host OpenShell gateway process. If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
+`recover` and `start` can ask OpenShell to start one stopped named sandbox.
+After the sandbox is ready, they verify supported state for a running agent gateway and repair the host-side port forwards.
+They do not relaunch a stopped built-in native agent gateway.
+`connect --probe-only` waits for that sandbox to become ready, rechecks it on its recorded gateway, and then verifies the same sandbox-scoped processes and repairs supported running gateway state and forwards.
+It reports a stopped built-in native agent gateway and does not relaunch it.
+These commands do not restart, replace, or reap the shared host OpenShell gateway process.
+If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
 
 The OpenShell CLI has no command that starts a gateway, and `openshell status` only reports the gateway state. If NemoClaw starts the gateway on your host, run `$$nemoclaw onboard` again to repair the host gateway itself. If a deployment outside NemoClaw owns the gateway process, start the gateway with that deployment, then run `openshell gateway select <gateway>`. NemoClaw prints the applicable recovery guidance when a sandbox-scoped command reports that the host gateway is down. Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicitly recover the named host gateway when their operation requires it. `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 
@@ -294,8 +302,13 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 
 <AgentOnly variant="openclaw">
 
-After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
-If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
+Rebuild restores the complete credential-sanitized native `openclaw.json` file from the pre-rebuild snapshot.
+NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
+If the file cannot be restored safely, NemoClaw exits nonzero and does not report a successful rebuild.
+
+If rebuild keeps the source sandbox but cannot release it from backup maintenance, the warning names the retained sandbox and reports whether it verified that the sandbox stopped.
+If stopping is not verified, do not assume that the sandbox is stopped or ready to use.
+Preserve the retained sandbox and backup, and follow the recovery guidance printed with the warning.
 
 </AgentOnly>
 
@@ -331,19 +344,11 @@ Use the recovery guidance that matches the reported check:
 A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
-  The rebuild command preserves the mounted workspace and carries the complete current OpenShell
-  policy into sandbox recreation. For that one replacement create, NemoClaw adds baseline fields
-  required by the current replacement image when they are absent from the live policy. Existing
-  values, network keys, and same-name live network entries win, so host changes are not overwritten.
-  NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the
-  sandbox. When no host web-search key is staged, rebuild preflight reuses an existing Brave or
-  Tavily credential only when the provider name, type, and credential key match the sandbox's
-  binding on its recorded OpenShell gateway. A missing or mismatched binding stops before recreation
-  and requires the matching host environment variable before you retry. After state restoration,
-  NemoClaw clears a session's stale model and provider pin when it still targets the managed
-  `inference` provider but no longer matches the configured default model. The session then follows
-  the current default selected through `inference set`, while sessions pinned to another provider
-  remain unchanged.
+  The rebuild command preserves the mounted workspace and carries the complete current OpenShell policy into sandbox recreation.
+  When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
+  A missing or mismatched binding stops before recreation and requires the matching host environment variable before you retry.
+  Rebuild also restores the complete credential-sanitized native `openclaw.json` file, so native OpenClaw configuration changes survive sandbox replacement without a selective merge.
+  Rebuild preserves restored OpenClaw session model and provider selections, including selections that differ from the configured default.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
@@ -413,7 +418,7 @@ Do not manually remove the cron restore marker or release recovery record becaus
 </Warning>
 
 If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first.
-Then run `$$nemoclaw <sandbox-name> recover` to repair the gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
+Then run `$$nemoclaw <sandbox-name> recover` to verify the running gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
 
 When NemoClaw is ready to reopen dispatch and no operator drain remains, its root-owned controller reschedules only enabled one-shot jobs that became due at or after the NemoClaw gate was acquired, have never run, and carry no dispatch or fire claim. It persists that update before removing the gate. If the update fails, rebuild or recovery exits nonzero and leaves the gate active.
 
