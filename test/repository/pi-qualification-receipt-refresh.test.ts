@@ -11,6 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkPiQualificationReceiptRefresh } from "../../scripts/checks/pi-qualification-receipt-refresh.mts";
 
 const SOURCE_REVISION = "a".repeat(40);
+const AUDIT_CONFIG = {
+  npmVersion: "12.0.2",
+  npmIntegrity: `sha512-${"A".repeat(86)}==`,
+  npmArchiveSha256: "d".repeat(64),
+  registryOrigin: "https://registry.npmjs.org/",
+  lockedGraphs: [{ lockSha256: "e".repeat(64) }],
+};
 const RECEIPTS = [
   { path: "ci/pi-amd64.json", platform: "linux/amd64" as const },
   { path: "ci/pi-arm64.json", platform: "linux/arm64" as const },
@@ -56,7 +63,11 @@ describe("Pi qualification receipt refresh", () => {
     fs.mkdirSync(path.join(rootDir, "ci"), { recursive: true });
     fs.writeFileSync(
       path.join(rootDir, "agents/pi/Dockerfile"),
-      "FROM scratch\nCOPY protected/app /app\n",
+      "FROM scratch\nCOPY protected/app /app\nCOPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json\n",
+    );
+    fs.writeFileSync(
+      path.join(rootDir, "ci/reviewed-npm-audit.json"),
+      JSON.stringify(AUDIT_CONFIG),
     );
     fs.writeFileSync(
       path.join(rootDir, "agents/pi/Dockerfile.base"),
@@ -89,41 +100,76 @@ describe("Pi qualification receipt refresh", () => {
       acceptedDigests: options.accepted ?? acceptedDigests,
       baseBranch: "main",
       git: (args) =>
-        args[0] === "merge-base"
-          ? { status: 0, stdout: "base\n" }
-          : args.includes("--name-only")
-            ? {
-                status: 0,
-                stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
-              }
-            : args[0] === "rev-parse"
-              ? args.join("\0") === ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"].join("\0")
-                ? options.mergeInProgress
-                  ? { status: 0, stdout: `${"e".repeat(40)}\n` }
-                  : { status: 1, stdout: "" }
-                : args.join("\0") === ["rev-parse", "--verify", "HEAD^2"].join("\0") &&
-                    options.pullRequestHeadRevision
-                  ? { status: 0, stdout: `${options.pullRequestHeadRevision}\n` }
+        args[0] === "show"
+          ? { status: 0, stdout: JSON.stringify(AUDIT_CONFIG) }
+          : args[0] === "merge-base"
+            ? { status: 0, stdout: "base\n" }
+            : args.includes("--name-only")
+              ? {
+                  status: 0,
+                  stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
+                }
+              : args[0] === "rev-parse"
+                ? args.join("\0") === ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"].join("\0")
+                  ? options.mergeInProgress
+                    ? { status: 0, stdout: `${"e".repeat(40)}\n` }
+                    : { status: 1, stdout: "" }
+                  : args.join("\0") === ["rev-parse", "--verify", "HEAD^2"].join("\0") &&
+                      options.pullRequestHeadRevision
+                    ? { status: 0, stdout: `${options.pullRequestHeadRevision}\n` }
+                    : (() => {
+                        throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
+                      })()
+                : args.includes("--quiet")
+                  ? (args.includes("--cached") &&
+                      options.mergeInProgress &&
+                      args[3] === SOURCE_REVISION) ||
+                    args[3] === (options.headRevision ?? options.pullRequestHeadRevision ?? "HEAD")
+                    ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+                    : (() => {
+                        throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
+                      })()
                   : (() => {
-                      throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
-                    })()
-              : args.includes("--quiet")
-                ? (args.includes("--cached") &&
-                    options.mergeInProgress &&
-                    args[3] === SOURCE_REVISION) ||
-                  args[3] === (options.headRevision ?? options.pullRequestHeadRevision ?? "HEAD")
-                  ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
-                  : (() => {
-                      throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
-                    })()
-                : (() => {
-                    throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
-                  })(),
+                      throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
+                    })(),
       receipts: RECEIPTS,
       rootDir,
       ...(options.headRevision !== null ? { headRevision: options.headRevision ?? "HEAD" } : {}),
     });
   }
+
+  it("does not require image qualification for audit-only lock fingerprints", () => {
+    fs.writeFileSync(
+      path.join(rootDir, "ci/reviewed-npm-audit.json"),
+      JSON.stringify({ ...AUDIT_CONFIG, lockedGraphs: [{ lockSha256: "f".repeat(64) }] }),
+    );
+    expect(() => run(["ci/reviewed-npm-audit.json"])).not.toThrow();
+  });
+
+  it.each([
+    ["npmVersion", "12.0.3"],
+    ["npmIntegrity", `sha512-${"B".repeat(86)}==`],
+    ["npmArchiveSha256", "f".repeat(64)],
+  ])("still requires qualification when %s changes", (field, value) => {
+    fs.writeFileSync(
+      path.join(rootDir, "ci/reviewed-npm-audit.json"),
+      JSON.stringify({ ...AUDIT_CONFIG, [field]: value }),
+    );
+    expect(() => run(["ci/reviewed-npm-audit.json"])).toThrow(
+      "Pi image inputs changed without refreshing both qualification receipts",
+    );
+  });
+
+  it.each([
+    ["malformed JSON", "{"],
+    [
+      "unreviewed registry",
+      JSON.stringify({ ...AUDIT_CONFIG, registryOrigin: "https://example.com/" }),
+    ],
+  ])("does not skip validation for %s", (_label, contents) => {
+    fs.writeFileSync(path.join(rootDir, "ci/reviewed-npm-audit.json"), contents);
+    expect(() => run(["ci/reviewed-npm-audit.json"])).toThrow();
+  });
 
   it.each([
     ["copied source", "protected/app/config.json"],
