@@ -454,6 +454,16 @@ describe("Tavily pre-candidate matrix contract", () => {
     expect(credentialErrors).toContain(
       "trusted pre-candidate step Generate E2E target matrix must preserve its exact reviewed environment",
     );
+    const retiredBraveErrors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs["generate-matrix"]!.steps!.find(
+        (candidate) => candidate.name === "Generate E2E target matrix",
+      )!;
+      (step.env as Record<string, string>).NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE =
+        "${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}";
+    });
+    expect(retiredBraveErrors).toContain(
+      "trusted pre-candidate step Generate E2E target matrix must preserve its exact reviewed environment",
+    );
     const matrixErrors = validateMutatedWorkflow((workflow) => {
       const step = workflow.jobs["generate-matrix"]!.steps!.find(
         (candidate) => candidate.name === "Generate E2E target matrix",

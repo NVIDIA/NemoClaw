@@ -99,7 +99,6 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
   "github-read": "catalogue-github-read",
-  "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
   "tavily-nvidia-inference": "catalogue-tavily-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
@@ -447,7 +446,6 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     "nvidia-api": [],
     "nvidia-inference": [],
     "github-read": [],
-    "brave-nvidia-inference": [],
     "tavily-nvidia-inference": [],
   };
 }
@@ -1189,7 +1187,6 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-      `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
       `catalogue_tavily_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["tavily-nvidia-inference"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,

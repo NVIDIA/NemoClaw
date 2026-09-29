@@ -61,8 +61,9 @@ describe("web-search E2E workflow planning", () => {
     expect(selectedWorkflowJobs(plan)).toContain("catalogue-tavily-nvidia-inference");
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
     expect(
-      withoutUnavailableOptionalCredentialTargets(plan, new Set(["BRAVE_API_KEY"]))
-        .catalogueMatrices["tavily-nvidia-inference"],
+      withoutUnavailableOptionalCredentialTargets(plan, new Set()).catalogueMatrices[
+        "tavily-nvidia-inference"
+      ],
     ).toEqual([]);
   });
 
@@ -109,7 +110,6 @@ describe("web-search E2E workflow planning", () => {
         EVENT_NAME: "push",
         CHANGED_FILES: "test/e2e/live/brave-search.test.ts",
         INFERENCE_MODE: "mock",
-        NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: "true",
         NEMOCLAW_E2E_TAVILY_API_KEY_AVAILABLE: available,
         GITHUB_OUTPUT: output,
         GITHUB_STEP_SUMMARY: path.join(directory, "summary"),
@@ -124,8 +124,33 @@ describe("web-search E2E workflow planning", () => {
   it("keeps the Brave job from selecting the Tavily cases in its shared test file (#12138)", () => {
     const brave = catalogueTarget("brave-search");
     const selector = new RegExp(brave.selector!);
-    expect(selector.test("Brave search exports stable configuration")).toBe(true);
+    expect(
+      selector.test(
+        "Brave credentials stay outside the running OpenClaw process and login shell (#7425)",
+      ),
+    ).toBe(true);
     expect(selector.test("openclaw Tavily export preserves source intent")).toBe(false);
     expect(selector.test("hermes Tavily export preserves source intent")).toBe(false);
+  });
+
+  it("keeps mocked Brave scheduled when Tavily credentials are unavailable (#12138)", () => {
+    const plan = withoutUnavailableOptionalCredentialTargets(
+      buildE2eWorkflowPlan(
+        {},
+        { changedFiles: ["test/e2e/live/brave-search.test.ts"], gatewayRuntimes: ["docker"] },
+      ),
+      new Set(),
+    );
+    expect(catalogueTarget("brave-search")).toMatchObject({
+      profile: "nvidia-inference",
+      installMode: "credential-free",
+      requiredOptionalCredentials: [],
+    });
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "brave-search",
+    );
+    expect(plan.catalogueMatrices["tavily-nvidia-inference"]).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toContain("catalogue-nvidia-inference");
+    expect(selectedWorkflowJobs(plan)).not.toContain("catalogue-tavily-nvidia-inference");
   });
 });

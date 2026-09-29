@@ -26,7 +26,6 @@ const CATALOGUE_JOBS = [
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
   "catalogue-github-read",
-  "catalogue-brave-nvidia-inference",
   "catalogue-tavily-nvidia-inference",
 ] as const;
 
