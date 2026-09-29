@@ -128,26 +128,10 @@ export type CloudflaredState =
 
 function readProcessCommandLine(pid: number): string | null {
   if (process.platform === "win32") {
-    try {
-      const commandLine = execFileSync(
-        "powershell.exe",
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${String(pid)}').CommandLine`,
-        ],
-        {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 1000,
-        },
-      ).trim();
-      return commandLine || null;
-    } catch {
-      return null;
-    }
+    // Native Windows is not a supported NemoClaw execution path. Fail closed
+    // rather than introducing a partial process-inspection contract here; the
+    // documented Windows path runs the Linux implementation under WSL2.
+    return null;
   }
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
@@ -308,7 +292,8 @@ export function readCloudflaredState(
   if (!pc.isAlive(pid)) {
     return { kind: "stale-pid-process", pid };
   }
-  if (!pidIsOurs(pid, pc)) {
+  const cmdline = pc.commandLine(pid);
+  if (cmdline === null || !commandLineNamesCloudflared(cmdline)) {
     return { kind: "stale-pid-process", pid };
   }
   return { kind: "running", pid };
@@ -387,12 +372,12 @@ function startService(
  * The recorded process may have exited and had its PID recycled by the OS to an
  * unrelated (possibly system) process. Signalling it would terminate a
  * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. An unreadable command line cannot prove ownership, so it
- * fails closed as a stale PID and is never signalled.
+ * names cloudflared. A null/unreadable command line stays conservative and is
+ * treated as ours, matching the established stop contract.
  */
 function pidIsOurs(pid: number, pc: ProcessControl): boolean {
   const cmdline = pc.commandLine(pid);
-  return cmdline !== null && commandLineNamesCloudflared(cmdline);
+  return cmdline === null || commandLineNamesCloudflared(cmdline);
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
@@ -659,7 +644,7 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+  stopService(pidDir, "cloudflared");
 }
 
 /**

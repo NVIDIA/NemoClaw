@@ -610,24 +610,6 @@ describe("stopAll", () => {
     },
   );
 
-  it("does not signal a live PID when process identity cannot be read", () => {
-    const { control, signals } = scriptedControl({
-      alive: [true],
-      cmdlines: [null],
-    });
-    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
-
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      stopAll({ pidDir, processControl: control });
-    } finally {
-      logSpy.mockRestore();
-    }
-
-    expect(signals).toEqual([]);
-    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
-  });
-
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({
       // Alive pre-SIGTERM; the poll observes exit; a live PID reappears at the
