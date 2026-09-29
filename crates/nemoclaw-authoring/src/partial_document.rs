@@ -68,6 +68,10 @@ impl PartialAssessment {
 }
 
 impl PartialDocument {
+    pub(crate) fn from_value(supplied: Value) -> Self {
+        Self { supplied }
+    }
+
     /// Apply the SDK's YAML size and syntax limits without requiring a complete document.
     pub fn from_yaml(bytes: &[u8]) -> Result<Self, Diagnostics> {
         let supplied =

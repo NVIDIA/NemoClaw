@@ -8,12 +8,13 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use crate::{
-    Capabilities, Diagnostics, PartialDocument, PartialIssueKind, diagnostics::diagnostic,
+    Capabilities, Diagnostics, JourneyQuestionReason, PartialDocument, PartialIssueKind,
+    diagnostics::diagnostic,
 };
 
-const NAME: &str = "/metadata/name";
-const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
-const SETTINGS: &str = "/spec/sandboxes/0/harness/settings";
+pub(crate) const NAME: &str = "/metadata/name";
+pub(crate) const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
+pub(crate) const SETTINGS: &str = "/spec/sandboxes/0/harness/settings";
 const MAX_BRANCHES: usize = 32;
 const MAX_SETTINGS: usize = 32;
 
@@ -23,9 +24,9 @@ const MAX_SETTINGS: usize = 32;
 #[derive(Clone, Debug)]
 pub struct JourneyDefinition {
     id: String,
-    base: PartialDocument,
-    ask: BTreeSet<String>,
-    omit: BTreeSet<String>,
+    pub(crate) base: PartialDocument,
+    pub(crate) ask: BTreeSet<String>,
+    pub(crate) omit: BTreeSet<String>,
 }
 
 impl JourneyDefinition {
@@ -48,9 +49,25 @@ impl JourneyDefinition {
         self
     }
 
-    /// Print a reviewable first tree. An unresolved frontier is never shown as
-    /// a complete journey; later slices expand it through the same field rules.
-    pub fn print_tree(&self, capabilities: &Capabilities) -> Result<String, Diagnostics> {
+    /// Start mutable resolution over the sparse v1 single-sandbox envelope.
+    pub fn start(&self, capabilities: &Capabilities) -> Result<crate::JourneyState, Diagnostics> {
+        self.validate_guidance(capabilities)?;
+        if !self
+            .base
+            .supplied()
+            .pointer("/spec/sandboxes")
+            .and_then(Value::as_array)
+            .is_some_and(|sandboxes| sandboxes.len() == 1 && sandboxes[0].is_object())
+        {
+            return Err(diagnostic(
+                "journey",
+                "The v1 journey requires exactly one sandbox object.",
+            ));
+        }
+        Ok(crate::JourneyState::new(self.clone()))
+    }
+
+    pub(crate) fn validate_guidance(&self, capabilities: &Capabilities) -> Result<(), Diagnostics> {
         if let Some(field) = self.ask.intersection(&self.omit).next() {
             return Err(diagnostic(
                 "journey",
@@ -68,10 +85,7 @@ impl JourneyDefinition {
                 ));
             };
             let Some(schema) = adapter_schema(capabilities, adapter)? else {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("adapter '{adapter}' has no setting schema"),
-                ));
+                continue;
             };
             if schema["properties"].get(&pointer[1..]).is_none() {
                 return Err(diagnostic(
@@ -87,33 +101,12 @@ impl JourneyDefinition {
                     &format!("cannot omit '{field}' in this preview"),
                 ));
             };
-            let Some(schema) = adapter_schema(capabilities, adapter)? else {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("adapter '{adapter}' has no setting schema"),
-                ));
-            };
             let Some(property) = pointer.strip_prefix('/') else {
                 return Err(diagnostic(
                     "journey",
                     "adapter setting paths must start with '/'",
                 ));
             };
-            if schema["properties"].get(property).is_none() {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("adapter '{adapter}' has no setting '{pointer}'"),
-                ));
-            }
-            if schema["required"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item == property))
-            {
-                return Err(diagnostic(
-                    "journey",
-                    &format!("required setting '{field}' cannot be omitted"),
-                ));
-            }
             if self
                 .base
                 .supplied()
@@ -131,88 +124,119 @@ impl JourneyDefinition {
                     &format!("supplied setting '{field}' cannot be omitted"),
                 ));
             }
+            let Some(schema) = adapter_schema(capabilities, adapter)? else {
+                continue;
+            };
+            if schema["properties"].get(property).is_none() {
+                return Err(diagnostic(
+                    "journey",
+                    &format!("adapter '{adapter}' has no setting '{pointer}'"),
+                ));
+            }
+            if schema["required"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item == property))
+            {
+                return Err(diagnostic(
+                    "journey",
+                    &format!("required setting '{field}' cannot be omitted"),
+                ));
+            }
         }
+        Ok(())
+    }
 
+    /// Print a reviewable first tree. An unresolved frontier is never shown as
+    /// a complete journey; later slices expand it through the same field rules.
+    pub fn print_tree(&self, capabilities: &Capabilities) -> Result<String, Diagnostics> {
+        let state = self.start(capabilities)?;
+        let initial = state.resolve(capabilities)?;
         let mut lines = vec![format!("Journey {}", self.id)];
         let mut questions = 0;
-        let name = self.base.supplied().pointer(NAME);
-        if name.is_none() || self.ask.contains(NAME) {
+        if let Some(name) = initial.question(NAME) {
             questions += 1;
-            lines.push(format!("  {NAME}: <valid name>{}", suggestion(name)));
+            lines.push(format!(
+                "  {NAME}: <valid name>{}",
+                suggestion(name.suggestion())
+            ));
         }
 
-        let chosen = self
-            .base
-            .supplied()
-            .pointer(HARNESS)
-            .and_then(Value::as_str);
-        let branch_harness = chosen.is_none() || self.ask.contains(HARNESS);
-        let harnesses = if branch_harness {
-            capabilities
-                .harnesses()
+        let branch_harness = initial.question(HARNESS);
+        let harnesses = if let Some(question) = branch_harness {
+            question
+                .choices()
                 .iter()
-                .map(|harness| harness.as_str().to_owned())
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
                 .collect::<Vec<_>>()
         } else {
-            vec![chosen.expect("selected harness").to_owned()]
+            state
+                .values()
+                .pointer(HARNESS)
+                .and_then(Value::as_str)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
         };
-        if branch_harness {
+        if let Some(question) = branch_harness {
             questions += 1;
             lines.push(format!(
                 "  {HARNESS}: choose adapter{}",
-                suggestion(self.base.supplied().pointer(HARNESS))
+                suggestion(question.suggestion())
             ));
         }
         let mut unverified_adapter = false;
         for harness in harnesses.iter().take(MAX_BRANCHES) {
-            if branch_harness {
+            if branch_harness.is_some() {
                 lines.push(format!("    ├─ {harness}"));
             }
-            let indent = if branch_harness { "    │  " } else { "  " };
-            let Some(schema) = adapter_schema(capabilities, harness)? else {
+            let indent = if branch_harness.is_some() {
+                "    │  "
+            } else {
+                "  "
+            };
+            let mut branch = state.clone();
+            if branch_harness.is_some() {
+                branch.answer(capabilities, HARNESS, Some(Value::String(harness.clone())))?;
+            }
+            let resolved = branch.resolve(capabilities)?;
+            if !resolved.unverified().is_empty() {
                 unverified_adapter = true;
-                lines.push(format!("{indent}adapter schema unverified"));
-                continue;
-            };
-            let Some(properties) = schema["properties"].as_object() else {
-                continue;
-            };
-            let required = schema["required"].as_array();
-            for (property, field_schema) in properties.iter().take(MAX_SETTINGS) {
-                let pointer = format!("/{property}");
-                let id = format!("adapter:{harness}:{pointer}");
-                let value = (chosen == Some(harness.as_str()))
-                    .then(|| {
-                        self.base
-                            .supplied()
-                            .pointer(&format!("{SETTINGS}{pointer}"))
-                    })
-                    .flatten();
-                if self.omit.contains(&id) {
+                for reason in resolved.unverified() {
+                    lines.push(format!("{indent}{reason}"));
+                }
+            }
+            for id in resolved.omitted().iter().take(MAX_SETTINGS) {
+                if let Some((_, pointer)) = adapter_field(id) {
                     lines.push(format!("{indent}{pointer}: omitted"));
-                    continue;
                 }
-                if value.is_some() && !self.ask.contains(&id) {
+            }
+            let setting_questions = resolved
+                .questions()
+                .iter()
+                .filter(|question| question.id().starts_with("adapter:"))
+                .collect::<Vec<_>>();
+            for question in setting_questions.iter().take(MAX_SETTINGS) {
+                let Some((_, pointer)) = adapter_field(question.id()) else {
                     continue;
-                }
+                };
                 questions += 1;
-                let required =
-                    required.is_some_and(|items| items.iter().any(|item| item == property));
-                let kind = field_schema["type"].as_str().unwrap_or("JSON value");
-                let options = if required {
+                let kind = question.schema()["type"].as_str().unwrap_or("JSON value");
+                let options = if question.required() {
                     format!("<{kind}>")
                 } else {
                     format!("[omit | <{kind}>]")
                 };
                 lines.push(format!(
-                    "{indent}{pointer}: {options}{}",
-                    suggestion(value.or_else(|| field_schema.get("default")))
+                    "{indent}{pointer}: {options}{}{}",
+                    suggestion(question.suggestion()),
+                    invalid_note(question.reason())
                 ));
             }
-            if properties.len() > MAX_SETTINGS {
+            if setting_questions.len() > MAX_SETTINGS {
                 lines.push(format!(
                     "{indent}... {} more settings not expanded",
-                    properties.len() - MAX_SETTINGS
+                    setting_questions.len() - MAX_SETTINGS
                 ));
             }
         }
@@ -223,8 +247,8 @@ impl JourneyDefinition {
             ));
         }
 
-        let assessment = self.base.assess();
-        let remaining_issues = assessment
+        let remaining_issues = initial
+            .assessment()
             .issues()
             .iter()
             .filter(|issue| {
@@ -243,29 +267,18 @@ impl JourneyDefinition {
                 ));
             }
         }
-        if questions == 0 && assessment.issues().is_empty() && !unverified_adapter {
+        if questions == 0 && initial.assessment().issues().is_empty() && !unverified_adapter {
             lines.push("  No configuration questions in the inspected surface".into());
         }
-        for field in self.ask.union(&self.omit) {
-            let Some((adapter, _)) = adapter_field(field) else {
-                continue;
-            };
-            if harnesses.iter().any(|harness| harness == adapter) {
-                continue;
-            }
-            let reason = if branch_harness {
-                "available harness choices".to_owned()
-            } else {
-                format!("selected harness '{}'", chosen.expect("selected harness"))
-            };
-            lines.push(format!("  Warning: {field} is not reachable from {reason}"));
+        for warning in initial.warnings() {
+            lines.push(format!("  Warning: {warning}"));
         }
         lines.push("  Preview scope: name, harness choice, top-level adapter settings; remaining SDK and Fabric branches are not expanded.".into());
         Ok(lines.join("\n"))
     }
 }
 
-fn adapter_schema<'a>(
+pub(crate) fn adapter_schema<'a>(
     capabilities: &'a Capabilities,
     adapter: &str,
 ) -> Result<Option<&'a Value>, Diagnostics> {
@@ -284,7 +297,7 @@ fn adapter_schema<'a>(
     Ok(Some(schema))
 }
 
-fn adapter_field(field: &str) -> Option<(&str, &str)> {
+pub(crate) fn adapter_field(field: &str) -> Option<(&str, &str)> {
     let suffix = field.strip_prefix("adapter:")?;
     let (adapter, path) = suffix.split_once(':')?;
     path.starts_with('/').then_some((adapter, path))
@@ -292,4 +305,12 @@ fn adapter_field(field: &str) -> Option<(&str, &str)> {
 
 fn suggestion(value: Option<&Value>) -> String {
     value.map_or(String::new(), |_| " (suggestion available)".into())
+}
+
+fn invalid_note(reason: JourneyQuestionReason) -> &'static str {
+    if reason == JourneyQuestionReason::InvalidSupplied {
+        " (invalid supplied value)"
+    } else {
+        ""
+    }
 }

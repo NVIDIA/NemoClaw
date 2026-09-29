@@ -137,3 +137,19 @@ fn harness_without_a_fabric_schema_does_not_claim_zero_questions() {
     assert!(tree.contains("adapter schema unverified"), "{tree}");
     assert!(!tree.contains("No configuration questions"), "{tree}");
 }
+
+#[test]
+fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"]["settings"] = serde_json::json!({"cli": 42});
+    let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
+
+    let tree = JourneyDefinition::new("invalid-setting", base)
+        .print_tree(&Capabilities::available())
+        .unwrap();
+    assert!(tree.contains("/cli: [omit | <string>]"), "{tree}");
+    assert!(tree.contains("invalid supplied value"), "{tree}");
+    assert!(!tree.contains("42"), "{tree}");
+}

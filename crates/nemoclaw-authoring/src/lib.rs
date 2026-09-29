@@ -21,6 +21,7 @@ mod graph;
 mod guided;
 mod journey;
 mod journey_definition;
+mod journey_state;
 mod partial_document;
 mod projection;
 
@@ -40,6 +41,7 @@ pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use journey::{PartialTemplate, TargetFacts, TargetStatus};
 pub use journey_definition::JourneyDefinition;
+pub use journey_state::{JourneyQuestion, JourneyQuestionReason, JourneyResolution, JourneyState};
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use projection::Session;
 

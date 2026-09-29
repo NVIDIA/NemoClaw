@@ -93,6 +93,12 @@ Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repo
 The first preview shows an unresolved SDK frontier rather than claiming to enumerate all questions.
 The express preview reports zero questions only in its inspected surface; model settings, deployment fields, and target compatibility still need coverage.
 
+The prototype now also exposes `JourneyDefinition::start`, `JourneyState::answer`, and `JourneyState::resolve`.
+Each open question reports whether a value is missing, deliberately asked, or invalid for its current field schema.
+The tree printer uses this same resolver for its identity, harness, and top-level adapter-setting questions.
+A supplied complete template can finish a guided journey through that surface and materialize an SDK document after its prompted answers and omissions.
+The minimum-values case still stops at the unresolved SDK frontier.
+
 ## Prototype decisions and limits
 
 - The SDK exposes a bounded YAML value parser so sparse authoring input uses the same syntax limits as complete documents.
@@ -101,6 +107,9 @@ The express preview reports zero questions only in its inspected surface; model 
 - Explicit omission guidance currently covers top-level optional adapter settings with an advertised schema. Conditional omissions need the later resolver slice.
 - The tree preview redacts suggestion values because native settings may contain sensitive data.
 - Invalid supplied SDK fields stay visible in the preview even when their paths are in the question surface. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.
+- The first mutable journey state keeps accepted answers and explicit omissions separate from supplied values. It preserves each adapter's settings while changing harnesses and recomputes active questions after every answer. Missing catalog schemas leave guidance in place with a warning.
+- SDK materialization and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. The caller must also consider unresolved Fabric and target evidence before treating the journey as ready.
+- The example TUI still uses the complete-document `Draft` and its guided, setting, route, and deployment cursors. Moving it to `JourneyState` requires those question sources to join the resolver so there is one answer state.
 
 ## Decisions to revisit after the prototype
 
