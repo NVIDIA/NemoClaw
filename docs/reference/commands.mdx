@@ -1022,7 +1022,7 @@ Onboarding adopts that mode when you have not selected one; an explicit conflict
 Configure registry credentials through Docker before onboarding a private image.
 
 Do not combine `--from-image` with `--from` or the Portable profile.
-Resume retains the recorded digest and requires the same `--from-image` value, or the same `NEMOCLAW_FROM_IMAGE` value in non-interactive mode, on the recovery command. To use another digest, start fresh. In non-interactive mode, also use `--recreate-sandbox`.
+Resume retains the recorded digest and requires the same `--from-image` value, or the same `NEMOCLAW_FROM_IMAGE` value in non-interactive mode, on the recovery command. To use another digest, start fresh. If a ready same-name sandbox has a different workload, explicitly authorize its replacement with `--recreate-sandbox`.
 Rebuild consumes the same digest without building an image.
 Cleanup retains the published image, and upgrades leave it pinned and publisher-managed.
 
