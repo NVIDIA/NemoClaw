@@ -20,7 +20,7 @@ function supportedOllamaHostMetadataOutput(command) {
   return "";
 }
 
-function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
+function createSuccessfulOllamaServiceExecutionProofRunner(fallback, systemdProofTimesOut = false) {
   const fs = require("node:fs");
   const path = require("node:path");
   const executablePath = path.join(process.env.HOME, "ollama-service-exec-fixture");
@@ -95,11 +95,34 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
       argv.at(-2) === executablePath &&
       argv.at(-1) === "--version"
     ) {
+      return systemdProofTimesOut
+        ? { stdout: "", stderr: "", exitCode: null, timedOut: true }
+        : success("ollama version is 0.11.10\n");
+    }
+    const directSudoOffset = argv[5] === "-n" ? 6 : 5;
+    if (
+      argv[0] === "/usr/bin/timeout" &&
+      argv[1] === "--signal=TERM" &&
+      argv[2] === "--kill-after=0.25s" &&
+      argv[3] === "15s" &&
+      argv[4] === "/usr/bin/sudo" &&
+      argv[directSudoOffset] === "-u" &&
+      argv[directSudoOffset + 1] === "ollama" &&
+      argv[directSudoOffset + 2] === "--" &&
+      argv[directSudoOffset + 3] === "/usr/bin/env" &&
+      argv[directSudoOffset + 4] === "LC_ALL=C" &&
+      argv[directSudoOffset + 5] === "/bin/sh" &&
+      argv[directSudoOffset + 6] === "-c" &&
+      argv[directSudoOffset + 7].includes('"$1" --version') &&
+      argv[directSudoOffset + 8] === "nemoclaw-direct-service-user-proof" &&
+      argv[directSudoOffset + 9] === executablePath &&
+      argv.length === directSudoOffset + 10
+    ) {
       return success("ollama version is 0.11.10\n");
     }
     if (
       failUnmatchedExecutionProof &&
-      argv[0] === "/usr/bin/sudo" &&
+      argv.includes(executablePath) &&
       argv.at(-2) === executablePath &&
       argv.at(-1) === "--version"
     ) {

@@ -1031,6 +1031,40 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it.each([
+    { exitCode: 0, timedOut: false },
+    { exitCode: 1, timedOut: false },
+    { exitCode: null, timedOut: true },
+  ])(
+    "sandbox client forwards native patch stdin and preserves its outcome ($exitCode, $timedOut)",
+    async (outcome) => {
+      const runner = new FakeRunner();
+      runner.enqueue(outcome);
+      const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+      const patch = JSON.stringify({ model: 'vendor/model"; $(not-a-command)' });
+      const result = await sandbox.exec("assistant", ["openclaw", "config", "patch", "--stdin"], {
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(runner.calls[0]?.args).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "openclaw",
+        "config",
+        "patch",
+        "--stdin",
+      ]);
+      expect(runner.calls[0]?.options).toMatchObject({
+        stdin: { text: patch },
+        timeoutMs: 120_000,
+      });
+      expect(result).toMatchObject(outcome);
+    },
+  );
+
   it("sandbox client passes trusted shell scripts through the named sandbox exec form", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
