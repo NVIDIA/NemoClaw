@@ -152,15 +152,11 @@ describe("Pi candidate lifecycle integration", () => {
     expect(agent.stateFiles.map(({ path: statePath }) => statePath)).toEqual(["settings.json"]);
   });
 
-  it("restores Pi user preferences only through the allowlisted key contract (#7927)", () => {
+  it("restores Pi settings as native state without a NemoClaw allowlist (#11763)", () => {
     const agent = loadAgent("pi", CANDIDATE_ENV);
     const settings = agent.stateFiles.find(({ path: statePath }) => statePath === "settings.json");
 
-    expect(settings?.restore?.merge).toBe("key-allowlist");
-    const userKeys =
-      settings?.restore?.merge === "key-allowlist" ? settings.restore.userKeys : undefined;
-    expect(userKeys?.map(({ key }) => key)).toContain("theme");
-    expect(userKeys?.map(({ key }) => key)).not.toContain("models");
+    expect(settings).toEqual({ path: "settings.json", strategy: "copy" });
   });
 
   it("refuses a public --agent pi selection without qualification authority (#7927)", () => {

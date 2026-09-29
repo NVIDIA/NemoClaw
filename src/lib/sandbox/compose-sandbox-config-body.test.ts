@@ -1,10 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import YAML from "yaml";
 
-const { composeSandboxConfigBody, hermesConfigAllowsPrivateUrls } = require("./config") as {
+const {
+  buildOpenClawNativeConfigBatchInvocation,
+  buildOpenClawNativeConfigSetInvocation,
+  composeSandboxConfigBody,
+  hermesConfigAllowsPrivateUrls,
+  writeSandboxConfig,
+} = require("./config") as {
+  buildOpenClawNativeConfigBatchInvocation: (
+    sandboxName: string,
+    updates: Array<{ dotpath: string; value: unknown }>,
+    gateway?: string | OpenShellRuntimeSelection,
+  ) => { args: string[]; input: string; env?: Record<string, string>; replaceEnv?: boolean };
+  buildOpenClawNativeConfigSetInvocation: (
+    sandboxName: string,
+    dotpath: string,
+    value: Record<string, unknown>,
+    gateway?: string | OpenShellRuntimeSelection,
+  ) => { args: string[]; input: string };
   composeSandboxConfigBody: (
     config: Record<string, unknown>,
     target: {
@@ -16,6 +34,11 @@ const { composeSandboxConfigBody, hermesConfigAllowsPrivateUrls } = require("./c
     },
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
+  writeSandboxConfig: (
+    sandboxName: string,
+    target: typeof OPENCLAW_TARGET,
+    config: Record<string, unknown>,
+  ) => void;
 };
 
 const HERMES_TARGET = {
@@ -71,6 +94,97 @@ describe("composeSandboxConfigBody", () => {
     const written = composeSandboxConfigBody(config, OPENCLAW_TARGET);
     expect(written.startsWith("#")).toBe(false);
     expect(JSON.parse(written)).toEqual(config);
+  });
+
+  it("refuses generic whole-file writes for OpenClaw", () => {
+    expect(() => writeSandboxConfig("alpha", OPENCLAW_TARGET, {})).toThrow(
+      /Refusing a whole-file OpenClaw config write/,
+    );
+  });
+
+  it("streams native OpenClaw config values instead of exposing them in host argv", () => {
+    const invocation = buildOpenClawNativeConfigSetInvocation(
+      "alpha",
+      "models.providers.inference",
+      { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+    );
+
+    expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
+    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-file");
+    expect(invocation.args.join(" ")).toContain("umask 077");
+    expect(invocation.args.join(" ")).not.toContain("--batch-json");
+    expect(invocation.args.join(" ")).not.toContain("models.providers.inference");
+    expect(invocation.input).toContain("sandbox-only-secret");
+    expect(JSON.parse(invocation.input)).toEqual([
+      {
+        path: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
+  });
+
+  it("sends related native OpenClaw config changes as one batch transaction", () => {
+    const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+      { dotpath: "agents.defaults.model.primary", value: "inference/model-a" },
+      {
+        dotpath: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
+
+    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-file");
+    expect(invocation.args.join(" ")).not.toContain("--batch-json");
+    expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
+    expect(JSON.parse(invocation.input)).toEqual([
+      { path: "agents.defaults.model.primary", value: "inference/model-a" },
+      {
+        path: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
+  });
+
+  it("pins native writes to the supplied gateway instead of the ambient selection (#11764)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    const invocation = buildOpenClawNativeConfigSetInvocation(
+      "alpha",
+      "models",
+      {},
+      "nemoclaw-9090",
+    );
+    expect(invocation.args.slice(0, 6)).toEqual([
+      "-g",
+      "nemoclaw-9090",
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+    ]);
+  });
+
+  it("preserves authoritative workspace and TLS selection for native MCP writes (#11764)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "other-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/other/tls");
+    const invocation = buildOpenClawNativeConfigBatchInvocation(
+      "alpha",
+      [{ dotpath: "tools.alsoAllow", value: ["bundle-mcp"] }],
+      {
+        gatewayName: "nemoclaw-9090",
+        workspace: "recorded-workspace",
+        localTlsDir: "/recorded/tls",
+      },
+    );
+    expect(invocation.args.slice(0, 2)).toEqual(["-g", "nemoclaw-9090"]);
+    expect(invocation.replaceEnv).toBe(true);
+    expect(invocation.env).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-9090",
+      OPENSHELL_WORKSPACE: "recorded-workspace",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+    });
+    expect(invocation.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(process.env.OPENSHELL_GATEWAY).toBe("other-gateway");
   });
 
   it("does not prepend the header when the Hermes target writes JSON", () => {
