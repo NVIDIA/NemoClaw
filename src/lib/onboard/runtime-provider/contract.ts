@@ -690,10 +690,12 @@ export type RuntimeProviderSnapshotSurface =
       preflight(
         operation: RuntimeProviderSnapshotOperation,
         sandbox: SandboxEntry,
+        timeoutMs?: number,
       ): RuntimeProviderSnapshotPreflightReceipt;
       capture(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
+        timeoutMs?: number,
       ): RuntimeProviderRuntimeReceipt;
       /** Optional read-only filesystem capture from an identified stopped runtime. */
       prepareStoppedStateCapture?(
