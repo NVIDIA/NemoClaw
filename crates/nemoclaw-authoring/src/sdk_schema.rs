@@ -17,6 +17,56 @@ pub(crate) fn sdk_field_schema(path: &str) -> Option<(Value, bool)> {
     sdk_field_schema_for(&Value::Null, path)
 }
 
+/// Whether any SDK schema branch can contain this field. This validates
+/// guidance before a sparse document has selected its conditional branches;
+/// `sdk_field_schema_for` still decides current applicability and requiredness.
+pub(crate) fn sdk_field_possible(path: &str) -> bool {
+    let Some(path) = path.strip_prefix('/') else {
+        return false;
+    };
+    let parts = path
+        .split('/')
+        .map(|part| part.replace("~1", "/").replace("~0", "~"))
+        .collect::<Vec<_>>();
+    possible_in_schema(schema_root(), schema_root(), &parts, 0)
+}
+
+fn possible_in_schema(root: &Value, schema: &Value, parts: &[String], depth: usize) -> bool {
+    if depth > 64 || schema == &Value::Bool(false) {
+        return false;
+    }
+    if parts.is_empty() || schema == &Value::Bool(true) {
+        return true;
+    }
+    let Some(schema) = follow_ref(root, schema) else {
+        return false;
+    };
+    let (part, rest) = parts.split_first().expect("nonempty parts");
+    if schema["properties"]
+        .get(part)
+        .is_some_and(|child| possible_in_schema(root, child, rest, depth + 1))
+        || (part.parse::<usize>().is_ok()
+            && schema
+                .get("items")
+                .is_some_and(|child| possible_in_schema(root, child, rest, depth + 1)))
+        || schema
+            .get("additionalProperties")
+            .is_some_and(|child| possible_in_schema(root, child, rest, depth + 1))
+    {
+        return true;
+    }
+    ["allOf", "oneOf", "anyOf"]
+        .into_iter()
+        .filter_map(|keyword| schema[keyword].as_array())
+        .flatten()
+        .chain(
+            ["then", "else"]
+                .into_iter()
+                .filter_map(|keyword| schema.get(keyword)),
+        )
+        .any(|branch| possible_in_schema(root, branch, parts, depth + 1))
+}
+
 fn schema_root() -> &'static Value {
     static SCHEMA: OnceLock<Value> = OnceLock::new();
     SCHEMA.get_or_init(input_schema)

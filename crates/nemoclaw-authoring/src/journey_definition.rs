@@ -7,8 +7,9 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 use crate::{
-    Capabilities, Diagnostics, PartialDocument, diagnostics::diagnostic,
-    sdk_schema::sdk_field_schema_for,
+    Capabilities, Diagnostics, PartialDocument,
+    diagnostics::diagnostic,
+    sdk_schema::{sdk_field_possible, sdk_field_schema_for},
 };
 
 pub(crate) const NAME: &str = "/metadata/name";
@@ -147,7 +148,9 @@ impl JourneyDefinition {
             if field == NAME || field == HARNESS || field == INFERENCE_PRESET {
                 continue;
             }
-            if sdk_field_schema_for(self.base.supplied(), field).is_some() {
+            if sdk_field_schema_for(self.base.supplied(), field).is_some()
+                || sdk_field_possible(field)
+            {
                 continue;
             }
             let Some((adapter, _)) = adapter_field(field) else {
@@ -160,13 +163,14 @@ impl JourneyDefinition {
         }
         for field in &self.omit {
             if field.starts_with('/') {
-                let Some((_, required)) = sdk_field_schema_for(self.base.supplied(), field) else {
+                let current = sdk_field_schema_for(self.base.supplied(), field);
+                if current.is_none() && !sdk_field_possible(field) {
                     return Err(diagnostic(
                         "journey",
                         &format!("cannot omit '{field}' in this preview"),
                     ));
-                };
-                if required {
+                }
+                if current.is_some_and(|(_, required)| required) {
                     return Err(diagnostic(
                         "journey",
                         &format!("required SDK field '{field}' cannot be omitted"),

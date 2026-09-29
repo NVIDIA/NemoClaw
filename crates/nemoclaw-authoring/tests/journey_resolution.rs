@@ -2657,6 +2657,58 @@ fn supplied_gateway_discriminator_can_be_deliberately_asked() {
 }
 
 #[test]
+fn sdk_guidance_can_name_a_field_in_a_later_gateway_branch() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("future-gateway-field", base)
+        .ask(["/spec/gateway/management", "/spec/gateway/tls"])
+        .start(&capabilities)
+        .unwrap();
+    let before = journey.resolve(&capabilities).unwrap();
+    assert!(before.question("/spec/gateway/tls").is_none());
+    assert!(
+        before
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("/spec/gateway/tls"))
+    );
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    let after = journey.resolve(&capabilities).unwrap();
+    assert!(after.question("/spec/gateway/tls").is_some());
+
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut omitted = JourneyDefinition::new("omit-future-gateway-field", base)
+        .ask(["/spec/gateway/management"])
+        .omit(["/spec/gateway/tls"])
+        .start(&capabilities)
+        .unwrap();
+    omitted
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    assert!(
+        omitted
+            .resolve(&capabilities)
+            .unwrap()
+            .omitted()
+            .contains(&"/spec/gateway/tls".to_owned())
+    );
+}
+
+#[test]
 fn invalid_supplied_gateway_discriminator_is_a_repair_question() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))

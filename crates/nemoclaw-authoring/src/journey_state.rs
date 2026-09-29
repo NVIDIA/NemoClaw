@@ -20,8 +20,8 @@ use crate::{
         adapter_schema,
     },
     sdk_schema::{
-        finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_schema,
-        sdk_field_schema_for, sdk_selected_branch,
+        finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_possible,
+        sdk_field_schema, sdk_field_schema_for, sdk_selected_branch,
     },
     settings::SettingQuestion,
 };
@@ -455,6 +455,16 @@ impl JourneyState {
         let mut omitted = Vec::new();
         let mut unverified = Vec::new();
         let mut warnings = Vec::new();
+        for field in self.definition.ask.union(&self.definition.omit) {
+            if field.starts_with('/')
+                && sdk_field_schema_for(&self.values, field).is_none()
+                && sdk_field_possible(field)
+            {
+                warnings.push(format!(
+                    "{field} is not applicable in the current SDK schema branch"
+                ));
+            }
+        }
         let name = self.values.pointer(NAME);
         let invalid_name = assessment
             .issues()
