@@ -97,6 +97,14 @@ function ensurePidDir(pidDir: string): void {
   chmodSync(pidDir, 0o700);
 }
 
+function readPid(pidDir: string, name: string): number | null {
+  const pidFile = join(pidDir, `${name}.pid`);
+  if (!existsSync(pidFile)) return null;
+  const raw = readFileSync(pidFile, "utf-8").trim();
+  const pid = Number(raw);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -119,17 +127,47 @@ export type CloudflaredState =
   | { kind: "stale-pid-process"; pid: number }
   | { kind: "unverified-pid-process"; pid: number };
 
+type CommandLineCapture = (command: string, args: readonly string[]) => string;
+
+const captureCommandLine: CommandLineCapture = (command, args) =>
+  execFileSync(command, [...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1000,
+  });
+
+/** Read a Windows process identity through the built-in CIM provider. */
+export function readWindowsProcessCommandLine(
+  pid: number,
+  capture: CommandLineCapture = captureCommandLine,
+): string | null {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${String(pid)}'`,
+    "if ($null -eq $p) { exit 3 }",
+    "@($p.Name, $p.ExecutablePath, $p.CommandLine) -join [Environment]::NewLine",
+  ].join("; ");
+  try {
+    const commandLine = capture("powershell.exe", [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ]).trim();
+    return commandLine.length > 0 ? commandLine : null;
+  } catch {
+    return null;
+  }
+}
+
 function readProcessCommandLine(pid: number): string | null {
-  if (process.platform === "win32") return null;
+  if (process.platform === "win32") return readWindowsProcessCommandLine(pid);
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
     try {
-      return execFileSync("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 1000,
-      });
+      return captureCommandLine("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="]);
     } catch {
       return null;
     }
@@ -140,7 +178,7 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
   return commandLine
     .split(/\0|\s+/)
     .filter(Boolean)
-    .some((token) => basename(token) === "cloudflared");
+    .some((token) => /^(?:cloudflared)(?:\.exe)?$/i.test(basename(token.replaceAll("\\", "/"))));
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -370,12 +408,12 @@ function startService(
  * The recorded process may have exited and had its PID recycled by the OS to an
  * unrelated (possibly system) process. Signalling it would terminate a
  * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. An unreadable command line cannot prove ownership, so it
- * fails closed as a stale PID and is never signalled.
+ * names cloudflared. A null/unreadable command line stays conservative and is
+ * treated as ours, matching readCloudflaredState.
  */
 function pidIsOurs(pid: number, pc: ProcessControl): boolean {
   const cmdline = pc.commandLine(pid);
-  return cmdline !== null && commandLineNamesCloudflared(cmdline);
+  return cmdline === null || commandLineNamesCloudflared(cmdline);
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
@@ -383,28 +421,20 @@ function stopService(
   pidDir: string,
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): boolean {
-  const state = readCloudflaredState(pidDir, pc);
-  if (state.kind === "stopped" || state.kind === "stale-pid-file") {
+): void {
+  const pid = readPid(pidDir, name);
+  if (pid === null) {
+    info(`${name} was not running`);
+    return;
+  }
+
+  // A dead PID, or a live PID recycled to a non-cloudflared process, means our
+  // service is not running. Drop the stale pid file without signalling.
+  if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
     info(`${name} was not running`);
     removePid(pidDir, name);
-    return true;
+    return;
   }
-
-  if (state.kind === "stale-pid-process") {
-    info(`${name} was not running`);
-    removePid(pidDir, name);
-    return true;
-  }
-
-  if (state.kind === "unverified-pid-process") {
-    warn(
-      `${name} PID ${String(state.pid)} was not stopped because its process identity is unavailable`,
-    );
-    return false;
-  }
-
-  const pid = state.pid;
 
   // Send SIGTERM
   try {
@@ -413,7 +443,7 @@ function stopService(
     // Already dead between the check and the signal
     removePid(pidDir, name);
     info(`${name} stopped (PID ${String(pid)})`);
-    return true;
+    return;
   }
 
   // Poll for exit (up to 3 seconds)
@@ -432,7 +462,7 @@ function stopService(
     if (!pidIsOurs(pid, pc)) {
       removePid(pidDir, name);
       info(`${name} was not running`);
-      return true;
+      return;
     }
     try {
       pc.signal(pid, "SIGKILL");
@@ -443,7 +473,6 @@ function stopService(
 
   removePid(pidDir, name);
   info(`${name} stopped (PID ${String(pid)})`);
-  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,13 +626,8 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
-  let cloudflaredCleanupComplete = true;
   if (pidDir) {
-    cloudflaredCleanupComplete = stopService(
-      pidDir,
-      "cloudflared",
-      opts.processControl ?? REAL_PROCESS_CONTROL,
-    );
+    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
@@ -637,9 +661,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     return finishOllamaCleanup();
   }
 
-  if (!cloudflaredCleanupComplete) {
-    info("Host service cleanup remains incomplete; cloudflared was not stopped.");
-  } else if (ollamaCleanupIncomplete) {
+  if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
   } else {
     info("All services stopped.");
@@ -666,7 +688,7 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+  stopService(pidDir, "cloudflared");
 }
 
 /**

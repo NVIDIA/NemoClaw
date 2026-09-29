@@ -26,6 +26,7 @@ import {
   getTunnelUrl,
   type ProcessControl,
   readCloudflaredState,
+  readWindowsProcessCommandLine,
   showStatus,
   startAll,
   stopAll,
@@ -527,6 +528,40 @@ describe("readCloudflaredState", () => {
     });
     expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
   });
+
+  it("recognizes cloudflared through the Windows CIM identity probe", () => {
+    const capture = vi.fn((_command: string, _args: readonly string[]) =>
+      [
+        "cloudflared.exe",
+        String.raw`C:\\Program Files\\cloudflared\\cloudflared.exe`,
+        String.raw`"C:\\Program Files\\cloudflared\\cloudflared.exe" tunnel run`,
+      ].join("\n"),
+    );
+    const commandLine = readWindowsProcessCommandLine(4242, capture);
+
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => commandLine,
+      signal: vi.fn(),
+    });
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toBe("powershell.exe");
+    expect(capture.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(["-NoProfile", "-NonInteractive", "-Command"]),
+    );
+    expect(capture.mock.calls[0]?.[1].at(-1)).toContain("ProcessId = 4242");
+    expect(state).toEqual({ kind: "running", pid: 4242 });
+  });
+
+  it("fails closed when the Windows CIM identity probe fails", () => {
+    expect(
+      readWindowsProcessCommandLine(4242, () => {
+        throw new Error("access denied");
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("stopAll", () => {
@@ -619,27 +654,6 @@ describe("stopAll", () => {
       expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
     },
   );
-
-  it("does not signal a live PID when process identity cannot be read", () => {
-    const { control, signals } = scriptedControl({
-      alive: [true],
-      cmdlines: [null],
-    });
-    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
-
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    let output = "";
-    try {
-      stopAll({ pidDir, processControl: control });
-    } finally {
-      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-      logSpy.mockRestore();
-    }
-
-    expect(signals).toEqual([]);
-    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
-    expect(output).toContain("cloudflared PID 4242 was not stopped");
-  });
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({

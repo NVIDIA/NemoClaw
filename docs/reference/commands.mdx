@@ -3476,7 +3476,7 @@ The command asks NemoClaw to stop an in-sandbox gateway only when NemoClaw direc
 
 ### `$$nemoclaw tunnel status`
 
-Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard. The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `$$nemoclaw status`. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be inspected. When identity is unavailable, `$$nemoclaw tunnel start` refuses to create a second tunnel; restore process-inspection access and retry. Other stopped and stale states include the same recovery hint used by `$$nemoclaw status`. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
 $$nemoclaw tunnel status
