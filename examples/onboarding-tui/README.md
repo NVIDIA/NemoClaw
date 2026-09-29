@@ -88,9 +88,9 @@ Loading a template preserves its deployment fields, references, and native setti
 
 ## Target checks
 
-For a managed gateway, the Podman preset requires local Linux and is disabled on macOS and other hosts.
-Choose Docker to continue on those hosts.
-An external gateway runs on its own host, so its Podman selection is preserved without applying the local host restriction.
+For a managed gateway, Podman requires a supported local rootless Linux target. The questionnaire records the selected runtime without treating the author's workstation as that target.
+When a verified bundle supplies target observations, a confirmed compatibility conflict blocks saving through the authoring resolver. Missing or unknown observations remain unverified; review the target requirements before applying the saved desired state.
+An external gateway runs on its own host, and the questionnaire preserves its selected runtime.
 The preset does not configure Podman Machine or a remote Linux host.
 
 The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
@@ -111,7 +111,7 @@ Without a usable bundle, onboarding uses bundled Fabric metadata and marks the t
 The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
-Unknown observations still allow saving after answering individually and selecting a runtime offered on this host, including when authoring for a target to prepare later.
+Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
 Discovery supplies choices and validation without displaying hardware inventories, model counts or successful-check summaries.

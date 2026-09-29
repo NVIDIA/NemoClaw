@@ -137,14 +137,14 @@ impl JourneyResolution {
         }
     }
 
-    /// A completed document whose configured target prerequisites are met.
+    /// A completed document without a known target conflict, and with any
+    /// configured target prerequisites met.
     pub fn ready_document(&self) -> Option<&Document> {
         let document = self.materialized_document()?;
-        if self.target_required
-            && self
-                .target_assessment
-                .as_ref()
-                .is_none_or(|assessment| assessment.status != CompatibilityStatus::Compatible)
+        if self.target_assessment.as_ref().is_some_and(|assessment| {
+            assessment.status == CompatibilityStatus::Conflict
+                || (self.target_required && assessment.status != CompatibilityStatus::Compatible)
+        }) || (self.target_required && self.target_assessment.is_none())
         {
             return None;
         }

@@ -97,3 +97,35 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     );
     assert!(unresolved.ready_document().is_none());
 }
+
+#[test]
+fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisite() {
+    let capabilities = Capabilities::available();
+    let state = express().start(&capabilities).unwrap();
+    let plain = state.resolve(&capabilities).unwrap();
+    let document = plain.materialized_document().unwrap();
+    assert!(plain.ready_document().is_some());
+    let conflict = DiscoveryEvidence {
+        key: discovery_key_for_document(document).unwrap(),
+        engine: Some(EngineObservation {
+            status: ObservationStatus::Unavailable,
+            reason: Some("engine rejected the target".into()),
+            source: "fixture".into(),
+            server_version: None,
+            architecture: None,
+            operating_system: None,
+            memory_bytes: None,
+            cpus: None,
+        }),
+        fabric: None,
+    };
+    let resolved = state
+        .resolve_with_target(&capabilities, Some(&conflict))
+        .unwrap();
+    assert_eq!(
+        resolved.target_assessment().unwrap().status,
+        CompatibilityStatus::Conflict
+    );
+    assert!(resolved.materialized_document().is_some());
+    assert!(resolved.ready_document().is_none());
+}

@@ -7,9 +7,9 @@ use std::{io, time::Duration};
 
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryEvidence,
-    EndpointEvidence, GatewayEvidence, HardwareEvidence, JourneyQuestion, JourneyQuestionKind,
-    JourneyState, discovery_key_for_document, inference_request_for_document,
+    AuthoringFacts, Capabilities, Diagnostics, DiscoveryEvidence, EndpointEvidence,
+    GatewayEvidence, HardwareEvidence, JourneyQuestion, JourneyQuestionKind, JourneyState,
+    discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
@@ -37,7 +37,6 @@ pub(crate) struct JourneyWizard {
     custom_answer: bool,
     facts: AuthoringFacts,
     discovery: Option<DiscoveryEvidence>,
-    host_os: &'static str,
     input: String,
     error: Option<String>,
     started: bool,
@@ -46,10 +45,6 @@ pub(crate) struct JourneyWizard {
 
 impl JourneyWizard {
     pub(crate) fn new(capabilities: Capabilities, state: JourneyState) -> Self {
-        Self::for_host(capabilities, state, std::env::consts::OS)
-    }
-
-    fn for_host(capabilities: Capabilities, state: JourneyState, host_os: &'static str) -> Self {
         Self {
             capabilities,
             state,
@@ -59,7 +54,6 @@ impl JourneyWizard {
             custom_answer: false,
             facts: AuthoringFacts::default(),
             discovery: None,
-            host_os,
             input: String::new(),
             error: None,
             started: false,
@@ -198,18 +192,6 @@ impl JourneyWizard {
             }
             return;
         };
-        if question.id() == "/spec/sandboxes/0/runtime/provider"
-            && self.host_os != "linux"
-            && question
-                .choices()
-                .get(self.choice_index(&question))
-                .and_then(Value::as_str)
-                == Some("podman")
-        {
-            self.error =
-                Some("Podman onboarding requires a Linux host. Choose Docker here.".into());
-            return;
-        }
         if question.allows_custom_answer()
             && !question.choices().is_empty()
             && self.choice_index(&question) == question.choices().len()
@@ -289,18 +271,14 @@ impl JourneyWizard {
                 }
             } else {
                 for (index, value) in question.choices().iter().enumerate() {
-                    let unavailable = question.id() == "/spec/sandboxes/0/runtime/provider"
-                        && self.host_os != "linux"
-                        && value == "podman";
                     lines.push(Line::from(format!(
-                        "{} {}{}",
+                        "{} {}",
                         if index == self.choice_index(&question) {
                             "❯"
                         } else {
                             " "
                         },
                         display_value(value),
-                        if unavailable { " (Linux only)" } else { "" }
                     )));
                 }
                 if question.allows_custom_answer() {
@@ -591,17 +569,6 @@ pub(crate) async fn run(
                         Ok(Some((evidence, facts))) => {
                             wizard.facts = facts;
                             wizard.discovery = Some(evidence);
-                            let assessment = wizard.state.resolve_with_target(
-                                &wizard.capabilities,
-                                wizard.discovery.as_ref(),
-                            )?;
-                            if assessment.target_assessment().is_some_and(|target| {
-                                target.status == CompatibilityStatus::Conflict
-                            }) {
-                                let target = assessment.target_assessment().expect("checked");
-                                wizard.error = Some(target.reasons.join(" "));
-                                continue;
-                            }
                         }
                         Ok(None) => {}
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
@@ -998,7 +965,7 @@ mod tests {
             let capabilities = Capabilities::available();
             let state = load_journey(Source::Template(&path), &capabilities)
                 .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-            let mut wizard = JourneyWizard::for_host(capabilities, state, "linux");
+            let mut wizard = JourneyWizard::new(capabilities, state);
             for _ in 0..100 {
                 wizard.advance();
                 if wizard.accepted || wizard.error.is_some() {
@@ -1094,10 +1061,10 @@ mod tests {
     }
 
     #[test]
-    fn mac_tui_rejects_podman_choice_before_changing_state() {
+    fn tui_preserves_podman_as_an_authored_target_choice() {
         let capabilities = Capabilities::available();
         let state = load_journey(Source::Defaults, &capabilities).unwrap();
-        let mut wizard = JourneyWizard::for_host(capabilities, state, "macos");
+        let mut wizard = JourneyWizard::new(capabilities, state);
         for _ in 0..5 {
             if wizard
                 .question()
@@ -1115,10 +1082,58 @@ mod tests {
             .unwrap();
         wizard.selection_changed = true;
         wizard.advance();
-        assert!(wizard.error.is_some());
+        assert!(wizard.error.is_none());
         assert_eq!(
             wizard.state.values().pointer(question.id()),
-            Some(&serde_json::json!("docker"))
+            Some(&serde_json::json!("podman"))
+        );
+    }
+
+    #[test]
+    fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
+        let capabilities = Capabilities::available();
+        let base =
+            PartialDocument::from_yaml(include_bytes!("../../onboarding/openclaw.yaml")).unwrap();
+        let state = JourneyDefinition::new("conflicted-target", base)
+            .omit([
+                "adapter:nvidia.fabric.openclaw:/agent_name",
+                "adapter:nvidia.fabric.openclaw:/cli",
+                "adapter:nvidia.fabric.openclaw:/home",
+                "adapter:nvidia.fabric.openclaw:/native_config",
+                "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            ])
+            .start(&capabilities)
+            .unwrap();
+        let document = state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .unwrap()
+            .clone();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        wizard.discovery = Some(DiscoveryEvidence {
+            key: discovery_key_for_document(&document).unwrap(),
+            engine: Some(nemoclaw_sdk::discovery::EngineObservation {
+                status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
+                reason: Some("target rejected engine".into()),
+                source: "fixture".into(),
+                server_version: None,
+                architecture: None,
+                operating_system: None,
+                memory_bytes: None,
+                cpus: None,
+            }),
+            fabric: None,
+        });
+        wizard.started = true;
+        wizard.advance();
+
+        assert!(!wizard.accepted);
+        assert!(
+            wizard
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("selected engine"))
         );
     }
 
