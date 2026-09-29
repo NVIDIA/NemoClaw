@@ -1177,7 +1177,7 @@ function stopModelRouterOnPort(
     );
     return false;
   }
-  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
+  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`, "-w"], { env: runtime.env });
   const lines = splitNonEmptyLines(lsof.stdout);
   if (
     (lsof.status !== 0 && lsof.status !== 1) ||
@@ -1265,7 +1265,7 @@ function stopModelRouter(
         : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
     const listenersAbsent = ports.every((port) => {
       const listener = runtime.commandExists("lsof")
-        ? runtime.run("lsof", ["-ti", `:${port}`], { env: runtime.env })
+        ? runtime.run("lsof", ["-ti", `:${port}`, "-w"], { env: runtime.env })
         : null;
       return listener?.status === 1 && !listener.stdout.trim() && !listener.stderr.trim();
     });

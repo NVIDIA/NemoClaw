@@ -30,7 +30,7 @@ it.each([
   { receipt: "recorded", sibling: true },
   { receipt: "legacy", sibling: true },
 ])(
-  "uses the $receipt router identity without stopping a sibling gateway's router (sibling=$sibling)",
+  "uses the $receipt router identity despite filesystem warnings without stopping a sibling router (sibling=$sibling)",
   async ({ receipt, sibling }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-port-"));
     const blueprintDir = path.join(root, "nemoclaw-blueprint");
@@ -90,11 +90,21 @@ it.each([
     let listenerOverride: RunResult | undefined;
     const run = vi.fn((command: string, args: string[]): RunResult => {
       switch (command) {
-        case "lsof":
-          return args[1] === `:${String(routerPort)}`
-            ? (listenerOverride ??
+        case "lsof": {
+          const result =
+            args[1] === `:${String(routerPort)}`
+              ? (listenerOverride ??
                 (exited.has(routerPid) ? missing() : ok(`${String(routerPid)}\n`)))
-            : ok();
+              : ok();
+          return {
+            ...result,
+            stderr:
+              result.stderr ||
+              (args.includes("-w")
+                ? ""
+                : "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system"),
+          };
+        }
         case "ps":
           switch (args[3]) {
             case "user=":
@@ -163,7 +173,7 @@ it.each([
           ([command, args]) => command === "lsof" && args[1] === `:${String(routerPort)}`,
         ),
       ).toHaveLength(1);
-      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":15000"], expect.anything());
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":15000", "-w"], expect.anything());
       expect(killed).toEqual(sibling ? [] : [routerPid]);
       expect(exited.has(routerPid)).toBe(!sibling);
       expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(sibling);
@@ -427,9 +437,9 @@ it.each([false, true])(
               ),
             ],
       );
-      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000", "-w"], expect.anything());
       expect(killed).toEqual([]);
-      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":14000"], expect.anything());
+      expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":14000", "-w"], expect.anything());
       expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(cleared);
       expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(!cleared);
       processObservation = { status: 2, stdout: "", stderr: "process inventory unavailable" };

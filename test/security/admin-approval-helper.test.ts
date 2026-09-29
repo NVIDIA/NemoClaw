@@ -139,6 +139,8 @@ function runAdminApprovalScript(
     terminal?: boolean;
     cleanupFails?: boolean;
     tamperScript?: boolean;
+    requireNonInteractiveBody?: boolean;
+    omitPreparedWrapper?: boolean;
   } = {},
 ): {
   commands: string[];
@@ -162,6 +164,7 @@ function runAdminApprovalScript(
     terminalRc,
     `trap 'printf "ADMIN_CONNECT_SHELL_CLEANED\\n"' EXIT
 openclaw() {
+  case "$ADMIN_REQUIRE_NONINTERACTIVE_BODY:$-" in 1:*i*) return 95 ;; esac
   local approval_errexit=0 approval_status=0
   case $- in *e*) approval_errexit=1 ;; esac
   set +e
@@ -170,6 +173,7 @@ openclaw() {
   if [ "$approval_errexit" = 1 ]; then set -e; else set +e; fi
   return "$approval_status"
 }
+${options.omitPreparedWrapper ? "unset -f openclaw" : ""}
 `,
   );
   fs.writeFileSync(cliPath, ADMIN_APPROVAL_TEST_CLI_SH, { mode: 0o755 });
@@ -243,6 +247,7 @@ esac
     ADMIN_CONNECT_TERMINAL_PROBE: options.terminal ? terminalProbe : "",
     ADMIN_CONNECT_RC: terminalRc,
     ADMIN_TAMPER_SCRIPT: options.tamperScript ? "1" : "0",
+    ADMIN_REQUIRE_NONINTERACTIVE_BODY: options.requireNonInteractiveBody ? "1" : "0",
     FAKE_ADMIN_SCRIPT_RECEIPT: stagedScriptReceipt,
     FAKE_ADMIN_CLEANUP_FAIL: options.cleanupFails ? "1" : "0",
   };
@@ -276,6 +281,32 @@ esac
 }
 
 describe("prepared connect-shell administrative approval", () => {
+  it("refuses approval when the prepared OpenClaw wrapper is missing", () => {
+    const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { terminal: true, omitPreparedWrapper: true },
+    );
+    expect(result.status).toBe(1);
+    expect(commands).toEqual([]);
+    expect(result.stdout).toContain("ADMIN_CONNECT_BODY_STATUS=1");
+    expect(result.stdout).toContain("ADMIN_CONNECT_STATUS=1");
+    expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
+    expect(stagedScriptRetained).toBe(false);
+  });
+  it("runs verified approval in a non-interactive interpreter with the prepared wrapper", () => {
+    const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { terminal: true, requireNonInteractiveBody: true },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`.slice(-2_000)).toBe(0);
+    expect(commands).toContain(`devices approve ${EXPECTED_REQUEST_ID}`);
+    expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
+    expect(stagedScriptRetained).toBe(false);
+  });
   it("rejects a replaced script before running approval in the prepared shell", () => {
     const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
       undefined,

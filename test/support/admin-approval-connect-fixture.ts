@@ -25,7 +25,7 @@ case "$2" in
     if [ -n "\${ADMIN_CONNECT_TERMINAL_PROBE:-}" ]; then
       exec python3 "$ADMIN_CONNECT_TERMINAL_PROBE"
     fi
-    exec /bin/bash
+    exec /bin/bash -c 'openclaw() { command openclaw "$@"; }; if [ -n "\${ADMIN_CONNECT_RC:-}" ]; then . "$ADMIN_CONNECT_RC"; fi; . /dev/stdin'
     ;;
   *) exit 93 ;;
 esac
