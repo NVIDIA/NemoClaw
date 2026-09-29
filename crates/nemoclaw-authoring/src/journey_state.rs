@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use crate::{
     Capabilities, Diagnostics, PartialAssessment, PartialDocument, PartialIssueKind,
-    ProviderPreset,
+    ProviderPreset, SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, NAME, SETTINGS, adapter_field,
@@ -19,11 +19,9 @@ use crate::{
     },
 };
 
-const PROVIDER: &str = "/spec/inferenceProviders/0";
 const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";
-const PROVIDER_ENDPOINT: &str = "/spec/inferenceProviders/0/endpoint";
-const ROUTE: &str = "/spec/sandboxes/0/agent/inference/routes/0";
-const MODEL: &str = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+const ROUTE_SELECTION: &str = "route:selection";
+const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,19 +116,31 @@ pub struct JourneyState {
     accepted: BTreeSet<String>,
     omitted: BTreeSet<String>,
     inactive_settings: BTreeMap<String, Value>,
-    selected_preset: Option<ProviderPreset>,
+    selected_presets: BTreeMap<usize, ProviderPreset>,
+    accepted_presets: BTreeSet<usize>,
+    selected_route: Option<usize>,
+    completed_routes: BTreeSet<usize>,
 }
 
 impl JourneyState {
     pub(crate) fn new(definition: JourneyDefinition) -> Self {
         let values = definition.base.supplied().clone();
+        let selected_route = (values
+            .pointer(ROUTES)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
+            <= 1)
+            .then_some(0);
         Self {
             definition,
             values,
             accepted: BTreeSet::new(),
             omitted: BTreeSet::new(),
             inactive_settings: BTreeMap::new(),
-            selected_preset: None,
+            selected_presets: BTreeMap::new(),
+            accepted_presets: BTreeSet::new(),
+            selected_route,
+            completed_routes: BTreeSet::new(),
         }
     }
 
@@ -138,11 +148,47 @@ impl JourneyState {
         &self.values
     }
 
+    pub fn current_route(&self) -> Option<&str> {
+        let index = self.selected_route?;
+        self.values
+            .pointer(&format!("{ROUTES}/{index}/name"))
+            .and_then(Value::as_str)
+    }
+
+    fn route_model_path(&self) -> Option<String> {
+        let index = self.selected_route?;
+        Some(format!("{ROUTES}/{index}/overrides/model"))
+    }
+
+    fn route_provider(&self) -> Option<(usize, usize)> {
+        let route = self.selected_route?;
+        let reference = self
+            .values
+            .pointer(&format!("{ROUTES}/{route}/providerRef"))?
+            .as_str()?;
+        let providers = self
+            .values
+            .pointer("/spec/inferenceProviders")?
+            .as_array()?;
+        let provider = providers
+            .iter()
+            .position(|item| item.get("name").and_then(Value::as_str) == Some(reference))?;
+        (providers[provider].get("serviceRef").is_none()).then_some((route, provider))
+    }
+
+    fn provider_path(&self) -> Option<String> {
+        self.route_provider()
+            .map(|(_, provider)| format!("/spec/inferenceProviders/{provider}"))
+    }
+
     fn current_preset(&self) -> Option<ProviderPreset> {
-        if let Some(preset) = self.selected_preset {
+        let (route, provider_index) = self.route_provider()?;
+        if let Some(preset) = self.selected_presets.get(&route).copied() {
             return Some(preset);
         }
-        let provider = self.values.pointer(PROVIDER)?;
+        let provider = self
+            .values
+            .pointer(&format!("/spec/inferenceProviders/{provider_index}"))?;
         let kind: InferenceProviderKind =
             serde_json::from_value(provider.get("provider")?.clone()).ok()?;
         let endpoint = provider.get("endpoint")?.as_str()?;
@@ -237,8 +283,69 @@ impl JourneyState {
             }
         }
 
+        if self.definition.ask_route_models {
+            if let Some(path) = self.route_model_path()
+                && !self.accepted.contains(&path)
+                && !questions.iter().any(|question| question.id == path)
+                && let Some((schema, required)) = sdk_field_schema(&path)
+            {
+                let value = self.values.pointer(&path);
+                questions.push(JourneyQuestion {
+                    id: path,
+                    reason: if value.is_some() {
+                        JourneyQuestionReason::ExplicitAsk
+                    } else {
+                        JourneyQuestionReason::Missing
+                    },
+                    required,
+                    choices: Vec::new(),
+                    suggestion: value.cloned(),
+                    schema,
+                });
+            }
+            if let Some(routes) = self.values.pointer(ROUTES).and_then(Value::as_array)
+                && routes.len() > 1
+            {
+                let current_pending = self
+                    .route_model_path()
+                    .is_some_and(|path| questions.iter().any(|question| question.id == path));
+                if !current_pending {
+                    let choices = routes
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| {
+                            Some(*index) != self.selected_route
+                                && !self.completed_routes.contains(index)
+                        })
+                        .filter_map(|(_, route)| route.get("name").cloned())
+                        .collect::<Vec<_>>();
+                    let choices = if self.selected_route.is_none() {
+                        routes
+                            .iter()
+                            .filter_map(|route| route.get("name").cloned())
+                            .collect::<Vec<_>>()
+                    } else {
+                        choices
+                    };
+                    if !choices.is_empty() {
+                        questions.push(JourneyQuestion {
+                            id: ROUTE_SELECTION.into(),
+                            reason: JourneyQuestionReason::Missing,
+                            required: true,
+                            choices,
+                            suggestion: None,
+                            schema: serde_json::json!({"type":"string"}),
+                        });
+                    }
+                }
+            }
+        }
+
         if self.definition.ask.contains(INFERENCE_PRESET)
-            && !self.accepted.contains(INFERENCE_PRESET)
+            && self.route_provider().is_some()
+            && !self
+                .selected_route
+                .is_some_and(|route| self.accepted_presets.contains(&route))
         {
             let suggestion = self
                 .current_preset()
@@ -261,22 +368,30 @@ impl JourneyState {
         }
         if self.definition.ask.contains(INFERENCE_PRESET)
             && self
-                .selected_preset
+                .selected_route
+                .and_then(|route| self.selected_presets.get(&route))
                 .is_some_and(|preset| preset.profile().custom_endpoint)
-            && !self.accepted.contains(PROVIDER_ENDPOINT)
-            && !questions
-                .iter()
-                .any(|question| question.id == PROVIDER_ENDPOINT)
+            && self
+                .provider_path()
+                .is_some_and(|path| !self.accepted.contains(&format!("{path}/endpoint")))
+            && !questions.iter().any(|question| {
+                self.provider_path()
+                    .is_some_and(|path| question.id == format!("{path}/endpoint"))
+            })
         {
-            let schema = sdk_field_schema(PROVIDER_ENDPOINT)
+            let endpoint = format!(
+                "{}/endpoint",
+                self.provider_path().expect("external provider")
+            );
+            let schema = sdk_field_schema(&endpoint)
                 .expect("external provider endpoint is in the SDK schema")
                 .0;
             questions.push(JourneyQuestion {
-                id: PROVIDER_ENDPOINT.into(),
+                id: endpoint.clone(),
                 reason: JourneyQuestionReason::ExplicitAsk,
                 required: true,
                 choices: Vec::new(),
-                suggestion: self.values.pointer(PROVIDER_ENDPOINT).cloned(),
+                suggestion: self.values.pointer(&endpoint).cloned(),
                 schema,
             });
         }
@@ -401,6 +516,32 @@ impl JourneyState {
                 });
             }
         }
+        if self.definition.ask_native
+            && let Some(document) = assessment.document()
+        {
+            for field in native_questions_for_document(document, capabilities, self.selected_route)?
+            {
+                let value = native_value(&self.values, self.selected_route, &field.path);
+                let valid =
+                    value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
+                if self.omitted.contains(&field.path) {
+                    omitted.push(field.path);
+                } else if !valid {
+                    questions.push(JourneyQuestion {
+                        id: field.path,
+                        reason: if value.is_some() {
+                            JourneyQuestionReason::InvalidSupplied
+                        } else {
+                            JourneyQuestionReason::Missing
+                        },
+                        required: field.required,
+                        choices: field.choices,
+                        suggestion: field.suggestion,
+                        schema: field.schema,
+                    });
+                }
+            }
+        }
 
         Ok(self.resolution(questions, omitted, warnings, unverified, assessment))
     }
@@ -414,17 +555,26 @@ impl JourneyState {
         assessment: PartialAssessment,
     ) -> JourneyResolution {
         if self.definition.ask.contains(INFERENCE_PRESET)
-            && !self.accepted.contains(INFERENCE_PRESET)
+            && self.route_provider().is_some()
+            && !self
+                .selected_route
+                .is_some_and(|route| self.accepted_presets.contains(&route))
         {
+            let provider = self.provider_path().expect("external provider");
+            let model = self.route_model_path().expect("selected route");
             questions.retain(|question| {
-                !question.id.starts_with("/spec/inferenceProviders/0/") && question.id != MODEL
+                !question.id.starts_with(&format!("{provider}/")) && question.id != model
             });
         } else if self
-            .selected_preset
+            .selected_route
+            .and_then(|route| self.selected_presets.get(&route))
             .is_some_and(|preset| preset.profile().custom_endpoint)
-            && !self.accepted.contains(PROVIDER_ENDPOINT)
+            && self
+                .provider_path()
+                .is_some_and(|path| !self.accepted.contains(&format!("{path}/endpoint")))
+            && let Some(model) = self.route_model_path()
         {
-            questions.retain(|question| question.id != MODEL);
+            questions.retain(|question| question.id != model);
         }
         questions.sort_by_key(|question| {
             self.definition
@@ -484,7 +634,9 @@ impl JourneyState {
                 "The answer does not satisfy its field schema.",
             ));
         }
-        if id == PROVIDER_ENDPOINT
+        if self
+            .provider_path()
+            .is_some_and(|path| id == format!("{path}/endpoint"))
             && let Some(endpoint) = value.as_ref().and_then(Value::as_str)
         {
             nemoclaw_sdk::config::validate_endpoint(endpoint, false)
@@ -506,6 +658,24 @@ impl JourneyState {
             }
         } else if id == HARNESS {
             candidate.put_harness(value.expect("required"))?;
+        } else if id == ROUTE_SELECTION {
+            let name = value
+                .as_ref()
+                .and_then(Value::as_str)
+                .expect("advertised route");
+            let routes = candidate
+                .values
+                .pointer(ROUTES)
+                .and_then(Value::as_array)
+                .ok_or_else(|| diagnostic("journey", "Inference routes are unavailable."))?;
+            let index = routes
+                .iter()
+                .position(|route| route["name"] == name)
+                .ok_or_else(|| diagnostic("journey", "The selected route is unavailable."))?;
+            if let Some(current) = candidate.selected_route {
+                candidate.completed_routes.insert(current);
+            }
+            candidate.selected_route = Some(index);
         } else if id == INFERENCE_PRESET {
             let preset = ProviderPreset::from_id(
                 value
@@ -525,7 +695,20 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if ((self.definition.ask.contains(id) || id == PROVIDER_ENDPOINT)
+        } else if self.definition.ask_native
+            && (id.starts_with("workflow:") || id.starts_with("model:"))
+        {
+            candidate.put_native_field(id, value.clone())?;
+            if value.is_none() {
+                candidate.omitted.insert(id.into());
+            } else {
+                candidate.omitted.remove(id);
+            }
+        } else if ((self.definition.ask.contains(id)
+            || self
+                .provider_path()
+                .is_some_and(|path| id == format!("{path}/endpoint"))
+            || self.definition.ask_route_models && self.route_model_path().as_deref() == Some(id))
             && sdk_field_schema(id).is_some())
             || self.definition.ask_deployment && id.starts_with('/')
         {
@@ -556,6 +739,11 @@ impl JourneyState {
             return Err(diagnostic("journey", "This question is not supported."));
         }
         candidate.accepted.insert(id.into());
+        if id == INFERENCE_PRESET
+            && let Some(route) = candidate.selected_route
+        {
+            candidate.accepted_presets.insert(route);
+        }
         *self = candidate;
         Ok(())
     }
@@ -567,6 +755,11 @@ impl JourneyState {
     ) -> Result<JourneyQuestion, Diagnostics> {
         let mut previous = self.clone();
         previous.accepted.remove(id);
+        if id == INFERENCE_PRESET
+            && let Some(route) = previous.selected_route
+        {
+            previous.accepted_presets.remove(&route);
+        }
         previous.omitted.remove(id);
         let suggestion = if id == NAME || id == HARNESS {
             let value = previous.values.pointer(id).cloned();
@@ -687,40 +880,69 @@ impl JourneyState {
         crate::settings::put(settings, pointer, value)
     }
 
+    fn put_native_field(&mut self, id: &str, value: Option<Value>) -> Result<(), Diagnostics> {
+        let (root, path) = if let Some(path) = id.strip_prefix("workflow:") {
+            ("/spec/sandboxes/0/harness".to_owned(), path)
+        } else if let Some(path) = id.strip_prefix("model:") {
+            (
+                format!(
+                    "{ROUTES}/{}",
+                    self.selected_route.ok_or_else(|| diagnostic(
+                        "journey",
+                        "Select a route before model settings."
+                    ))?
+                ),
+                path,
+            )
+        } else {
+            return Err(diagnostic("journey", "Invalid native question path."));
+        };
+        let owner = self
+            .values
+            .pointer_mut(&root)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| diagnostic("journey", "The native setting owner is unavailable."))?;
+        let settings = if id.starts_with("workflow:") {
+            owner
+                .entry("config")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .ok_or_else(|| diagnostic("journey", "Harness config must be an object."))?
+                .entry("workflow")
+                .or_insert_with(|| Value::Object(Map::new()))
+        } else {
+            owner
+                .entry("overrides")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .ok_or_else(|| diagnostic("journey", "Route overrides must be an object."))?
+                .entry("settings")
+                .or_insert_with(|| Value::Object(Map::new()))
+        };
+        crate::settings::put(settings, path, value)
+    }
+
     fn put_inference_preset(&mut self, preset: ProviderPreset) -> Result<(), Diagnostics> {
-        let providers = self
-            .values
-            .pointer("/spec/inferenceProviders")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                diagnostic("journey", "Inference presets require one shared provider.")
-            })?;
-        if providers.len() != 1 || providers[0].get("serviceRef").is_some() {
-            return Err(diagnostic(
+        let (route_index, provider_index) = self.route_provider().ok_or_else(|| {
+            diagnostic(
                 "journey",
-                "Inference presets require one external shared provider.",
-            ));
-        }
-        let routes = self
-            .values
-            .pointer("/spec/sandboxes/0/agent/inference/routes")
-            .and_then(Value::as_array)
-            .ok_or_else(|| diagnostic("journey", "Inference presets require one route."))?;
-        if routes.len() != 1 || routes[0].get("provider").is_some() {
-            return Err(diagnostic(
-                "journey",
-                "Inference presets require one route using the shared provider.",
-            ));
-        }
+                "Inference presets require a selected route using an external provider.",
+            )
+        })?;
+        let provider_path = format!("/spec/inferenceProviders/{provider_index}");
+        let route_path = format!("{ROUTES}/{route_index}");
+        let api_path = format!("{provider_path}/api");
+        let endpoint_path = format!("{provider_path}/endpoint");
+        let model_path = format!("{route_path}/overrides/model");
         let previous_name = self
             .values
-            .pointer(&format!("{PROVIDER}/name"))
+            .pointer(&format!("{provider_path}/name"))
             .and_then(Value::as_str)
             .ok_or_else(|| diagnostic("journey", "The shared provider needs a name."))?
             .to_owned();
         if self
             .values
-            .pointer(&format!("{ROUTE}/providerRef"))
+            .pointer(&format!("{route_path}/providerRef"))
             .and_then(Value::as_str)
             != Some(&previous_name)
         {
@@ -734,7 +956,7 @@ impl JourneyState {
         let profile = preset.profile();
         let old_api = self
             .values
-            .pointer(PROVIDER_API)
+            .pointer(&api_path)
             .cloned()
             .and_then(|value| serde_json::from_value::<InferenceApi>(value).ok());
         let api = old_api
@@ -742,7 +964,7 @@ impl JourneyState {
             .unwrap_or(preset.apis()[0]);
         let provider = self
             .values
-            .pointer_mut(PROVIDER)
+            .pointer_mut(&provider_path)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The shared provider must be an object."))?;
         provider.insert("name".into(), Value::String(profile.name.into()));
@@ -761,7 +983,7 @@ impl JourneyState {
         );
         let route = self
             .values
-            .pointer_mut(ROUTE)
+            .pointer_mut(&route_path)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The route must be an object."))?;
         route.insert("providerRef".into(), Value::String(profile.name.into()));
@@ -774,16 +996,16 @@ impl JourneyState {
         } else {
             overrides.remove("model");
         }
-        self.selected_preset = Some(preset);
+        self.selected_presets.insert(route_index, preset);
         if previous != Some(preset) {
             for field in [
-                PROVIDER_API,
-                MODEL,
-                PROVIDER_ENDPOINT,
-                "/spec/inferenceProviders/0/credential/env",
+                api_path,
+                model_path,
+                endpoint_path,
+                format!("{provider_path}/credential/env"),
             ] {
-                self.accepted.remove(field);
-                self.omitted.remove(field);
+                self.accepted.remove(&field);
+                self.omitted.remove(&field);
             }
             for field in self.accepted.clone() {
                 if field.starts_with('/')
@@ -814,4 +1036,120 @@ impl JourneyState {
         }
         Ok(())
     }
+}
+
+fn native_value<'a>(
+    values: &'a Value,
+    selected_route: Option<usize>,
+    id: &str,
+) -> Option<&'a Value> {
+    if let Some(path) = id.strip_prefix("workflow:") {
+        values.pointer(&format!("/spec/sandboxes/0/harness/config/workflow{path}"))
+    } else if let Some(path) = id.strip_prefix("model:") {
+        values.pointer(&format!(
+            "{ROUTES}/{}/overrides/settings{path}",
+            selected_route?
+        ))
+    } else {
+        None
+    }
+}
+
+fn native_questions_for_document(
+    document: &Document,
+    capabilities: &Capabilities,
+    selected_route: Option<usize>,
+) -> Result<Vec<SettingQuestion>, Diagnostics> {
+    let sandbox = &document.spec.sandboxes[0];
+    let harness = document
+        .sandbox_harness(sandbox)
+        .map_err(|error| diagnostic("journey", &error.to_string()))?;
+    let harness_id = harness.kind.as_str();
+    let workflow = harness
+        .config
+        .as_ref()
+        .and_then(|config| config.get("workflow"))
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    let targets = capabilities
+        .targets
+        .iter()
+        .map(|record| &record["descriptor"])
+        .filter(|target| target["type"] == "workflow" && target["adapter_id"] == harness_id)
+        .collect::<Vec<_>>();
+    let workflow_required = capabilities
+        .config_schemas
+        .get(harness_id)
+        .and_then(|schema| schema["required"].as_array())
+        .is_some_and(|fields| fields.iter().any(|field| field == "workflow"));
+    let mut fields = Vec::new();
+    if !targets.is_empty() || workflow_required {
+        let mut choices = targets
+            .iter()
+            .filter_map(|target| target["id"].as_str())
+            .map(|id| Value::String(id.into()))
+            .collect::<Vec<_>>();
+        choices.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+        choices.dedup();
+        let mut schema = serde_json::json!({"type":"string","minLength":1});
+        if !choices.is_empty() {
+            schema["enum"] = Value::Array(choices.clone());
+        }
+        fields.push(SettingQuestion {
+            path: "workflow:/target_id".into(),
+            title: "Workflow target".into(),
+            description: "Select a workflow target advertised by this Fabric adapter.".into(),
+            required: workflow_required,
+            schema,
+            choices,
+            suggestion: workflow.get("target_id").cloned(),
+        });
+        if let Some(target) = targets
+            .iter()
+            .find(|target| target["id"] == workflow["target_id"])
+            && let Some(schema) = target["spec"].get("settings_schema")
+        {
+            let settings = workflow
+                .get("settings")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            let mut native = Vec::new();
+            crate::settings::collect(schema, schema, &settings, "", false, &mut native, 0)?;
+            for mut field in native {
+                field.path = format!("workflow:/settings{}", field.path);
+                fields.push(field);
+            }
+        }
+    }
+    if let Some(schema) = capabilities.model_schemas.get(harness_id) {
+        let inference = document
+            .sandbox_inference(sandbox)
+            .map_err(|error| diagnostic("journey", &error.to_string()))?;
+        if let Some(route) = selected_route.and_then(|index| inference.routes.get(index)) {
+            let config =
+                nemoclaw_sdk::fabric_config::for_sandbox(document, sandbox).map_err(|_| {
+                    diagnostic(
+                        "journey",
+                        "Cannot project the selected model configuration.",
+                    )
+                })?;
+            let mut model = Vec::new();
+            crate::settings::collect(
+                schema,
+                schema,
+                &config["models"][&route.name],
+                "",
+                false,
+                &mut model,
+                0,
+            )?;
+            for mut field in model {
+                if field.path == "/settings" || field.path.starts_with("/settings/") {
+                    field.path = format!("model:{}", &field.path["/settings".len()..]);
+                    fields.push(field);
+                }
+            }
+        }
+    }
+    Ok(fields)
 }

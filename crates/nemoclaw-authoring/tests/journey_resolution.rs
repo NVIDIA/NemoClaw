@@ -102,6 +102,233 @@ fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits(
 }
 
 #[test]
+fn sparse_journey_uses_workflow_and_model_owner_schemas() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture.native-owner");
+    adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
+    adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
+    adapter.descriptor["model_schema"] = json!({"type":"object","properties":{"settings":{"type":"object","properties":{"variant":{"type":"string","enum":["quick","thorough"]}},"required":["variant"]}}});
+    catalog.adapters = vec![adapter];
+    catalog.targets = vec![json!({"descriptor":{
+        "type":"workflow","id":"fixture.target","adapter_id":"fixture.native-owner",
+        "spec":{"settings_schema":{"type":"object","properties":{"region":{"type":"string","enum":["west","east"]}},"required":["region"]}}
+    },"provenance":[]})];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.native-owner");
+    let mut state = JourneyDefinition::new(
+        "native",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .ask_native_fields()
+    .start(&capabilities)
+    .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("workflow:/target_id")
+            .is_some()
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("model:/variant")
+            .is_some()
+    );
+    state
+        .answer(
+            &capabilities,
+            "workflow:/target_id",
+            Some(json!("fixture.target")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("workflow:/settings/region")
+            .is_some()
+    );
+    state
+        .answer(
+            &capabilities,
+            "workflow:/settings/region",
+            Some(json!("west")),
+        )
+        .unwrap();
+    state
+        .answer(&capabilities, "model:/variant", Some(json!("quick")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+}
+
+#[test]
+fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/spark/local-and-hosted.yaml"
+    ))
+    .unwrap();
+    let mut state = JourneyDefinition::new("routes", base)
+        .ask_route_models()
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let route = "route:selection";
+    let hosted_model = "/spec/sandboxes/0/agent/inference/routes/1/overrides/model";
+    let local_model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let first = state.resolve(&capabilities).unwrap();
+    assert_eq!(
+        first.question(route).unwrap().choices(),
+        &[json!("local"), json!("hosted")]
+    );
+    assert!(first.question(hosted_model).is_none());
+    state
+        .answer(&capabilities, route, Some(json!("hosted")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(hosted_model)
+            .is_some()
+    );
+    state
+        .answer(
+            &capabilities,
+            hosted_model,
+            Some(json!("replacement-model")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(route)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, route, Some(json!("local")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(local_model)
+            .is_some()
+    );
+    state
+        .answer(
+            &capabilities,
+            local_model,
+            Some(json!("nvidia/Qwen3.8-27B-NVFP4")),
+        )
+        .unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(resolved.question(route).is_none());
+    assert_eq!(
+        state.values().pointer(hosted_model),
+        Some(&json!("replacement-model"))
+    );
+    assert!(
+        resolved.materialized_document().is_some(),
+        "questions={:?} unverified={:?} issues={:?}",
+        resolved.questions(),
+        resolved.unverified(),
+        resolved.assessment().issues()
+    );
+}
+
+#[test]
+fn route_preset_changes_only_the_selected_external_provider() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/spark/local-and-hosted.yaml"
+    ))
+    .unwrap();
+    let mut state = JourneyDefinition::new("route-presets", base)
+        .ask_route_models()
+        .ask(["inference:preset"])
+        .start(&capabilities)
+        .unwrap();
+    let before = state.values().clone();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .is_none()
+    );
+    state
+        .answer(&capabilities, "route:selection", Some(json!("local")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .is_none()
+    );
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            Some(json!("nvidia/Qwen3.8-27B-NVFP4")),
+        )
+        .unwrap();
+    state
+        .answer(&capabilities, "route:selection", Some(json!("hosted")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .is_some()
+    );
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("openai")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer("/spec/inferenceProviders/0"),
+        before.pointer("/spec/inferenceProviders/0")
+    );
+    assert_eq!(
+        state.values().pointer("/spec/inferenceProviders/1/name"),
+        Some(&json!("openai-api"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/1/providerRef"),
+        Some(&json!("openai-api"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+        before.pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+    );
+}
+
+#[test]
 fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     let capabilities = Capabilities::available();
     let definition = JourneyDefinition::new("minimum", minimum());

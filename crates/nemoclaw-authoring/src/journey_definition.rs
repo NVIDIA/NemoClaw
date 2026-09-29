@@ -31,6 +31,8 @@ pub struct JourneyDefinition {
     pub(crate) ask: BTreeSet<String>,
     pub(crate) ask_order: Vec<String>,
     pub(crate) ask_deployment: bool,
+    pub(crate) ask_native: bool,
+    pub(crate) ask_route_models: bool,
     pub(crate) omit: BTreeSet<String>,
 }
 
@@ -42,6 +44,8 @@ impl JourneyDefinition {
             ask: BTreeSet::new(),
             ask_order: Vec::new(),
             ask_deployment: false,
+            ask_native: false,
+            ask_route_models: false,
             omit: BTreeSet::new(),
         }
     }
@@ -65,6 +69,18 @@ impl JourneyDefinition {
     /// Their field schemas and active reference paths come from the SDK document.
     pub fn ask_deployment_fields(mut self) -> Self {
         self.ask_deployment = true;
+        self
+    }
+
+    /// Resolve workflow and model settings from the selected Fabric descriptors.
+    pub fn ask_native_fields(mut self) -> Self {
+        self.ask_native = true;
+        self
+    }
+
+    /// Visit each existing inference route and ask for its model selection.
+    pub fn ask_route_models(mut self) -> Self {
+        self.ask_route_models = true;
         self
     }
 
