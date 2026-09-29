@@ -31,6 +31,17 @@ const ONBOARD_OPTIONS = {
 const SELECTED_REVISION = "c".repeat(40);
 const SELECTED_COHORT = "ghrun-123-4";
 const PLATFORM = "linux/amd64";
+
+it("uses the bounded discovery timeout for public-tunnel onboarding and rebuild", () => {
+  const baseEnv = { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "999999" };
+  expect(
+    buildMcpBridgeOnboardEnv({ ...ONBOARD_OPTIONS, agent: "openclaw", baseEnv }),
+  ).toHaveProperty("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "5000");
+  expect(buildMcpBridgeExactMainEnv({ baseEnv })).toHaveProperty(
+    "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS",
+    "5000",
+  );
+});
 const selectedReferences = Object.fromEntries(
   SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => [
     agent,

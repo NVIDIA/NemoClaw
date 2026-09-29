@@ -817,7 +817,20 @@ export async function beginOpenClawPostRestoreDoctor(
           Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
           runtimeSelection,
         );
-        return result?.status === 0;
+        if (result?.status !== 0) return false;
+        if (maintenanceKind !== "backup" || !deps.executePrivilegedSandboxCommand) return true;
+        // A Docker receipt can precede OpenShell transport readiness after start.
+        // Verify the same gateway-down window through the command transport before backup.
+        const transportRemainingMs = reconciliationDeadlineMs - deps.now();
+        if (!Number.isFinite(transportRemainingMs) || transportRemainingMs <= 0) return false;
+        const transport = await executeOpenClawDoctorNetworkCommand(
+          deps,
+          sandboxName,
+          buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName, markerContent),
+          Math.max(1, Math.min(15_000, Math.floor(transportRemainingMs))),
+          runtimeSelection,
+        );
+        return transport?.status === 0;
       } catch {
         return false;
       }
@@ -857,7 +870,7 @@ export async function beginOpenClawPostRestoreDoctor(
       : stage === "restart"
         ? `OpenShell did not converge the recreated sandbox start into a verified ${maintenanceLabel} window`
         : maintenanceKind === "backup"
-          ? "startup did not prove backup quiescence with the gateway held down"
+          ? "startup did not prove backup quiescence and OpenShell command transport readiness"
           : "startup did not prove doctor completion with the gateway held down";
   return {
     ok: false,

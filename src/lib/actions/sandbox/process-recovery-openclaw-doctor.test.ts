@@ -402,6 +402,33 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     ]);
   });
 
+  it.each([true, false])(
+    "requires command transport after the privileged backup receipt (recovers: %s)",
+    async (recovers) => {
+      let currentMs = 0;
+      const execute = vi
+        .fn()
+        .mockResolvedValue({ status: recovers ? 0 : 255, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: 255, stdout: "", stderr: "" });
+      const capture = vi.fn(() => ({ status: 0, output: "" }));
+      const result = await beginOpenClawBackupQuiesce("alpha", undefined, {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: execute,
+        executePrivilegedSandboxCommand: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+        now: () => currentMs,
+        sleep: async () => {
+          currentMs += 30_000;
+        },
+      });
+
+      expect(execute.mock.calls.length).toBeGreaterThan(2);
+      expect(result.ok).toBe(recovers);
+      expect(capture).toHaveBeenCalledTimes(recovers ? 2 : 3);
+      expect(currentMs).toBe(recovers ? 30_000 : 6 * 60_000);
+    },
+  );
+
   it("promotes restored backup state through doctor before release", async () => {
     const execute = vi.fn(async (_sandboxName: string, _command: string) => ({
       status: 0,

@@ -10,7 +10,6 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcpInspectCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -38,11 +37,10 @@ import {
 } from "./mcp-bridge-cleanup.ts";
 import {
   assertHermesMcpHttpResponse,
-  buildHermesMcpChatProbeScript,
+  HERMES_MCP_FAILURE_CAPTURE_BYTES,
   buildHermesMcpRuntimeDiagnosticsScript,
   captureHermesMcpLifecycleFailure,
   readHermesGatewayIdentity,
-  HERMES_MCP_FAILURE_CAPTURE_BYTES,
 } from "./mcp-bridge-hermes-http.ts";
 import {
   assertHermesConfig,
@@ -59,14 +57,17 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  buildMcpToolCallCommand,
+  COMPATIBLE_MODEL,
+  TOOL_CHALLENGE,
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
-  HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
   captureRejectedOpenClawCredentialAliasState,
   addBridgeAndReadStatus,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
   runDeniedMcpToolCall,
+  retryHermesGatewayDraining,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
   runOpenClawPublicPinRefreshProof,
@@ -74,7 +75,6 @@ import {
   rebuildWithoutMcpHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
   retryAfterConcurrentAddTransientFailure,
-  retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
@@ -111,8 +111,6 @@ const CONCURRENT_SERVER_NAME = "concurrent";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
-const COMPATIBLE_MODEL = "mock/mcp-bridge";
-const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const MCP_RESULT = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
 const MCP_SERVER_OPTIONS = {
   secret: HOST_SECRET,
@@ -530,32 +528,7 @@ async function assertRealAdapterToolCall(
   const otherCallsBefore = options.otherEndpoint?.requests.filter(
     (request) => request.rpcMethod === "tools/call",
   ).length;
-  const prompt = `Call the fake MCP tool exactly once with challenge ${TOOL_CHALLENGE} and return its result verbatim.`;
-  const hermesPayload = JSON.stringify({
-    model: COMPATIBLE_MODEL,
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 256,
-  });
-  // ShellProbe redacts these values before it returns command output or writes
-  // artifacts. The HTTP assertion redacts them again before Vitest formats a
-  // bounded failure preview.
-  const hermesRedactionValues = [
-    HOST_SECRET,
-    ROTATED_HOST_SECRET,
-    COMPATIBLE_KEY,
-    TOOL_CHALLENGE,
-    prompt,
-    hermesPayload,
-  ];
-  const command =
-    options.agent === "openclaw"
-      ? `nemoclaw-start openclaw agent --agent main --json --thinking off --session-id ${shellQuote(`mcp-e2e-native-${options.artifactName}`)} -m ${shellQuote(prompt)}`
-      : options.agent === "hermes"
-        ? [
-            ...HERMES_MCP_ENV_LOAD_COMMANDS,
-            buildHermesMcpChatProbeScript(hermesPayload, options.resultToken),
-          ].join("\n")
-        : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
+  const { command, hermesRedactionValues } = buildMcpToolCallCommand(options);
   const runToolCall = (artifactName: string) =>
     sandbox.execShell(
       options.sandboxName,
@@ -1036,12 +1009,26 @@ test(
       OPENCLAW_SANDBOX_NAME,
       mcpUrl,
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "openclaw-real-mcp-tool-call-after-credential-rotation",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
+    await withMcpToolCallFailureEvidence(
+      () =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          resultToken: MCP_RESULT,
+          artifactName: "openclaw-real-mcp-tool-call-after-credential-rotation",
+          expectedSecret: ROTATED_HOST_SECRET,
+        }),
+      host,
+      {
+        artifacts,
+        artifactPrefix: "openclaw-credential-rotation",
+        sandboxName: OPENCLAW_SANDBOX_NAME,
+        serverName: SERVER_NAME,
+        credentialEnvName: "FAKE_MCP_SECRET",
+        requests: fakeMcp.requests,
+        expectedSecret: ROTATED_HOST_SECRET,
+        redactionValues: [COMPATIBLE_KEY, HOST_SECRET, ROTATED_HOST_SECRET],
+      },
+    );
     await assertSecretAbsentFromSandbox(
       sandbox,
       OPENCLAW_SANDBOX_NAME,

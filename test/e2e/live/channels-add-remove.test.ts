@@ -532,6 +532,12 @@ test(
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
+    await captureSandboxFailureDiagnostics(host, rebuildAdd, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-3-rebuild-add-failure",
+      redactionValues: secretsToRedact,
+      captureGatewayLog: true,
+    });
     expect(resultText(rebuildAdd)).not.toContain("provider credential not found");
     assertExitZero(rebuildAdd, `nemoclaw ${SANDBOX_NAME} rebuild --yes after add`);
     expect(

@@ -150,6 +150,12 @@ OpenClaw failure probes read only regular, single-link log files without followi
 They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
 Oversized files retain size and permission metadata for diagnosis.
 
+The OpenClaw `mcp-bridge` fixture sets `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=5000` during onboarding and rebuild.
+This gives tool discovery through its public tunnel a 5,000 ms budget without changing production defaults or tool-call timeouts.
+If the native tool call after credential rotation fails, the fixture captures MCP status, tool discovery, and credential-free request metadata before cleanup.
+The Telegram add/remove fixture also captures rebuild failure diagnostics after channel addition, before cleanup removes the sandbox.
+These diagnostics preserve the failing operation's result; they do not retry it.
+
 When the missing-custom-presets target fails before its expected policy rejection, it captures these bounded, redacted failure probes before cleanup.
 The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
 Container probes use a resolved full container ID and never delete resources or retry onboarding.

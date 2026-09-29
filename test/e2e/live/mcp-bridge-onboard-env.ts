@@ -88,6 +88,9 @@ export function buildMcpBridgeExactMainEnv(options: {
     ...buildAvailabilityProbeEnv(baseEnv),
     ...qualificationEnv,
     ...envOverlay,
+    // Public-tunnel discovery can exceed OpenClaw's 1.5-second default.
+    // This existing sandbox override affects tools/list, not tool-call timeouts.
+    NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "5000",
   };
 }
 

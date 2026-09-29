@@ -1056,6 +1056,7 @@ function describeStateDirDiscoveryFailure(
     return {
       log: `FAILED: SSH dir check exited ${String(result.status)} — cannot determine which dirs exist`,
       unreachable: isSshTransportFailure(result),
+      error: `SSH state-directory discovery failed (exit ${String(result.status)}${result.signal ? `, signal ${result.signal}` : ""}). No state archive was captured.`,
     };
   }
   if (invalidDirectories.length > 0) {
@@ -1851,6 +1852,8 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       backedUpFiles,
       failedFiles: stateFiles.map((f) => f.path),
       unreachable: true,
+      error:
+        "Could not obtain SSH configuration for sandbox state backup. No state archive was captured.",
     };
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);

@@ -302,6 +302,10 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 
 <AgentOnly variant="openclaw">
 
+Before backing up a running OpenClaw sandbox, rebuild verifies its maintenance window through OpenShell command transport.
+It waits within the maintenance deadline when command transport is not ready.
+If verification fails, rebuild stops before replacement and prints lifecycle recovery steps.
+
 Rebuild restores the complete credential-sanitized native `openclaw.json` file from the pre-rebuild snapshot.
 NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
 If the file cannot be restored safely, NemoClaw exits nonzero and does not report a successful rebuild.
@@ -513,6 +517,8 @@ NemoClaw fails closed when the selected gateway, replacement settings, durable s
 A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal. If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings. The active replacement can continue without adding `--resume`. Use `--resume` for interrupted onboarding steps that occur before a replacement journal exists.
 
 If any manifest-declared state directory or state file cannot be archived, NemoClaw reports each failed path and stops before deleting the original sandbox.
+If the reason names SSH configuration or state-directory discovery, backup failed before it could determine which state paths exist.
+Restore access to the recorded OpenShell gateway and sandbox before retrying.
 This fail-closed behavior also applies to `rebuild --force`, even when the backup contains other usable entries.
 When an incomplete snapshot contains captured entries, NemoClaw retains it at the printed path but excludes it from `snapshot list` and snapshot restore selection.
 The retained snapshot may contain unsanitized credentials.
