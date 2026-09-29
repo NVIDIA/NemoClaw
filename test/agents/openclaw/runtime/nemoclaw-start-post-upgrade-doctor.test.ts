@@ -140,30 +140,37 @@ describe("sanitized legacy device identity migration", () => {
     expect(result.stderr).toContain("Removed sanitized legacy device identity placeholder");
   });
 
-  it("rotates a restored identity during trusted post-upgrade maintenance", () => {
-    fs.writeFileSync(
-      path.join(config, ".nemoclaw-post-upgrade-doctor"),
-      "nemoclaw-openclaw-post-upgrade-doctor-v2\n",
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      target,
-      JSON.stringify({
+  it.each([
+    { encoding: "empty", content: "" },
+    { encoding: "one-byte", content: "{" },
+    {
+      encoding: "complete",
+      content: JSON.stringify({
         version: 1,
         deviceId: "device",
         publicKeyPem: "public",
         privateKeyPem: "private",
       }),
-    );
+    },
+  ])(
+    "rotates a restored $encoding identity during trusted post-upgrade maintenance",
+    ({ content }) => {
+      fs.writeFileSync(
+        path.join(config, ".nemoclaw-post-upgrade-doctor"),
+        "nemoclaw-openclaw-post-upgrade-doctor-v2\n",
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(target, content);
 
-    const result = runMigration();
+      const result = runMigration();
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(target)).toBe(false);
-    expect(result.stderr).toContain(
-      "Removed restored legacy device identity for post-upgrade rotation",
-    );
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(target)).toBe(false);
+      expect(result.stderr).toContain(
+        "Removed restored legacy device identity for post-upgrade rotation",
+      );
+    },
+  );
 
   it("rejects an untrusted post-upgrade marker without removing the identity", () => {
     const marker = path.join(config, ".nemoclaw-post-upgrade-doctor");
@@ -196,6 +203,13 @@ describe("sanitized legacy device identity migration", () => {
     const result = runMigration();
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(target, "utf8")).toBe("{not valid");
+  });
+
+  it.each(["", "{"])("preserves a tiny malformed identity outside maintenance", (content) => {
+    fs.writeFileSync(target, content);
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe(content);
   });
 
   it.each([

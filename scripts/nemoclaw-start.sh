@@ -4614,24 +4614,24 @@ try:
         sys.exit(0)
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
         raise ValueError('unsafe device identity file')
-    if before.st_size < 2 or before.st_size > 131072:
-        sys.exit(0)
     target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=identity_fd)
     fds.append(target_fd)
     if before.st_dev != os.fstat(identity_fd).st_dev or stable(os.fstat(target_fd)) != stable(before):
         raise ValueError('device identity file changed')
-    payload = bytearray()
-    while len(payload) < before.st_size:
-        chunk = os.read(target_fd, before.st_size - len(payload))
-        if not chunk:
+    payload = None
+    if before.st_size <= 131072:
+        payload = bytearray()
+        while len(payload) < before.st_size:
+            chunk = os.read(target_fd, before.st_size - len(payload))
+            if not chunk:
+                raise ValueError('device identity file changed')
+            payload.extend(chunk)
+        if os.read(target_fd, 1):
             raise ValueError('device identity file changed')
-        payload.extend(chunk)
-    if os.read(target_fd, 1):
-        raise ValueError('device identity file changed')
     # The archive sanitizer preserves member length with ASCII space padding.
     # Byte equality keeps ordinary startup cleanup narrower than JSON equality
     # (which would accept duplicate keys or alternate encodings).
-    sanitized_placeholder = bytes(payload).rstrip(b' ') == MARKER
+    sanitized_placeholder = payload is not None and bytes(payload).rstrip(b' ') == MARKER
     upgrade_before = None
     upgrade_fd = None
     if not sanitized_placeholder:
