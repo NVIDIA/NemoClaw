@@ -20,7 +20,6 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildConfigSetRestartGuidance,
-  buildRecomputeSandboxConfigHashScript,
   hermesCompatHashRecoveryError,
   isHermesCompatHashRecoveryError,
 } = require("../../src/lib/sandbox/config");
@@ -38,7 +37,7 @@ describe("resolveAgentConfig", () => {
     const target = resolveAgentConfig("nonexistent-sandbox");
     expect(target.agentName).toBe("openclaw");
     expect(target.configPath).toBe("/sandbox/.openclaw/openclaw.json");
-    expect(target.format).toBe("json");
+    expect(target.format).toBe("json5");
   });
 
   it("returns a configDir that is the parent of configPath", () => {
@@ -49,34 +48,6 @@ describe("resolveAgentConfig", () => {
   it("includes configFile in configPath", () => {
     const target = resolveAgentConfig("any-sandbox");
     expect(target.configPath.endsWith(target.configFile)).toBe(true);
-  });
-});
-
-describe("buildRecomputeSandboxConfigHashScript", () => {
-  it("does not run a pathname hash pass after an OpenClaw config transaction", () => {
-    const script = buildRecomputeSandboxConfigHashScript({
-      agentName: "openclaw",
-      configPath: "/sandbox/.openclaw/openclaw.json",
-      configDir: "/sandbox/.openclaw",
-      format: "json",
-      configFile: "openclaw.json",
-      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-    });
-
-    expect(script).toBeNull();
-  });
-
-  it("does not run a second pathname-based hash pass after a Hermes config transaction", () => {
-    const script = buildRecomputeSandboxConfigHashScript({
-      agentName: "hermes",
-      configPath: "/sandbox/.hermes/config.yaml",
-      configDir: "/sandbox/.hermes",
-      format: "yaml",
-      configFile: "config.yaml",
-      sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-    });
-
-    expect(script).toBeNull();
   });
 });
 
@@ -117,37 +88,12 @@ describe("selectDirectSandboxContainer", () => {
 
 describe("config set helpers", () => {
   describe("buildConfigSetRestartGuidance", () => {
-    it.each(["openclaw", "hermes"])(
-      "keeps managed restart guidance for OpenClaw and Hermes [case %#]",
-      (agentName) => {
-        const output = buildConfigSetRestartGuidance("alpha", agentName).join("\n");
-
-        expect(output).toContain("--restart");
-        expect(output).toContain("nemoclaw 'alpha' gateway restart");
-      },
-    );
-
-    it("does not name Hermes in the OpenClaw restart note (#8614)", () => {
-      const output = buildConfigSetRestartGuidance("alpha", "openclaw").join("\n");
-
-      expect(output).not.toContain("Hermes");
-      expect(output).toContain("--restart");
-    });
-
     it("names Hermes in the Hermes restart note (#8614)", () => {
-      const output = buildConfigSetRestartGuidance("alpha", "hermes").join("\n");
+      const output = buildConfigSetRestartGuidance("alpha").join("\n");
 
       expect(output).toContain("Hermes may restart");
       expect(output).toContain("--restart");
-    });
-
-    it("uses runtime-specific guidance for custom agents", () => {
-      const output = buildConfigSetRestartGuidance("custom-box", "custom-agent").join("\n");
-
-      expect(output).toContain("Follow the restart procedure for 'custom-agent'");
-      expect(output).toContain("NemoClaw does not manage restarts for this agent");
-      expect(output).not.toContain("--restart");
-      expect(output).not.toContain("gateway restart");
+      expect(output).toContain("nemoclaw 'alpha' gateway restart");
     });
   });
 

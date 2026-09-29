@@ -3,6 +3,7 @@
 
 import { posix as path } from "node:path";
 
+import JSON5 from "json5";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../../core/json-types";
@@ -34,6 +35,7 @@ import type {
 } from "./types";
 
 const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>(["apply", "post-agent-install"]);
+const OPENCLAW_CONFIG_TARGET = "/sandbox/.openclaw/openclaw.json";
 
 export function listHookRequests(
   plan: SandboxMessagingPlan,
@@ -91,6 +93,26 @@ export async function applyAgentConfigAtOpenShell(
     if (kind && render.some((entry) => entry.kind !== kind)) {
       throw new Error(`Cannot apply mixed messaging render kinds to ${target}.`);
     }
+    if (
+      plan.agent === "openclaw" &&
+      resolvedTarget === OPENCLAW_CONFIG_TARGET &&
+      kind === "json-fragment"
+    ) {
+      const changed = applyOpenClawConfigPatch(
+        plan.sandboxName,
+        render.filter(
+          (entry): entry is SandboxMessagingJsonRenderPlan =>
+            isJsonRender(entry) && !disabledChannelIds.has(entry.channelId),
+        ),
+        render.filter(
+          (entry): entry is SandboxMessagingJsonRenderPlan =>
+            isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
+        ),
+        options.runOpenshell,
+      );
+      if (changed) appliedTargets.push(resolvedTarget);
+      continue;
+    }
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
     // Nothing rendered and no file on disk: no migration to perform.
     if (!kind && existing === undefined) continue;
@@ -145,6 +167,20 @@ export function removeDisabledChannelAgentConfigAtOpenShell(
     if (!kind || render.some((entry) => entry.kind !== kind)) {
       throw new Error(`Cannot remove mixed messaging render kinds from ${target}.`);
     }
+    if (
+      plan.agent === "openclaw" &&
+      resolvedTarget === OPENCLAW_CONFIG_TARGET &&
+      kind === "json-fragment"
+    ) {
+      const changed = applyOpenClawConfigPatch(
+        plan.sandboxName,
+        [],
+        render.filter(isJsonRender),
+        options.runOpenshell,
+      );
+      if (changed) appliedTargets.push(resolvedTarget);
+      continue;
+    }
     const existing = readSandboxFileForRemoval(
       plan.sandboxName,
       resolvedTarget,
@@ -159,6 +195,115 @@ export function removeDisabledChannelAgentConfigAtOpenShell(
     appliedTargets.push(resolvedTarget);
   }
   return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function applyOpenClawConfigPatch(
+  sandboxName: string,
+  render: readonly SandboxMessagingJsonRenderPlan[],
+  disabledRender: readonly SandboxMessagingJsonRenderPlan[],
+  runOpenshell: MessagingOpenShellRunner,
+): boolean {
+  const patch: Record<string, MessagingSerializableValue> = {};
+  for (const pathValue of minimalRemovalPaths(disabledRender.map((entry) => entry.path))) {
+    if (openClawConfigPathExists(sandboxName, pathValue, runOpenshell)) {
+      setJsonPath(patch, pathValue, null);
+    }
+  }
+  for (const entry of render) {
+    assertOpenClawPatchValue(entry.path, entry.value);
+    setJsonPath(patch, entry.path, entry.value);
+  }
+  if (Object.keys(patch).length === 0) return false;
+
+  writeOpenClawConfigPatch(sandboxName, patch, runOpenshell);
+  return true;
+}
+
+function writeOpenClawConfigPatch(
+  sandboxName: string,
+  patch: Record<string, MessagingSerializableValue>,
+  runOpenshell: MessagingOpenShellRunner,
+): void {
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "openclaw",
+      "config",
+      "patch",
+      "--stdin",
+    ],
+    {
+      ignoreError: true,
+      input: JSON.stringify(patch),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  if (result.error || result.signal || (result.status ?? 0) !== 0) {
+    throw new Error(`Failed to apply native OpenClaw messaging config: ${compactOutput(result)}`);
+  }
+}
+
+function minimalRemovalPaths(paths: readonly string[]): string[] {
+  const selected: string[] = [];
+  const candidates = [...new Set(paths)].sort(
+    (left, right) => left.split(".").length - right.split(".").length,
+  );
+  for (const candidate of candidates) {
+    if (!selected.some((ancestor) => candidate.startsWith(`${ancestor}.`))) {
+      selected.push(candidate);
+    }
+  }
+  return selected;
+}
+
+function openClawConfigPathExists(
+  sandboxName: string,
+  dotpath: string,
+  runOpenshell: MessagingOpenShellRunner,
+): boolean {
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "openclaw",
+      "config",
+      "get",
+      dotpath,
+      "--json",
+    ],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (!result.error && !result.signal && (result.status ?? 0) === 0) return true;
+  const output = `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`;
+  if (/Config path (?:is valid but unset|not found)|Unknown config path/iu.test(output))
+    return false;
+  throw new Error(`Failed to inspect native OpenClaw messaging config: ${compactOutput(result)}`);
+}
+
+function assertOpenClawPatchValue(pathValue: string, value: MessagingSerializableValue): void {
+  if (value === null) {
+    throw new Error(
+      `OpenClaw messaging render path '${pathValue}' cannot set null because native patches reserve null for removal.`,
+    );
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) assertOpenClawPatchValue(pathValue, entry);
+    return;
+  }
+  if (isObjectRecord(value)) {
+    for (const entry of Object.values(value)) assertOpenClawPatchValue(pathValue, entry);
+  }
 }
 
 function removeOwnedEnvLines(
@@ -416,7 +561,7 @@ function parseStructuredConfig(
   format: "json" | "yaml",
 ): Record<string, MessagingSerializableValue> {
   if (!existing || existing.trim().length === 0) return {};
-  const parsed = format === "yaml" ? YAML.parse(existing) : (JSON.parse(existing) as unknown);
+  const parsed = format === "yaml" ? YAML.parse(existing) : (JSON5.parse(existing) as unknown);
   if (!isObjectRecord(parsed)) {
     throw new Error(`Messaging agent config target ${target} must contain an object.`);
   }
@@ -631,6 +776,16 @@ function applyHookBuildFileOutputs(
     if (output.kind !== "build-file") continue;
     const file = readHookBuildFile(output.value);
     const target = resolveHookBuildFileTarget(file.path, plan.agent);
+    if (plan.agent === "openclaw" && target === OPENCLAW_CONFIG_TARGET) {
+      if (!isObjectRecord(file.merge) || file.content !== undefined) {
+        throw new Error("OpenClaw config hooks must provide an object merge, not file contents.");
+      }
+      validateSafeMergeValue(file.merge);
+      assertOpenClawPatchValue(target, file.merge);
+      writeOpenClawConfigPatch(plan.sandboxName, file.merge, runOpenshell);
+      appliedTargets.push(target);
+      continue;
+    }
     const contents =
       file.merge !== undefined
         ? applyStructuredMerge(

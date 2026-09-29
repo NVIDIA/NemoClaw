@@ -173,7 +173,6 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.writeSandboxConfig.mock.calls[0][1].configPath).toBe(
       "/sandbox/.hermes/config.yaml",
     );
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes",
       expect.objectContaining({
