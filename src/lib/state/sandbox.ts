@@ -55,7 +55,6 @@ import {
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
-  textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "../security/credential-filter.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
@@ -82,16 +81,6 @@ export const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
-// These paths are NemoClaw control-plane state, not native agent state. The
-// target image regenerates config.json and its root-owned blueprint cache. The
-// OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
-const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
-  "--exclude='./.nemoclaw/config.json'",
-  "--exclude='./.nemoclaw/blueprints'",
-  "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
-  "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
-  "--exclude='./.pi/agent/trust.json'",
-].join(" ");
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
 export const HOST_LOCAL_INFERENCE_REBUILD_RESTORE_AUTHORITY_ERROR =
@@ -950,18 +939,15 @@ function dependencyPackageManifestIsCredentialFree(raw: string): boolean {
     return false;
   }
   if (!isConfigValue(value)) return false;
-  const inspect = (candidate: unknown, parentField?: string): boolean => {
-    if (typeof candidate === "string") {
-      return (
-        !dependencyStringContainsCredential(candidate) &&
-        (!parentField ||
-          !isDependencyCredentialField(parentField) ||
-          !valueLooksLikeSecret(candidate))
-      );
-    }
-    if (Array.isArray(candidate)) return candidate.every((child) => inspect(child));
+  const inspect = (candidate: unknown): boolean => {
+    if (typeof candidate === "string") return !valueLooksLikeSecret(candidate);
+    if (Array.isArray(candidate)) return candidate.every(inspect);
     if (candidate && typeof candidate === "object") {
-      return Object.entries(candidate).every(([key, child]) => inspect(child, key));
+      return Object.entries(candidate).every(
+        ([key, child]) =>
+          inspect(child) &&
+          (!isCredentialField(key) || typeof child !== "string" || !valueLooksLikeSecret(child)),
+      );
     }
     return true;
   };
@@ -1024,11 +1010,7 @@ function dependencyStringContainsCredential(value: string): boolean {
   for (const candidate of candidates) {
     try {
       const url = new URL(candidate);
-      if (
-        url.password ||
-        (url.username && textContainsHighConfidenceCredential(decodeURIComponent(url.username)))
-      )
-        return true;
+      if (url.username || url.password) return true;
       for (const [key, queryValue] of url.searchParams) {
         if (queryValue && isDependencyCredentialField(key)) return true;
       }
@@ -1038,7 +1020,7 @@ function dependencyStringContainsCredential(value: string): boolean {
       // detector below still rejects high-confidence credential material.
     }
   }
-  return textContainsHighConfidenceCredential(nonUrlContent);
+  return valueLooksLikeSecret(nonUrlContent);
 }
 
 function dependencyValueContainsCredential(value: unknown, parentField?: string): boolean {
@@ -1063,35 +1045,12 @@ function dependencyValueContainsCredential(value: unknown, parentField?: string)
   return false;
 }
 
-function yarnV1LockfileContainsCredentialOrIsMalformed(raw: string): boolean {
-  if (raw.includes("\uFFFD") || !/^# yarn lockfile v1\r?$/mu.test(raw)) return true;
-  let selectorSeen = false;
-  for (const line of raw.split(/\r?\n/u)) {
-    if (!line.trim() || line.startsWith("#")) continue;
-    if (!/^\s/u.test(line)) {
-      if (!line.endsWith(":")) return true;
-      selectorSeen = true;
-      continue;
-    }
-    if (!selectorSeen || /\t/u.test(line)) return true;
-    const property = /^ {2}([A-Za-z_][A-Za-z0-9_-]*)(?::|\s+)(.*)$/u.exec(line);
-    if (property) {
-      if (isDependencyCredentialField(property[1]!) && property[2]!.trim()) return true;
-      continue;
-    }
-    if (/^ {4,}(?:"[^"]+"|'[^']+'|\S+)\s+(?:"[^"]*"|'[^']*'|\S+)$/u.test(line)) continue;
-    return true;
-  }
-  return !selectorSeen;
-}
-
 function dependencyLockfileContainsCredential(name: string, raw: string): boolean {
   if (dependencyStringContainsCredential(raw)) return true;
   try {
     const parsed: unknown = name.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
     return dependencyValueContainsCredential(parsed);
   } catch {
-    if (name === "yarn.lock") return yarnV1LockfileContainsCredentialOrIsMalformed(raw);
     // A recognized lockfile must be structurally inspectable before its opaque
     // contents can cross the host-side persistence boundary.
     return true;
@@ -1188,16 +1147,15 @@ function nativeStructuredAuthorityKind(
   normalized: string,
   fileName: string,
 ): NativeStructuredAuthorityKind | null {
-  if (/^\.openclaw\/openclaw\.json(?:\.last-good|\.bak\.[^/]*)?$/u.test(normalized)) {
+  if (/^\.openclaw\/openclaw\.json(?:\.bak\.[^/]*)?$/u.test(normalized)) {
     return "openclaw-config";
   }
   if (
     isSensitiveFile(fileName) ||
-    /^\.(?:openclaw|openclaw-data)\/(?:devices|identity)\/(?:device(?:-auth)?|paired|pending)\.json$/u.test(
+    /^\.openclaw\/(?:devices|identity)\/(?:device(?:-auth)?|paired|pending)\.json$/u.test(
       normalized,
     ) ||
-    (!fileName.startsWith("._") &&
-      /^\.(?:openclaw|openclaw-data)\/credentials\/.+\.json$/u.test(normalized))
+    (!fileName.startsWith("._") && /^\.openclaw\/credentials\/.+\.json$/u.test(normalized))
   ) {
     return "credential-json";
   }
@@ -1260,15 +1218,6 @@ function sanitizedStructuredAuthority(
       const sanitizedGateway = (sanitized as Record<string, unknown>).gateway;
       if (isObjectRecord(sanitizedGateway)) delete sanitizedGateway.auth;
     }
-  } else if (
-    kind === "credential-json" &&
-    /^(?:\.openclaw|\.openclaw-data)\/identity\/device\.json$/u.test(normalized)
-  ) {
-    // The complete native-home archive keeps the path but cannot retain the
-    // machine-local private key. Leave an explicit, narrowly recognized
-    // startup placeholder instead of a partial identity that OpenClaw would
-    // correctly reject as corrupt legacy state.
-    sanitized = { nemoclawSanitizedDeviceIdentity: 1 };
   } else {
     sanitized = stripCredentials(config);
   }
@@ -1395,49 +1344,13 @@ function isBundledProviderProfileSchema(entry: string): boolean {
 const NATIVE_DEPENDENCY_TREE_SEGMENTS = new Set([".venv", "node_modules", "site-packages", "venv"]);
 
 function isNativeDependencyTreeEntry(entry: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const segments = normalized.split("/");
-  return (
-    normalized.startsWith(".hermes/lazy-packages/") ||
-    segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment))
-  );
+  const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
+  return segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment));
 }
 
-function isNativeNonAuthoritySourceEntry(entry: string): boolean {
+function isBundledNemoclawRuntimeCodeEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const sourceOrAsset =
-    /\.(?:[cm]?[jt]sx?|css|scss|json|map|py|rb|go|rs|java|kt|swift|php|sh|rst)$/iu.test(
-      path.posix.basename(normalized),
-    );
-  return (
-    sourceOrAsset &&
-    (isNativeDependencyTreeEntry(normalized) || normalized.startsWith(".openclaw/cache/"))
-  );
-}
-
-function isNativeNonAuthorityBinaryStateEntry(entry: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  // These SQLite databases are durable agent state rather than credential
-  // authorities. Treat only an actually binary payload as opaque; a text file
-  // at either path still passes through the credential scanner below.
-  return /^(?:\.openclaw\/state\/openclaw\.sqlite|\.deepagents\/\.state\/sessions\.db)(?:-(?:shm|wal))?$/u.test(
-    normalized,
-  );
-}
-
-function shouldScanNativeOpaqueAssignments(
-  entry: string,
-  fileName: string,
-  providerProfileSchema: boolean,
-): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  return (
-    providerProfileSchema ||
-    nativeStructuredAuthorityKind(normalized, fileName) !== null ||
-    fileName === ".env" ||
-    fileName.endsWith(".env") ||
-    /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
-  );
+  return normalized.startsWith(".openclaw/extensions/nemoclaw/dist/");
 }
 
 function scanNativeTarFilePayload(
@@ -1447,8 +1360,6 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
-  nonAuthorityBinary: boolean,
-  nonAuthoritySource: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1458,18 +1369,8 @@ function scanNativeTarFilePayload(
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
-    if (nonAuthorityBinary && offset === position && chunk.subarray(0, count).includes(0)) {
-      return false;
-    }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
-    // Installed third-party source can embed generated WASM/base64 payloads that
-    // randomly contain complete token-shaped byte sequences. It is not a
-    // credential authority, so scanning it cannot distinguish those bytes from
-    // a real token. Keep scanning dependency manifests and non-source files,
-    // while structured native authorities and bundled NemoClaw code remain
-    // covered below.
-    if (nonAuthoritySource) return false;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
     // the same field (or any other credential assignment) still fails closed.
@@ -1479,13 +1380,7 @@ function scanNativeTarFilePayload(
           "$1unused$2",
         )
       : raw;
-    if (
-      textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
-      })
-    ) {
-      return true;
-    }
+    if (textContainsCredential(credentialScanInput, { opaqueAssignments })) return true;
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
@@ -1538,20 +1433,20 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
           if (!shouldSkipNativeRawCredentialScan(fileName)) {
-            // Dependency source is not a credential authority and generated
-            // bundles can contain accidental token-shaped bytes. Package
-            // manifests still receive a structure-aware scan below.
+            // Dependency and bundled runtime source contain symbols such as
+            // FILE_PATH_KEYS that look like credential assignments. They
+            // receive high-confidence scanning here; package manifests also
+            // receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
-            const dependencyTree = isNativeDependencyTreeEntry(entry);
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
-              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+              fileName !== "package.json" &&
+                !isNativeDependencyTreeEntry(entry) &&
+                !isBundledNemoclawRuntimeCodeEntry(entry),
               fileName === ".npmrc",
               providerProfileSchema,
-              dependencyTree || isNativeNonAuthorityBinaryStateEntry(entry),
-              isNativeNonAuthoritySourceEntry(entry),
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
@@ -1927,17 +1822,11 @@ function capturePreparedNativeState(
       [
         "source=$1",
         "if tar --hard-dereference -cf - --files-from /dev/null >/dev/null 2>&1; then",
-        `  tar -C "$source" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
+        '  tar -C "$source" --hard-dereference -cf - -- .',
         "else",
         '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
         "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
-        '  cp -RpP "$source/." "$stage/"',
-        '  rm -f -- "$stage/.nemoclaw/config.json"',
-        '  rm -rf -- "$stage/.nemoclaw/blueprints"',
-        '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
-        '  rm -f -- "$stage/.pi/agent/trust.json"',
-        '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
-        '  tar -C "$stage" -cf - -- .',
+        '  cp -RpP "$source/." "$stage/" && tar -C "$stage" -cf - -- .',
         "fi",
       ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
       "nemoclaw-stopped-native-capture",
@@ -2043,14 +1932,14 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
           "trap resume EXIT HUP INT TERM",
-          "quiesce_pass=0",
-          'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
+          "collect_candidates",
+          'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
           'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; } 2>/dev/null || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           // Expand hard links into independent file content without following
           // symbolic links; GNU tar's --hard-dereference is hard-link-only.
-          `tar -C "$root" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
+          'tar -C "$root" --hard-dereference -cf - -- .',
         ].join("; ");
         result = spawnSync(
           "bash",
@@ -2468,15 +2357,15 @@ async function restoreNativeSandboxState(
         '    source_item="$source_dir/$name"',
         '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
         '    owner="$(stat -c %u -- "$target_item")"',
-        '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
-        '      restore_dir "$source_item" "$target_item"',
-        '      rmdir -- "$source_item"',
-        '    elif [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
+        '    if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
         '      rm -rf -- "$target_item"',
         '    elif [ -f "$target_item" ] && [ ! -L "$target_item" ] && [ -f "$source_item" ] && [ ! -L "$source_item" ] && cmp -s -- "$source_item" "$target_item"; then',
         '      rm -f -- "$source_item"',
         '    elif [ -L "$target_item" ] && [ -L "$source_item" ] && [ "$(readlink -- "$source_item")" = "$(readlink -- "$target_item")" ]; then',
         '      rm -f -- "$source_item"',
+        '    elif [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
+        '      restore_dir "$source_item" "$target_item"',
+        '      rmdir -- "$source_item"',
         "    else",
         '      echo "native restore could not preserve archived state at: $target_item" >&2',
         "      exit 22",
@@ -2495,9 +2384,8 @@ async function restoreNativeSandboxState(
         'restore_dir "$stage" "$root"',
       ].join("\n");
       // The target image's non-agent-owned entries remain authoritative. The
-      // recursive ownership merge replaces every archived agent-owned path
-      // without removing native mount roots, while retaining image-owned trust
-      // scaffolding. If an
+      // recursive ownership merge replaces every agent-owned path without a
+      // path allowlist, while retaining image-owned trust scaffolding. If an
       // archived child is absent below a non-writable scaffold, restoration
       // fails instead of silently dropping that archived state.
       const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;

@@ -28,6 +28,7 @@ export function captureHostCommand(
     cwd: ROOT,
     env: environment,
     encoding: "utf-8",
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   });
