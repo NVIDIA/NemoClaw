@@ -211,6 +211,24 @@ describe("selected E2E managed-image reference", () => {
     ).toThrow("complete selected managed-image cohort receipt");
   });
 
+  it("rejects a cohort receipt with a malformed image digest (#12421)", () => {
+    const environment = selectedEnvironment("/tmp/unused");
+    const receipt = JSON.parse(environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT!) as {
+      images: { openclaw: { "linux/amd64": string } };
+    };
+    receipt.images.openclaw["linux/amd64"] =
+      `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:not-a-digest`;
+    environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT = JSON.stringify(receipt);
+
+    expect(() =>
+      selectedE2eManagedImageReference({
+        environment,
+        expectedAgent: "openclaw",
+        nodeArchitecture: "x64",
+      }),
+    ).toThrow("exact agent image from the selected cohort");
+  });
+
   it("rejects a host architecture that has no managed image (#12421)", () => {
     expect(() =>
       selectedE2eManagedImageReference({

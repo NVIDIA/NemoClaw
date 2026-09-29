@@ -143,9 +143,11 @@ function selectedManagedImageAuthority(options: {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
   const reference = (agentImages as Record<string, unknown>)[options.platform];
+  const referencePrefix = `${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`;
   if (
     typeof reference !== "string" ||
-    !reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`)
+    !reference.startsWith(referencePrefix) ||
+    !/^[a-f0-9]{64}$/i.test(reference.slice(referencePrefix.length))
   ) {
     throw new Error("stock onboarding must use the exact agent image from the selected cohort");
   }
