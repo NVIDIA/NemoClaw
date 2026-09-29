@@ -19,6 +19,7 @@ mod evidence;
 mod facts;
 mod graph;
 mod guided;
+mod identity;
 mod journey_definition;
 mod journey_state;
 mod partial_document;
@@ -42,6 +43,7 @@ pub use facts::{
 };
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
+pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
 };

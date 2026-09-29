@@ -3,7 +3,7 @@
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
 mod journey_tui;
-use nemoclaw_authoring::{Capabilities, Session};
+use nemoclaw_authoring::{Capabilities, new_deployment_uid};
 use nemoclaw_authoring::{JourneyDefinition, JourneyScope, JourneyState, PartialDocument};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
 use std::{
@@ -74,7 +74,7 @@ fn load_journey(
     metadata
         .as_object_mut()
         .ok_or("template metadata must be an object")?
-        .insert("uid".into(), serde_json::json!(Session::new()?.uid()));
+        .insert("uid".into(), serde_json::json!(new_deployment_uid()?));
     let partial = PartialDocument::from_yaml(&serde_json::to_vec(&supplied)?)?;
     JourneyDefinition::new("onboarding", partial)
         .ask([
