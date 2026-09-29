@@ -189,6 +189,7 @@ describe("OpenClaw sandbox setup", () => {
       undefined,
       "openai-completions",
       true,
+      "nemoclaw-19090",
     );
 
     expect(order).toEqual(["configure", "initialize"]);
@@ -197,6 +198,7 @@ describe("OpenClaw sandbox setup", () => {
       "selected/model",
       "compatible-endpoint",
       "openai-completions",
+      "nemoclaw-19090",
       undefined,
     );
   });
@@ -254,6 +256,7 @@ describe("OpenClaw sandbox setup", () => {
 describe("initial OpenClaw inference route", () => {
   it("applies the selected route natively before a confirmed gateway restart (#12033)", async () => {
     const order: string[] = [];
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     const config = { agents: {}, models: {} };
     const route = {
       providerKey: "inference",
@@ -263,16 +266,23 @@ describe("initial OpenClaw inference route", () => {
       inferenceCompat: null,
     };
     const initialize = createInitialOpenclawInferenceRoute({
-      readOpenclawConfig: vi.fn(() => config),
+      readOpenclawConfig: vi.fn((_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        return config;
+      }),
       patchOpenclawInferenceConfig: vi.fn(() => ({ route })),
-      writeOpenclawInferenceConfigNatively: vi.fn(() => order.push("write")),
-      restartNativeGateway: vi.fn(async () => {
+      writeOpenclawInferenceConfigNatively: vi.fn((_sandbox, _config, _route, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        order.push("write");
+      }),
+      restartNativeGateway: vi.fn(async (_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
         order.push("restart");
         return { ok: true as const };
       }),
     });
 
-    await initialize("spark-box", "selected/model", "compatible-endpoint", null);
+    await initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090");
 
     expect(order).toEqual(["write", "restart"]);
   });
@@ -298,7 +308,7 @@ describe("initial OpenClaw inference route", () => {
     });
 
     await expect(
-      initialize("spark-box", "selected/model", "compatible-endpoint", null),
+      initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090"),
     ).rejects.toThrow(/restart failed after initial inference configuration.*restart rejected/u);
   });
 });

@@ -114,16 +114,21 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     revalidateSandboxIdentity?: (operation: string) => void,
     preferredInferenceApi: string | null = null,
     initializeNativeInferenceRoute = false,
+    gatewayName?: string,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
     await deps.configureOpenclawSandbox(sandboxName, model, provider, revalidateSandboxIdentity);
     if (initializeNativeInferenceRoute) {
+      if (!gatewayName) {
+        throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
       await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
         sandboxName,
         model,
         provider,
         preferredInferenceApi,
+        gatewayName,
         revalidateSandboxIdentity,
       );
     } else if (deps.shouldRestartNativeGateway(provider)) {

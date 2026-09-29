@@ -16,6 +16,10 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -39,6 +43,7 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
@@ -76,6 +81,8 @@ const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
+const CUSTOM_CONTEXT_WINDOW = 131_072;
+const CUSTOM_MAX_TOKENS = 4_096;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -109,7 +116,12 @@ interface OpenClawConfig {
         baseUrl?: unknown;
         apiKey?: unknown;
         api?: unknown;
-        models?: Array<{ id?: unknown; name?: unknown; maxTokens?: unknown }>;
+        models?: Array<{
+          id?: unknown;
+          name?: unknown;
+          contextWindow?: unknown;
+          maxTokens?: unknown;
+        }>;
       }
     >;
   };
@@ -243,6 +255,32 @@ function commandEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
   };
+}
+
+function writeCustomOpenClawDockerfile(home: string, selectedModel: string): string {
+  const environment = commandEnv(home);
+  const selectedCatalog = liveE2eManagedImageCatalog(environment)!;
+  const contract = readLiveE2eManagedImageCatalogContracts(selectedCatalog).get("openclaw")!;
+
+  const buildContext = path.join(home, "custom-openclaw-image");
+  const dockerfilePath = path.join(buildContext, "Dockerfile");
+  fs.mkdirSync(buildContext, { recursive: true });
+  const selectedPrimary = `inference/${selectedModel}`;
+  const bakeRoute = [
+    'const fs = require("node:fs");',
+    'const configPath = "/sandbox/.openclaw/openclaw.json";',
+    'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
+    "config.agents ??= {}; config.agents.defaults ??= {}; config.agents.defaults.model ??= {};",
+    'config.agents.defaults.model.primary = "inference/baked-wrong-model";',
+    "config.models ??= {}; config.models.providers ??= {};",
+    `config.models.providers.inference = { baseUrl: "https://baked.invalid/v1", apiKey: "unused", api: "openai-completions", models: [{ id: "baked-wrong-model", name: "inference/baked-wrong-model", contextWindow: 8192, maxTokens: 128 }, { id: ${JSON.stringify(selectedModel)}, name: ${JSON.stringify(selectedPrimary)}, contextWindow: ${CUSTOM_CONTEXT_WINDOW}, maxTokens: ${CUSTOM_MAX_TOKENS} }] };`,
+    "fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\\n`);",
+  ].join(" ");
+  fs.writeFileSync(
+    dockerfilePath,
+    [`FROM ${contract.reference}`, `RUN node -e ${shellQuote(bakeRoute)}`, ""].join("\n"),
+  );
+  return dockerfilePath;
 }
 
 async function bestEffortStateReset(run: () => Promise<unknown>): Promise<void> {
@@ -500,14 +538,6 @@ async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellP
   );
 }
 
-async function assertOpenShellRoute(host: HostCliClient, home: string): Promise<void> {
-  const route = await getRouteOutput(host, home);
-  expect(route.exitCode, resultText(route)).toBe(0);
-  const plain = stripAnsi(resultText(route));
-  expect(plain).toContain(`Provider: ${SWITCH_PROVIDER}`);
-  expect(plain).toContain(`Model: ${SWITCH_MODEL}`);
-}
-
 async function assertRegistryAndSession(
   home: string,
   options: { mockProvider?: MockAnthropicProvider },
@@ -515,7 +545,6 @@ async function assertRegistryAndSession(
   const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
   const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
   const sandbox = registry.sandboxes?.[SANDBOX_NAME];
-  expect(sandbox, `sandbox ${SANDBOX_NAME} missing from registry`).toBeTruthy();
   expect(sandbox?.provider).toBe(SWITCH_PROVIDER);
   expect(sandbox?.model).toBe(SWITCH_MODEL);
   expect(sandbox?.nimContainer).toBeNull();
@@ -560,12 +589,22 @@ async function assertRegistryAndSession(
   }
 }
 
-async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promise<void> {
+async function assertOpenClawConfig(
+  sandbox: SandboxClient,
+  home: string,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+    contextWindow?: number;
+    maxTokens?: number;
+  },
+): Promise<void> {
   const configResult = await sandbox.exec(
     SANDBOX_NAME,
     ["cat", "/sandbox/.openclaw/openclaw.json"],
     {
-      artifactName: "read-openclaw-config-after-inference-switch",
+      artifactName: expected.artifactName,
       env: commandEnv(home),
       timeoutMs: COMMAND_TIMEOUT_MS,
     },
@@ -573,23 +612,23 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
   expect(configResult.exitCode, resultText(configResult)).toBe(0);
   const config = JSON.parse(configResult.stdout) as OpenClawConfig;
   const expectedProviderKey =
-    SWITCH_INFERENCE_API === "anthropic-messages" ? "anthropic" : "inference";
-  const expectedPrimary = `${expectedProviderKey}/${SWITCH_MODEL}`;
+    expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
+  const expectedPrimary = `${expectedProviderKey}/${expected.model}`;
   const provider = config.models?.providers?.[expectedProviderKey];
-  const firstModel = provider?.models?.[0];
+  const selectedModel = provider?.models?.find((entry) => entry.id === expected.model);
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
   expect(provider?.baseUrl).toBe(
-    SWITCH_INFERENCE_API === "anthropic-messages"
+    expected.inferenceApi === "anthropic-messages"
       ? "https://inference.local"
       : "https://inference.local/v1",
   );
   expect(provider?.apiKey).toBe("unused");
-  expect(provider?.api).toBe(SWITCH_INFERENCE_API);
-  expect(firstModel?.id).toBe(SWITCH_MODEL);
-  expect(firstModel?.name).toBe(expectedPrimary);
-  expect(typeof firstModel?.maxTokens).toBe("number");
-  expect(firstModel?.maxTokens).toBeGreaterThan(0);
+  expect(provider?.api).toBe(expected.inferenceApi);
+  expect(selectedModel?.name).toBe(expectedPrimary);
+  expect(selectedModel?.contextWindow).toBe(expected.contextWindow ?? selectedModel?.contextWindow);
+  expect(selectedModel?.maxTokens).toBe(expected.maxTokens ?? selectedModel?.maxTokens);
+  expect(selectedModel?.maxTokens).toBeGreaterThan(0);
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -747,6 +786,12 @@ async function checkOpenClawGatewayInference(
   host: HostCliClient,
   home: string,
   artifacts: ArtifactSink,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+    phase: string;
+  },
   mockProvider: MockAnthropicProvider | undefined,
 ): Promise<"ok" | { skipped: string }> {
   const requestOffset = mockProvider?.requests().length ?? 0;
@@ -783,7 +828,7 @@ cat "$stderr_file" 2>/dev/null || true
 exit "$rc"
 `;
   const result = await host.command("bash", ["-lc", script], {
-    artifactName: "openclaw-gateway-inference-after-switch",
+    artifactName: expected.artifactName,
     env: commandEnv(home, { SANDBOX_NAME }),
     timeoutMs: AGENT_TIMEOUT_MS,
   });
@@ -791,7 +836,7 @@ exit "$rc"
   const requestArtifact = "mock-anthropic-openclaw-gateway-requests.json";
   await (mockProvider
     ? artifacts.writeJson(requestArtifact, {
-        phase: "prove inference.local and OpenClaw gateway inference",
+        phase: expected.phase,
         requestCount: mockRequests.length,
         requests: mockRequests.slice(0, 20),
         truncated: mockRequests.length > 20,
@@ -811,16 +856,16 @@ exit "$rc"
         (request) =>
           request.method === "POST" &&
           request.path === "/v1/messages" &&
-          request.model === SWITCH_MODEL &&
+          request.model === expected.model &&
           request.stream &&
           request.toolCount === 0,
       ));
   const expectedOpenClawProvider =
-    SWITCH_INFERENCE_API === "anthropic-messages" ? "anthropic" : "inference";
+    expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
   if (
     result.exitCode === 0 &&
     modelRun?.provider === expectedOpenClawProvider &&
-    modelRun.model === SWITCH_MODEL &&
+    modelRun.model === expected.model &&
     agentReplyContainsToken(reply, "PONG") &&
     !fallbackOrPairing &&
     mockRequestMatched
@@ -829,7 +874,7 @@ exit "$rc"
   }
   throw new Error(
     [
-      `OpenClaw gateway inference failed after switch (exit ${result.exitCode})`,
+      `OpenClaw gateway inference failed during ${expected.phase} (exit ${result.exitCode})`,
       `reply=${reply.slice(0, 200)}`,
       `raw=${raw.slice(0, 200)}`,
       `stderr=${[warnings, result.stderr].filter(Boolean).join("\n").slice(0, 200)}`,
@@ -838,6 +883,64 @@ exit "$rc"
         : "",
     ].join("; "),
   );
+}
+
+async function runInitialRouteLifecycle(options: {
+  artifacts: ArtifactSink;
+  home: string;
+  host: HostCliClient;
+  model: string;
+  progress: Pick<TestProgress, "phase">;
+  redactionValues: string[];
+  sandbox: SandboxClient;
+}): Promise<void> {
+  const verify = async (artifactSuffix: string): Promise<void> => {
+    await assertOpenClawConfig(options.sandbox, options.home, {
+      model: options.model,
+      inferenceApi: "openai-completions",
+      contextWindow: CUSTOM_CONTEXT_WINDOW,
+      maxTokens: CUSTOM_MAX_TOKENS,
+      artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
+    });
+    await checkOpenClawGatewayInference(
+      options.host,
+      options.home,
+      options.artifacts,
+      {
+        model: options.model,
+        inferenceApi: "openai-completions",
+        artifactName: `openclaw-gateway-inference-initial-route-${artifactSuffix}`,
+        phase: `prove initial custom-image route ${artifactSuffix}`,
+      },
+      undefined,
+    );
+  };
+  const requireLifecycleSuccess = (result: ShellProbeResult): void => {
+    expect(result.exitCode, resultText(result)).toBe(0);
+  };
+
+  options.progress.phase("prove the selected route after custom-image onboarding");
+  await verify("after-onboard");
+
+  options.progress.phase("prove the selected route after gateway restart");
+  const restart = await options.host.nemoclaw([SANDBOX_NAME, "gateway", "restart"], {
+    artifactName: "restart-openclaw-initial-custom-route",
+    env: commandEnv(options.home),
+    redactionValues: options.redactionValues,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  requireLifecycleSuccess(restart);
+  await verify("after-restart");
+
+  options.progress.phase("prove the selected route after rebuild");
+  const rebuild = await options.host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+    artifactName: "rebuild-openclaw-initial-custom-route",
+    env: commandEnv(options.home),
+    redactionValues: options.redactionValues,
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  requireLifecycleSuccess(rebuild);
+  await verify("after-rebuild");
 }
 
 // The pure reply-matching and mock-baseline-config assertions that previously
@@ -913,7 +1016,10 @@ test(
       e2ePhases: [
         "confirm the selected runtime and choose the baseline provider",
         "clear existing inference-switch state",
-        "install and onboard baseline OpenClaw",
+        "install and onboard a custom-image baseline OpenClaw",
+        "prove the selected route after custom-image onboarding",
+        "prove the selected route after gateway restart",
+        "prove the selected route after rebuild",
         "prepare the switched provider and endpoint",
         "switch the route and verify restart semantics",
         "inspect route configuration and recorded state",
@@ -932,7 +1038,10 @@ test(
       switchInferenceApi: SWITCH_INFERENCE_API,
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
-        "install.sh --non-interactive onboards an OpenClaw sandbox",
+        "install.sh --non-interactive onboards an OpenClaw sandbox from a custom Dockerfile",
+        "fresh custom-image onboarding replaces the baked primary route with the selected model",
+        "the selected model's baked context window and token limit survive gateway restart and rebuild",
+        "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
@@ -981,6 +1090,7 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
+    const customDockerfile = writeCustomOpenClawDockerfile(home, baseline.model);
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1015,10 +1125,16 @@ test(
     progress.phase("clear existing inference-switch state");
     await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
-    progress.phase("install and onboard baseline OpenClaw");
+    progress.phase("install and onboard a custom-image baseline OpenClaw");
     const install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      [
+        "install.sh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+        "--from",
+        customDockerfile,
+      ],
       {
         artifactName: "install-and-onboard-openclaw-inference-switch",
         cwd: REPO_ROOT,
@@ -1042,6 +1158,24 @@ test(
     }
     expect(install.exitCode, installText).toBe(0);
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
+
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      commandEnv(home),
+      redactionValues,
+      false,
+    );
+    await runInitialRouteLifecycle({
+      artifacts,
+      home,
+      host,
+      model: baseline.model,
+      progress,
+      redactionValues,
+      sandbox,
+    });
 
     progress.phase("prepare the switched provider and endpoint");
     const publicProvider = publicApiKey
@@ -1103,8 +1237,16 @@ test(
     }
 
     progress.phase("inspect route configuration and recorded state");
-    await assertOpenShellRoute(host, home);
-    await assertOpenClawConfig(sandbox, home);
+    const route = await getRouteOutput(host, home);
+    expect(route.exitCode, resultText(route)).toBe(0);
+    const plainRoute = stripAnsi(resultText(route));
+    expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
+    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
+    await assertOpenClawConfig(sandbox, home, {
+      model: SWITCH_MODEL,
+      inferenceApi: SWITCH_INFERENCE_API,
+      artifactName: "read-openclaw-config-after-inference-switch",
+    });
     await assertRegistryAndSession(home, { mockProvider });
 
     progress.phase("prove inference.local and OpenClaw gateway inference");
@@ -1123,6 +1265,12 @@ test(
       host,
       home,
       artifacts,
+      {
+        model: SWITCH_MODEL,
+        inferenceApi: SWITCH_INFERENCE_API,
+        artifactName: "openclaw-gateway-inference-after-switch",
+        phase: "prove inference.local and OpenClaw gateway inference",
+      },
       mockProvider,
     );
     if (gatewayInference !== "ok") {
@@ -1149,6 +1297,10 @@ test(
       assertions: {
         runtimeProviderAvailable: true,
         installCompleted: install.exitCode === 0,
+        customImageInitialRouteSelected: true,
+        customImageModelMetadataPreserved: true,
+        customImageRouteSurvivedGatewayRestart: true,
+        customImageRouteSurvivedRebuild: true,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,

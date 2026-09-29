@@ -13,7 +13,7 @@ const initialOpenclawInferenceRouteRuntime = {
 };
 
 export interface InitialOpenclawInferenceRouteDeps {
-  readOpenclawConfig(sandboxName: string): ConfigObject;
+  readOpenclawConfig(sandboxName: string, gatewayName: string): ConfigObject;
   patchOpenclawInferenceConfig(
     config: ConfigObject,
     provider: string,
@@ -26,8 +26,12 @@ export interface InitialOpenclawInferenceRouteDeps {
     sandboxName: string,
     config: ConfigObject,
     route: SandboxInferenceConfig,
+    gatewayName: string,
   ): void;
-  restartNativeGateway(sandboxName: string): Promise<
+  restartNativeGateway(
+    sandboxName: string,
+    gatewayName: string,
+  ): Promise<
     | { ok: true }
     | {
         ok: false;
@@ -42,6 +46,7 @@ export type InitializeOpenclawInferenceRoute = (
   model: string,
   provider: string,
   preferredInferenceApi: string | null,
+  gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
 ) => Promise<void>;
 
@@ -53,10 +58,11 @@ export function createInitialOpenclawInferenceRoute(
     model,
     provider,
     preferredInferenceApi,
+    gatewayName,
     revalidateSandboxIdentity,
   ): Promise<void> {
     revalidateSandboxIdentity?.(`read native OpenClaw config in sandbox '${sandboxName}'`);
-    const config = deps.readOpenclawConfig(sandboxName);
+    const config = deps.readOpenclawConfig(sandboxName, gatewayName);
     const patched = deps.patchOpenclawInferenceConfig(
       config,
       provider,
@@ -69,10 +75,10 @@ export function createInitialOpenclawInferenceRoute(
     revalidateSandboxIdentity?.(
       `apply native OpenClaw inference route in sandbox '${sandboxName}'`,
     );
-    deps.writeOpenclawInferenceConfigNatively(sandboxName, config, patched.route);
+    deps.writeOpenclawInferenceConfigNatively(sandboxName, config, patched.route, gatewayName);
 
     revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
-    const restart = await deps.restartNativeGateway(sandboxName);
+    const restart = await deps.restartNativeGateway(sandboxName, gatewayName);
     if (!restart.ok) {
       throw new Error(
         `OpenClaw native gateway restart failed after initial inference configuration (${restart.failureLayer}): ${restart.detail}`,
@@ -82,25 +88,28 @@ export function createInitialOpenclawInferenceRoute(
 }
 
 export const initializeOpenclawInferenceRoute = createInitialOpenclawInferenceRoute({
-  readOpenclawConfig: (sandboxName) => {
+  readOpenclawConfig: (sandboxName, gatewayName) => {
     const config = initialOpenclawInferenceRouteRuntime.loadSandboxConfig();
-    return config.readSandboxConfig(sandboxName, config.resolveAgentConfig(sandboxName));
+    return config.readSandboxConfig(
+      sandboxName,
+      config.resolveAgentConfig(sandboxName),
+      gatewayName,
+    );
   },
   patchOpenclawInferenceConfig: (...args) =>
     initialOpenclawInferenceRouteRuntime.loadInferenceSet().patchOpenClawInferenceConfig(...args),
-  writeOpenclawInferenceConfigNatively: (sandboxName, config, route) => {
+  writeOpenclawInferenceConfigNatively: (sandboxName, config, route, gatewayName) => {
     const inferenceSet = initialOpenclawInferenceRouteRuntime.loadInferenceSet();
-    // Final onboarding selects its attempt-scoped gateway before this step, so
-    // the native config command uses that selected OpenShell runtime.
     inferenceSet.writeOpenClawInferenceConfigNatively(
       sandboxName,
       config,
       route,
       initialOpenclawInferenceRouteRuntime.loadSandboxConfig().setOpenClawConfigValues,
+      gatewayName,
     );
   },
-  restartNativeGateway: (sandboxName) =>
+  restartNativeGateway: (sandboxName, gatewayName) =>
     initialOpenclawInferenceRouteRuntime
       .loadFinalizationDeps()
-      .restartNativeGatewayForInitialSetup(sandboxName),
+      .restartNativeGatewayForInitialSetup(sandboxName, gatewayName),
 });

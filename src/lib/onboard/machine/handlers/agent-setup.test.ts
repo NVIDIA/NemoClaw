@@ -14,7 +14,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
   let session = createSession();
   const calls = {
     handleAgentSetup: vi.fn(async () => undefined),
-    context: vi.fn(() => ({ ctx: true })),
+    context: vi.fn(() => ({ ctx: true, gatewayName: "nemoclaw-19090" })),
     ensureDashboard: vi.fn(() => 18789),
     persistDashboardPort: vi.fn(),
     skipped: vi.fn(async (stepName: string) => {
@@ -97,7 +97,7 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true },
+      { ctx: true, gatewayName: "nemoclaw-19090" },
     );
     expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
@@ -334,6 +334,7 @@ describe("handleAgentSetupState", () => {
       undefined,
       "openai-completions",
       false,
+      "nemoclaw-19090",
     );
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
@@ -400,6 +401,7 @@ describe("handleAgentSetupState", () => {
       undefined,
       "openai-completions",
       true,
+      "nemoclaw-19090",
     );
     expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
   });
@@ -418,6 +420,7 @@ describe("handleAgentSetupState", () => {
       "model",
       "provider",
       "openai-completions",
+      "nemoclaw-19090",
       undefined,
     );
     expect(calls.initializeOpenclawInferenceRoute).toHaveBeenCalledBefore(calls.complete);

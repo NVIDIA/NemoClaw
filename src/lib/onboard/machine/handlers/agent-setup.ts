@@ -28,7 +28,7 @@ export interface AgentSetupStateOptions<Agent> {
       session: Session | null,
       context: unknown,
     ): Promise<void>;
-    agentSetupContext(): unknown;
+    agentSetupContext(): { gatewayName: string };
     ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
@@ -51,6 +51,7 @@ export interface AgentSetupStateOptions<Agent> {
       revalidateSandboxIdentity?: (operation: string) => void,
       preferredInferenceApi?: string | null,
       initializeNativeInferenceRoute?: boolean,
+      gatewayName?: string,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -64,6 +65,7 @@ export interface AgentSetupStateOptions<Agent> {
       model: string,
       provider: string,
       preferredInferenceApi: string | null,
+      gatewayName: string,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
@@ -91,6 +93,7 @@ export async function handleAgentSetupState<Agent>({
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
+  const agentSetupContext = deps.agentSetupContext();
   const initializeOpenclawInferenceRoute = async (): Promise<void> => {
     if (!initializeNativeInferenceRoute) return;
     await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
@@ -98,6 +101,7 @@ export async function handleAgentSetupState<Agent>({
       model,
       provider,
       preferredInferenceApi,
+      agentSetupContext.gatewayName,
       revalidateSandboxIdentity,
     );
   };
@@ -110,7 +114,7 @@ export async function handleAgentSetupState<Agent>({
       agent,
       resume,
       session,
-      deps.agentSetupContext(),
+      agentSetupContext,
     );
     // ensureAgentDashboardForward returns the port the dashboard forward was
     // actually established on, which may be bumped when the default is already
@@ -180,6 +184,7 @@ export async function handleAgentSetupState<Agent>({
       revalidateSandboxIdentity,
       preferredInferenceApi,
       initializeNativeInferenceRoute,
+      agentSetupContext.gatewayName,
     );
     revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
