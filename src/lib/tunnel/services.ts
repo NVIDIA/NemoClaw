@@ -127,7 +127,28 @@ export type CloudflaredState =
   | { kind: "stale-pid-process"; pid: number };
 
 function readProcessCommandLine(pid: number): string | null {
-  if (process.platform === "win32") return null;
+  if (process.platform === "win32") {
+    try {
+      const commandLine = execFileSync(
+        "powershell.exe",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${String(pid)}').CommandLine`,
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 1000,
+        },
+      ).trim();
+      return commandLine || null;
+    } catch {
+      return null;
+    }
+  }
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
@@ -366,12 +387,12 @@ function startService(
  * The recorded process may have exited and had its PID recycled by the OS to an
  * unrelated (possibly system) process. Signalling it would terminate a
  * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. A null/unreadable command line stays conservative and is
- * treated as ours, matching readCloudflaredState.
+ * names cloudflared. An unreadable command line cannot prove ownership, so it
+ * fails closed as a stale PID and is never signalled.
  */
 function pidIsOurs(pid: number, pc: ProcessControl): boolean {
   const cmdline = pc.commandLine(pid);
-  return cmdline === null || commandLineNamesCloudflared(cmdline);
+  return cmdline !== null && commandLineNamesCloudflared(cmdline);
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
