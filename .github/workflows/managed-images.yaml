@@ -101,7 +101,7 @@ jobs:
       - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -121,7 +121,7 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEWED_AUDIT_SHA: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          REVIEWED_AUDIT_SHA: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -544,7 +544,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
+          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -572,7 +572,7 @@ jobs:
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
-          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '8ed889c14ccd7e828a9fbc20606cc7c587e6ca31'
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = 'd60ee0bb36e582f83846f41a1b7e94719fcd89f6'
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
