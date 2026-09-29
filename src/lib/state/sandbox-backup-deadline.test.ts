@@ -18,7 +18,7 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, spawnSync: executorMocks.spawnSync };
 });
 
-vi.mock("../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs", () => ({
+vi.mock("../security/snapshot-sanitizer-boundary.js", () => ({
   SnapshotSanitizerPrerequisiteError: class extends Error {},
   applyDescriptorSnapshotActions: executorMocks.applyDescriptorSnapshotActions,
   decodeDescriptorSnapshotContent: vi.fn(),
