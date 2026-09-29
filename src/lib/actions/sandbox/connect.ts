@@ -3081,6 +3081,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
       console.error(
         "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
+      if (publication.diagnostic) {
+        console.error(
+          `  Readiness evidence: stage=${publication.diagnostic.stage} reason=${publication.diagnostic.reason}`,
+        );
+      }
       process.exit(1);
     }
     return null;
