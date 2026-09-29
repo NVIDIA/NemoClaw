@@ -3,7 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./service-command";
+import {
+  resolveDefaultSandboxName,
+  resolveDefaultSandboxServiceOptions,
+  runStartCommand,
+  runStopCommand,
+} from "./service-command";
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;
@@ -65,9 +70,19 @@ describe("services command", () => {
     const startAll = vi.fn(async () => {});
     await runStartCommand({
       listSandboxes: () => ({ defaultSandbox: "alpha" }),
+      getSandbox: () => ({ dashboardPort: 18_791 }),
       startAll,
     });
-    expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha", dashboardPort: 18_791 });
+  });
+
+  it("keeps the service fallback when the selected sandbox is not registered", () => {
+    expect(
+      resolveDefaultSandboxServiceOptions({
+        listSandboxes: () => ({ defaultSandbox: "alpha" }),
+        getSandbox: () => null,
+      }),
+    ).toEqual({ sandboxName: "alpha" });
   });
 
   it("stops services without a sandbox override when the default sandbox is unsafe", () => {

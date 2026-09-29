@@ -35,7 +35,8 @@ const mocks = vi.hoisted(() => {
     fetchGatewayAuthTokenFromSandbox: vi.fn(async () => "token"),
     getVersion: vi.fn(() => "1.2.3"),
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
-    listSandboxes: vi.fn(() => ({ sandboxes: [] })),
+    getSandbox: vi.fn(() => ({ dashboardPort: 18_791 })),
+    listSandboxes: vi.fn(() => ({ sandboxes: [], defaultSandbox: "resolved-sandbox" })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
     runDashboardUrlCommand: vi.fn(async () => undefined),
@@ -43,10 +44,13 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
-    resolveDefaultSandboxName: vi.fn((listSandboxes: () => unknown) => {
-      listSandboxes();
-      return "resolved-sandbox";
-    }),
+    resolveDefaultSandboxServiceOptions: vi.fn(
+      (deps: { listSandboxes: () => unknown; getSandbox: (name: string) => unknown }) => {
+        deps.listSandboxes();
+        deps.getSandbox("resolved-sandbox");
+        return { sandboxName: "resolved-sandbox", dashboardPort: 18_791 };
+      },
+    ),
     assertHermesPortableCommandUnavailable: vi.fn(),
     withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
       operation(),
@@ -82,7 +86,10 @@ vi.mock("../lib/actions/global", () => ({
 vi.mock("../lib/adapters/openshell/client", () => ({
   captureOpenshellCommand: mocks.captureOpenshellCommand,
 }));
-vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
+vi.mock("../lib/state/registry", () => ({
+  getSandbox: mocks.getSandbox,
+  listSandboxes: mocks.listSandboxes,
+}));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
 vi.mock("../lib/tunnel/services", () => ({
   showStatus: mocks.showStatus,
@@ -90,7 +97,7 @@ vi.mock("../lib/tunnel/services", () => ({
   stopAll: mocks.stopAll,
 }));
 vi.mock("../lib/tunnel/service-command", () => ({
-  resolveDefaultSandboxName: mocks.resolveDefaultSandboxName,
+  resolveDefaultSandboxServiceOptions: mocks.resolveDefaultSandboxServiceOptions,
   runStartCommand: mocks.runStartCommand,
   runStopCommand: mocks.runStopCommand,
 }));
@@ -443,9 +450,13 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
-    expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveDefaultSandboxServiceOptions).toHaveBeenCalledTimes(1);
     expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
-    expect(mocks.showStatus).toHaveBeenCalledWith({ sandboxName: "resolved-sandbox" });
+    expect(mocks.getSandbox).toHaveBeenCalledWith("resolved-sandbox");
+    expect(mocks.showStatus).toHaveBeenCalledWith({
+      sandboxName: "resolved-sandbox",
+      dashboardPort: 18_791,
+    });
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );

@@ -5,9 +5,19 @@ export interface SandboxSummary {
   defaultSandbox?: string | null;
 }
 
+export interface SandboxServiceTarget {
+  dashboardPort?: number | null;
+}
+
+export interface ServiceTargetDeps {
+  listSandboxes: () => SandboxSummary;
+  getSandbox: (name: string) => SandboxServiceTarget | null;
+}
+
 export interface StartCommandDeps {
   listSandboxes: () => SandboxSummary;
-  startAll: (options: { sandboxName?: string }) => Promise<void>;
+  getSandbox: (name: string) => SandboxServiceTarget | null;
+  startAll: (options: { sandboxName?: string; dashboardPort?: number }) => Promise<void>;
 }
 
 export interface StopCommandDeps {
@@ -30,8 +40,20 @@ export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): 
   return defaultSandbox && SAFE_SANDBOX_RE.test(defaultSandbox) ? defaultSandbox : undefined;
 }
 
+export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
+  sandboxName?: string;
+  dashboardPort?: number;
+} {
+  const sandboxName = resolveDefaultSandboxName(deps.listSandboxes);
+  const dashboardPort = sandboxName ? deps.getSandbox(sandboxName)?.dashboardPort : undefined;
+  return {
+    sandboxName,
+    ...(dashboardPort === null || dashboardPort === undefined ? {} : { dashboardPort }),
+  };
+}
+
 export async function runStartCommand(deps: StartCommandDeps): Promise<void> {
-  await deps.startAll({ sandboxName: resolveDefaultSandboxName(deps.listSandboxes) });
+  await deps.startAll(resolveDefaultSandboxServiceOptions(deps));
 }
 
 export function runStopCommand(deps: StopCommandDeps): void {
