@@ -39,7 +39,10 @@ export type {
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
 
 /** Detect standalone credential fingerprints without interpreting surrounding file structure. */
-export function textContainsHighConfidenceCredential(value: string): boolean {
+export function textContainsHighConfidenceCredential(
+  value: string,
+  options: { privateKeyHeader?: boolean } = {},
+): boolean {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,
@@ -49,7 +52,10 @@ export function textContainsHighConfidenceCredential(value: string): boolean {
     pattern.lastIndex = 0;
     if (pattern.test(withoutPlaceholders)) return true;
   }
-  return /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(withoutPlaceholders);
+  return (
+    options.privateKeyHeader !== false &&
+    /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(withoutPlaceholders)
+  );
 }
 
 function textWithoutSafeCredentialFixtures(value: string): string {
@@ -72,10 +78,10 @@ function textWithoutSafeCredentialFixtures(value: string): string {
 /** Detect standalone and context-anchored credentials in opaque file content. */
 export function textContainsCredential(
   value: string,
-  options: { opaqueAssignments?: boolean } = {},
+  options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
 ): boolean {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
-  if (textContainsHighConfidenceCredential(withoutPlaceholders)) return true;
+  if (textContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
   const authorization =
     /\b(?:Proxy-)?Authorization["']?[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
   if (authorization.test(withoutPlaceholders)) return true;

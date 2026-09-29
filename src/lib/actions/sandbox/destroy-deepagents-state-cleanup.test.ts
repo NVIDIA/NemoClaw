@@ -54,11 +54,13 @@ describe("native agent destroy state cleanup", { timeout: 15_000 }, () => {
     const wipeScript = wipeArgs[wipeArgs.indexOf("-c") + 1]!;
     expect(wipeScript).toContain("root='/sandbox'");
     expect(wipeScript).toContain('[ ! -d "$root" ] || [ -L "$root" ]');
-    expect(wipeScript).toContain('for keep in "$@"');
-    expect(wipeScript).toContain('find "$entry" -xdev -depth -user "$uid"');
-    expect(wipeScript).toContain('rm -f -- "$candidate"');
+    expect(wipeScript).toContain("is_exact_keep()");
+    expect(wipeScript).toContain("is_keep_parent()");
+    expect(wipeScript).toContain('rm -rf -- "$entry"');
+    expect(wipeScript).toContain('clean_dir "$root" "$@"');
+    expect(wipeScript).toContain('verify_dir "$root" "$@"');
     expect(wipeScript).toContain("agent native root retains sandbox-owned state");
-    expect(wipeScript).not.toContain('rm -rf -- "$entry"');
+    expect(wipeScript).not.toContain('find "$entry"');
     expect(wipeArgs.slice(wipeArgs.indexOf("-c") + 3)).toEqual([
       "/sandbox/.deepagents/.env",
       "/sandbox/.deepagents/.mcp.json",
@@ -93,9 +95,9 @@ describe("native agent destroy state cleanup", { timeout: 15_000 }, () => {
       "/sandbox/.deepagents/.mcp.json",
       "/sandbox/project/source",
     ]);
-    expect(wipeScript).toContain('case "$candidate" in "$keep"|"$keep"/*) exit 0');
-    expect(wipeScript).toContain('case "$keep" in "$candidate"/*) exit 0');
-    expect(wipeScript).not.toContain('find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf');
+    expect(wipeScript).toContain('[ "$candidate" != "$keep" ] || return 0');
+    expect(wipeScript).toContain('[ "${keep#"$candidate"/}" = "$keep" ] || return 0');
+    expect(wipeScript).toContain('if [ ! -d "$entry" ] || [ -L "$entry" ]');
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 

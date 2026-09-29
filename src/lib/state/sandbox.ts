@@ -81,6 +81,13 @@ export const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
+// These paths are NemoClaw control-plane state, not native agent state. The
+// target image regenerates config.json, and warm-up sessions use a reserved
+// internal prefix that is already hidden from ordinary session list/export.
+const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
+  "--exclude='./.nemoclaw/config.json'",
+  "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
+].join(" ");
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
 export const HOST_LOCAL_INFERENCE_REBUILD_RESTORE_AUTHORITY_ERROR =
@@ -1147,7 +1154,7 @@ function nativeStructuredAuthorityKind(
   normalized: string,
   fileName: string,
 ): NativeStructuredAuthorityKind | null {
-  if (/^\.openclaw\/openclaw\.json(?:\.bak\.[^/]*)?$/u.test(normalized)) {
+  if (/^\.openclaw\/openclaw\.json(?:\.last-good|\.bak\.[^/]*)?$/u.test(normalized)) {
     return "openclaw-config";
   }
   if (
@@ -1348,6 +1355,13 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
   return segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment));
 }
 
+function isNativeDependencySourceEntry(entry: string): boolean {
+  return (
+    isNativeDependencyTreeEntry(entry) &&
+    /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(path.posix.basename(entry))
+  );
+}
+
 function isBundledNemoclawRuntimeCodeEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   return normalized.startsWith(".openclaw/extensions/nemoclaw/dist/");
@@ -1360,6 +1374,8 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  dependencyBinary: boolean,
+  dependencySource: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1369,6 +1385,9 @@ function scanNativeTarFilePayload(
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
+    if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
+      return false;
+    }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
     // Provider profiles describe whether injected material is secret with a
@@ -1380,7 +1399,14 @@ function scanNativeTarFilePayload(
           "$1unused$2",
         )
       : raw;
-    if (textContainsCredential(credentialScanInput, { opaqueAssignments })) return true;
+    if (
+      textContainsCredential(credentialScanInput, {
+        opaqueAssignments,
+        privateKeyHeader: !dependencySource,
+      })
+    ) {
+      return true;
+    }
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
@@ -1438,15 +1464,18 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
             // receive high-confidence scanning here; package manifests also
             // receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
+            const dependencyTree = isNativeDependencyTreeEntry(entry);
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
               fileName !== "package.json" &&
-                !isNativeDependencyTreeEntry(entry) &&
+                !dependencyTree &&
                 !isBundledNemoclawRuntimeCodeEntry(entry),
               fileName === ".npmrc",
               providerProfileSchema,
+              dependencyTree,
+              isNativeDependencySourceEntry(entry),
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
@@ -1822,11 +1851,14 @@ function capturePreparedNativeState(
       [
         "source=$1",
         "if tar --hard-dereference -cf - --files-from /dev/null >/dev/null 2>&1; then",
-        '  tar -C "$source" --hard-dereference -cf - -- .',
+        `  tar -C "$source" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
         "else",
         '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
         "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
-        '  cp -RpP "$source/." "$stage/" && tar -C "$stage" -cf - -- .',
+        '  cp -RpP "$source/." "$stage/"',
+        '  rm -f -- "$stage/.nemoclaw/config.json"',
+        '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
+        '  tar -C "$stage" -cf - -- .',
         "fi",
       ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
       "nemoclaw-stopped-native-capture",
@@ -1939,7 +1971,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           // Expand hard links into independent file content without following
           // symbolic links; GNU tar's --hard-dereference is hard-link-only.
-          'tar -C "$root" --hard-dereference -cf - -- .',
+          `tar -C "$root" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
         ].join("; ");
         result = spawnSync(
           "bash",

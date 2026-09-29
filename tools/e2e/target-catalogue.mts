@@ -1297,8 +1297,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "none",
-    restoreCli: false,
-    exposeCliBin: false,
+    restoreCli: true,
+    exposeCliBin: true,
     owningPaths: ["src/lib/cli/public-display-defaults.ts"],
     environment: {
       ...nonInteractive,

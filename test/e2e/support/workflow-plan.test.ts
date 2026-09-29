@@ -512,6 +512,15 @@ describe("E2E workflow plan", () => {
         artifactLayout: "target-shard",
       },
     ],
+    [
+      "snapshot-commands",
+      {
+        profile: "standard",
+        installMode: "none",
+        restoreCli: true,
+        exposeCliBin: true,
+      },
+    ],
   ] as const)("preserves the shared execution contract for %s", (id, contract) => {
     expect(catalogueTarget(id)).toMatchObject(contract);
   });
