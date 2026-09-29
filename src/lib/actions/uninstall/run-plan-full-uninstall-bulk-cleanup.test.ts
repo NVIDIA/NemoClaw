@@ -135,7 +135,7 @@ function fullCleanupDeps(
   } satisfies UninstallRunDeps;
 }
 
-describe("full-uninstall bulk sandbox cleanup", () => {
+describe("full uninstall bulk sandbox cleanup", () => {
   it("verifies stable empty inventory before provider cleanup (#11831)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-empty-"));
     try {
