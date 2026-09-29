@@ -1356,10 +1356,14 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
   return segments.some((segment) => NATIVE_DEPENDENCY_TREE_SEGMENTS.has(segment));
 }
 
-function isNativeDependencySourceEntry(entry: string): boolean {
+function isNativeNonAuthoritySourceEntry(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const sourceOrAsset = /\.(?:[cm]?[jt]sx?|css|scss|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(
+    path.posix.basename(normalized),
+  );
   return (
-    isNativeDependencyTreeEntry(entry) &&
-    /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(path.posix.basename(entry))
+    sourceOrAsset &&
+    (isNativeDependencyTreeEntry(normalized) || normalized.startsWith(".openclaw/cache/"))
   );
 }
 
@@ -1386,7 +1390,7 @@ function scanNativeTarFilePayload(
   npmConfig: boolean,
   providerProfileSchema: boolean,
   dependencyBinary: boolean,
-  dependencySource: boolean,
+  nonAuthoritySource: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1407,7 +1411,7 @@ function scanNativeTarFilePayload(
     // a real token. Keep scanning dependency manifests and non-source files,
     // while structured native authorities and bundled NemoClaw code remain
     // covered below.
-    if (dependencySource) return false;
+    if (nonAuthoritySource) return false;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
     // the same field (or any other credential assignment) still fails closed.
@@ -1489,7 +1493,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               fileName === ".npmrc",
               providerProfileSchema,
               dependencyTree,
-              isNativeDependencySourceEntry(entry),
+              isNativeNonAuthoritySourceEntry(entry),
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;

@@ -31,6 +31,7 @@ const { backupSandboxStateWithManagedAuthority } = await import(
   ).href
 );
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
+const TOKEN_SHAPED_GENERATED_BYTES = ["AKIA", "SITQQJHDQELIAYQ"].join("");
 
 afterAll(() => {
   restoreEnv("HOME", ORIGINAL_HOME);
@@ -996,11 +997,8 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/main/sessions/sessions.json",
       '{"sessions":{"main":{"sessionToken":"opaqueSessionIdentifierZ1234567890"}}}',
     ],
-    [
-      "a dependency runtime symbol",
-      "node_modules/example/dist/adapter.runtime.cjs",
-      ["AKIA", "SITQQJHDQELIAYQ"].join(""),
-    ],
+    ["dependency source", "node_modules/example.js", TOKEN_SHAPED_GENERATED_BYTES],
+    ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
   ])(
     "preserves %s without treating it as credential configuration",
     (_case, relativePath, content) => {
