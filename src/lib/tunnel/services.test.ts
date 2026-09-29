@@ -447,6 +447,43 @@ describe("startAll", () => {
     );
   });
 
+  it("does not replace a quick tunnel that remains live after stop escalation", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://retained-target.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    const oldPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel --url http://localhost:12345",
+      signal: () => {},
+    };
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    try {
+      await startAll({ pidDir, dashboardPort: 18_791, processControl });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"))).toBe(oldPid);
+    const log = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
+    expect(log).toContain("argv:tunnel --url http://localhost:12345");
+    expect(log).not.toContain("argv:tunnel --url http://localhost:18791");
+  });
+
   it("falls back when a direct quick-tunnel port is invalid", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -660,7 +697,7 @@ describe("stopAll", () => {
 
   it("escalates to SIGKILL when cloudflared remains live after the grace period (#7644)", () => {
     const { control, signals } = scriptedControl({
-      alive: [true, true],
+      alive: [true, true, false],
       cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
@@ -679,6 +716,31 @@ describe("stopAll", () => {
       { pid: 4242, sig: "SIGKILL" },
     ]);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("retains service state when cloudflared remains live after SIGKILL", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, true, true],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "cloudflared tunnel run"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345", { mode: 0o600 });
+
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([
+      { pid: 4242, sig: "SIGTERM" },
+      { pid: 4242, sig: "SIGKILL" },
+    ]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("12345");
   });
 
   it("removes stale PID files", () => {

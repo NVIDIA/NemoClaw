@@ -411,11 +411,11 @@ function stopService(
   pidDir: string,
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): void {
+): boolean {
   const pid = readPid(pidDir, name);
   if (pid === null) {
     info(`${name} was not running`);
-    return;
+    return true;
   }
 
   // A dead PID, or a live PID recycled to a non-cloudflared process, means our
@@ -424,18 +424,21 @@ function stopService(
     info(`${name} was not running`);
     removePid(pidDir, name);
     removeCloudflaredDashboardPort(pidDir);
-    return;
+    return true;
   }
 
   // Send SIGTERM
   try {
     pc.signal(pid, "SIGTERM");
   } catch {
-    // Already dead between the check and the signal
+    if (pc.isAlive(pid)) {
+      warn(`${name} could not be stopped (PID ${String(pid)})`);
+      return false;
+    }
     removePid(pidDir, name);
     removeCloudflaredDashboardPort(pidDir);
     info(`${name} stopped (PID ${String(pid)})`);
-    return;
+    return true;
   }
 
   // Poll for exit (up to 3 seconds)
@@ -455,7 +458,7 @@ function stopService(
       removePid(pidDir, name);
       removeCloudflaredDashboardPort(pidDir);
       info(`${name} was not running`);
-      return;
+      return true;
     }
     try {
       pc.signal(pid, "SIGKILL");
@@ -464,9 +467,21 @@ function stopService(
     }
   }
 
+  if (pc.isAlive(pid)) {
+    if (!pidIsOurs(pid, pc)) {
+      removePid(pidDir, name);
+      removeCloudflaredDashboardPort(pidDir);
+      info(`${name} was not running`);
+      return true;
+    }
+    warn(`${name} could not be stopped (PID ${String(pid)})`);
+    return false;
+  }
+
   removePid(pidDir, name);
   removeCloudflaredDashboardPort(pidDir);
   info(`${name} stopped (PID ${String(pid)})`);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -714,6 +729,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     process.env.CLOUDFLARE_TUNNEL_TOKEN ??
     ""
   ).trim();
+  let tunnelTargetReady = true;
   try {
     execSync("command -v cloudflared", {
       stdio: ["ignore", "ignore", "ignore"],
@@ -730,21 +746,29 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       if (isRunning(pidDir, "cloudflared")) {
         const runningPort = readCloudflaredDashboardPort(pidDir);
         if (runningPort !== dashboardPort) {
-          stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+          tunnelTargetReady = stopService(
+            pidDir,
+            "cloudflared",
+            opts.processControl ?? REAL_PROCESS_CONTROL,
+          );
         }
       }
-      startService(pidDir, "cloudflared", "cloudflared", [
-        "tunnel",
-        "--url",
-        `http://localhost:${String(dashboardPort)}`,
-      ]);
-      if (isRunning(pidDir, "cloudflared")) {
-        writeCloudflaredDashboardPort(pidDir, dashboardPort);
+      if (tunnelTargetReady) {
+        startService(pidDir, "cloudflared", "cloudflared", [
+          "tunnel",
+          "--url",
+          `http://localhost:${String(dashboardPort)}`,
+        ]);
+        if (isRunning(pidDir, "cloudflared")) {
+          writeCloudflaredDashboardPort(pidDir, dashboardPort);
+        }
       }
     }
   } catch {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
+
+  if (!tunnelTargetReady) return;
 
   // Wait for cloudflared URL
   if (isRunning(pidDir, "cloudflared")) {
