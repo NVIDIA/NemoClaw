@@ -313,7 +313,7 @@ describe("shared E2E workflow boundary", () => {
       (step) => step.name === "Generate E2E target matrix",
     )!;
     expect((workflow.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
-      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+      "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
     );
     expect((generate.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
       "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",

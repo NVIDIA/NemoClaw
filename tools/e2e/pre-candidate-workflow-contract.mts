@@ -6,8 +6,7 @@ export const PRE_CANDIDATE_WORKFLOW_ENV = {
   NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
   NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
   NEMOCLAW_E2E_SHARD: "default",
-  NEMOCLAW_GATEWAY_RUNTIMES:
-    "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+  NEMOCLAW_GATEWAY_RUNTIMES: "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
 };
 export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "Build trusted larger-runner routing": {
