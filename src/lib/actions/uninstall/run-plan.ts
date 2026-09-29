@@ -4492,6 +4492,7 @@ async function executePreparedPlan(
         );
       }
       bulkCleanupProgressPending =
+        ok &&
         !portableRuntimeCleanup &&
         !scopedToSelectedGateway &&
         bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
