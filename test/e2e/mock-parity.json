@@ -3,6 +3,15 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/brave-search.test.ts",
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
+      "fast": [
+        "test/onboarding/brave-search-integration.test.ts",
+        "test/e2e/support/brave-search-isolation.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/deferred-onboarding.test.ts",
       "fast": [
         "src/lib/actions/installer/deferred-onboarding.test.ts",
@@ -476,23 +485,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": ["test/e2e/live/brave-search-helpers.ts"],
-      "fast": [
-        "src/lib/adapters/config/live-export-source.test.ts",
-        "src/lib/config/config.test.ts",
-        "src/lib/adapters/openshell/sandbox-identity.test.ts",
-        "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
-        "src/lib/onboard/machine/handlers/agent-setup.test.ts",
-        "src/lib/onboard/openclaw-setup.test.ts",
-        "src/lib/onboard/policy-resume-selection.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/brave-search-config.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
@@ -543,6 +535,7 @@
       ],
       "fast": [
         "src/lib/policy/policy-live-state.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
