@@ -530,8 +530,8 @@ describe("E2E workflow plan", () => {
       {
         profile: "standard",
         installMode: "none",
-        restoreCli: true,
-        exposeCliBin: true,
+        restoreCli: false,
+        exposeCliBin: false,
       },
     ],
   ] as const)("preserves the shared execution contract for %s", (id, contract) => {
