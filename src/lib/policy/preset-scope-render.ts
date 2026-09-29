@@ -56,7 +56,7 @@ export function escapeTerminalText(value: string): string {
 }
 
 /** Redact credential-shaped content before rendering untrusted YAML scalars. */
-function renderTerminalText(value: string): string {
+export function renderTerminalText(value: string): string {
   return escapeTerminalText(redactFullWithUrls(value));
 }
 

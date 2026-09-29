@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Approve or Deny Agent Network Requests"
 sidebar-title: "Approve or Deny Network Requests"
-description: "Review and approve blocked agent network requests in the TUI."
-description-agent: "Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI."
+description: "Review and approve blocked agent network requests in the TUI or from the command line."
+description-agent: "Reviews and approves blocked agent network requests in the TUI or with `nemoclaw <name> policy requests`. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI."
 keywords: ["nemoclaw approve network requests", "sandbox egress approval tui"]
 content:
   type: "how_to"
@@ -81,6 +81,37 @@ They reset to the baseline when you destroy and recreate the sandbox.
 They are not persisted to the baseline policy file.
 To keep an endpoint allowed for future sandbox instances, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
 Rejected rules stay blocked unless you later approve the same rule or add a matching endpoint to the policy.
+
+## Approve or Reject from the Command Line
+
+You can review the same pending rules without opening the TUI.
+This is useful in a script, over a plain SSH session, or when you only need to handle one request.
+
+List the pending requests for a sandbox:
+
+```bash
+$$nemoclaw my-assistant policy requests
+```
+
+Each entry shows the request ID, destination host and port, the binary that made the request, any HTTP method and path the rule allows, and the security and prover notes that OpenShell recorded.
+
+Approve one:
+
+```bash
+$$nemoclaw my-assistant policy approve <id>
+```
+
+The command shows the rule and asks for confirmation before it changes the live policy.
+If the proposed rule changed after you listed it, OpenShell refuses the approval and you need to list the requests again.
+
+Reject a request and keep the destination blocked:
+
+```bash
+$$nemoclaw my-assistant policy reject <id> --reason "Only GET /docs is needed"
+```
+
+OpenShell returns the reason to the agent so it can propose a narrower rule.
+Approvals from the command line behave the same way as approvals in the TUI.
 
 <AgentOnly variant="openclaw,hermes">
 

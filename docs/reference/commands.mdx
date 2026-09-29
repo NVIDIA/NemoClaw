@@ -2283,6 +2283,50 @@ The restore command accepts these flags:
 | `--yes`, `-y`, `--force` | Skip the confirmation prompt |
 | `--dry-run` | Preview the egress restoration or stale-record cleanup without applying changes |
 
+### `$$nemoclaw <name> policy requests`
+
+List the network requests that OpenShell blocked for the sandbox and holds for review.
+Each entry shows the request ID, the destination host and port, the binary that made the request, any HTTP method and path the proposed rule allows, how many times the request was attempted, and the security and prover notes that OpenShell recorded.
+These are the same pending rules that `openshell term` shows in its `Network Rules` panel.
+
+```bash
+$$nemoclaw my-assistant policy requests
+$$nemoclaw my-assistant policy requests --json
+```
+
+| Flag     | Description                    |
+| -------- | ------------------------------ |
+| `--json` | Print pending requests as JSON |
+
+### `$$nemoclaw <name> policy approve <id>`
+
+Approve one pending request and add its rule to the sandbox's live OpenShell policy.
+The command prints the destination and what the rule allows, then asks for confirmation.
+It refuses a request that OpenShell reports it cannot apply.
+If the proposed rule changed after it was listed, OpenShell refuses the approval; run `policy requests` again to review the refreshed rule.
+A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, does not prompt and requires `--yes`.
+
+```bash
+$$nemoclaw my-assistant policy approve 4f1c2a9e
+```
+
+| Flag          | Description                  |
+| ------------- | ---------------------------- |
+| `--yes`, `-y` | Skip the confirmation prompt |
+
+### `$$nemoclaw <name> policy reject <id>`
+
+Reject one pending request so the destination stays blocked.
+OpenShell returns the optional reason to the agent so it can propose a narrower rule.
+
+```bash
+$$nemoclaw my-assistant policy reject 4f1c2a9e --reason "Only GET /docs is needed"
+```
+
+| Flag              | Description                                       |
+| ----------------- | ------------------------------------------------- |
+| `--reason <text>` | Guidance returned to the agent with the rejection |
+
 ### `$$nemoclaw <name> policy explain`
 
 Print a redacted summary of the current OpenShell policy context for a sandbox so an agent or operator can reason about what is allowed, what is blocked, and how to request a change. The output covers inferred tier and preset context, allowed host categories, known unapplied presets, policy-change commands, and the support boundaries between NemoClaw, OpenShell, and the agent. Raw policy YAML, rule bodies, and credential metadata are deliberately not included.

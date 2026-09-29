@@ -15,7 +15,7 @@
       "src/lib/adapters/openshell/timeouts.ts": 24,
       "src/lib/agent/defs.ts": 33,
       "src/lib/cli/branding.ts": 80,
-      "src/lib/cli/nemoclaw-oclif-command.ts": 106,
+      "src/lib/cli/nemoclaw-oclif-command.ts": 109,
       "src/lib/cli/terminal-style.ts": 38,
       "src/lib/core/json-types.ts": 32,
       "src/lib/core/ports.ts": 87,

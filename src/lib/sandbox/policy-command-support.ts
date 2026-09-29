@@ -40,6 +40,17 @@ export const policyMutationArgs = { sandboxName: sandboxNameArg, preset: presetA
 
 export const policyBaselineArgs = { sandboxName: sandboxNameArg, key: baselineKeyArg };
 
+const requestIdArg = Args.string({
+  name: "id",
+  description: "Pending request ID from `policy requests`",
+  ignoreStdin: true,
+  required: true,
+});
+
+export const policySandboxArgs = { sandboxName: sandboxNameArg };
+
+export const policyRequestArgs = { sandboxName: sandboxNameArg, requestId: requestIdArg };
+
 export const policyMutationFlags = {
   yes: yesFlag(),
   force: forceFlag(),
