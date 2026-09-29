@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   checkLaunchReadinessMutationAuthority,
+  classifyLaunchReadinessStoreFailure,
   fenceLaunchReadinessLease as fenceLeaseStore,
   LAUNCH_READINESS_LEASE_MS,
   LAUNCH_READINESS_MAX_BYTES,
@@ -956,5 +957,42 @@ describe("launch readiness lease storage", () => {
     fs.writeFileSync(receiptPath, JSON.stringify(value), { mode: 0o600 });
     fs.chmodSync(receiptPath, 0o600);
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("missing");
+  });
+});
+
+describe("launch readiness publication diagnostics", () => {
+  it.each([
+    ["EACCES", "permission-denied"],
+    ["EPERM", "permission-denied"],
+    ["EROFS", "read-only-filesystem"],
+    ["ENOSPC", "storage-full"],
+    ["ENOENT", "store-missing"],
+    ["private-token", "unclassified"],
+  ])("classifies %s without exposing error text", (code, expected) => {
+    const error = Object.assign(new Error("private-token".repeat(1000)), { code });
+    expect(classifyLaunchReadinessStoreFailure(error)).toBe(expected);
+  });
+
+  it.each([
+    ["Launch readiness publication authority changed.", "authority-changed"],
+    [
+      "Launch readiness publication is disabled while authority or clock history is unsafe.",
+      "publication-disabled",
+    ],
+    ["Launch readiness publication time is unsafe.", "publication-time-unsafe"],
+    ["Launch readiness lease time envelope is no longer valid.", "lease-time-invalid"],
+  ])("classifies the fixed storage error %s", (message, expected) => {
+    expect(classifyLaunchReadinessStoreFailure(new Error(message))).toBe(expected);
+  });
+
+  it("does not serialize thrown values or invoke code accessors", () => {
+    const getter = vi.fn(() => {
+      throw new Error("private-token");
+    });
+    const error = Object.defineProperty(new Error("private-token"), "code", { get: getter });
+    expect(classifyLaunchReadinessStoreFailure(error)).toBe("unclassified");
+    expect(classifyLaunchReadinessStoreFailure({ message: "private-token" })).toBe("unclassified");
+    expect(classifyLaunchReadinessStoreFailure(undefined)).toBe("unclassified");
+    expect(getter).not.toHaveBeenCalled();
   });
 });
