@@ -11,7 +11,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Configuration constraints, question dependencies, validated draft edits, and review data |
+| Authoring library | Sparse desired-state values, question guidance, answer resolution, and validation results |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -77,9 +77,10 @@ See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
 Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
 Configuration retains credential references, not values.
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) retains sparse authored values while a frontend answers questions.
+It materializes an SDK `Document` only after the current question and validation gates pass.
 It has no terminal or deployment operations.
-Its guided API consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
+Its journey resolver consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
 Provider presets supply presentation defaults; they do not form a compatibility matrix.
 The SDK owns deployment references, credentials, security grants, and resource lifecycle.
 Fabric owns adapter identity, native capability claims, accepted settings, configuration validation, and native mapping.
@@ -97,13 +98,12 @@ That change removes `config.schema` without a replacement; NemoClaw must stop us
 Settings, model, and target schemas remain owner contracts.
 A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
 
-The authoring dependency graph relates fields independently of their screen order.
-The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
-Ties retain presentation order; inactive fields and choices with only one valid answer do not require a question.
-The authoring API distinguishes suggested, accepted, delegated, implied, and inactive answers.
-Delegation accepts the current suggestion; later dependency changes can reopen it.
-Changes to accepted dependent answers still require confirmation, while unrelated accepted answers remain intact.
-These answer states describe user intent, separately from evidence about a target.
+`JourneyDefinition` combines a sparse template with deliberate `ask` and `omit` guidance.
+`JourneyState` resolves active questions from that guidance, the SDK schema, and the current Fabric descriptor after each answer.
+An answer is validated before it changes state; a provider API or endpoint change reopens affected model questions while retaining the previous model as a suggestion.
+Unrelated accepted answers remain intact.
+Delegation accepts remaining suggestions only with current compatible target and endpoint evidence.
+Target observations remain separate from authored intent.
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
@@ -129,8 +129,8 @@ The host calls Fabric's public plan/start/invoke/stop APIs.
 The bridge reports health as unsupported for the pinned Fabric revision.
 Native model or agent probes with no Fabric contract remain unavailable.
 
-The authoring dependency graph and OpenTofu execution graph have different jobs.
-The former chooses questions and invalidates dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
+Authoring question resolution and the OpenTofu execution graph have different jobs.
+The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
 
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Diagnostics, Draft, diagnostics::diagnostic};
+use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
@@ -47,13 +47,7 @@ pub struct DiscoveryAssessment {
     pub pending: Vec<DiscoveryQuery>,
 }
 
-impl Draft {
-    pub fn discovery_key(&self) -> Result<DiscoveryKey, Diagnostics> {
-        discovery_key_for_document(self.document())
-    }
-}
-
-/// Read target dependencies from SDK-valid desired state without a Draft.
+/// Read target dependencies from SDK-valid desired state.
 pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, Diagnostics> {
     let [sandbox] = document.spec.sandboxes.as_slice() else {
         return Err(diagnostic(
@@ -95,10 +89,6 @@ impl DiscoveryEvidence {
     /// Evaluate target facts without rewriting desired state or the global menu.
     /// Pending contains only dependency-ready reads. A completed unknown result
     /// remains unknown until the caller explicitly refreshes it.
-    pub fn assessment(&self, draft: &Draft) -> Result<DiscoveryAssessment, Diagnostics> {
-        self.assessment_for_document(draft.document())
-    }
-
     pub fn assessment_for_document(
         &self,
         document: &Document,

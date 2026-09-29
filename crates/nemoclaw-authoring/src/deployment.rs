@@ -1,55 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Questions over existing deployment intent, derived from the SDK input schema.
-use crate::{Diagnostics, Draft, SettingQuestion, diagnostics::diagnostic};
+
+//! Deployment question discovery from the SDK input schema.
+
+use crate::{Diagnostics, diagnostics::diagnostic, settings::SettingQuestion};
 use nemoclaw_sdk::{
     config::{Document, schema::input_schema},
     fabric_capabilities::schema_accepts,
 };
 use serde_json::Value;
-
-impl Draft {
-    /// Existing deployment fields that can be edited without changing native adapter settings.
-    /// Paths identify their actual locations in the SDK document, including service names.
-    pub fn deployment_questions(&self) -> Result<Vec<SettingQuestion>, Diagnostics> {
-        deployment_questions_for_document(&self.document)
-    }
-
-    /// Validate the entire proposed document before accepting an active question's answer.
-    pub fn answer_deployment_question(
-        &mut self,
-        path: &str,
-        value: Value,
-    ) -> Result<(), Diagnostics> {
-        let question = self
-            .deployment_questions()?
-            .into_iter()
-            .find(|question| question.path == path)
-            .ok_or_else(|| {
-                diagnostic(
-                    "deployment",
-                    "This deployment question is no longer active.",
-                )
-            })?;
-        if schema_accepts(&question.schema, &value) != Some(true) {
-            return Err(diagnostic(
-                "deployment",
-                "The answer does not satisfy the SDK field schema.",
-            ));
-        }
-        let mut values = serde_json::to_value(&self.document)
-            .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?;
-        *values
-            .pointer_mut(path)
-            .ok_or_else(|| diagnostic("deployment", "The field no longer exists."))? = value;
-        let document = Document::parse(values.to_string().as_bytes())
-            .map_err(|error| diagnostic("deployment", &error.to_string()))?;
-        if document == self.document {
-            return Ok(());
-        }
-        self.replace_document(document)
-    }
-}
 
 pub(crate) fn deployment_questions_for_document(
     document: &Document,

@@ -14,12 +14,12 @@ use serde_json::{Map, Value};
 use crate::{
     AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryAssessment,
     DiscoveryEvidence, PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset,
-    SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
         adapter_schema, sdk_field_schema,
     },
+    settings::SettingQuestion,
 };
 
 const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";

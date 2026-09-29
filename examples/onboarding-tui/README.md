@@ -22,15 +22,13 @@ nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
 Omit the template to use the built-in defaults.
-Those defaults come from a partial template in this example. It leaves the six original guided
-fields open and supplies preset values for the rest of the document.
+Those defaults come from the example YAML template.
+The journey definition asks for deployment name, harness, runtime, inference preset, API, and model, then covers applicable Fabric and deployment settings.
 The template's choices are preselected; Enter accepts an answer.
-The questionnaire chooses an unresolved question whose dependencies are resolved, preferring questions that constrain more remaining choices.
-It skips inactive fields and choices with only one supported answer.
+The authoring resolver recomputes applicable questions after each answer and follows the definition's order for explicitly asked fields.
 You can go back to change an answer.
-If a change affects answers you already accepted, the questionnaire shows them before making the change.
-Accept the revision to revisit affected questions, or go back to keep the current configuration.
-Unrelated accepted answers are preserved and skipped when continuing forward.
+If a change affects accepted answers, the resolver reopens the dependent questions and keeps their supplied values as suggestions.
+Going back restores the previous state; unrelated accepted answers stay accepted.
 
 After accepting a harness, **Ctrl+D** requests delegation of the remaining suggested settings.
 When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
