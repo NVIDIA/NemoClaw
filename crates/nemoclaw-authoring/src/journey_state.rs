@@ -498,6 +498,49 @@ impl JourneyState {
             }
         }
 
+        // The SDK decides requiredness. A missing scalar is answerable even
+        // when the journey did not list it in `ask`. Unconditional leaves of
+        // missing objects can be traversed; arrays and conditional alternatives
+        // remain an explicit frontier until their structure can be resolved.
+        for issue in assessment.issues() {
+            if issue.kind() != PartialIssueKind::Missing
+                || issue.path() == NAME
+                || issue.path() == HARNESS
+                || self.values.pointer(issue.path()).is_some()
+                || questions.iter().any(|question| question.id == issue.path())
+            {
+                continue;
+            }
+            let Some((parent, _)) = issue.path().rsplit_once('/') else {
+                continue;
+            };
+            let Some((schema, _)) = sdk_field_schema(issue.path()) else {
+                continue;
+            };
+            if self.values.pointer(parent).is_none() {
+                continue;
+            }
+            let choices = finite_choices(&schema);
+            if !scalar_question(&schema, &choices) {
+                collect_required_leaf_questions(
+                    &self.values,
+                    issue.path(),
+                    &schema,
+                    &mut questions,
+                    0,
+                );
+                continue;
+            }
+            questions.push(JourneyQuestion {
+                id: issue.path().into(),
+                reason: JourneyQuestionReason::Missing,
+                required: true,
+                choices,
+                suggestion: schema.get("default").cloned(),
+                schema,
+            });
+        }
+
         if self
             .definition
             .ask_scopes
@@ -1031,23 +1074,7 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if ((self.definition.ask.contains(id)
-            || self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::InferenceApi)
-                && self
-                    .provider_path()
-                    .is_some_and(|path| id == format!("{path}/api"))
-            || self
-                .provider_path()
-                .is_some_and(|path| id == format!("{path}/endpoint"))
-            || self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::RouteModels)
-                && self.route_model_path().as_deref() == Some(id))
-            && sdk_field_schema(id).is_some())
+        } else if (id.starts_with('/') && sdk_field_schema(id).is_some())
             || self
                 .definition
                 .ask_scopes
@@ -1566,6 +1593,61 @@ fn harness_kind(values: &Value) -> Option<&str> {
 
 fn settings_path(values: &Value) -> Option<String> {
     harness_path(values).map(|path| format!("{path}/settings"))
+}
+
+fn scalar_question(schema: &Value, choices: &[Value]) -> bool {
+    matches!(
+        schema["type"].as_str(),
+        Some("string" | "number" | "integer" | "boolean")
+    ) || !choices.is_empty()
+}
+
+/// Walk only unconditional required properties. Alternatives and array shape
+/// remain unresolved until another answer makes their structure concrete.
+fn collect_required_leaf_questions(
+    values: &Value,
+    path: &str,
+    schema: &Value,
+    questions: &mut Vec<JourneyQuestion>,
+    depth: usize,
+) {
+    if depth >= 16 {
+        return;
+    }
+    let Some(required) = schema["required"].as_array() else {
+        return;
+    };
+    for name in required.iter().filter_map(Value::as_str) {
+        let escaped = name.replace('~', "~0").replace('/', "~1");
+        let child_path = format!("{path}/{escaped}");
+        if values.pointer(&child_path).is_some()
+            || questions.iter().any(|question| question.id == child_path)
+        {
+            continue;
+        }
+        let Some((child_schema, _)) = sdk_field_schema(&child_path) else {
+            continue;
+        };
+        let choices = finite_choices(&child_schema);
+        if scalar_question(&child_schema, &choices) {
+            questions.push(JourneyQuestion {
+                id: child_path,
+                reason: JourneyQuestionReason::Missing,
+                required: true,
+                choices,
+                suggestion: child_schema.get("default").cloned(),
+                schema: child_schema,
+            });
+        } else {
+            collect_required_leaf_questions(
+                values,
+                &child_path,
+                &child_schema,
+                questions,
+                depth + 1,
+            );
+        }
+    }
 }
 
 fn finite_choices(schema: &Value) -> Vec<Value> {

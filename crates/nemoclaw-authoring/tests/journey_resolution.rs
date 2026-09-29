@@ -15,6 +15,100 @@ fn minimum() -> PartialDocument {
 }
 
 #[test]
+fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["metadata"].as_object_mut().unwrap().remove("name");
+    values["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    values["spec"]["sandboxes"][0]["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("missing-leaves", base)
+        .start(&capabilities)
+        .unwrap();
+    for (path, value) in [
+        ("/metadata/name", "deployment"),
+        ("/spec/sandboxes/0/name", "sandbox"),
+        ("/spec/sandboxes/0/agent/name", "agent"),
+        ("/spec/sandboxes/0/agent/inference/routes/0/name", "primary"),
+        (
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            "nvidia/selected-model",
+        ),
+    ] {
+        let resolution = state.resolve(&capabilities).unwrap();
+        let question = resolution
+            .question(path)
+            .unwrap_or_else(|| panic!("missing {path}"));
+        assert_eq!(question.reason(), JourneyQuestionReason::Missing);
+        state
+            .answer(&capabilities, path, Some(json!(value)))
+            .unwrap();
+    }
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+}
+
+#[test]
+fn missing_object_parent_exposes_its_unconditional_required_fields() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("missing-agent", base)
+        .start(&capabilities)
+        .unwrap();
+    let name = "/spec/sandboxes/0/agent/name";
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(name)
+            .unwrap()
+            .reason(),
+        JourneyQuestionReason::Missing
+    );
+    state
+        .answer(&capabilities, name, Some(json!("primary")))
+        .unwrap();
+    assert_eq!(state.values().pointer(name), Some(&json!("primary")));
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_none()
+    );
+}
+
+#[test]
 fn sparse_journey_follows_nested_fabric_conditionals() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();

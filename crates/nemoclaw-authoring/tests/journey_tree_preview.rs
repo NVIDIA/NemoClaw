@@ -33,6 +33,8 @@ fn minimum_values_preview_shows_harness_branches_and_optional_omission() {
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
 
     assert!(tree.contains("/metadata/name"));
+    assert!(tree.contains("/spec/sandboxes/0/name"));
+    assert!(tree.contains("/spec/sandboxes/0/agent/name"));
     assert!(tree.contains("nvidia.fabric.openclaw"));
     assert!(tree.contains("/cli: omitted"));
     assert!(tree.contains("Other unresolved SDK constraints"));
