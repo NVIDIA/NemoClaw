@@ -83,7 +83,11 @@ export function createDefaultGooglechatTunnelGateOptions(
       const { startAll, stopCloudflared } = loadServices();
       const { startGooglechatWebhookProxy, stopGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
-      stopCloudflared({ pidDir });
+      if (!stopCloudflared({ pidDir })) {
+        throw new Error(
+          "Google Chat tunnel cleanup is incomplete because cloudflared process identity is unavailable.",
+        );
+      }
       const proxyPort = await startGooglechatWebhookProxy(pidDir, dashboardPort);
       try {
         await startAll({
@@ -101,7 +105,11 @@ export function createDefaultGooglechatTunnelGateOptions(
       const { stopCloudflared } = loadServices();
       const { stopGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
-      stopCloudflared({ pidDir });
+      if (!stopCloudflared({ pidDir })) {
+        throw new Error(
+          "Google Chat tunnel cleanup is incomplete because cloudflared process identity is unavailable.",
+        );
+      }
       stopGooglechatWebhookProxy(pidDir);
     },
     getTunnelUrl: () => {

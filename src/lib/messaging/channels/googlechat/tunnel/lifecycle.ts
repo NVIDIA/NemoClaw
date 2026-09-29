@@ -22,7 +22,11 @@ export function stopGooglechatWebhookTunnel(
 ): string {
   const { services, webhookProxy } = deps;
   const pidDir = googlechatWebhookTunnelPidDir(services.resolveServicePidDir({ sandboxName }));
-  services.stopCloudflared({ pidDir });
+  if (!services.stopCloudflared({ pidDir })) {
+    throw new Error(
+      "Google Chat tunnel cleanup is incomplete because cloudflared process identity is unavailable.",
+    );
+  }
   webhookProxy.stopGooglechatWebhookProxy(pidDir);
   return pidDir;
 }

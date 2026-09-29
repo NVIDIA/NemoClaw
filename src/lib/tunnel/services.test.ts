@@ -283,6 +283,27 @@ describe("showStatus", () => {
     logSpy.mockRestore();
   });
 
+  it("does not show a stale tunnel URL when live PID identity is unavailable", () => {
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://stale.trycloudflare.com");
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({
+      pidDir,
+      processControl: {
+        isAlive: () => true,
+        commandLine: () => null,
+        signal: vi.fn(),
+      },
+    });
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("PID 4242, identity unavailable");
+    expect(output).toContain("restore process inspection access");
+    expect(output).not.toContain("Public URL");
+    expect(output).not.toContain("https://stale.trycloudflare.com");
+    logSpy.mockRestore();
+  });
+
   // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
   // asked for a "no cloudflared process; restart with ..." shape — a cause
   // phrase plus a single-command recovery. All three failure modes surface

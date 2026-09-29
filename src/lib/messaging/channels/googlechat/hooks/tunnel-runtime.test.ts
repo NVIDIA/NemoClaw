@@ -8,7 +8,7 @@ describe("Google Chat tunnel runtime", () => {
   it("targets a dedicated route-restricted proxy instead of the dashboard", async () => {
     const pidDir = "/tmp/nemoclaw-services-test-googlechat";
     const startAll = vi.fn(async () => undefined);
-    const stopCloudflared = vi.fn();
+    const stopCloudflared = vi.fn(() => true);
     const stopGooglechatWebhookProxy = vi.fn();
     const startGooglechatWebhookProxy = vi.fn(async () => 24680);
     const services = {
@@ -57,7 +57,7 @@ describe("Google Chat tunnel runtime", () => {
         readCloudflaredState: () => ({ kind: "running", pid: 123 }),
         resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
         startAll: async () => undefined,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -85,7 +85,7 @@ describe("Google Chat tunnel runtime", () => {
         startAll: async () => {
           throw new Error("cloudflared failed");
         },
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -103,5 +103,31 @@ describe("Google Chat tunnel runtime", () => {
     expect(stopGooglechatWebhookProxy).toHaveBeenCalledWith(
       "/tmp/nemoclaw-services-test-googlechat",
     );
+  });
+
+  it("preserves the route proxy when cloudflared cleanup is unverified", () => {
+    const stopGooglechatWebhookProxy = vi.fn();
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "https://restricted.trycloudflare.com",
+        readCloudflaredState: () => ({ kind: "unverified-pid-process", pid: 4242 }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll: async () => undefined,
+        stopCloudflared: () => false,
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: true,
+          port: 24680,
+          upstreamPort: 18789,
+        }),
+        startGooglechatWebhookProxy: async () => 24680,
+        stopGooglechatWebhookProxy,
+      }),
+      sandboxName: "test",
+    });
+
+    expect(() => options.stopTunnel?.()).toThrow("Google Chat tunnel cleanup is incomplete");
+    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
   });
 });

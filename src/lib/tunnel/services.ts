@@ -653,12 +653,20 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn(
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
-    info("Host services stopped; managed gateway not released.");
+    info(
+      cloudflaredCleanupComplete
+        ? "Host services stopped; managed gateway not released."
+        : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway was not released.",
+    );
     return finishOllamaCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
-    info("Host services stopped; managed gateway release was not confirmed.");
+    info(
+      cloudflaredCleanupComplete
+        ? "Host services stopped; managed gateway release was not confirmed."
+        : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway release was not confirmed.",
+    );
     return finishOllamaCleanup();
   }
 
@@ -688,10 +696,10 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
  * and unloads Ollama); enrollment that auto-started a tunnel needs a tunnel-only
  * stop to clean up without tearing down other services.
  */
-export function stopCloudflared(opts: ServiceOptions = {}): void {
+export function stopCloudflared(opts: ServiceOptions = {}): boolean {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared");
+  return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
 }
 
 /**
