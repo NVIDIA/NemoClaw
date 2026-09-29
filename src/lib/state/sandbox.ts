@@ -1401,6 +1401,13 @@ function scanNativeTarFilePayload(
     }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
+    // Installed third-party source can embed generated WASM/base64 payloads that
+    // randomly contain complete token-shaped byte sequences. It is not a
+    // credential authority, so scanning it cannot distinguish those bytes from
+    // a real token. Keep scanning dependency manifests and non-source files,
+    // while structured native authorities and bundled NemoClaw code remain
+    // covered below.
+    if (dependencySource) return false;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
     // the same field (or any other credential assignment) still fails closed.
@@ -1413,7 +1420,6 @@ function scanNativeTarFilePayload(
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
-        privateKeyHeader: !dependencySource,
       })
     ) {
       return true;
@@ -1470,10 +1476,9 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
           if (!shouldSkipNativeRawCredentialScan(fileName)) {
-            // Dependency and bundled runtime source contain symbols such as
-            // FILE_PATH_KEYS that look like credential assignments. They
-            // receive high-confidence scanning here; package manifests also
-            // receive a structure-aware scan below.
+            // Dependency source is not a credential authority and generated
+            // bundles can contain accidental token-shaped bytes. Package
+            // manifests still receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const dependencyTree = isNativeDependencyTreeEntry(entry);
             const violation = scanNativeTarFilePayload(

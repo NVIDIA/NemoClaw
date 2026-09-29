@@ -999,7 +999,7 @@ describe("complete native home persistence", () => {
     [
       "a dependency runtime symbol",
       "node_modules/example/dist/adapter.runtime.cjs",
-      'const sessionToken = "opaqueRuntimeFixtureZ1234567890";',
+      ["AKIA", "SITQQJHDQELIAYQ"].join(""),
     ],
   ])(
     "preserves %s without treating it as credential configuration",
