@@ -101,9 +101,11 @@ describe("final onboard flow phases", () => {
     const revalidateSandboxIdentity = vi.fn();
     const setupOpenclaw = vi.fn(async () => undefined);
     const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
     const [branchPhase] = createPhases("openclaw", [], {
       setupOpenclaw,
       waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
     });
     const session = createSession();
     session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
@@ -127,6 +129,9 @@ describe("final onboard flow phases", () => {
     expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
       "my-sandbox",
       "nemoclaw-19090",
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
     );
   });
 

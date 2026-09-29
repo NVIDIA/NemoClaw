@@ -24,6 +24,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     openclawReady: vi.fn(async () => false),
     controlPlaneReady: vi.fn(async () => true),
     openclawGatewayStarted: vi.fn(async () => true as boolean | null),
+    openclawGatewaySettled: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -48,6 +49,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       isOpenclawReady: calls.openclawReady,
       waitForSandboxControlPlaneReady: calls.controlPlaneReady,
       waitForStartedOpenclawGatewayProcess: calls.openclawGatewayStarted,
+      settleStartedOpenclawGatewayForConfiguration: calls.openclawGatewaySettled,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -412,7 +414,11 @@ describe("handleAgentSetupState", () => {
     const order: string[] = [];
     const { deps, calls } = createDeps({
       waitForStartedOpenclawGatewayProcess: vi.fn(async () => {
-        order.push("settled");
+        order.push("started");
+        return true;
+      }),
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => {
+        order.push("paired");
         return true;
       }),
       setupOpenclaw: vi.fn(async () => {
@@ -426,7 +432,7 @@ describe("handleAgentSetupState", () => {
       settleOpenclawStartupBeforeConfiguration: true,
     });
 
-    expect(order).toEqual(["settled", "configured"]);
+    expect(order).toEqual(["started", "paired", "configured"]);
     expect(calls.complete).toHaveBeenCalledOnce();
   });
 
@@ -442,6 +448,23 @@ describe("handleAgentSetupState", () => {
         settleOpenclawStartupBeforeConfiguration: true,
       }),
     ).rejects.toThrow(/startup did not settle before configuration/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("does not change external-image config before its gateway pairing settles (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => false),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/pairing did not settle before configuration/u);
 
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();

@@ -394,6 +394,12 @@ export const finalizationHandlerDeps = {
       .loadProcessRecovery()
       .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
   },
+  async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
+    const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
+    if (pairing.kind === "settled") return true;
+    console.error(`  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason)}`);
+    return false;
+  },
   async checkAndRecoverSandboxProcesses(
     name: string,
     options: { quiet: boolean },

@@ -39,6 +39,7 @@ export interface AgentSetupStateOptions<Agent> {
       sandboxName: string,
       gatewayName: string,
     ): Promise<boolean | null>;
+    settleStartedOpenclawGatewayForConfiguration(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -191,6 +192,14 @@ export async function handleAgentSetupState<Agent>({
     ) {
       throw new Error(
         `External-image OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
+      );
+    }
+    if (
+      settleOpenclawStartupBeforeConfiguration &&
+      !(await deps.settleStartedOpenclawGatewayForConfiguration(sandboxName))
+    ) {
+      throw new Error(
+        `External-image OpenClaw pairing did not settle before configuration for sandbox '${sandboxName}'.`,
       );
     }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);

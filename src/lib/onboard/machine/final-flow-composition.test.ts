@@ -39,6 +39,8 @@ describe("createFinalOnboardFlowPhases", () => {
         waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
         waitForStartedOpenclawGatewayProcess:
           finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
+        settleStartedOpenclawGatewayForConfiguration:
+          finalizationHandlerDeps.settleStartedOpenclawGatewayForConfiguration,
       },
       policiesDeps: {},
       finalization: {},
