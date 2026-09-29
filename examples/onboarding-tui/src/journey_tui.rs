@@ -267,6 +267,11 @@ impl JourneyWizard {
                 },
                 question.id()
             )));
+            if let Some(cause) = question.reopened_because() {
+                lines.push(Line::from(format!(
+                    "Recheck this answer because {cause} changed."
+                )));
+            }
             lines.push(Line::from(""));
             if question.choices().is_empty() || self.custom_answer {
                 let input = if self.input.is_empty() {

@@ -1782,6 +1782,15 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     state
         .answer(&capabilities, preset, Some(json!("anthropic")))
         .unwrap();
+    let reopened = state.resolve(&capabilities).unwrap();
+    assert_eq!(
+        reopened.question(model).unwrap().reopened_because(),
+        Some(preset)
+    );
+    assert_eq!(
+        reopened.question(api).unwrap().reopened_because(),
+        Some(preset)
+    );
     assert_eq!(
         state
             .values()
@@ -1997,7 +2006,10 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         .answer(&capabilities, api, Some(json!("openai-responses")))
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();
-    assert!(resolved.question(model).is_some());
+    assert_eq!(
+        resolved.question(model).unwrap().reopened_because(),
+        Some(api)
+    );
     assert!(resolved.question(name).is_none());
     assert_eq!(
         state.values().pointer(model),
@@ -2013,12 +2025,14 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
             Some(json!("https://new.example.com/v1")),
         )
         .unwrap();
-    assert!(
+    assert_eq!(
         state
             .resolve(&capabilities)
             .unwrap()
             .question(model)
-            .is_some()
+            .unwrap()
+            .reopened_because(),
+        Some(endpoint)
     );
 }
 

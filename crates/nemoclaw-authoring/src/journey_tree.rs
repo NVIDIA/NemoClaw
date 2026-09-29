@@ -82,8 +82,13 @@ impl TreePrinter<'_> {
                 } else {
                     ""
                 };
+                let reopened = question
+                    .reopened_because()
+                    .map_or_else(String::new, |cause| {
+                        format!(" (recheck because {} changed)", display_id(cause))
+                    });
                 self.lines.push(format!(
-                    "{indent}{}: {value}{}{invalid}",
+                    "{indent}{}: {value}{}{invalid}{reopened}",
                     display_id(question.id()),
                     suggestion(question.suggestion())
                 ));

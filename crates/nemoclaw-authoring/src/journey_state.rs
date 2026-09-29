@@ -52,6 +52,7 @@ pub enum JourneyQuestionKind {
 pub struct JourneyQuestion {
     id: String,
     reason: JourneyQuestionReason,
+    reopened_because: Option<String>,
     required: bool,
     choices: Vec<Value>,
     kind: JourneyQuestionKind,
@@ -65,6 +66,10 @@ impl JourneyQuestion {
     }
     pub fn reason(&self) -> JourneyQuestionReason {
         self.reason
+    }
+    /// The earlier answer that caused an accepted decision to reopen.
+    pub fn reopened_because(&self) -> Option<&str> {
+        self.reopened_because.as_deref()
     }
     pub fn required(&self) -> bool {
         self.required
@@ -158,6 +163,7 @@ pub struct JourneyState {
     definition: JourneyDefinition,
     values: Value,
     accepted: BTreeSet<String>,
+    reopened_by: BTreeMap<String, String>,
     selected_forms: BTreeMap<String, String>,
     omitted: BTreeSet<String>,
     inactive_settings: BTreeMap<String, Value>,
@@ -183,6 +189,7 @@ impl JourneyState {
             definition,
             values,
             accepted: BTreeSet::new(),
+            reopened_by: BTreeMap::new(),
             selected_forms: BTreeMap::new(),
             omitted: BTreeSet::new(),
             inactive_settings: BTreeMap::new(),
@@ -459,6 +466,7 @@ impl JourneyState {
         {
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: NAME.into(),
                 reason: if invalid_name {
                     JourneyQuestionReason::InvalidSupplied
@@ -506,6 +514,7 @@ impl JourneyState {
             if value.is_none() || !valid || !self.accepted.contains(field) {
                 questions.push(JourneyQuestion {
                     kind: JourneyQuestionKind::Field,
+                    reopened_because: None,
                     id: field.clone(),
                     reason: if value.is_some() && !valid {
                         JourneyQuestionReason::InvalidSupplied
@@ -568,6 +577,7 @@ impl JourneyState {
             }
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: issue.path().into(),
                 reason: if issue.kind() == PartialIssueKind::Missing {
                     JourneyQuestionReason::Missing
@@ -594,6 +604,7 @@ impl JourneyState {
                 let value = self.values.pointer(&path);
                 questions.push(JourneyQuestion {
                     kind: JourneyQuestionKind::InferenceModel,
+                    reopened_because: None,
                     id: path,
                     reason: if value.is_some() {
                         JourneyQuestionReason::ExplicitAsk
@@ -635,6 +646,7 @@ impl JourneyState {
                     if !choices.is_empty() {
                         questions.push(JourneyQuestion {
                             kind: JourneyQuestionKind::Field,
+                            reopened_because: None,
                             id: ROUTE_SELECTION.into(),
                             reason: JourneyQuestionReason::Missing,
                             required: true,
@@ -658,6 +670,7 @@ impl JourneyState {
                 .map(|preset| Value::String(preset.id().into()));
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: INFERENCE_PRESET.into(),
                 reason: if suggestion.is_some() {
                     JourneyQuestionReason::ExplicitAsk
@@ -695,6 +708,7 @@ impl JourneyState {
                 let value = self.values.pointer(&path);
                 questions.push(JourneyQuestion {
                     kind: JourneyQuestionKind::Field,
+                    reopened_because: None,
                     id: path,
                     reason: if value.is_some() {
                         JourneyQuestionReason::ExplicitAsk
@@ -730,6 +744,7 @@ impl JourneyState {
                 .0;
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: endpoint.clone(),
                 reason: JourneyQuestionReason::ExplicitAsk,
                 required: true,
@@ -791,6 +806,7 @@ impl JourneyState {
             }
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: HARNESS.into(),
                 reason: if chosen.is_none() {
                     JourneyQuestionReason::Missing
@@ -847,6 +863,7 @@ impl JourneyState {
                 {
                     questions.push(JourneyQuestion {
                         kind: JourneyQuestionKind::Field,
+                        reopened_because: None,
                         id,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
@@ -887,6 +904,7 @@ impl JourneyState {
                 }
                 questions.push(JourneyQuestion {
                     kind: JourneyQuestionKind::Field,
+                    reopened_because: None,
                     id: field.path,
                     reason: JourneyQuestionReason::ExplicitAsk,
                     required: field.required,
@@ -930,6 +948,7 @@ impl JourneyState {
                 } else if !valid || !accepted {
                     questions.push(JourneyQuestion {
                         kind: JourneyQuestionKind::Field,
+                        reopened_because: None,
                         id: field.path,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
@@ -987,6 +1006,9 @@ impl JourneyState {
             && let Some(model) = self.route_model_path()
         {
             questions.retain(|question| question.id != model);
+        }
+        for question in &mut questions {
+            question.reopened_because = self.reopened_by.get(question.id()).cloned();
         }
         questions.sort_by_key(|question| {
             (
@@ -1177,7 +1199,7 @@ impl JourneyState {
             if previous != candidate.values.pointer(id).cloned()
                 && let Some(provider) = provider_for_dependency
             {
-                candidate.reopen_models_for_provider(&provider);
+                candidate.reopen_models_for_provider(&provider, id);
             }
             if id == "/spec/gateway/engine" {
                 candidate.generated_gateway_engine = false;
@@ -1214,6 +1236,7 @@ impl JourneyState {
             return Err(diagnostic("journey", "This question is not supported."));
         }
         candidate.accepted.insert(id.into());
+        candidate.reopened_by.remove(id);
         if id == INFERENCE_PRESET
             && let Some(route) = candidate.selected_route
         {
@@ -1445,7 +1468,7 @@ impl JourneyState {
         crate::settings::put(settings, path, value)
     }
 
-    fn reopen_models_for_provider(&mut self, provider: &str) {
+    fn reopen_models_for_provider(&mut self, provider: &str, cause: &str) {
         let Some(routes_path) = routes_path(&self.values) else {
             return;
         };
@@ -1462,13 +1485,19 @@ impl JourneyState {
             })
             .collect::<Vec<_>>();
         for index in route_indexes {
-            self.accepted
-                .remove(&format!("{routes_path}/{index}/overrides/model"));
+            let model = format!("{routes_path}/{index}/overrides/model");
+            self.reopen_accepted(&model, cause);
             self.completed_routes.remove(&index);
             self.accepted_model_settings
                 .retain(|(route, _)| *route != index);
             self.omitted_model_settings
                 .retain(|(route, _)| *route != index);
+        }
+    }
+
+    fn reopen_accepted(&mut self, field: &str, cause: &str) {
+        if self.accepted.remove(field) || self.reopened_by.contains_key(field) {
+            self.reopened_by.insert(field.into(), cause.into());
         }
     }
 
@@ -1562,14 +1591,14 @@ impl JourneyState {
                 endpoint_path,
                 format!("{provider_path}/credential/env"),
             ] {
-                self.accepted.remove(&field);
+                self.reopen_accepted(&field, INFERENCE_PRESET);
                 self.omitted.remove(&field);
             }
             for field in self.accepted.clone() {
                 if field.starts_with('/')
                     && before_values.pointer(&field) != self.values.pointer(&field)
                 {
-                    self.accepted.remove(&field);
+                    self.reopen_accepted(&field, INFERENCE_PRESET);
                     self.omitted.remove(&field);
                 }
             }
@@ -1642,7 +1671,6 @@ impl JourneyState {
         };
         self.put_sdk_field("/spec/gateway/engine", Some(Value::String(engine.into())))?;
         self.generated_gateway_engine = true;
-        self.accepted.remove("/spec/gateway/engine");
         Ok(())
     }
 }
@@ -1732,6 +1760,7 @@ fn collect_required_leaf_questions(
                 if !questions.iter().any(|question| question.id == choice_path) {
                     questions.push(JourneyQuestion {
                         kind: JourneyQuestionKind::Field,
+                        reopened_because: None,
                         id: choice_path,
                         reason: if supplied.is_some() {
                             JourneyQuestionReason::InvalidSupplied
@@ -1789,6 +1818,7 @@ fn collect_required_leaf_questions(
                     if scalar_question(&child_schema, &choices) {
                         questions.push(JourneyQuestion {
                             kind: JourneyQuestionKind::Field,
+                            reopened_because: None,
                             id: child_path,
                             reason: if supplied.is_some() {
                                 JourneyQuestionReason::InvalidSupplied
@@ -1817,6 +1847,7 @@ fn collect_required_leaf_questions(
             if !questions.iter().any(|question| question.id == id) {
                 questions.push(JourneyQuestion {
                     kind: JourneyQuestionKind::StructuralForm,
+                    reopened_because: None,
                     id,
                     reason: JourneyQuestionReason::Missing,
                     required: true,
@@ -1850,6 +1881,7 @@ fn collect_required_leaf_questions(
         if scalar_question(&child_schema, &choices) {
             questions.push(JourneyQuestion {
                 kind: JourneyQuestionKind::Field,
+                reopened_because: None,
                 id: child_path,
                 reason: if supplied.is_some() {
                     JourneyQuestionReason::InvalidSupplied
