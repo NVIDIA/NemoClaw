@@ -304,6 +304,8 @@ export interface Session {
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
   routerPid: number | null;
+  /** Host port last used by the managed Model Router; retained for exact cleanup. */
+  routerPort: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
@@ -375,6 +377,7 @@ export interface SessionUpdates {
   compatibleEndpointReasoningEffort?: ReasoningEffort | null;
   nimContainer?: string | null;
   routerPid?: number;
+  routerPort?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
@@ -568,6 +571,11 @@ function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMe
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readTcpPort(value: SessionJsonValue | undefined): number | null {
+  const port = readPositiveInteger(value);
+  return port !== null && port <= 65535 ? port : null;
 }
 
 function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
@@ -1022,6 +1030,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
+    routerPort: readTcpPort(overrides.routerPort),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(
@@ -1161,6 +1170,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     compatibleEndpointReasoningEffort,
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
+    routerPort: readTcpPort(data.routerPort),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
@@ -1729,6 +1739,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     updates.routerPid > 0
   ) {
     safe.routerPid = updates.routerPid;
+  }
+  if (
+    typeof updates.routerPort === "number" &&
+    Number.isInteger(updates.routerPort) &&
+    updates.routerPort > 0 &&
+    updates.routerPort <= 65535
+  ) {
+    safe.routerPort = updates.routerPort;
   }
   if (typeof updates.routerCredentialHash === "string") {
     safe.routerCredentialHash = updates.routerCredentialHash;

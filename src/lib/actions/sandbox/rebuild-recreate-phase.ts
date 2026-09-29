@@ -172,6 +172,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
           ? sessionBefore?.migratedLegacyValueHashes
           : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
+        routerPort:
+          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
         // The inner resume compares its requested host mounts against this
