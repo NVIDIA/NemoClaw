@@ -97,14 +97,6 @@ function ensurePidDir(pidDir: string): void {
   chmodSync(pidDir, 0o700);
 }
 
-function readPid(pidDir: string, name: string): number | null {
-  const pidFile = join(pidDir, `${name}.pid`);
-  if (!existsSync(pidFile)) return null;
-  const raw = readFileSync(pidFile, "utf-8").trim();
-  const pid = Number(raw);
-  return Number.isFinite(pid) && pid > 0 ? pid : null;
-}
-
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -124,7 +116,8 @@ export type CloudflaredState =
   | { kind: "running"; pid: number }
   | { kind: "stopped" }
   | { kind: "stale-pid-file" }
-  | { kind: "stale-pid-process"; pid: number };
+  | { kind: "stale-pid-process"; pid: number }
+  | { kind: "unverified-pid-process"; pid: number };
 
 function readProcessCommandLine(pid: number): string | null {
   if (process.platform === "win32") {
@@ -293,7 +286,10 @@ export function readCloudflaredState(
     return { kind: "stale-pid-process", pid };
   }
   const cmdline = pc.commandLine(pid);
-  if (cmdline === null || !commandLineNamesCloudflared(cmdline)) {
+  if (cmdline === null) {
+    return { kind: "unverified-pid-process", pid };
+  }
+  if (!commandLineNamesCloudflared(cmdline)) {
     return { kind: "stale-pid-process", pid };
   }
   return { kind: "running", pid };
@@ -337,6 +333,12 @@ function startService(
   const state = readCloudflaredState(pidDir, pc);
   if (state.kind === "running") {
     info(`${name} already running (PID ${String(state.pid)})`);
+    return;
+  }
+  if (state.kind === "unverified-pid-process") {
+    warn(
+      `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to start another tunnel`,
+    );
     return;
   }
 
@@ -386,19 +388,23 @@ function stopService(
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
 ): void {
-  const pid = readPid(pidDir, name);
-  if (pid === null) {
+  const state = readCloudflaredState(pidDir, pc);
+  if (state.kind === "stopped") {
     info(`${name} was not running`);
     return;
   }
-
-  // A dead PID, or a live PID recycled to a non-cloudflared process, means our
-  // service is not running. Drop the stale pid file without signalling.
-  if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
+  if (state.kind === "stale-pid-file" || state.kind === "stale-pid-process") {
     info(`${name} was not running`);
     removePid(pidDir, name);
     return;
   }
+  if (state.kind === "unverified-pid-process") {
+    warn(
+      `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to signal it`,
+    );
+    return;
+  }
+  const pid = state.pid;
 
   // Send SIGTERM
   try {
@@ -487,6 +493,12 @@ export function showStatus(opts: ServiceOptions = {}): void {
       console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID ${String(state.pid)})`);
       console.log(
         `      no cloudflared process (PID ${String(state.pid)} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
+    case "unverified-pid-process":
+      console.log(`  ${YELLOW}●${NC} cloudflared  (PID ${String(state.pid)}, unverified)`);
+      console.log(
+        `      process identity is unavailable; retry after restoring process inspection access`,
       );
       break;
   }

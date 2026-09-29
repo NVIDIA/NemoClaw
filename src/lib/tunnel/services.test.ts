@@ -440,7 +440,7 @@ describe("startAll", () => {
     expect(() => process.kill(process.pid, 0)).not.toThrow();
   });
 
-  it("replaces a live PID when its process identity cannot be read", async () => {
+  it("preserves a live PID when its process identity cannot be read", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
     const fakeCloudflared = join(binDir, "cloudflared");
@@ -466,10 +466,11 @@ describe("startAll", () => {
 
     await startAll({ pidDir, dashboardPort: 12345, processControl });
 
-    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(replacementPid).not.toBe(4242);
-    expect(output).toContain("https://fresh.trycloudflare.com");
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("process identity is unavailable for PID 4242");
+    expect(output).toContain("refusing to start another tunnel");
+    expect(output).not.toContain("https://fresh.trycloudflare.com");
     expect(output).not.toContain("https://stale.trycloudflare.com");
     expect(signals).toEqual([]);
   });
@@ -516,6 +517,16 @@ describe("readCloudflaredState", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
     const state = readCloudflaredState(pidDir);
     expect(state.kind).toBe("stale-pid-process");
+  });
+
+  it("returns unverified-pid-process when a live PID identity cannot be read", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => null,
+      signal: () => {},
+    });
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
   });
 });
 
@@ -609,6 +620,24 @@ describe("stopAll", () => {
       expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
     },
   );
+
+  it("preserves and does not signal a live PID when identity cannot be read", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: [null],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+  });
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({

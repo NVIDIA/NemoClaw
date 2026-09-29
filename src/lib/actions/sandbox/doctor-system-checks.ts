@@ -157,6 +157,16 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
+function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `PID ${pid}, identity unavailable`,
+    hint: "process identity is unavailable; retry after restoring process inspection access",
+  };
+}
+
 export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
   const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
   switch (state.kind) {
@@ -166,6 +176,8 @@ export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
       return staleCloudflaredPidFileCheck();
     case "stale-pid-process":
       return staleCloudflaredPidCheck(state.pid);
+    case "unverified-pid-process":
+      return unverifiedCloudflaredPidCheck(state.pid);
     case "running":
       return {
         group: "Local services",
