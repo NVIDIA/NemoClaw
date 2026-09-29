@@ -70,11 +70,13 @@ below.
 If the trusted local validation machinery cannot be established, do not execute the changed
 validator or install its dependency graph into a credentialed contributor environment. Preserve the
 implementation's focused test evidence, publish the exact commit as a draft through the guarded
-publication method without invoking changed local hooks, and rely on the canonical PR workflow's
-trusted-base action implementations in its read-only token context. Disclose the skipped local
-validation, the differing machinery, and the canonical base SHA in `Verification`. This fallback
-needs no additional publication approval. Stop only when canonical PR validation lacks a trusted,
-read-only path for the candidate or when another publication gate independently fails.
+publication method without invoking changed local hooks, and rely on a canonical-base workflow job
+that has no effective write permissions. Before publication, inspect the job's trigger, checkout
+refs, permissions, action implementations, and credential inputs at the canonical base SHA. The job
+must not use candidate-local actions. It must not pass credentials to candidate-controlled commands.
+Disclose the skipped local validation, the differing machinery, and the canonical base SHA in
+`Verification`. This fallback needs no additional publication approval. Stop when no canonical-base
+job meets these conditions or when another publication gate independently fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal
 `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication
