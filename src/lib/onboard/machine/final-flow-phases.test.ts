@@ -94,12 +94,15 @@ describe("final onboard flow phases", () => {
       "chat",
       true,
       "nemoclaw-19090",
+      undefined,
     );
   });
 
   it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
     const revalidateSandboxIdentity = vi.fn();
-    const setupOpenclaw = vi.fn(async () => undefined);
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
     const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
     const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
     const [branchPhase] = createPhases("openclaw", [], {
@@ -125,6 +128,7 @@ describe("final onboard flow phases", () => {
       "chat",
       true,
       "nemoclaw-19090",
+      expect.any(Function),
     );
     expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
       "my-sandbox",

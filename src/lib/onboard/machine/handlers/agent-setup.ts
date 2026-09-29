@@ -58,6 +58,7 @@ export interface AgentSetupStateOptions<Agent> {
       preferredInferenceApi?: string | null,
       initializeNativeInferenceRoute?: boolean,
       gatewayName?: string,
+      settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -194,14 +195,6 @@ export async function handleAgentSetupState<Agent>({
         `External-image OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
       );
     }
-    if (
-      settleOpenclawStartupBeforeConfiguration &&
-      !(await deps.settleStartedOpenclawGatewayForConfiguration(sandboxName))
-    ) {
-      throw new Error(
-        `External-image OpenClaw pairing did not settle before configuration for sandbox '${sandboxName}'.`,
-      );
-    }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
     await deps.setupOpenclaw(
       sandboxName,
@@ -211,6 +204,9 @@ export async function handleAgentSetupState<Agent>({
       preferredInferenceApi,
       initializeNativeInferenceRoute,
       agentSetupContext.gatewayName,
+      settleOpenclawStartupBeforeConfiguration
+        ? () => deps.settleStartedOpenclawGatewayForConfiguration(sandboxName)
+        : undefined,
     );
     revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(

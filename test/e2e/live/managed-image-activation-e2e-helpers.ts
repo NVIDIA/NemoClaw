@@ -1043,24 +1043,24 @@ async function qualifyExternalImage(
     } finally {
       replaceExternalImageReceipt(sandboxName, receipt);
     }
-
-    const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
-      artifactName: "external-image-openclaw-rebuild",
-      env,
-      redactionValues: [API_KEY],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    });
-    if (rebuild.exitCode === 0) {
-      await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
-        artifactNamePrefix: "external-image-openclaw-ready-after-rebuild",
-        env,
-      });
-      await runAgentTurn(sandbox, agent, sandboxName, "after", env);
-      rebuilt = true;
-    }
-    registryEntry = registryDocument().sandboxes?.[sandboxName];
-    receipt = registryEntry?.workload;
   }
+
+  const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+    artifactName: `external-image-${agent}-rebuild`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs: ONBOARD_TIMEOUT_MS,
+  });
+  if (rebuild.exitCode === 0) {
+    await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
+      artifactNamePrefix: `external-image-${agent}-ready-after-rebuild`,
+      env,
+    });
+    await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+    rebuilt = true;
+  }
+  registryEntry = registryDocument().sandboxes?.[sandboxName];
+  receipt = registryEntry?.workload;
 
   const destroy = await host.destroySandbox(sandboxName, {
     artifactName: `external-image-destroy-${agent}`,
@@ -1100,7 +1100,7 @@ async function qualifyExternalImage(
     retainedAfterDestroy:
       afterInspection.exitCode === 0 && retainedImageId !== "" && retainedImageId === imageId,
     rebuilt,
-    verified: verified && (agent !== "openclaw" || (identityDriftRejected && rebuilt)),
+    verified: verified && rebuilt && (agent !== "openclaw" || identityDriftRejected),
   };
 }
 
