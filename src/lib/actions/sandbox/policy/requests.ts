@@ -110,6 +110,12 @@ function reportError(
   } else if (error.kind === "unavailable" || error.kind === "timeout") {
     deps.error(`  Check that the sandbox is running with '${deps.cliName} ${sandboxName} status'.`);
   }
+  if (error.kind === "timeout" && action !== "read pending requests") {
+    // The gateway may still apply a change after the CLI gives up waiting.
+    deps.error(
+      `  It may still have gone through. Run '${requestsCommand(sandboxName, deps)}' before retrying.`,
+    );
+  }
   return { exitCode: 1 };
 }
 
@@ -255,7 +261,13 @@ export async function approveSandboxPolicyRequest(
         resolved.error("  Non-interactive approval requires explicit acknowledgement: pass --yes.");
         return { exitCode: 1 };
       }
-      const answer = await resolved.ask(`  Approve request '${safe(found.id)}'? [y/N]: `);
+      // Ctrl-D at the prompt means "no", same as an empty answer.
+      const answer = await resolved
+        .ask(`  Approve request '${safe(found.id)}'? [y/N]: `)
+        .catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException | null)?.code === "EOF") return "";
+          throw error;
+        });
       if (!answer.trim().toLowerCase().startsWith("y")) {
         resolved.log("  Cancelled. The request is still pending.");
         return { exitCode: 0 };

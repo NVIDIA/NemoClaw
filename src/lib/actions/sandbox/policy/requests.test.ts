@@ -188,6 +188,34 @@ describe("policy requests", () => {
     expect(lines.join("\n")).toContain("still pending");
   });
 
+  it("treats Ctrl-D at the prompt as no", async () => {
+    const eof = Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+    const { deps, host, lines, policyRequests } = harness([pending()], {
+      ask: async () => Promise.reject(eof),
+    });
+
+    await expect(
+      approveSandboxPolicyRequest("alpha", { requestId: "chunk-1" }, host, deps),
+    ).resolves.toEqual({ exitCode: 0 });
+
+    expect(policyRequests.approve).not.toHaveBeenCalled();
+    expect(lines.join("\n")).toContain("still pending");
+  });
+
+  it("says to re-check pending requests when an approval times out", async () => {
+    const { deps, host, errors, policyRequests } = harness();
+    policyRequests.approve.mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "timeout", message: "OpenShell did not respond in time." },
+    } as never);
+
+    await expect(
+      approveSandboxPolicyRequest("alpha", { requestId: "chunk-1", yes: true }, host, deps),
+    ).resolves.toEqual({ exitCode: 1 });
+
+    expect(errors.join("\n")).toContain("nemoclaw alpha policy requests' before retrying");
+  });
+
   it("requires --yes when it cannot prompt", async () => {
     const { deps, host, errors, policyRequests } = harness([pending()], {
       isNonInteractive: () => true,
