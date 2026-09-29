@@ -17,7 +17,7 @@ use crate::{
     SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
-        HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, SETTINGS, adapter_field,
+        HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
         adapter_schema, sdk_field_schema,
     },
 };
@@ -152,8 +152,8 @@ pub struct JourneyState {
 impl JourneyState {
     pub(crate) fn new(definition: JourneyDefinition) -> Self {
         let values = definition.base.supplied().clone();
-        let selected_route = (values
-            .pointer(ROUTES)
+        let selected_route = (routes_path(&values)
+            .and_then(|path| values.pointer(&path))
             .and_then(Value::as_array)
             .map_or(0, Vec::len)
             <= 1)
@@ -181,7 +181,7 @@ impl JourneyState {
     pub fn current_route(&self) -> Option<&str> {
         let index = self.selected_route?;
         self.values
-            .pointer(&format!("{ROUTES}/{index}/name"))
+            .pointer(&format!("{}/{index}/name", routes_path(&self.values)?))
             .and_then(Value::as_str)
     }
 
@@ -366,14 +366,20 @@ impl JourneyState {
 
     fn route_model_path(&self) -> Option<String> {
         let index = self.selected_route?;
-        Some(format!("{ROUTES}/{index}/overrides/model"))
+        Some(format!(
+            "{}/{index}/overrides/model",
+            routes_path(&self.values)?
+        ))
     }
 
     fn route_provider(&self) -> Option<(usize, usize)> {
         let route = self.selected_route?;
         let reference = self
             .values
-            .pointer(&format!("{ROUTES}/{route}/providerRef"))?
+            .pointer(&format!(
+                "{}/{route}/providerRef",
+                routes_path(&self.values)?
+            ))?
             .as_str()?;
         let providers = self
             .values
@@ -516,7 +522,9 @@ impl JourneyState {
                     schema,
                 });
             }
-            if let Some(routes) = self.values.pointer(ROUTES).and_then(Value::as_array)
+            if let Some(routes) = routes_path(&self.values)
+                .and_then(|path| self.values.pointer(&path))
+                .and_then(Value::as_array)
                 && routes.len() > 1
             {
                 let current_pending = self
@@ -643,7 +651,8 @@ impl JourneyState {
             });
         }
 
-        let chosen = self.values.pointer(HARNESS).and_then(Value::as_str);
+        let active_harness = harness_path(&self.values);
+        let chosen = harness_kind(&self.values);
         let harness_open = chosen.is_none()
             || (self.definition.ask.contains(HARNESS) && !self.accepted.contains(HARNESS));
         let reachable: Vec<&str> = if harness_open {
@@ -690,7 +699,7 @@ impl JourneyState {
                     .iter()
                     .map(|harness| Value::String(harness.as_str().into()))
                     .collect(),
-                suggestion: self.values.pointer(HARNESS).cloned(),
+                suggestion: chosen.map(|kind| Value::String(kind.into())),
                 schema: serde_json::json!({"type":"string"}),
             });
         } else if let Some(harness) = chosen {
@@ -700,7 +709,12 @@ impl JourneyState {
             };
             let settings = self
                 .values
-                .pointer(SETTINGS)
+                .pointer(&format!(
+                    "{}/settings",
+                    active_harness
+                        .as_deref()
+                        .expect("chosen harness has an owner")
+                ))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
             let mut fields = Vec::new();
@@ -959,11 +973,14 @@ impl JourneyState {
                 .as_ref()
                 .and_then(Value::as_str)
                 .expect("advertised route");
-            let routes = candidate
-                .values
-                .pointer(ROUTES)
-                .and_then(Value::as_array)
-                .ok_or_else(|| diagnostic("journey", "Inference routes are unavailable."))?;
+            let routes =
+                candidate
+                    .values
+                    .pointer(&routes_path(&candidate.values).ok_or_else(|| {
+                        diagnostic("journey", "Inference routes are unavailable.")
+                    })?)
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| diagnostic("journey", "Inference routes are unavailable."))?;
             let index = routes
                 .iter()
                 .position(|route| route["name"] == name)
@@ -982,7 +999,7 @@ impl JourneyState {
             .expect("advertised preset");
             candidate.put_inference_preset(preset)?;
         } else if let Some((adapter, pointer)) = adapter_field(id) {
-            if candidate.values.pointer(HARNESS).and_then(Value::as_str) != Some(adapter) {
+            if harness_kind(&candidate.values) != Some(adapter) {
                 return Err(diagnostic("journey", "This adapter setting is not active."));
             }
             candidate.put_setting(pointer, value.clone())?;
@@ -1095,26 +1112,31 @@ impl JourneyState {
             previous.accepted_presets.remove(&route);
         }
         previous.omitted.remove(id);
-        let suggestion = if id == NAME || id == HARNESS {
+        let suggestion = if id == NAME {
             let value = previous.values.pointer(id).cloned();
-            if id == NAME {
-                previous
-                    .values
-                    .pointer_mut("/metadata")
-                    .and_then(Value::as_object_mut)
-                    .ok_or_else(|| diagnostic("journey", "Metadata must be an object."))?
-                    .remove("name");
-            } else {
-                previous
-                    .values
-                    .pointer_mut("/spec/sandboxes/0/harness")
-                    .and_then(Value::as_object_mut)
-                    .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?
-                    .remove("kind");
-            }
+            previous
+                .values
+                .pointer_mut("/metadata")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| diagnostic("journey", "Metadata must be an object."))?
+                .remove("name");
+            value
+        } else if id == HARNESS {
+            let owner_path = harness_path(&previous.values)
+                .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
+            let value = previous
+                .values
+                .pointer(&format!("{owner_path}/kind"))
+                .cloned();
+            previous
+                .values
+                .pointer_mut(&owner_path)
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?
+                .remove("kind");
             value
         } else if let Some((adapter, pointer)) = adapter_field(id) {
-            if previous.values.pointer(HARNESS).and_then(Value::as_str) != Some(adapter) {
+            if harness_kind(&previous.values) != Some(adapter) {
                 return Err(diagnostic(
                     "journey",
                     "This question is no longer applicable.",
@@ -1122,7 +1144,13 @@ impl JourneyState {
             }
             let value = previous
                 .values
-                .pointer(&format!("{SETTINGS}{pointer}"))
+                .pointer(&format!(
+                    "{}{pointer}",
+                    settings_path(&previous.values).ok_or_else(|| diagnostic(
+                        "journey",
+                        "Harness settings are unavailable."
+                    ))?
+                ))
                 .cloned();
             previous.put_setting(pointer, None)?;
             value
@@ -1174,25 +1202,30 @@ impl JourneyState {
             .as_str()
             .ok_or_else(|| diagnostic("journey", "Harness must be a string."))?
             .to_owned();
-        let previous = self
-            .values
-            .pointer(HARNESS)
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let previous = harness_kind(&self.values).map(str::to_owned);
         if previous.as_deref() != Some(&next)
             && let Some(old) = &previous
-            && let Some(settings) = self.values.pointer(SETTINGS)
+            && let Some(settings) =
+                settings_path(&self.values).and_then(|path| self.values.pointer(&path))
         {
             self.inactive_settings.insert(old.clone(), settings.clone());
         }
-        let sandbox = self
-            .values
-            .pointer_mut("/spec/sandboxes/0")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| diagnostic("journey", "The v1 journey requires one sandbox object."))?;
-        let harness = sandbox
-            .entry("harness")
-            .or_insert_with(|| Value::Object(Map::new()));
+        let owner_path = harness_path(&self.values)
+            .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
+        let harness = if owner_path == "/spec/sandboxes/0/harness" {
+            self.values
+                .pointer_mut("/spec/sandboxes/0")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| {
+                    diagnostic("journey", "The v1 journey requires one sandbox object.")
+                })?
+                .entry("harness")
+                .or_insert_with(|| Value::Object(Map::new()))
+        } else {
+            self.values
+                .pointer_mut(&owner_path)
+                .ok_or_else(|| diagnostic("journey", "Referenced harness is unavailable."))?
+        };
         let harness = harness
             .as_object_mut()
             .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?;
@@ -1209,7 +1242,10 @@ impl JourneyState {
     fn put_setting(&mut self, pointer: &str, value: Option<Value>) -> Result<(), Diagnostics> {
         let harness = self
             .values
-            .pointer_mut("/spec/sandboxes/0/harness")
+            .pointer_mut(
+                &harness_path(&self.values)
+                    .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?,
+            )
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?;
         let settings = harness
@@ -1220,11 +1256,19 @@ impl JourneyState {
 
     fn put_native_field(&mut self, id: &str, value: Option<Value>) -> Result<(), Diagnostics> {
         let (root, path) = if let Some(path) = id.strip_prefix("workflow:") {
-            ("/spec/sandboxes/0/harness".to_owned(), path)
+            (
+                harness_path(&self.values)
+                    .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?,
+                path,
+            )
         } else if let Some(path) = id.strip_prefix("model:") {
             (
                 format!(
-                    "{ROUTES}/{}",
+                    "{}/{}",
+                    routes_path(&self.values).ok_or_else(|| diagnostic(
+                        "journey",
+                        "Inference routes are unavailable."
+                    ))?,
                     self.selected_route.ok_or_else(|| diagnostic(
                         "journey",
                         "Select a route before model settings."
@@ -1268,7 +1312,11 @@ impl JourneyState {
             )
         })?;
         let provider_path = format!("/spec/inferenceProviders/{provider_index}");
-        let route_path = format!("{ROUTES}/{route_index}");
+        let route_path = format!(
+            "{}/{route_index}",
+            routes_path(&self.values)
+                .ok_or_else(|| { diagnostic("journey", "Inference routes are unavailable.") })?
+        );
         let api_path = format!("{provider_path}/api");
         let endpoint_path = format!("{provider_path}/endpoint");
         let model_path = format!("{route_path}/overrides/model");
@@ -1437,15 +1485,47 @@ fn native_value<'a>(
     id: &str,
 ) -> Option<&'a Value> {
     if let Some(path) = id.strip_prefix("workflow:") {
-        values.pointer(&format!("/spec/sandboxes/0/harness/config/workflow{path}"))
+        values.pointer(&format!("{}/config/workflow{path}", harness_path(values)?))
     } else if let Some(path) = id.strip_prefix("model:") {
         values.pointer(&format!(
-            "{ROUTES}/{}/overrides/settings{path}",
+            "{}/{}/overrides/settings{path}",
+            routes_path(values)?,
             selected_route?
         ))
     } else {
         None
     }
+}
+
+fn routes_path(values: &Value) -> Option<String> {
+    let agent = values.pointer("/spec/sandboxes/0/agent")?;
+    if agent.get("inference").is_some() {
+        return Some(ROUTES.into());
+    }
+    let reference = agent.get("inferenceRef")?.as_str()?;
+    let escaped = reference.replace('~', "~0").replace('/', "~1");
+    let path = format!("/spec/inferences/{escaped}/routes");
+    values.pointer(&path).is_some().then_some(path)
+}
+
+fn harness_path(values: &Value) -> Option<String> {
+    let sandbox = values.pointer("/spec/sandboxes/0")?;
+    if let Some(reference) = sandbox.get("harnessRef").and_then(Value::as_str) {
+        let escaped = reference.replace('~', "~0").replace('/', "~1");
+        let path = format!("/spec/harnesses/{escaped}");
+        return values.pointer(&path).is_some().then_some(path);
+    }
+    Some("/spec/sandboxes/0/harness".into())
+}
+
+fn harness_kind(values: &Value) -> Option<&str> {
+    values
+        .pointer(&format!("{}/kind", harness_path(values)?))
+        .and_then(Value::as_str)
+}
+
+fn settings_path(values: &Value) -> Option<String> {
+    harness_path(values).map(|path| format!("{path}/settings"))
 }
 
 fn finite_choices(schema: &Value) -> Vec<Value> {

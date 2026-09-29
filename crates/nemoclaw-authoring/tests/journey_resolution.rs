@@ -572,6 +572,221 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
 }
 
 #[test]
+fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey() {
+    let capabilities = Capabilities::available();
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        &include_bytes!("../../../examples/multiple-providers.yaml")[..],
+    )
+    .unwrap();
+    document.spec.sandboxes.truncate(1);
+    let base =
+        PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    let mut state = JourneyDefinition::new("referenced-routes", base)
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/inferences/smart-and-fast/routes/1/overrides/model";
+    let original = state.values().clone();
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("route:selection")
+            .unwrap()
+            .choices(),
+        &[json!("smart"), json!("fast")]
+    );
+    state
+        .answer(&capabilities, "route:selection", Some(json!("fast")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(path)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, path, Some(json!("new-local-model")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer(path),
+        Some(&json!("new-local-model"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/inferences/smart-and-fast/routes/0"),
+        original.pointer("/spec/inferences/smart-and-fast/routes/0")
+    );
+}
+
+#[test]
+fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
+    let capabilities = Capabilities::available();
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+    )
+    .unwrap();
+    document.spec.sandboxes.truncate(1);
+    let base =
+        PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    let mut state = JourneyDefinition::new("referenced-harness", base)
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap();
+    let field = "adapter:nvidia.fabric.openclaw:/timeout_seconds";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(field)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, field, Some(json!(301)))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/harnesses/assistant/settings/timeout_seconds"),
+        Some(&json!(301))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness")
+            .is_none()
+    );
+}
+
+#[test]
+fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
+    let capabilities = Capabilities::available();
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+    )
+    .unwrap();
+    document.spec.sandboxes.truncate(1);
+    let base =
+        PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    let mut state = JourneyDefinition::new("referenced-harness-choice", base)
+        .ask(["/spec/sandboxes/0/harness/kind"])
+        .start(&capabilities)
+        .unwrap();
+    let field = "/spec/sandboxes/0/harness/kind";
+    state
+        .answer(&capabilities, field, Some(json!("nvidia.fabric.openclaw")))
+        .unwrap();
+    state
+        .answer(&capabilities, field, Some(json!("nvidia.fabric.hermes")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer("/spec/harnesses/assistant/kind"),
+        Some(&json!("nvidia.fabric.hermes"))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness")
+            .is_none()
+    );
+}
+
+#[test]
+fn referenced_model_settings_are_written_to_the_selected_route() {
+    let capabilities = Capabilities::available();
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+    )
+    .unwrap();
+    document.spec.sandboxes.truncate(1);
+    let base =
+        PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    let mut state = JourneyDefinition::new("referenced-model", base)
+        .ask([JourneyScope::RouteModels])
+        .ask([JourneyScope::NativeSettings])
+        .start(&capabilities)
+        .unwrap();
+    state
+        .answer(&capabilities, "route:selection", Some(json!("fast")))
+        .unwrap();
+    let field = "model:/reasoning_effort";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(field)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, field, Some(json!("low")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer(
+            "/spec/inferences/smart-and-fast/routes/1/overrides/settings/reasoning_effort"
+        ),
+        Some(&json!("low"))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference")
+            .is_none()
+    );
+}
+
+#[test]
+fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture.workflow-owner");
+    adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
+    adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
+    catalog.adapters = vec![adapter];
+    catalog.targets = vec![json!({"descriptor":{
+        "type":"workflow","id":"fixture.target","adapter_id":"fixture.workflow-owner",
+        "spec":{"settings_schema":{"type":"object","properties":{}}}
+    },"provenance":[]})];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+    )
+    .unwrap();
+    document.spec.sandboxes.truncate(1);
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["harnesses"]["assistant"]["kind"] = json!("fixture.workflow-owner");
+    let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("referenced-workflow", base)
+        .ask([JourneyScope::NativeSettings])
+        .start(&capabilities)
+        .unwrap();
+    let field = "workflow:/target_id";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(field)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, field, Some(json!("fixture.target")))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/harnesses/assistant/config/workflow/target_id"),
+        Some(&json!("fixture.target"))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness")
+            .is_none()
+    );
+}
+
+#[test]
 fn route_preset_changes_only_the_selected_external_provider() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(

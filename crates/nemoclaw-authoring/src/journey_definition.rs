@@ -439,8 +439,9 @@ impl JourneyDefinition {
 }
 
 /// Find a field in the SDK input schema without maintaining a parallel list of
-/// document constraints. The v1 journey supports existing object properties and
-/// array elements; conditional branches remain a separate resolution problem.
+/// document constraints. The v1 journey supports existing object properties,
+/// named map entries, and array elements; conditional branches remain a
+/// separate resolution problem.
 pub(crate) fn sdk_field_schema(path: &str) -> Option<(Value, bool)> {
     static SCHEMA: OnceLock<Value> = OnceLock::new();
     let root = SCHEMA.get_or_init(input_schema);
@@ -453,11 +454,19 @@ pub(crate) fn sdk_field_schema(path: &str) -> Option<(Value, bool)> {
             required = true;
         } else {
             let name = part.replace("~1", "/").replace("~0", "~");
-            required = node
-                .get("required")
-                .and_then(Value::as_array)
-                .is_some_and(|items| items.iter().any(|item| item == &name));
-            node = node.get("properties")?.get(&name)?;
+            if let Some(property) = node
+                .get("properties")
+                .and_then(|properties| properties.get(&name))
+            {
+                required = node
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| items.iter().any(|item| item == &name));
+                node = property;
+            } else {
+                node = node.get("additionalProperties")?;
+                required = true;
+            }
         }
     }
     let mut field = follow_ref(root, node)?.clone();
