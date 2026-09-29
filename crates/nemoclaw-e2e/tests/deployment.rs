@@ -1562,3 +1562,119 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
     );
     deployment.destroy(&cancel).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_credentials() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    document.spec.inference_providers[0].endpoint = "https://127.0.0.1:9/v1".into();
+    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
+        env: "NEMOCLAW_TEST_REDACTION_KEY".into(),
+    });
+    let input = directory.path().join("deployment.yaml");
+    let state = directory.path().join("state");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let invoke = |operation: &str, format: &str, secret: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        );
+        command
+            .args([
+                operation,
+                "-o",
+                format,
+                "--progress",
+                "plain",
+                "--verbose",
+                "--state-dir",
+            ])
+            .arg(&state)
+            .arg("--bundle")
+            .arg(&bundle)
+            .env("NEMOCLAW_TEST_REDACTION_KEY", secret)
+            .env("NEMOCLAW_TEST_MARKER_KEY", "redacted");
+        if operation == "apply" {
+            command.arg(&input).arg("--non-interactive");
+        }
+        command.output().unwrap()
+    };
+    let applied = invoke("apply", "json", "a");
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stdout)
+    );
+    let original = fixture.state.lock().unwrap().sandboxes.clone();
+    let effects = fixture.state.lock().unwrap().effects;
+    document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "changed-model".into();
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+    }));
+    for secret in ["a", "z", "lifecycle_adapter_start_failed"] {
+        for format in ["text", "json"] {
+            let failed = invoke("apply", format, secret);
+            assert_eq!(failed.status.code(), Some(1));
+            let stdout = String::from_utf8(failed.stdout).unwrap();
+            let stderr = String::from_utf8(failed.stderr).unwrap();
+            let message = if format == "json" {
+                let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+                assert_eq!(result["outcome"], "failed");
+                result["error"]["message"].as_str().unwrap().to_owned()
+            } else {
+                stderr.clone()
+            };
+            if secret.len() == 1 {
+                assert!(message.contains("child diagnostic withheld because a credential is too short for safe redaction"), "{message}");
+                assert!(
+                    !message.contains("[redacted]"),
+                    "short-value character matches must not escape"
+                );
+            } else {
+                assert!(message.contains("[redacted]"), "{message}");
+                assert!(
+                    message.contains("agent runtime is unavailable"),
+                    "{message}"
+                );
+                assert!(!message.contains(secret));
+            }
+            assert!(!message.contains("[[redacted]]"));
+            assert!(!stdout.contains("native-secret-must-not-escape"));
+            assert!(!stderr.contains("native-secret-must-not-escape"));
+            assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        }
+    }
+    fixture.state.lock().unwrap().configuration_error = None;
+    let recovered = invoke("apply", "json", "a");
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stdout)
+    );
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let destroyed = invoke("destroy", "json", "a");
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stdout)
+    );
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}

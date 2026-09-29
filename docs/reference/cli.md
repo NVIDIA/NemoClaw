@@ -125,6 +125,7 @@ Handled operation errors use the selected format: text on stderr, or one JSON re
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
 When available, `remainingState` describes the known effects and `help` supplies a next step.
 Diagnostics identify the operation, cause, and confirmed retention where available; they do not imply rollback or cleanup when resource state is unknown.
+Short protected values cause child error details and resource/download progress to be withheld; see [diagnostic disclosure](../security.md#diagnostic-disclosure).
 On Unix, SIGINT and SIGTERM cancel ongoing work, including credential prompts.
 Interruption preserves the recorded recovery boundary; follow [recovery](../usage.md#updates-and-recovery) before retrying.
 
