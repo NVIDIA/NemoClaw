@@ -4512,7 +4512,7 @@ EOF
 # v0.0.123 seeded an empty approvals file that OpenClaw cannot migrate.
 # Retain nonempty files for native migration, including malformed user data.
 remove_empty_legacy_exec_approvals() {
-  python3 -I - /sandbox/.openclaw <<'PY'
+  run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
 import os
 import stat
 import sys
