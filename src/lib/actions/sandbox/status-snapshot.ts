@@ -97,10 +97,12 @@ export function getSandboxStatusInferenceHealth(
   currentProvider: unknown,
   currentModel: unknown,
   probeProviderHealthImpl: ProbeProviderHealth = probeProviderHealth,
+  recordedEndpointUrl?: unknown,
 ): ProviderHealthStatus | null {
   if (!gatewayPresent || typeof currentProvider !== "string") return null;
   return probeProviderHealthImpl(currentProvider, {
     model: typeof currentModel === "string" ? currentModel : undefined,
+    ...(typeof recordedEndpointUrl === "string" ? { recordedEndpointUrl } : {}),
   });
 }
 
@@ -117,6 +119,7 @@ export function maybeGetSandboxStatusInferenceHealth(
   currentProvider: unknown,
   currentModel: unknown,
   probeProviderHealthImpl?: ProbeProviderHealth,
+  recordedEndpointUrl?: unknown,
 ): ProviderHealthStatus | null {
   if (suppressInferenceProbe) return null;
   return getSandboxStatusInferenceHealth(
@@ -124,6 +127,7 @@ export function maybeGetSandboxStatusInferenceHealth(
     currentProvider,
     currentModel,
     probeProviderHealthImpl,
+    recordedEndpointUrl,
   );
 }
 
@@ -637,6 +641,7 @@ export async function collectSandboxStatusSnapshot(
       (live && live.provider) || currentProvider,
       (live && live.model) || currentModel,
       opts.deps?.probeProviderHealthImpl,
+      sb?.endpointUrl,
     );
   } catch {
     providerHealth = {

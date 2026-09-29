@@ -22,6 +22,7 @@ import {
   createOpenclawSetup,
   isOpenclawGatewayReady,
 } from "./openclaw-setup";
+import { createInitialOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 
 describe("OpenClaw sandbox setup", () => {
   beforeEach(() => {
@@ -132,6 +133,7 @@ describe("OpenClaw sandbox setup", () => {
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
+      initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
@@ -154,6 +156,7 @@ describe("OpenClaw sandbox setup", () => {
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox: vi.fn(async () => undefined),
+      initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
       restartNativeGateway,
       shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
@@ -161,6 +164,43 @@ describe("OpenClaw sandbox setup", () => {
     await setup("spark-box", "model", "compatible-endpoint");
 
     expect(restartNativeGateway).not.toHaveBeenCalled();
+  });
+
+  it("initializes a fresh custom-image route before reporting setup success (#12033)", async () => {
+    const order: string[] = [];
+    const initializeOpenclawInferenceRoute = vi.fn(async () => {
+      order.push("initialize");
+    });
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox: vi.fn(async () => {
+        order.push("configure");
+      }),
+      initializeOpenclawInferenceRoute,
+      restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+      shouldRestartNativeGateway: () => false,
+    });
+
+    await setup(
+      "spark-box",
+      "selected/model",
+      "compatible-endpoint",
+      undefined,
+      "openai-completions",
+      true,
+      "nemoclaw-19090",
+    );
+
+    expect(order).toEqual(["configure", "initialize"]);
+    expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      "spark-box",
+      "selected/model",
+      "compatible-endpoint",
+      "openai-completions",
+      "nemoclaw-19090",
+      undefined,
+    );
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
@@ -172,6 +212,7 @@ describe("OpenClaw sandbox setup", () => {
         configureOpenclawSandbox: async () => {
           throw new Error("sandbox identity changed");
         },
+        initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
         restartNativeGateway: vi.fn(),
         shouldRestartNativeGateway: () => false,
       });
@@ -193,6 +234,7 @@ describe("OpenClaw sandbox setup", () => {
         step: vi.fn(),
         agentProductName: () => "OpenClaw",
         configureOpenclawSandbox: vi.fn(async () => undefined),
+        initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
         restartNativeGateway: vi.fn(async () => ({
           ok: false as const,
           failureLayer: "native agent command",
@@ -208,6 +250,77 @@ describe("OpenClaw sandbox setup", () => {
     } finally {
       log.mockRestore();
     }
+  });
+});
+
+describe("initial OpenClaw inference route", () => {
+  it("applies the selected route natively before a confirmed gateway restart (#12033)", async () => {
+    const order: string[] = [];
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    const config = { agents: {}, models: {} };
+    const route = {
+      providerKey: "inference",
+      primaryModelRef: "inference/selected/model",
+      inferenceBaseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    };
+    const patchOpenclawInferenceConfig = vi.fn(() => ({ route }));
+    const initialize = createInitialOpenclawInferenceRoute({
+      readOpenclawConfig: vi.fn((_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        return config;
+      }),
+      patchOpenclawInferenceConfig,
+      writeOpenclawInferenceConfigNatively: vi.fn((_sandbox, _config, _route, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        order.push("write");
+      }),
+      restartNativeGateway: vi.fn(async (_sandbox, gatewayName) => {
+        expect(gatewayName).toBe("nemoclaw-19090");
+        order.push("restart");
+        return { ok: true as const };
+      }),
+    });
+
+    await initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090");
+
+    expect(order).toEqual(["write", "restart"]);
+    expect(patchOpenclawInferenceConfig).toHaveBeenCalledExactlyOnceWith(
+      config,
+      "compatible-endpoint",
+      "selected/model",
+      null,
+      undefined,
+      "compatible-endpoint",
+      { effort: null, explicit: false },
+      false,
+    );
+  });
+
+  it("fails initialization when the gateway restart is not confirmed (#12033)", async () => {
+    const initialize = createInitialOpenclawInferenceRoute({
+      readOpenclawConfig: vi.fn(() => ({ agents: {}, models: {} })),
+      patchOpenclawInferenceConfig: vi.fn(() => ({
+        route: {
+          providerKey: "inference",
+          primaryModelRef: "inference/selected/model",
+          inferenceBaseUrl: "https://inference.local/v1",
+          inferenceApi: "openai-completions",
+          inferenceCompat: null,
+        },
+      })),
+      writeOpenclawInferenceConfigNatively: vi.fn(),
+      restartNativeGateway: vi.fn(async () => ({
+        ok: false as const,
+        failureLayer: "native agent command",
+        detail: "restart rejected",
+      })),
+    });
+
+    await expect(
+      initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090"),
+    ).rejects.toThrow(/restart failed after initial inference configuration.*restart rejected/u);
   });
 });
 

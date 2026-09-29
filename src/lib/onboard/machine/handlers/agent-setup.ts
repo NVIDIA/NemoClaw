@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute } from "../../openclaw/initial-inference-route";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface AgentSetupStateOptions<Agent> {
@@ -9,11 +10,13 @@ export interface AgentSetupStateOptions<Agent> {
   sandboxName: string;
   model: string;
   provider: string;
+  preferredInferenceApi: string | null;
   resume: boolean;
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
   managedOpenclawStartup?: boolean;
+  initializeNativeInferenceRoute?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
@@ -25,7 +28,7 @@ export interface AgentSetupStateOptions<Agent> {
       session: Session | null,
       context: unknown,
     ): Promise<void>;
-    agentSetupContext(): unknown;
+    agentSetupContext(): { gatewayName: string };
     ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
@@ -46,6 +49,9 @@ export interface AgentSetupStateOptions<Agent> {
       model: string,
       provider: string,
       revalidateSandboxIdentity?: (operation: string) => void,
+      preferredInferenceApi?: string | null,
+      initializeNativeInferenceRoute?: boolean,
+      gatewayName?: string,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -53,6 +59,14 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       revalidateSandboxIdentity?: (operation: string) => void,
       managedProfileApplied?: boolean,
+    ): Promise<void>;
+    initializeOpenclawInferenceRoute?(
+      sandboxName: string,
+      model: string,
+      provider: string,
+      preferredInferenceApi: string | null,
+      gatewayName: string,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -69,14 +83,29 @@ export async function handleAgentSetupState<Agent>({
   sandboxName,
   model,
   provider,
+  preferredInferenceApi,
   resume,
   session,
   hermesAuthMethod,
   hermesToolGateways,
   managedOpenclawStartup = false,
+  initializeNativeInferenceRoute = false,
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
+  const agentSetupContext = deps.agentSetupContext();
+  const initializeOpenclawInferenceRoute = async (): Promise<void> => {
+    if (!initializeNativeInferenceRoute) return;
+    await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+      sandboxName,
+      model,
+      provider,
+      preferredInferenceApi,
+      agentSetupContext.gatewayName,
+      revalidateSandboxIdentity,
+    );
+  };
+
   if (agent) {
     await deps.handleAgentSetup(
       sandboxName,
@@ -85,7 +114,7 @@ export async function handleAgentSetupState<Agent>({
       agent,
       resume,
       session,
-      deps.agentSetupContext(),
+      agentSetupContext,
     );
     // ensureAgentDashboardForward returns the port the dashboard forward was
     // actually established on, which may be bumped when the default is already
@@ -116,6 +145,7 @@ export async function handleAgentSetupState<Agent>({
       revalidateSandboxIdentity,
       managedOpenclawStartup === true,
     );
+    await initializeOpenclawInferenceRoute();
     revalidateSandboxIdentity?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
     await deps.recordStepComplete(
@@ -138,6 +168,7 @@ export async function handleAgentSetupState<Agent>({
       revalidateSandboxIdentity,
       true,
     );
+    await initializeOpenclawInferenceRoute();
     revalidateSandboxIdentity?.(`complete managed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
@@ -146,7 +177,15 @@ export async function handleAgentSetupState<Agent>({
   } else {
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
-    await deps.setupOpenclaw(sandboxName, model, provider, revalidateSandboxIdentity);
+    await deps.setupOpenclaw(
+      sandboxName,
+      model,
+      provider,
+      revalidateSandboxIdentity,
+      preferredInferenceApi,
+      initializeNativeInferenceRoute,
+      agentSetupContext.gatewayName,
+    );
     revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",

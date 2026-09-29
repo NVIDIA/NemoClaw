@@ -1039,9 +1039,15 @@ describe("finalization process-recovery refusal propagation", () => {
 });
 
 describe("initial native gateway startup", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
 
   it("uses the native agent restart path without restoring supervisor authority", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "review-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/review-tls");
     const restartSandboxGateway = vi.fn(async () => ({
       ok: true as const,
       restarted: true as const,
@@ -1052,9 +1058,18 @@ describe("initial native gateway startup", () => {
       restartSandboxGateway,
     });
 
-    await expect(restartNativeGatewayForInitialSetup("alpha")).resolves.toMatchObject({
+    await expect(
+      restartNativeGatewayForInitialSetup("alpha", "nemoclaw-19090"),
+    ).resolves.toMatchObject({
       ok: true,
     });
-    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      runtimeSelection: {
+        gatewayName: "nemoclaw-19090",
+        workspace: "review-workspace",
+        localTlsDir: "/tmp/review-tls",
+      },
+    });
   });
 });

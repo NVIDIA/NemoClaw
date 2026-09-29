@@ -302,6 +302,19 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/onboard.ts",
+    "src/lib/onboard/machine/core-flow-phases.ts",
+    "src/lib/onboard/machine/flow-context.ts",
+    "src/lib/onboard/machine/handlers/sandbox.ts",
+    "src/lib/onboard/openclaw/initial-inference-route.ts",
+    "src/lib/onboard/sandbox-recreate-transaction.ts",
+  ])("selects custom-image route evidence when %s changes (#12033)", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "openclaw-inference-switch",
+    );
+  });
+
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -794,7 +807,6 @@ describe("E2E workflow plan", () => {
   it("selects stopped-phase survival coverage when its direct live test changes", () => {
     const changedFile = "test/e2e/live/sandbox-survival.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "sandbox-survival",
     );
@@ -983,7 +995,6 @@ describe("E2E workflow plan", () => {
 
     expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
   });
-
   it("resolves every native-state upgrade and rebuild risk requirement to selected work", () => {
     const changedFiles = ["src/lib/state/sandbox.ts"];
     const riskPlan = buildRiskPlan({ headSha: "0".repeat(40), changedFiles });
@@ -994,7 +1005,6 @@ describe("E2E workflow plan", () => {
         .flat()
         .flatMap((row) => [row.id, row.target_id]),
     ]);
-
     expect(riskPlan.requiredJobs.map((job) => job.id)).toEqual([
       "onboard-repair",
       "onboard-resume",
@@ -1015,14 +1025,12 @@ describe("E2E workflow plan", () => {
       {},
       { changedFiles: ["src/lib/state/sandbox.ts"], gatewayRuntimes: ["docker"] },
     );
-
     const nativeStateRows = (plan: ReturnType<typeof buildE2eWorkflowPlan>) =>
       Object.values(plan.catalogueMatrices)
         .flat()
         .filter((row) => ["onboard-repair", "onboard-resume"].includes(row.target_id));
     const podmanRows = nativeStateRows(podmanPlan);
     const dockerRows = nativeStateRows(dockerPlan);
-
     expect(new Set(podmanRows.map((row) => row.target_id))).toEqual(
       new Set(["onboard-repair", "onboard-resume"]),
     );
@@ -1044,7 +1052,6 @@ describe("E2E workflow plan", () => {
     const selectedCatalogueIds = Object.values(plan.catalogueMatrices)
       .flat()
       .map((row) => row.id);
-
     expect(riskPlan.requiredJobs.map((job) => job.id)).not.toContain("snapshot-commands");
     expect(riskPlan.requiredJobs.map((job) => job.id)).toContain("rebuild-openclaw");
     expect(selectedCatalogueIds).toContain("rebuild-openclaw");
