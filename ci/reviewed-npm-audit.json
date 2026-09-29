@@ -101,7 +101,7 @@
       "integrity": "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "71f87f397d8f628c40daefb0cc80d7b35a3be0353884f8275824a46568dc3113"
+      "lockSha256": "c015570ccccf56986c3d92a85de6f7aa507110f6a11cc2eedd80752672589f9b"
     },
     {
       "id": "mcporter-runtime",
