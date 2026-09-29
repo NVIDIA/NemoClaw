@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_sdk::config::Gateway;
+use async_trait::async_trait;
+use nemoclaw_sdk::{Error, config::Gateway, discovery::GatewayCapabilities};
 use openshell_sdk::{EdgeAuthInterceptor, OpenShellClient};
 use std::{sync::Arc, time::Duration};
 use tonic::{
@@ -12,13 +13,87 @@ use tonic::{
 
 #[derive(Clone)]
 pub struct OpenShell {
+    pub(super) gateway: Arc<dyn OpenShellGateway>,
+}
+
+#[derive(Clone)]
+pub(super) struct ConnectedOpenShellGateway {
     pub(super) client: Arc<OpenShellClient>,
     pub(super) secrets: Arc<dyn Secrets>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SandboxPhase {
+    Pending,
+    Ready,
+}
+
+#[async_trait]
+/// Domain operations required by reconciliation.
+///
+/// The connected implementation keeps SDK and raw gRPC selection, wire types,
+/// deadlines, and transport errors behind this boundary.
+pub(super) trait OpenShellGateway: Send + Sync {
+    async fn observe(
+        &self,
+        kind: &str,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError>;
+    async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError>;
+    async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError>;
+    async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
+    async fn delete(&self, kind: &str, workspace: &str, name: &str)
+    -> Result<(), ObservationError>;
+    async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError>;
+    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error>;
+    async fn exec(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error>;
+}
+
 impl OpenShell {
     /// Configure a lazy channel without network mutation or automatic RPC retry.
     /// Secret references are resolved locally; raw credentials never enter rows.
     pub fn connect(gateway: &Gateway, secrets: Arc<dyn Secrets>) -> Result<Self, ObservationError> {
+        Ok(Self {
+            gateway: Arc::new(ConnectedOpenShellGateway::connect(gateway, secrets)?),
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_gateway(gateway: Arc<dyn OpenShellGateway>) -> Self {
+        Self { gateway }
+    }
+
+    pub async fn observe(
+        &self,
+        kind: &str,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        if name.is_empty()
+            || ((kind == "workspace") != workspace.is_empty())
+            || name.contains('\0')
+            || workspace.contains('\0')
+        {
+            return Err(ObservationError::Query);
+        }
+        self.gateway.observe(kind, workspace, name, removing).await
+    }
+}
+
+impl ConnectedOpenShellGateway {
+    pub(in crate::openshell) fn connect(
+        gateway: &Gateway,
+        secrets: Arc<dyn Secrets>,
+    ) -> Result<Self, ObservationError> {
         nemoclaw_sdk::config::validate_endpoint(gateway.endpoint(), true)
             .map_err(|_| ObservationError::Query)?;
         if gateway.endpoint().starts_with("http:")
@@ -77,20 +152,13 @@ impl OpenShell {
             .map(|response| workspace_row(response, name, removing))
             .transpose()
     }
-    pub async fn observe(
+    async fn observe(
         &self,
         kind: &str,
         workspace: &str,
         name: &str,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        if name.is_empty()
-            || ((kind == "workspace") != workspace.is_empty())
-            || name.contains('\0')
-            || workspace.contains('\0')
-        {
-            return Err(ObservationError::Query);
-        }
         let row = match kind {
             "workspace" => return self.workspace(name, removing).await,
             "provider_profile" => self.observe_profile(workspace, name).await?,
@@ -149,6 +217,64 @@ impl OpenShell {
     }
 }
 
+#[async_trait]
+impl OpenShellGateway for ConnectedOpenShellGateway {
+    async fn observe(
+        &self,
+        kind: &str,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        ConnectedOpenShellGateway::observe(self, kind, workspace, name, removing).await
+    }
+
+    async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError> {
+        match kind {
+            "workspace" => self.create_workspace(want).await,
+            "provider" => self.create_provider(want).await,
+            "provider_profile" => self.create_profile(want).await,
+            "sandbox" => self.create_sandbox(want).await,
+            _ => Err(ObservationError::Query),
+        }
+    }
+
+    async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::update_provider(self, want, live).await
+    }
+
+    async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::delete_bound_sandbox(self, want).await
+    }
+
+    async fn delete(
+        &self,
+        kind: &str,
+        workspace: &str,
+        name: &str,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::delete(self, kind, workspace, name).await
+    }
+
+    async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError> {
+        ConnectedOpenShellGateway::gateway_capabilities(self).await
+    }
+
+    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error> {
+        ConnectedOpenShellGateway::sandbox_phase(self, binding).await
+    }
+
+    async fn exec(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error> {
+        ConnectedOpenShellGateway::exec(self, binding, command, environment, seconds).await
+    }
+}
+
 fn authentication(token: Option<&str>) -> Result<EdgeAuthInterceptor, ObservationError> {
     let interceptor =
         EdgeAuthInterceptor::new(token, None).map_err(|_| ObservationError::Authentication)?;
@@ -165,10 +291,205 @@ fn authentication(token: Option<&str>) -> Result<EdgeAuthInterceptor, Observatio
     Ok(interceptor)
 }
 
+fn row_value<'a>(row: &'a Row, key: &str) -> &'a str {
+    row.get(key).map(String::as_str).unwrap_or("")
+}
+
+pub(super) fn decode_sandbox_phase(status: proto::SandboxStatus) -> Result<SandboxPhase, Error> {
+    if let Ok(
+        phase @ (proto::SandboxPhase::Error
+        | proto::SandboxPhase::Deleting
+        | proto::SandboxPhase::Stopped
+        | proto::SandboxPhase::Completed),
+    ) = proto::SandboxPhase::try_from(status.phase)
+    {
+        return Err(Error::SandboxStartup {
+            phase: phase.as_str_name(),
+            // Conditions are backend-controlled. Only fixed known reasons may
+            // cross the diagnostic boundary; messages can contain credentials.
+            reason: status
+                .conditions
+                .iter()
+                .find_map(|condition| {
+                    if condition.r#type != "Ready" || condition.status != "False" {
+                        return None;
+                    }
+                    match condition.reason.as_str() {
+                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
+                        "ContainerExited" => Some("ContainerExited"),
+                        _ => None,
+                    }
+                })
+                .unwrap_or("unknown"),
+            exit_code: status
+                .exit_code
+                .map_or_else(|| "unknown".into(), |code| code.to_string()),
+        });
+    }
+    Ok(if status.phase == proto::SandboxPhase::Ready as i32 {
+        SandboxPhase::Ready
+    } else {
+        SandboxPhase::Pending
+    })
+}
+
+impl ConnectedOpenShellGateway {
+    async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
+        let sandbox = self
+            .client
+            .raw_grpc()
+            .get_sandbox(self.request(proto::GetSandboxRequest {
+                name: row_value(binding, "name").into(),
+                workspace_scope: Some(proto::workspace_selector(row_value(binding, "workspace"))),
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner()
+            .sandbox
+            .ok_or(ObservationError::Incomplete)?;
+        verify_identity(
+            binding,
+            &base(sandbox.metadata.clone(), row_value(binding, "name"), false)?,
+        )?;
+        Ok(sandbox)
+    }
+
+    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error> {
+        decode_sandbox_phase(
+            self.bound_sandbox(binding)
+                .await?
+                .status
+                .ok_or(ObservationError::Incomplete)?,
+        )
+    }
+
+    async fn exec(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error> {
+        // Exec is name-addressed upstream; verify the retained identity immediately
+        // before sending and never retry an ambiguous invocation.
+        let sandbox = self.bound_sandbox(binding).await?;
+        let mut request = self.request(proto::ExecSandboxRequest {
+            sandbox: sandbox.metadata.ok_or(ObservationError::Incomplete)?.name,
+            workspace_scope: Some(proto::workspace_selector(row_value(binding, "workspace"))),
+            command,
+            environment: environment.into_iter().collect(),
+            execution_timeout: Some(
+                openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
+                    .expect("u32 seconds fit protobuf duration"),
+            ),
+            ..Default::default()
+        });
+        request.set_timeout(Duration::from_secs(u64::from(seconds)));
+        let mut stream = self
+            .client
+            .raw_grpc()
+            .exec_sandbox(request)
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner();
+        let mut output = Vec::new();
+        let mut exit = None;
+        while let Some(event) = stream
+            .message()
+            .await
+            .map_err(|error| remote_error(&error))?
+        {
+            if exit.is_some() {
+                return Err(ObservationError::Incomplete.into());
+            }
+            match event.payload.ok_or(ObservationError::Incomplete)? {
+                proto::exec_sandbox_event::Payload::Stdout(chunk) => {
+                    if output.len() + chunk.data.len() > 1 << 20 {
+                        return Err(Error::Conflict("sandbox exec output exceeds limit"));
+                    }
+                    output.extend(chunk.data);
+                }
+                proto::exec_sandbox_event::Payload::Stderr(_) => {}
+                proto::exec_sandbox_event::Payload::Exit(result) => exit = Some(result.exit_code),
+            }
+        }
+        Ok((exit.ok_or(ObservationError::Incomplete)?, output))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use nemoclaw_sdk::{Error, backend::Backend, discovery::GatewayCapabilities};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
     use tonic::service::Interceptor;
+
+    struct FixtureGateway {
+        observations: AtomicUsize,
+        creations: AtomicUsize,
+        observed: Mutex<Option<Row>>,
+    }
+
+    #[async_trait]
+    impl OpenShellGateway for FixtureGateway {
+        async fn observe(
+            &self,
+            _kind: &str,
+            _workspace: &str,
+            _name: &str,
+            _removing: bool,
+        ) -> Result<Option<Row>, ObservationError> {
+            self.observations.fetch_add(1, Ordering::Relaxed);
+            Ok(self.observed.lock().unwrap().clone())
+        }
+
+        async fn create(&self, _kind: &str, want: &Row) -> Result<String, ObservationError> {
+            self.creations.fetch_add(1, Ordering::Relaxed);
+            let mut row = want.clone();
+            row.insert("id".into(), "physical".into());
+            *self.observed.lock().unwrap() = Some(row);
+            Ok("physical".into())
+        }
+
+        async fn update_provider(&self, _want: &Row, _live: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn delete_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn delete(
+            &self,
+            _kind: &str,
+            _workspace: &str,
+            _name: &str,
+        ) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError> {
+            unreachable!()
+        }
+
+        async fn sandbox_phase(&self, _binding: &Row) -> Result<SandboxPhase, Error> {
+            unreachable!()
+        }
+
+        async fn exec(
+            &self,
+            _binding: &Row,
+            _command: Vec<String>,
+            _environment: Row,
+            _seconds: u32,
+        ) -> Result<(i32, Vec<u8>), Error> {
+            unreachable!()
+        }
+    }
 
     #[test]
     fn sdk_authentication_preserves_sensitive_bearer_metadata_and_deadlines() {
@@ -194,5 +515,84 @@ mod tests {
             authentication(Some("invalid\nsecret-sentinel")),
             Err(ObservationError::Authentication)
         ));
+    }
+
+    #[tokio::test]
+    async fn reconciliation_observes_through_the_gateway_boundary() {
+        let gateway = Arc::new(FixtureGateway {
+            observations: AtomicUsize::new(0),
+            creations: AtomicUsize::new(0),
+            observed: Mutex::new(Some([("name".into(), "fixture".into())].into())),
+        });
+        let openshell = OpenShell::with_gateway(gateway.clone());
+
+        let observed = openshell
+            .observe("workspace", "", "fixture", false)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(observed["name"], "fixture");
+        assert_eq!(gateway.observations.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_mutates_through_the_gateway_boundary() {
+        let gateway = Arc::new(FixtureGateway {
+            observations: AtomicUsize::new(0),
+            creations: AtomicUsize::new(0),
+            observed: Mutex::new(None),
+        });
+        let openshell = OpenShell::with_gateway(gateway.clone());
+        let desired: Row = [
+            ("name", "fixture"),
+            ("owner", "deployment"),
+            ("generation", "generation"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect();
+
+        let mutation = openshell.ensure("workspace", &desired).await;
+
+        assert_eq!(mutation.error(), None);
+        assert_eq!(mutation.state().unwrap()["id"], "physical");
+        assert_eq!(gateway.creations.load(Ordering::Relaxed), 1);
+        assert_eq!(gateway.observations.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn terminal_sandbox_reports_known_failure_without_backend_text() {
+        for (kind, status, reason, expected) in [
+            (
+                "Ready",
+                "False",
+                "ControlSupervisorExited",
+                "ControlSupervisorExited",
+            ),
+            ("Ready", "False", "ContainerExited", "ContainerExited"),
+            ("Ready", "False", "secret-sentinel", "unknown"),
+            ("Ready", "True", "ControlSupervisorExited", "unknown"),
+            ("Other", "False", "ControlSupervisorExited", "unknown"),
+        ] {
+            let error = decode_sandbox_phase(proto::SandboxStatus {
+                phase: proto::SandboxPhase::Error as i32,
+                conditions: vec![proto::SandboxCondition {
+                    r#type: kind.into(),
+                    status: status.into(),
+                    reason: reason.into(),
+                    message: "secret-sentinel".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap_err()
+            .into_observation()
+            .to_string();
+            assert!(error.contains(&format!("reason {expected}")), "{error}");
+            assert!(error.contains("exit code unknown"));
+            assert!(error.contains("resources retained"));
+            assert!(!error.contains("secret-sentinel"));
+        }
     }
 }

@@ -7,40 +7,6 @@ use std::time::Duration;
 
 const AGENT_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
-    if let Ok(
-        phase @ (proto::SandboxPhase::Error
-        | proto::SandboxPhase::Deleting
-        | proto::SandboxPhase::Stopped
-        | proto::SandboxPhase::Completed),
-    ) = proto::SandboxPhase::try_from(status.phase)
-    {
-        return Err(Error::SandboxStartup {
-            phase: phase.as_str_name(),
-            // Conditions are backend-controlled. Only fixed known reasons may
-            // cross the diagnostic boundary; messages can contain credentials.
-            reason: status
-                .conditions
-                .iter()
-                .find_map(|condition| {
-                    if condition.r#type != "Ready" || condition.status != "False" {
-                        return None;
-                    }
-                    match condition.reason.as_str() {
-                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
-                        "ContainerExited" => Some("ContainerExited"),
-                        _ => None,
-                    }
-                })
-                .unwrap_or("unknown"),
-            exit_code: status
-                .exit_code
-                .map_or_else(|| "unknown".into(), |code| code.to_string()),
-        });
-    }
-    Ok(status.phase)
-}
-
 async fn readiness_deadline(
     wait: impl std::future::Future<Output = Result<(), Error>>,
     cancel: &CancellationToken,
@@ -56,32 +22,8 @@ fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
 impl OpenShell {
-    async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
-        let sandbox = self
-            .client
-            .raw_grpc()
-            .get_sandbox(self.request(proto::GetSandboxRequest {
-                name: value(binding, "name").into(),
-                workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
-            }))
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner()
-            .sandbox
-            .ok_or(ObservationError::Incomplete)?;
-        verify_identity(
-            binding,
-            &base(sandbox.metadata.clone(), value(binding, "name"), false)?,
-        )?;
-        Ok(sandbox)
-    }
     pub(crate) async fn check_sandbox_phase(&self, binding: &Row) -> Result<(), Error> {
-        startup_phase(
-            self.bound_sandbox(binding)
-                .await?
-                .status
-                .ok_or(ObservationError::Incomplete)?,
-        )?;
+        self.gateway.sandbox_phase(binding).await?;
         Ok(())
     }
     pub async fn exec_bound(
@@ -93,62 +35,10 @@ impl OpenShell {
     ) -> Result<(i32, Vec<u8>), Error> {
         tokio::time::timeout(
             Duration::from_secs(u64::from(seconds)),
-            self.exec_stream(binding, command, environment, seconds),
+            self.gateway.exec(binding, command, environment, seconds),
         )
         .await
         .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
-    }
-    async fn exec_stream(
-        &self,
-        binding: &Row,
-        command: Vec<String>,
-        environment: Row,
-        seconds: u32,
-    ) -> Result<(i32, Vec<u8>), Error> {
-        // Exec is name-addressed upstream; verify the retained identity immediately
-        // before sending and never retry an ambiguous invocation.
-        let sandbox = self.bound_sandbox(binding).await?;
-        let mut request = self.request(proto::ExecSandboxRequest {
-            sandbox: sandbox.metadata.ok_or(ObservationError::Incomplete)?.name,
-            workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
-            command,
-            environment: environment.into_iter().collect(),
-            execution_timeout: Some(
-                openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
-                    .expect("u32 seconds fit protobuf duration"),
-            ),
-            ..Default::default()
-        });
-        request.set_timeout(Duration::from_secs(u64::from(seconds)));
-        let mut stream = self
-            .client
-            .raw_grpc()
-            .exec_sandbox(request)
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        let mut output = Vec::new();
-        let mut exit = None;
-        while let Some(event) = stream
-            .message()
-            .await
-            .map_err(|error| remote_error(&error))?
-        {
-            if exit.is_some() {
-                return Err(ObservationError::Incomplete.into());
-            }
-            match event.payload.ok_or(ObservationError::Incomplete)? {
-                proto::exec_sandbox_event::Payload::Stdout(chunk) => {
-                    if output.len() + chunk.data.len() > 1 << 20 {
-                        return Err(Error::Conflict("sandbox exec output exceeds limit"));
-                    }
-                    output.extend(chunk.data);
-                }
-                proto::exec_sandbox_event::Payload::Stderr(_) => {}
-                proto::exec_sandbox_event::Payload::Exit(result) => exit = Some(result.exit_code),
-            }
-        }
-        Ok((exit.ok_or(ObservationError::Incomplete)?, output))
     }
     fn configuration_command(&self, binding: &Row) -> Result<(Vec<String>, Row), Error> {
         if value(binding, "agent_runtime") != "fabric" {
@@ -165,13 +55,8 @@ impl OpenShell {
     pub async fn configure_agent(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                let phase = startup_phase(
-                    self.bound_sandbox(binding)
-                        .await?
-                        .status
-                        .ok_or(ObservationError::Incomplete)?,
-                )?;
-                if phase == proto::SandboxPhase::Ready as i32 {
+                let phase = self.gateway.sandbox_phase(binding).await?;
+                if phase == SandboxPhase::Ready {
                     return Ok::<(), Error>(());
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -202,9 +87,8 @@ impl OpenShell {
     pub async fn ready(&self, binding: &Row, cancel: &CancellationToken) -> Result<(), Error> {
         let wait = async {
             loop {
-                let sandbox = self.bound_sandbox(binding).await?;
-                let phase = startup_phase(sandbox.status.ok_or(ObservationError::Incomplete)?)?;
-                if phase == proto::SandboxPhase::Ready as i32 {
+                let phase = self.gateway.sandbox_phase(binding).await?;
+                if phase == SandboxPhase::Ready {
                     let (command, environment) = self.configuration_command(binding)?;
                     if let Ok((0, _)) = self.exec_bound(binding, command, environment, 20).await {
                         return Ok(());
@@ -293,40 +177,5 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "terminal");
         assert_eq!(started.elapsed(), Duration::from_secs(2));
-    }
-
-    #[test]
-    fn terminal_sandbox_reports_known_failure_without_backend_text() {
-        for (kind, status, reason, expected) in [
-            (
-                "Ready",
-                "False",
-                "ControlSupervisorExited",
-                "ControlSupervisorExited",
-            ),
-            ("Ready", "False", "ContainerExited", "ContainerExited"),
-            ("Ready", "False", "secret-sentinel", "unknown"),
-            ("Ready", "True", "ControlSupervisorExited", "unknown"),
-            ("Other", "False", "ControlSupervisorExited", "unknown"),
-        ] {
-            let error = startup_phase(proto::SandboxStatus {
-                phase: proto::SandboxPhase::Error as i32,
-                conditions: vec![proto::SandboxCondition {
-                    r#type: kind.into(),
-                    status: status.into(),
-                    reason: reason.into(),
-                    message: "secret-sentinel".into(),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            })
-            .unwrap_err()
-            .into_observation()
-            .to_string();
-            assert!(error.contains(&format!("reason {expected}")), "{error}");
-            assert!(error.contains("exit code unknown"));
-            assert!(error.contains("resources retained"));
-            assert!(!error.contains("secret-sentinel"));
-        }
     }
 }

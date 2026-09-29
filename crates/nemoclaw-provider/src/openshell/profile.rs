@@ -186,7 +186,7 @@ pub(super) fn provider_row(
     ]);
     Ok(result)
 }
-impl OpenShell {
+impl ConnectedOpenShellGateway {
     pub(super) async fn observe_profile(
         &self,
         workspace: &str,

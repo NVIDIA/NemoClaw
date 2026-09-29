@@ -76,3 +76,7 @@ pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationE
         }
     }
 }
+
+pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {
+    row_policy(row).map(|_| ())
+}
