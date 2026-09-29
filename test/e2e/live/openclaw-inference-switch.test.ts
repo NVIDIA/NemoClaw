@@ -275,7 +275,13 @@ function writeCustomOpenClawDockerfile(home: string): string {
   ].join(" ");
   fs.writeFileSync(
     dockerfilePath,
-    [`FROM ${contract.reference}`, `RUN node -e ${shellQuote(bakeRoute)}`, ""].join("\n"),
+    [
+      `FROM ${contract.reference}`,
+      "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+      "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      `RUN node -e ${shellQuote(bakeRoute)}`,
+      "",
+    ].join("\n"),
   );
   return dockerfilePath;
 }
