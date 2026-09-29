@@ -311,20 +311,22 @@ interface BackupRetryDeps {
     name: string,
     deadlineMs: number,
     deferSanitizationDeadlineCleanup: boolean,
+    deferCompletionPublication: boolean,
   ) => sandboxState.BackupResult;
   probe: (name: string, deadlineMs: number) => boolean;
   sleep: (ms: number) => Promise<void>;
   deadlineMs?: number;
   deferSanitizationDeadlineCleanup: boolean;
+  deferCompletionPublication: boolean;
   delayMs: number;
   now: () => number;
 }
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
-  backup: (name, deadlineMs, deferSanitizationDeadlineCleanup) =>
+  backup: (name, deadlineMs, deferSanitizationDeadlineCleanup, deferCompletionPublication) =>
     snapshotBackup.backupSandboxStateWithManagedAuthority(
       name,
-      { deadlineMs, deferSanitizationDeadlineCleanup },
+      { deadlineMs, deferSanitizationDeadlineCleanup, deferCompletionPublication },
       {
         getSandbox: registry.getSandbox,
       },
@@ -332,6 +334,7 @@ const defaultBackupRetryDeps: BackupRetryDeps = {
   probe: sandboxState.probeSandboxSshReachable,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   deferSanitizationDeadlineCleanup: false,
+  deferCompletionPublication: false,
   delayMs: STARTED_BACKUP_RETRY_DELAY_MS,
   now: Date.now,
 };
@@ -384,6 +387,7 @@ export async function backupStartedSandboxState(
         sandboxName,
         backupDeadlineMs,
         deps.deferSanitizationDeadlineCleanup,
+        deps.deferCompletionPublication,
       );
       if (deps.now() <= backupDeadlineMs) return result;
       const deadlineError = "Sandbox backup exceeded its transaction deadline.";

@@ -158,6 +158,7 @@ export async function retainStrictPreUpgradeRecoveryState(
       mcpObservation.entries,
       mcpObservation.runtimeSelection ?? runtimeSelection,
     );
+    result.manifest = sandboxState.markRebuildBackupComplete(result.manifest);
   } catch (error) {
     return failedRetentionResult(result, "recovery handoff publication", error);
   }

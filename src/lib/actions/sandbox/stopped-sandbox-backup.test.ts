@@ -536,6 +536,22 @@ describe("backupStartedSandboxState", () => {
     expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
       deadlineMs: expect.any(Number),
       deferSanitizationDeadlineCleanup: false,
+      deferCompletionPublication: false,
+    });
+  });
+
+  it("keeps strict stopped backups incomplete until recovery retention publishes", async () => {
+    adapterMocks.probeSsh.mockReturnValueOnce(true);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
+
+    await expect(
+      backupStartedSandboxState("my-sb", { deferCompletionPublication: true }),
+    ).resolves.toEqual(ok);
+
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
+      deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: false,
+      deferCompletionPublication: true,
     });
   });
 
@@ -691,7 +707,7 @@ describe("backupStartedSandboxState", () => {
       }),
     ).resolves.toEqual(ok);
 
-    expect(backup).toHaveBeenCalledWith("my-sb", 300_000, false);
+    expect(backup).toHaveBeenCalledWith("my-sb", 300_000, false, false);
 
     const stopSandbox = vi.fn().mockImplementation(async ({ timeoutMs }: { timeoutMs: number }) => {
       now += timeoutMs;

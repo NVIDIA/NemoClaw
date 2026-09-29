@@ -201,6 +201,12 @@ export interface BackupOptions {
    * snapshot only after restoring the temporarily started container.
    */
   deferSanitizationDeadlineCleanup?: boolean;
+  /**
+   * Internal recovery-transaction fence. Persist captured state as incomplete
+   * until the caller publishes the recovery handoffs and explicitly marks the
+   * manifest complete.
+   */
+  deferCompletionPublication?: boolean;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
@@ -2072,7 +2078,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
       };
     }
-    manifest.backupComplete = true;
+    manifest.backupComplete = options.deferCompletionPublication !== true;
     writeManifest(backupPath, manifest);
     return {
       success: true,
@@ -2119,7 +2125,8 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
       manifest.stateDirs.includes(failedDir),
     );
-    manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
+    const backupSucceeded = failedDirs.length === 0 && failedFiles.length === 0;
+    manifest.backupComplete = backupSucceeded && options.deferCompletionPublication !== true;
 
     const publicationError = validateSnapshotPublication(
       backupPath,
@@ -2149,7 +2156,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     manifest.backupPath = backupPath;
 
     return {
-      success: failedDirs.length === 0 && failedFiles.length === 0,
+      success: backupSucceeded,
       unreachable,
       manifest,
       backedUpDirs,
@@ -3244,6 +3251,14 @@ export function markRebuildBackupIncomplete(manifest: RebuildManifest): RebuildM
   writeManifest(manifest.backupPath, incomplete);
   Object.assign(manifest, incomplete);
   return incomplete;
+}
+
+/** Publish a fully retained strict-recovery backup for restore selection. */
+export function markRebuildBackupComplete(manifest: RebuildManifest): RebuildManifest {
+  const complete = { ...manifest, backupComplete: true };
+  writeManifest(manifest.backupPath, complete);
+  Object.assign(manifest, complete);
+  return complete;
 }
 
 function readBoundRebuildHandoff(filePath: string): string | null {

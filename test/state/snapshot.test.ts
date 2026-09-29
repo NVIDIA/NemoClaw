@@ -644,19 +644,22 @@ describe("sandbox directory backup semantics", () => {
           unsafeDiscoveryMarker,
         }),
       );
-
       writeOpenClawRegistry("alpha", { fromDockerfile: "/tmp/Dockerfile.custom" });
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.TMPDIR = stagingRoot;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = sandboxState.backupSandboxState("alpha", { deferCompletionPublication: true });
       expect(backup.success).toBe(true);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
-      expect(backup.manifest?.backupComplete).toBe(true);
+      expect(backup.manifest?.backupComplete).toBe(false);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
+      expect(sandboxState.listBackups("alpha")).toEqual([]);
+      expect(sandboxState.findBackup("alpha", "v1").match).toBeNull();
+      sandboxState.markRebuildBackupComplete(backup.manifest!);
+      expect(sandboxState.listBackups("alpha")).toHaveLength(1);
       const discoveryCommand = fs
         .readFileSync(sshLog, "utf-8")
         .trim()
@@ -698,7 +701,6 @@ describe("sandbox directory backup semantics", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("returns a structured failure when the archive staging file cannot be created", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-backup-staging-failure-"));
     const oldPath = process.env.PATH;

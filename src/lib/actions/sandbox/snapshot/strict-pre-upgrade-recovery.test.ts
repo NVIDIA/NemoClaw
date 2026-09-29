@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   captureRecordedSandboxBasePolicy: vi.fn(),
   observeMcpStateForRebuild: vi.fn(),
   markRebuildBackupIncomplete: vi.fn(),
+  markRebuildBackupComplete: vi.fn(),
   removeSandboxStateBackup: vi.fn(),
   writeRebuildMcpHandoff: vi.fn(),
   writeRebuildPolicyHandoff: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("../../../policy", () => ({
 }));
 vi.mock("../../../state/sandbox", () => ({
   markRebuildBackupIncomplete: mocks.markRebuildBackupIncomplete,
+  markRebuildBackupComplete: mocks.markRebuildBackupComplete,
   removeSandboxStateBackup: mocks.removeSandboxStateBackup,
   writeRebuildMcpHandoff: mocks.writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff: mocks.writeRebuildPolicyHandoff,
@@ -43,6 +45,10 @@ describe("strict pre-upgrade recovery retention", () => {
       ...manifest,
       backupComplete: false,
     }));
+    mocks.markRebuildBackupComplete.mockImplementation((manifest) => ({
+      ...manifest,
+      backupComplete: true,
+    }));
     mocks.writeRebuildPolicyHandoff.mockImplementation((manifest) => ({
       ...manifest,
       rebuildPolicyHandoff: { file: "policy.yaml", sha256: "a".repeat(64) },
@@ -67,6 +73,7 @@ describe("strict pre-upgrade recovery retention", () => {
       retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
     ).resolves.toMatchObject({
       manifest: {
+        backupComplete: true,
         rebuildPolicyHandoff: expect.any(Object),
         rebuildMcpHandoff: {
           entries: [],
@@ -77,6 +84,7 @@ describe("strict pre-upgrade recovery retention", () => {
         },
       },
     });
+    expect(mocks.markRebuildBackupComplete).toHaveBeenCalledAfter(mocks.writeRebuildMcpHandoff);
     expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledWith(sandbox, runtimeSelection, true);
   });
 
@@ -358,6 +366,35 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.markRebuildBackupIncomplete).toHaveBeenCalledWith(
       expect.objectContaining({ rebuildPolicyHandoff: expect.any(Object) }),
     );
+  });
+
+  it("keeps the deferred manifest nonselectable when handoff and invalidation writes fail", async () => {
+    mocks.writeRebuildMcpHandoff.mockImplementation(() => {
+      throw new Error("MCP handoff write failed");
+    });
+    mocks.markRebuildBackupIncomplete.mockImplementation(() => {
+      throw new Error("invalidation write failed");
+    });
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: {
+        backupPath: "/backups/alpha/timestamp",
+        backupComplete: false,
+      },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
+    ).resolves.toMatchObject({
+      success: false,
+      manifest: { backupComplete: false },
+      error: expect.stringContaining("invalidation write failed"),
+    });
+    expect(mocks.markRebuildBackupComplete).not.toHaveBeenCalled();
   });
 
   it("returns a failed result for a non-timeout policy error", async () => {

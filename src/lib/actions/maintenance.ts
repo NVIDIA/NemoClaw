@@ -355,10 +355,11 @@ export async function backupAllUnderPortableHostFence(
           ? backupStartedSandboxState(sb.name, {
               deadlineMs: transactionDeadlineMs ?? undefined,
               deferSanitizationDeadlineCleanup: retainPreUpgradePolicy,
+              deferCompletionPublication: retainPreUpgradePolicy,
             })
           : snapshotBackup.backupSandboxStateWithManagedAuthority(
               sb.name,
-              {},
+              retainPreUpgradePolicy ? { deferCompletionPublication: true } : {},
               {
                 getSandbox: registry.getSandbox,
               },

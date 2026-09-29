@@ -634,6 +634,7 @@ function backupStateOnly(
     | "name"
     | "deadlineMs"
     | "deferSanitizationDeadlineCleanup"
+    | "deferCompletionPublication"
     | "captureStateFile"
     | "captureStateDirectories"
     | "capturedAgentState"
@@ -642,6 +643,7 @@ function backupStateOnly(
   return options.name === undefined &&
     options.deadlineMs === undefined &&
     options.deferSanitizationDeadlineCleanup === undefined &&
+    options.deferCompletionPublication === undefined &&
     options.capturedAgentState === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
@@ -798,7 +800,11 @@ export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "deadlineMs" | "deferSanitizationDeadlineCleanup" | "capturedAgentState"
+    | "name"
+    | "deadlineMs"
+    | "deferSanitizationDeadlineCleanup"
+    | "capturedAgentState"
+    | "deferCompletionPublication"
   > = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,

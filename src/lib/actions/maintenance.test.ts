@@ -72,7 +72,10 @@ vi.mock("../state/portable-uninstall-retirement", () => ({
   withPortableHostFence: mocks.withPortableHostFence,
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
-  backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
+  backupSandboxStateWithManagedAuthority: (name: string, options: Record<string, unknown>) =>
+    Object.keys(options).length > 0
+      ? mocks.backupSandboxState(name, options)
+      : mocks.backupSandboxState(name),
   discardIncompleteBackup: mocks.discardIncompleteBackup,
 }));
 vi.mock("../openshell-sandbox-list", () => ({
@@ -556,7 +559,6 @@ describe("backupAll", () => {
     }) as never);
 
     await backupAll();
-
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.startStoppedSandboxContainerForBackup).toHaveBeenCalledWith("sb-stopped", {
       deadlineMs: 330_000,
@@ -564,8 +566,8 @@ describe("backupAll", () => {
     expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped", {
       deadlineMs: 330_000,
       deferSanitizationDeadlineCleanup: true,
+      deferCompletionPublication: true,
     });
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
       {
         containerName: "openshell-sb-stopped-abc",
@@ -581,7 +583,6 @@ describe("backupAll", () => {
     expect(logOutput).toContain("2 backed up, 0 failed, 0 skipped");
     expect(logOutput).not.toContain("Skipping 'sb-stopped'");
   });
-
   it("keeps the stopped-container lifecycle inside one backup transaction (#7952)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
@@ -730,7 +731,6 @@ describe("backupAll", () => {
       purpose: "pre-upgrade",
       requireAll: true,
     });
-
     expect(events).toEqual(["lock:start:sb-good", "backup", "retain-recovery", "lock:end:sb-good"]);
     expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
       sandbox,
@@ -739,7 +739,6 @@ describe("backupAll", () => {
       undefined,
     );
   });
-
   it.each([
     { purpose: "pre-upgrade" as const, requireAll: false },
     { purpose: "pre-uninstall" as const, requireAll: true },
@@ -1272,9 +1271,10 @@ describe("backupAll", () => {
     }) as never);
 
     await backupAll();
-
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good", {
+      deferCompletionPublication: true,
+    });
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledTimes(1);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-good", expect.any(Function));
