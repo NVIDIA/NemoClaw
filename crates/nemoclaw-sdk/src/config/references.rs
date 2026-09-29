@@ -240,6 +240,9 @@ impl Inference {
                 ));
             }
         }
+        if let Some(routing) = &self.routing {
+            routing.validate(None, &self.routes)?;
+        }
         Ok(())
     }
 }

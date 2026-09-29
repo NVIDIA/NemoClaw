@@ -60,6 +60,22 @@ def hermes_relay_enabled(inference=None):
     return True
 
 
+def hermes_switchyard_enabled(inference=None):
+    routing = (inference or {}).get("routing")
+    if routing is None:
+        return False
+    if (
+        not isinstance(routing, dict)
+        or set(routing) != {"kind", "routeId", "algorithm"}
+        or routing.get("kind") != "switchyard"
+        or not isinstance(routing.get("routeId"), str)
+        or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", routing["routeId"])
+        or not isinstance(routing.get("algorithm"), dict)
+    ):
+        raise ValueError("invalid Hermes Switchyard routing settings")
+    return True
+
+
 def relay_configuration(name):
     output = "/sandbox/artifacts/relay"
     return {
@@ -137,6 +153,19 @@ def model_credential(inference=None):
     return value
 
 
+def hermes_model_connection(inference=None):
+    if not hermes_switchyard_enabled(inference):
+        return model_connection(inference)
+    return {
+        "provider": "openai",
+        "model": f"switchyard/{inference['routing']['routeId']}",
+        # A required plugin activation intercepts this synthetic model. If it does
+        # not, the request must fail locally instead of bypassing the router.
+        "base_url": "http://127.0.0.1:1/v1",
+        "api_key_env": "OPENAI_API_KEY",
+    }
+
+
 def configured_agent(name, inference, *, match_name=True):
     agents = (inference or {}).get("agents")
     if agents is None or agents == []:
@@ -170,7 +199,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])
         ):
             raise ValueError("Pi requires a valid configured route model")
-    relay = harness == "hermes" and hermes_relay_enabled(inference)
+    switchyard = harness == "hermes" and hermes_switchyard_enabled(inference)
+    relay = harness == "hermes" and (hermes_relay_enabled(inference) or switchyard)
     adapter = {
         "deepagents": "nvidia.fabric.langchain.deepagents",
         "hermes": "nemoclaw.local.hermes",
@@ -184,7 +214,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         "pi": "nvidia.fabric.pi",
     }[harness]
     native_interfaces = harness == "hermes" and (inference or {}).get("interfaces") is not None
-    if relay and not native_interfaces:
+    if relay and not native_interfaces and not switchyard:
         adapter = "nvidia.fabric.hermes"
     config = {
         **(
@@ -194,7 +224,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         ),
         **(
             {"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}}
-            if harness == "hermes" and (not relay or native_interfaces)
+            if harness == "hermes" and (not relay or native_interfaces or switchyard)
             else {}
         ),
         **(
@@ -224,7 +254,9 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             ),
             **(
                 {"settings": {"agent_name": name}}
-                if harness == "openclaw" or harness == "hermes" and (not relay or native_interfaces)
+                if harness == "openclaw"
+                or harness == "hermes"
+                and (not relay or native_interfaces or switchyard)
                 else {}
             ),
         },
@@ -274,7 +306,11 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             settings = config["harness"].setdefault("settings", {})
             settings.update(
                 {
-                    **({} if relay and not native_interfaces else {"inference": inference}),
+                    **(
+                        {}
+                        if relay and not native_interfaces and not switchyard
+                        else {"inference": inference}
+                    ),
                     "api_mode": {
                         "openai-completions": "chat_completions",
                         "openai-responses": "codex_responses",
@@ -291,6 +327,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         )
         if harness == "remote-agent":
             config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
+    if switchyard:
+        config["models"]["default"].update(hermes_model_connection(inference))
     if harness in ("deepagents", "pi") and (inference or {}).get("agents"):
         if agent.get("tools") is not None:
             if agent["tools"] != {"allow": ["read"]}:

@@ -138,12 +138,36 @@ impl Document {
             if let Some(tools) = &agent.tools {
                 tools.validate(harness.kind)?;
             }
-            require(
-                self.sandbox_inference(sandbox)?.routes.len() == 1
-                    || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi),
-                "multiple model choices require OpenClaw or Pi",
-            )?;
             let inference = self.scoped_inference(sandbox)?;
+            require(
+                inference.inference.routes.len() == 1
+                    || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi)
+                    || (harness.kind == HarnessKind::Hermes
+                        && inference.inference.routing.is_some()),
+                "multiple model choices require OpenClaw, Pi, or Hermes Switchyard routing",
+            )?;
+            if let Some(routing) = &inference.inference.routing {
+                routing.validate(Some(harness.kind), &inference.inference.routes)?;
+                let route_refs = routing.route_refs()?;
+                let providers = route_refs
+                    .iter()
+                    .map(|name| {
+                        let route = inference
+                            .inference
+                            .routes
+                            .iter()
+                            .find(|route| &route.name == name)
+                            .ok_or(ConfigError::new(
+                                "Switchyard routing references an unknown inference route",
+                            ))?;
+                        Ok(self.route_provider(route, &inference)?.key)
+                    })
+                    .collect::<Result<std::collections::BTreeSet<_>, ConfigError>>()?;
+                require(
+                    providers.len() == route_refs.len(),
+                    "Switchyard routing roles require distinct OpenShell providers",
+                )?;
+            }
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;

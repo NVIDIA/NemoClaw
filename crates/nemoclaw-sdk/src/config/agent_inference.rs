@@ -164,6 +164,8 @@ pub(crate) struct SandboxRuntimeSettings {
     pub interfaces: Option<AgentInterfaces>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<RuntimeAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<InferenceRouting>,
     pub api: InferenceApi,
     pub tuning: RouteTuning,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,7 +268,8 @@ impl SandboxRuntimeSettings {
             && (!matches!(
                 harness,
                 HarnessKind::OpenClaw | HarnessKind::Pi | HarnessKind::DeepAgents
-            ) || self.agents.len() != 1
+            ) && !(harness == HarnessKind::Hermes && self.routing.is_some())
+                || self.agents.len() != 1
                 || self
                     .agents
                     .iter()
@@ -301,6 +304,27 @@ impl SandboxRuntimeSettings {
                     return Err(ConfigError::new("invalid Pi model choice"));
                 }
             }
+            if let Some(routing) = &self.routing {
+                let routes = selection
+                    .models
+                    .keys()
+                    .map(|name| Route {
+                        name: name.clone(),
+                        ..Route::default()
+                    })
+                    .collect::<Vec<_>>();
+                routing.validate(Some(harness), &routes)?;
+                let providers = routing
+                    .route_refs()?
+                    .into_iter()
+                    .map(|name| selection.models[name].provider.as_str())
+                    .collect::<std::collections::BTreeSet<_>>();
+                if providers.len() != routing.route_refs()?.len() {
+                    return Err(ConfigError::new(
+                        "Switchyard routing roles require distinct OpenShell providers",
+                    ));
+                }
+            }
             let primary = &selection.models[&selection.default];
             if primary.provider != self.provider
                 || primary.connection != self.connection
@@ -311,6 +335,17 @@ impl SandboxRuntimeSettings {
                     "runtime inference settings differ from the agent's default model settings",
                 ));
             }
+        }
+        if self.routing.is_some()
+            && self
+                .agents
+                .first()
+                .and_then(|agent| agent.inference.as_ref())
+                .is_none()
+        {
+            return Err(ConfigError::new(
+                "Switchyard routing requires named runtime model choices",
+            ));
         }
         if !self.api.supported(harness)
             || self
@@ -379,7 +414,8 @@ impl Document {
         let primary = models[inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == HarnessKind::OpenClaw
             || (harness.kind == HarnessKind::Pi && agent.tools.is_some())
-            || models.len() > 1;
+            || models.len() > 1
+            || inference.routing.is_some();
         let web_search = self.web_search(sandbox)?;
         let auth = agent.auth.as_ref().map(|auth| RuntimeAuth {
             method: auth.method.clone(),
@@ -412,6 +448,7 @@ impl Document {
             execution: harness.execution.clone(),
             interfaces: harness.interfaces.clone(),
             auth,
+            routing: inference.routing.clone(),
         })
     }
 }

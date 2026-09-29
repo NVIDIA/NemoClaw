@@ -989,13 +989,17 @@
           "type": "string"
         },
         "routes": {
-          "description": "One or more uniquely named model choices. Multiple choices require OpenClaw or Pi.",
+          "description": "One or more uniquely named model choices. Multiple choices require OpenClaw, Pi, or Hermes with Switchyard routing.",
           "items": {
             "$ref": "#/$defs/Route"
           },
           "maxItems": 32,
           "minItems": 1,
           "type": "array"
+        },
+        "routing": {
+          "$ref": "#/$defs/InferenceRouting",
+          "description": "Optional in-process routing over the named routes. Switchyard requires Hermes."
         }
       },
       "required": [
@@ -1154,6 +1158,37 @@
         }
       },
       "type": "object"
+    },
+    "InferenceRouting": {
+      "description": "Optional inference routing performed inside the harness process.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Route Hermes requests through the native NeMo Relay Switchyard plugin.",
+          "properties": {
+            "algorithm": {
+              "$ref": "#/$defs/SwitchyardAlgorithm",
+              "description": "Supported Switchyard routing algorithm and its named route bindings."
+            },
+            "kind": {
+              "const": "switchyard",
+              "description": "In-process routing implementation selected for this inference.",
+              "type": "string"
+            },
+            "routeId": {
+              "description": "Synthetic Switchyard model name, exposed as `switchyard/<routeId>`.",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "routeId",
+            "algorithm"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "InlineRecipe": {
       "additionalProperties": false,
@@ -3471,6 +3506,112 @@
       ],
       "type": "object"
     },
+    "SwitchyardAlgorithm": {
+      "description": "Switchyard algorithms accepted by the V1 configuration contract.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Deterministic weighted selection among two or more named inference routes.",
+          "properties": {
+            "kind": {
+              "const": "weighted-random",
+              "description": "Supported Switchyard algorithm selected for this route.",
+              "type": "string"
+            },
+            "seed": {
+              "description": "Seed supplied to Switchyard's random router.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "targets": {
+              "description": "Named target routes and their positive integer weights.",
+              "items": {
+                "$ref": "#/$defs/SwitchyardWeightedTarget"
+              },
+              "maxItems": 32,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "seed",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Capability classifier choosing between weak and strong serving routes.",
+          "properties": {
+            "baseThreshold": {
+              "description": "Initial classifier threshold, from zero through one.",
+              "format": "double",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "classifierRoute": {
+              "description": "Named route used for the classification request.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "llm-classifier",
+              "description": "Supported Switchyard algorithm selected for this route.",
+              "type": "string"
+            },
+            "strongRoute": {
+              "description": "Named route used for higher-complexity requests.",
+              "type": "string"
+            },
+            "thresholdStep": {
+              "description": "Positive threshold adjustment for each additional capability level.",
+              "format": "double",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "weakRoute": {
+              "description": "Named route used for lower-complexity requests.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "classifierRoute",
+            "weakRoute",
+            "strongRoute",
+            "baseThreshold",
+            "thresholdStep"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SwitchyardWeightedTarget": {
+      "additionalProperties": false,
+      "description": "One weighted Switchyard target bound to a named inference route.",
+      "properties": {
+        "routeRef": {
+          "description": "Named route whose provider connection remains managed by OpenShell.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Positive relative selection weight.",
+          "format": "uint32",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "routeRef",
+        "weight"
+      ],
+      "type": "object"
+    },
     "TLS": {
       "additionalProperties": false,
       "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
@@ -3714,7 +3855,7 @@
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-    "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",
+    "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, routing, tuning, and tools; omitted disclosure means progressive. Hermes Switchyard routing accepts only the supported algorithms, requires distinct named routes and OpenShell providers for every routing role, and is preserved in the runtime contract.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",

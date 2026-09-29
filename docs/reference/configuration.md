@@ -21,7 +21,7 @@ Empty or zero selects a default only where stated.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
+- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, routing, tuning, and tools; omitted disclosure means progressive. Hermes Switchyard routing accepts only the supported algorithms, requires distinct named routes and OpenShell providers for every routing role, and is preserved in the runtime contract.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
 - The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
@@ -541,7 +541,8 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `default` | string | No | — | Initial model choice by route name. Required with multiple routes; omission selects the sole route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw or Pi. Constraints: minimum items 1; maximum items 32. |
+| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw, Pi, or Hermes with Switchyard routing. Constraints: minimum items 1; maximum items 32. |
+| `routing` | [InferenceRouting](#inferencerouting) | No | — | Optional in-process routing over the named routes. Switchyard requires Hermes. |
 
 ## InferenceApi
 
@@ -583,6 +584,31 @@ Paths:
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## InferenceRouting
+
+Optional inference routing performed inside the harness process.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferences.{key}.routing`
+- `spec.sandboxes[].agent.inference.routing`
+- `spec.sandboxes[].inferences.{key}.routing`
+
+Accepted input: object.
+
+### Alternative 1
+
+Route Hermes requests through the native NeMo Relay Switchyard plugin.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `algorithm` | [SwitchyardAlgorithm](#switchyardalgorithm) | Yes | — | Supported Switchyard routing algorithm and its named route bindings. |
+| `kind` | string | Yes | — | In-process routing implementation selected for this inference. Constraints: `"switchyard"`. |
+| `routeId` | string | Yes | — | Synthetic Switchyard model name, exposed as `switchyard/<routeId>`. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## InlineRecipe
 
@@ -1417,6 +1443,62 @@ Paths:
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## SwitchyardAlgorithm
+
+Switchyard algorithms accepted by the V1 configuration contract.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferences.{key}.routing.algorithm`
+- `spec.sandboxes[].agent.inference.routing.algorithm`
+- `spec.sandboxes[].inferences.{key}.routing.algorithm`
+
+Accepted input: object.
+
+### Alternative 1
+
+Deterministic weighted selection among two or more named inference routes.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `kind` | string | Yes | — | Supported Switchyard algorithm selected for this route. Constraints: `"weighted-random"`. |
+| `seed` | integer | Yes | — | Seed supplied to Switchyard's random router. Constraints: minimum 0. |
+| `targets` | array of [SwitchyardWeightedTarget](#switchyardweightedtarget) | Yes | — | Named target routes and their positive integer weights. Constraints: minimum items 2; maximum items 32. |
+
+### Alternative 2
+
+Capability classifier choosing between weak and strong serving routes.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `baseThreshold` | number | Yes | — | Initial classifier threshold, from zero through one. Constraints: minimum 0; maximum 1. |
+| `classifierRoute` | string | Yes | — | Named route used for the classification request. |
+| `kind` | string | Yes | — | Supported Switchyard algorithm selected for this route. Constraints: `"llm-classifier"`. |
+| `strongRoute` | string | Yes | — | Named route used for higher-complexity requests. |
+| `thresholdStep` | number | Yes | — | Positive threshold adjustment for each additional capability level. Constraints: minimum 0; maximum 1. |
+| `weakRoute` | string | Yes | — | Named route used for lower-complexity requests. |
+
+## SwitchyardWeightedTarget
+
+One weighted Switchyard target bound to a named inference route.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferences.{key}.routing.algorithm.targets[]`
+- `spec.sandboxes[].agent.inference.routing.algorithm.targets[]`
+- `spec.sandboxes[].inferences.{key}.routing.algorithm.targets[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `routeRef` | string | Yes | — | Named route whose provider connection remains managed by OpenShell. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `weight` | integer | Yes | — | Positive relative selection weight. Constraints: minimum 1; maximum 1000000000. |
 
 ## TLS
 

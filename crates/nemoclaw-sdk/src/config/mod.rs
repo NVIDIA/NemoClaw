@@ -13,6 +13,7 @@ mod inference;
 mod interfaces;
 mod providers;
 pub(crate) mod references;
+mod routing;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
@@ -25,6 +26,7 @@ mod kinds;
 #[doc(hidden)]
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
+pub use routing::{InferenceRouting, SwitchyardAlgorithm, SwitchyardWeightedTarget};
 mod types;
 pub use inference::InferenceConnection;
 pub(crate) mod validation;

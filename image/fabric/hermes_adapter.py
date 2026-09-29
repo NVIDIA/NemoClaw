@@ -12,7 +12,13 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from fabric import hermes_relay_enabled, model_connection, model_credential
+from fabric import (
+    hermes_model_connection,
+    hermes_relay_enabled,
+    hermes_switchyard_enabled,
+    model_connection,
+    model_credential,
+)
 from interfaces import token
 
 ROOT = Path("/sandbox/.hermes")
@@ -22,6 +28,172 @@ MODES = {
     "openai-responses": "codex_responses",
     "anthropic-messages": "anthropic_messages",
 }
+SWITCHYARD_MANIFEST = Path("/opt/nemoclaw/switchyard-plugin/relay-plugin.toml")
+SWITCHYARD_TIMEOUT_MS = 300_000
+
+
+def switchyard_plugin_configuration(deployment_path):
+    return {
+        "version": 1,
+        "plugins": {
+            "policy": {
+                "overrides": {
+                    "nvidia.switchyard": {
+                        "startup": "required",
+                        "attestation": "integrity_only",
+                    }
+                }
+            },
+            "dynamic": [
+                {
+                    "manifest": str(SWITCHYARD_MANIFEST),
+                    "config": {
+                        "priority": 0,
+                        "switchyard_config_path": str(deployment_path),
+                    },
+                }
+            ],
+        },
+    }
+
+
+def switchyard_deployment(inference):
+    if not hermes_switchyard_enabled(inference):
+        raise ValueError("Hermes Switchyard routing is not configured")
+    agents = inference.get("agents")
+    if not isinstance(agents, list) or len(agents) != 1:
+        raise ValueError("Switchyard routing requires one Hermes agent")
+    selection = agents[0].get("inference")
+    if not isinstance(selection, dict) or set(selection) != {"default", "models"}:
+        raise ValueError("Switchyard routing requires named model choices")
+    models = selection["models"]
+    routing = inference["routing"]
+    algorithm = routing["algorithm"]
+    kind = algorithm.get("kind")
+    if kind == "llm-classifier" and set(algorithm) == {
+        "kind",
+        "classifierRoute",
+        "weakRoute",
+        "strongRoute",
+        "baseThreshold",
+        "thresholdStep",
+    }:
+        route_names = [
+            algorithm["classifierRoute"],
+            algorithm["weakRoute"],
+            algorithm["strongRoute"],
+        ]
+        route = {
+            "id": f"switchyard/{routing['routeId']}",
+            "type": "llm_classifier",
+            "mode": "capability",
+            "classifier_target": route_names[0],
+            "weak_target": route_names[1],
+            "strong_target": route_names[2],
+            "base_threshold": algorithm["baseThreshold"],
+            "threshold_step": algorithm["thresholdStep"],
+        }
+    elif kind == "weighted-random" and set(algorithm) == {"kind", "seed", "targets"}:
+        targets = algorithm["targets"]
+        if not isinstance(targets, list) or any(not isinstance(target, dict) for target in targets):
+            raise ValueError("invalid Switchyard weighted targets")
+        route_names = [target.get("routeRef") for target in targets]
+        route = {
+            "id": f"switchyard/{routing['routeId']}",
+            "type": "random",
+            "targets": route_names,
+            "weights": [target.get("weight") for target in targets],
+            "seed": algorithm["seed"],
+        }
+    else:
+        raise ValueError("unsupported Switchyard routing algorithm")
+    if (
+        len(route_names) != len(set(route_names))
+        or not route_names
+        or any(name not in models for name in route_names)
+    ):
+        raise ValueError("invalid Switchyard route references")
+    clients = {}
+    targets = {}
+    providers = set()
+    for name in route_names:
+        model = models[name]
+        connection = model_connection(model)
+        provider = model.get("provider")
+        if not isinstance(provider, str) or not provider or provider in providers:
+            raise ValueError("Switchyard roles require distinct OpenShell providers")
+        providers.add(provider)
+        api_key_env = connection["api_key_env"]
+        if not api_key_env or api_key_env == "NEMOCLAW_ANONYMOUS_API_KEY":
+            raise ValueError("Switchyard providers require attached credentials")
+        try:
+            wire_format = {
+                "openai-completions": "openai_chat",
+                "openai-responses": "openai_responses",
+                "anthropic-messages": "anthropic_messages",
+            }[model["api"]]
+        except (KeyError, TypeError) as error:
+            raise ValueError("unsupported Switchyard provider API") from error
+        clients[name] = {
+            "format": wire_format,
+            "base_url": connection["base_url"],
+            "api_key_env": api_key_env,
+            "max_retries": 0,
+            "timeout_ms": SWITCHYARD_TIMEOUT_MS,
+        }
+        targets[name] = {"id": connection["model"], "llm_client": name}
+    return {
+        "schema_version": 1,
+        "llm_clients": clients,
+        "targets": targets,
+        "routes": {routing["routeId"]: route},
+    }
+
+
+def _write_owned_toml(path, value):
+    import tomllib
+
+    import tomli_w
+
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if path.exists():
+        with path.open("rb") as source:
+            if tomllib.load(source) != value:
+                raise RuntimeError(
+                    "Switchyard runtime configuration conflicts with deployment intent"
+                )
+        return
+    with open(path, "xb", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        tomli_w.dump(value, output)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def write_switchyard_plugin_config(inference, relay_plugins_path, home=None):
+    import tomllib
+
+    home = home or ROOT
+    directory = home / "nemoclaw-switchyard"
+    deployment_path = directory / "switchyard.toml"
+    plugins_path = directory / "plugins.toml"
+    with Path(relay_plugins_path).open("rb") as source:
+        plugins = tomllib.load(source)
+    if "plugins" in plugins:
+        raise RuntimeError("Relay plugin configuration already declares dynamic plugins")
+    _write_owned_toml(deployment_path, switchyard_deployment(inference))
+    plugins.update(switchyard_plugin_configuration(deployment_path))
+    _write_owned_toml(plugins_path, plugins)
+    return plugins_path
+
+
+def require_switchyard_relay(required):
+    if not required:
+        return
+    from agent.relay_runtime import get_runtime
+
+    runtime = get_runtime()
+    if runtime is None or not runtime.managed_execution_enabled():
+        raise RuntimeError("required Switchyard Relay plugin is not active")
 
 
 def interface_settings(inference):
@@ -40,7 +212,7 @@ def interface_settings(inference):
 
 def native_configuration(inference):
     api = (inference or {}).get("api", "openai-completions")
-    connection = model_connection(inference)
+    connection = hermes_model_connection(inference)
     return {
         "model": {
             "default": connection["model"],
@@ -53,7 +225,11 @@ def native_configuration(inference):
                 "name": "openshell",
                 "base_url": connection["base_url"],
                 "api_mode": MODES[api],
-                "api_key": model_credential(inference),
+                "api_key": (
+                    "openshell-placeholder"
+                    if hermes_switchyard_enabled(inference)
+                    else model_credential(inference)
+                ),
             }
         ],
         "agent": {"max_turns": 8},
@@ -190,6 +366,7 @@ async def native_server():
     try:
         if not await adapter.connect():
             raise RuntimeError("Hermes native API startup failed")
+        require_switchyard_relay(os.environ.get("NEMOCLAW_HERMES_SWITCHYARD_REQUIRED") == "1")
         if dashboard["enabled"]:
             home = ROOT / "profiles/dashboard-home"
             env = dict(
@@ -251,8 +428,8 @@ class HermesRuntime:
             raise ValueError("invalid runtime identity")
         model = config["models"]["default"]
         if (
-            model["model"] != model_connection(self.inference)["model"]
-            or model.get("base_url") != model_connection(self.inference)["base_url"]
+            model["model"] != hermes_model_connection(self.inference)["model"]
+            or model.get("base_url") != hermes_model_connection(self.inference)["base_url"]
         ):
             raise ValueError("Hermes model differs from its configured inference connection")
         ROOT.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -266,18 +443,27 @@ class HermesRuntime:
             env = dict(
                 os.environ,
                 HERMES_HOME=str(ROOT),
-                OPENAI_API_KEY=model_credential(self.inference),
-                OPENAI_BASE_URL=model_connection(self.inference)["base_url"],
+                OPENAI_API_KEY=(
+                    "openshell-placeholder"
+                    if hermes_switchyard_enabled(self.inference)
+                    else model_credential(self.inference)
+                ),
+                OPENAI_BASE_URL=hermes_model_connection(self.inference)["base_url"],
                 HERMES_DISABLE_LAZY_INSTALLS="1",
                 NEMOCLAW_HERMES_INTERFACES=json.dumps(interface_settings(self.inference)),
+                NEMOCLAW_HERMES_SWITCHYARD_REQUIRED=(
+                    "1" if hermes_switchyard_enabled(self.inference) else "0"
+                ),
             )
-            if hermes_relay_enabled(self.inference):
+            if hermes_relay_enabled(self.inference) or hermes_switchyard_enabled(self.inference):
                 from nemo_fabric_adapters.hermes.telemetry import (
                     HERMES_RELAY_ENV_NAMES,
                     write_hermes_relay_plugin_config,
                 )
 
                 path, _ = write_hermes_relay_plugin_config(payload)
+                if hermes_switchyard_enabled(self.inference):
+                    path = write_switchyard_plugin_config(self.inference, path)
                 for name in HERMES_RELAY_ENV_NAMES:
                     env.pop(name, None)
                 env["HERMES_NEMO_RELAY_PLUGINS_TOML"] = str(path)

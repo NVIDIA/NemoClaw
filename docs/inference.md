@@ -20,6 +20,8 @@ See [state migration](state.md#native-inference-migration) before changing an ex
 ## Give an Agent Multiple Model Choices
 
 OpenClaw and Pi agents can select different models from one or more providers.
+Hermes accepts multiple routes only with `inference.routing.kind: switchyard`, but that path remains **TBD** until a Fabric image packages and qualifies a compatible released Hermes, Relay, and Switchyard plugin tuple.
+The current parser and runtime contract retain Switchyard intent; they do not establish a deployable image or production readiness.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
@@ -37,7 +39,7 @@ Use native requests to verify model selection through the agent interface separa
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
 OpenClaw and Pi support up to 32 routes per inference definition.
-Other harnesses keep one choice.
+Hermes without Switchyard routing and other harnesses keep one choice.
 For OpenClaw, `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
 Native reasoning changes remain a harness operation.
 Each managed `service` serves one pinned model; routes must use its declared served model.
@@ -483,7 +485,7 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Workflow or claim | Documentation status |
 |---|---|
 | Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
-| Managed model router and model-pool lifecycle | **TBD** — requires an implementation and lifecycle test results |
+| Managed model router and model-pool lifecycle | **TBD** — Hermes Switchyard intent exists, but no Fabric image packages a qualified Hermes, Relay, and Switchyard plugin tuple; lifecycle and live results are still required |
 | Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
 | Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
 | Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |

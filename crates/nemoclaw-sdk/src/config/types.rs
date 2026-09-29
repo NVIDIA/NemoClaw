@@ -331,8 +331,12 @@ pub struct Inference {
     /// Initial model choice by route name. Required with multiple routes; omission selects the sole route.
     pub default: Option<String>,
     #[serde(rename = "routes")]
-    /// One or more uniquely named model choices. Multiple choices require OpenClaw or Pi.
+    /// One or more uniquely named model choices. Multiple choices require OpenClaw, Pi, or Hermes with Switchyard routing.
     pub routes: Vec<Route>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::InferenceRouting")]
+    /// Optional in-process routing over the named routes. Switchyard requires Hermes.
+    pub routing: Option<super::InferenceRouting>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
