@@ -54,7 +54,6 @@ describe("runInferenceSet OpenClaw routing", () => {
         : {
             id: "nvidia/new-model",
             name: "inference/nvidia/new-model",
-            contextWindow: 65536,
             params: { temperature: 0.3 },
           };
       expect(providerUpdate?.value).toEqual({

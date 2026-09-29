@@ -64,7 +64,11 @@ import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
 
 export { resolveCurrentRuntimeProviderBundle };
-export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
+export {
+  createHermesPortableOllamaInferenceBindings,
+  createHermesPortableOllamaInferenceResolver,
+  retireHermesPortableOllamaFreshState,
+} from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";

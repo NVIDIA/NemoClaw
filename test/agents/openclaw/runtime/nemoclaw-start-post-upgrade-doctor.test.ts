@@ -36,9 +36,15 @@ describe("legacy empty approvals migration", () => {
       fs.readFileSync(START_SCRIPT, "utf8"),
       "remove_empty_legacy_exec_approvals",
     ).replaceAll("/sandbox/.openclaw", configPath);
-    return spawnSync("bash", ["-c", `${fn}\nremove_empty_legacy_exec_approvals`], {
-      encoding: "utf8",
-    });
+    return spawnSync(
+      "bash",
+      [
+        "-c",
+        // The temporary state belongs to the test process; image smoke tests cover root step-down.
+        `run_openclaw_config_as_owner() { "$@"; }\n${fn}\nremove_empty_legacy_exec_approvals`,
+      ],
+      { encoding: "utf8" },
+    );
   }
 
   it("rejects a linked config directory without deleting its empty approval file", () => {

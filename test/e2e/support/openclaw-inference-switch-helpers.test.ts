@@ -171,6 +171,7 @@ describe("openclaw-inference-switch mock-Anthropic baseline", () => {
     expect(mockBaselineInference("http://127.0.0.1:34567/v1")).toEqual({
       apiKey: MOCK_BASELINE_API_KEY,
       endpointUrl: "http://127.0.0.1:34567/v1",
+      model: MOCK_BASELINE_MODEL,
       env: {
         COMPATIBLE_API_KEY: MOCK_BASELINE_API_KEY,
         NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
