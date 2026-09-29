@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../adapters/sandbox/sandbox-exec-output";
 
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 

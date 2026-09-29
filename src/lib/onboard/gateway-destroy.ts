@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Buffer } from "node:buffer";
+import { createCliOpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle-cli";
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
+import type { GatewayOwner } from "./gateway-ownership";
 
 import { GATEWAY_PORT } from "../core/ports";
 import { listSandboxes as listRegisteredSandboxes } from "../state/registry";
@@ -10,18 +12,9 @@ import { resolveGatewayName, resolveSandboxGatewayName } from "./gateway-binding
 import { isExternallySupervised } from "./gateway-ownership";
 import {
   GatewayAuthorityError,
-  removeGatewayRegistrationWithPolicy,
+  removeGatewayRegistrationThroughAdapter,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
-
-export type RunOpenshell = (
-  args: string[],
-  opts: { ignoreError: true },
-) => {
-  status: number | null;
-  stdout?: string | Buffer;
-  stderr?: string | Buffer;
-};
 
 export type RemoveVolumesByPrefix = (prefix: string, opts: { ignoreError: true }) => unknown;
 
@@ -29,10 +22,11 @@ export type DestroyGatewayDeps = {
   clearRegistry: () => void;
   dockerRemoveVolumesByPrefix: RemoveVolumesByPrefix;
   gatewayName: string;
-  hasLifecycleCommands: () => boolean;
+  hasLifecycleCommands: () => boolean | Promise<boolean>;
   isDockerDriverGatewayEnabled: () => boolean;
-  removeDockerDriverGatewayRegistration: () => boolean;
-  runOpenshell: RunOpenshell;
+  removeDockerDriverGatewayRegistration: () => boolean | Promise<boolean>;
+  lifecycle: OpenShellGatewayLifecycle;
+  resolveAuthority: () => GatewayOwner;
   stopDockerDriverGatewayProcess: () => void;
 };
 
@@ -48,21 +42,24 @@ export type AbortGatewayTeardownDeps = {
   listSandboxes?: typeof listRegisteredSandboxes;
   resolveAuthority?: typeof resolveGatewayTeardownAuthority;
   releaseManagedGatewayPort?: typeof releaseManagedGatewayPort;
-  removeGatewayRegistration?: (gatewayName: string) => boolean;
+  removeGatewayRegistration?: (gatewayName: string) => boolean | Promise<boolean>;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 };
 
-function defaultRemoveGatewayRegistration(gatewayName: string): boolean {
-  // Lazy require keeps unit tests free of openshell binary resolution.
+async function defaultRemoveGatewayRegistration(
+  gatewayName: string,
+  revalidateAuthority: () => GatewayOwner,
+): Promise<boolean> {
   const runtime =
     require("../adapters/openshell/runtime") as typeof import("../adapters/openshell/runtime");
-  return (
-    runtime.runOpenshell(["gateway", "remove", gatewayName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).status === 0
-  );
+  const result = await removeGatewayRegistrationThroughAdapter({
+    gatewayName,
+    allowLegacyDestroy: false,
+    lifecycle: createCliOpenShellGatewayLifecycle(runtime.captureResolvedOpenshell),
+    revalidateAuthority,
+  });
+  return result.ok;
 }
 
 /**
@@ -90,7 +87,9 @@ export function gatewayHasRegisteredSandbox(
  *
  * @returns true when teardown completed or no teardown was required.
  */
-export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDeps = {}): boolean {
+export async function teardownOrphanManagedGatewayOnAbort(
+  deps: AbortGatewayTeardownDeps = {},
+): Promise<boolean> {
   const log = deps.log ?? ((message: string) => console.error(message));
   const warn = deps.warn ?? ((message: string) => console.error(message));
 
@@ -101,7 +100,12 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
     const listSandboxes = deps.listSandboxes ?? listRegisteredSandboxes;
     const resolveAuthority = deps.resolveAuthority ?? resolveGatewayTeardownAuthority;
     const release = deps.releaseManagedGatewayPort ?? releaseManagedGatewayPort;
-    const removeRegistration = deps.removeGatewayRegistration ?? defaultRemoveGatewayRegistration;
+    const removeRegistration =
+      deps.removeGatewayRegistration ??
+      ((name: string) =>
+        defaultRemoveGatewayRegistration(name, () =>
+          resolveAuthority({ gatewayName: name, gatewayPort: port }, { env }),
+        ));
 
     const hasRegisteredSandbox = gatewayHasRegisteredSandbox(gatewayName, listSandboxes);
     if (hasRegisteredSandbox === null) {
@@ -161,7 +165,7 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
     if (!releaseConfirmed) return false;
 
     try {
-      if (!removeRegistration(gatewayName)) {
+      if (!(await removeRegistration(gatewayName))) {
         warn(
           `  Gateway registration '${gatewayName}' was not confirmed removed after onboard abort.`,
         );
@@ -184,29 +188,33 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
   }
 }
 
-export function destroyGatewayWithVolumeCleanup({
+export async function destroyGatewayWithVolumeCleanup({
   clearRegistry,
   dockerRemoveVolumesByPrefix,
   gatewayName,
   hasLifecycleCommands,
   isDockerDriverGatewayEnabled,
   removeDockerDriverGatewayRegistration,
-  runOpenshell,
+  lifecycle,
+  resolveAuthority,
   stopDockerDriverGatewayProcess,
-}: DestroyGatewayDeps): boolean {
+}: DestroyGatewayDeps): Promise<boolean> {
   const dockerDriver = isDockerDriverGatewayEnabled();
   if (dockerDriver) {
     stopDockerDriverGatewayProcess();
   }
 
-  const lifecycleCommands = hasLifecycleCommands();
+  const lifecycleCommands = await hasLifecycleCommands();
   const gatewayRemoved = dockerDriver
-    ? removeDockerDriverGatewayRegistration()
-    : removeGatewayRegistrationWithPolicy({
-        allowLegacyDestroy: true,
-        gatewayLabel: gatewayName,
-        run: (args) => runOpenshell(args, { ignoreError: true }),
-      }).ok;
+    ? await removeDockerDriverGatewayRegistration()
+    : (
+        await removeGatewayRegistrationThroughAdapter({
+          allowLegacyDestroy: !isExternallySupervised(resolveAuthority()),
+          gatewayName,
+          lifecycle,
+          revalidateAuthority: resolveAuthority,
+        })
+      ).ok;
 
   if (gatewayRemoved) {
     clearRegistry();

@@ -12,6 +12,7 @@ import {
   ProcessBoundLockContentionError,
   releaseProcessBoundLock,
   withProcessBoundRegistryLockAt,
+  withProcessBoundRegistryLockAtAsync,
   withRegistryLockAt,
   type RegistryLockDeps,
 } from "./registry/lock";
@@ -156,6 +157,111 @@ describe("registry lock ownership decisions", () => {
 });
 
 describe("process-bound registry locking", () => {
+  it.each([false, true])(
+    "lets a waiting async caller enter after the holder settles (reject=%s)",
+    async (reject) => {
+      const test = fixture("nemoclaw-async-contenders-");
+      const events: string[] = [];
+      const failure = new Error("holder failed");
+      const holder = withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        async () => {
+          events.push("holder-entered");
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          events.push("holder-settled");
+          return reject ? Promise.reject(failure) : "holder";
+        },
+        exactDeps(),
+      );
+      const contender = withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        () => {
+          events.push("contender-entered");
+          return "contender";
+        },
+        exactDeps({ wait: undefined, maxRetries: 3 }),
+      );
+      const results = await Promise.allSettled([holder, contender]);
+      expect(results).toEqual([
+        reject ? { status: "rejected", reason: failure } : { status: "fulfilled", value: "holder" },
+        { status: "fulfilled", value: "contender" },
+      ]);
+      expect(events).toEqual(["holder-entered", "holder-settled", "contender-entered"]);
+      expect(fs.existsSync(test.lockDir)).toBe(false);
+    },
+  );
+
+  it("bounds async contention without entering or removing the held generation", async () => {
+    const test = fixture("nemoclaw-async-contention-bound-");
+    const handle = acquireProcessBoundLockAt(test.lockDir, exactDeps());
+    const wait = vi.fn();
+    const operation = vi.fn();
+    try {
+      await expect(
+        withProcessBoundRegistryLockAtAsync(
+          test.registryFile,
+          operation,
+          exactDeps({ wait, maxRetries: 2 }),
+        ),
+      ).rejects.toThrow(ProcessBoundLockContentionError);
+      expect(wait).toHaveBeenCalledTimes(2);
+      expect(operation).not.toHaveBeenCalled();
+      expect(fs.readFileSync(test.ownerFile, "utf8")).toBe(String(process.pid));
+    } finally {
+      releaseProcessBoundLock(handle);
+    }
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+  });
+
+  it.each([
+    {
+      outcome: "success",
+      finish: () => "removed",
+      assert: (operation: Promise<string>) => expect(operation).resolves.toBe("removed"),
+    },
+    {
+      outcome: "failure",
+      finish: (): string => {
+        throw new Error("cleanup failed");
+      },
+      assert: (operation: Promise<string>) => expect(operation).rejects.toThrow("cleanup failed"),
+    },
+  ])(
+    "holds the registry lock until asynchronous cleanup settles: $outcome",
+    async ({ finish, assert }) => {
+      const test = fixture("nemoclaw-async-provider-cleanup-lock-");
+      let settle!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      const operation = withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        async () => {
+          await pending;
+          expect(fs.existsSync(test.lockDir)).toBe(true);
+          return finish();
+        },
+        exactDeps(),
+      );
+      expect(fs.existsSync(test.lockDir)).toBe(true);
+      expect(() =>
+        withProcessBoundRegistryLockAt(
+          test.registryFile,
+          () => undefined,
+          exactDeps({ maxRetries: 1 }),
+        ),
+      ).toThrow(ProcessBoundLockContentionError);
+      settle();
+      await assert(operation);
+      expect(fs.existsSync(test.lockDir)).toBe(false);
+      const contender = vi.fn(() => "entered");
+      expect(
+        withProcessBoundRegistryLockAt(test.registryFile, contender, exactDeps({ maxRetries: 1 })),
+      ).toBe("entered");
+      expect(contender).toHaveBeenCalledOnce();
+    },
+  );
+
   it("holds beyond ten seconds and makes a contender exhaust 120 bounded retries", () => {
     const test = fixture("nemoclaw-process-bound-lock-");
     const wait = vi.fn();
@@ -331,6 +437,88 @@ describe("process-bound registry locking", () => {
   });
 });
 
+describe("registry lock exhaustion remediation", () => {
+  it.each([
+    ["live", "Recorded owner PID 4242 is still running"],
+    ["dead", "Recorded owner PID 4242 is no longer running"],
+    ["recycled", "PID 4242 now belongs to an unrelated process"],
+    ["unverifiable", "PID 4242 exists but cannot be confirmed as the recorded owner"],
+  ])("reports %s ownership and directs the operator to retry acquisition", (kind, diagnostic) => {
+    const test = fixture("nemoclaw-lock-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+    let waited = false;
+    const operation = vi.fn();
+    const acquire = () =>
+      withRegistryLockAt(
+        test.registryFile,
+        operation,
+        exactDeps({
+          maxRetries: 1,
+          now: () => LOCK_MTIME,
+          wait: () => {
+            waited = true;
+          },
+          isProcessAlive: () => !(waited && kind === "dead"),
+          readProcessIdentity: () =>
+            kind === "unverifiable"
+              ? null
+              : waited && kind === "recycled"
+                ? RECYCLED_IDENTITY
+                : PROCESS_IDENTITY,
+        }),
+      );
+    let caught: unknown;
+    try {
+      acquire();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ProcessBoundLockContentionError);
+    const message = (caught as Error).message;
+    expect(message).toContain(test.lockDir);
+    expect(message).toContain("after 1 retries.");
+    expect(message).toContain(diagnostic);
+    expect(message).toContain("Rerun this command to retry lock acquisition.");
+    expect(message).not.toMatch(/rm -|stop it|stopping/u);
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
+  });
+
+  it("does not confirm a live PID without its recorded process identity", () => {
+    const test = fixture("nemoclaw-legacy-owner-remediation-");
+    writeOrdinaryGeneration(test, 4242);
+    markStale(test.lockDir);
+    expect(() =>
+      withRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ now: () => LOCK_MTIME, maxRetries: 1 }),
+      ),
+    ).toThrow("PID 4242 exists but cannot be confirmed as the recorded owner");
+    expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
+  });
+
+  it("preserves a fresh incomplete claim and reclaims abandoned debris on retry", () => {
+    const test = fixture("nemoclaw-ownerless-remediation-");
+    fs.mkdirSync(test.lockDir, { recursive: true, mode: 0o700 });
+    markStale(test.lockDir);
+    expect(() =>
+      withRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ now: () => LOCK_MTIME, maxRetries: 1 }),
+      ),
+    ).toThrow("The lock has no verifiable owner record. Wait briefly. Rerun this command");
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(
+      withRegistryLockAt(test.registryFile, () => "resumed", exactDeps({ maxRetries: 2 })),
+    ).toBe("resumed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+  });
+});
+
 describe("generation-safe registry lock removal", () => {
   it("holds and releases one opaque process-bound generation", () => {
     const test = fixture("nemoclaw-opaque-handle-");
@@ -496,5 +684,53 @@ describe("generation-safe registry lock removal", () => {
     ).toThrow(/identity changed during acquisition/);
     expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4343");
     expect(quarantineDirectories(test.lockDir)).toEqual([]);
+  });
+});
+
+describe("asynchronous registry authority", () => {
+  it("holds the exact process lock through an awaited probe", async () => {
+    const test = fixture("nemoclaw-await-registry-");
+    let complete!: () => void;
+    const probe = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const operation = withProcessBoundRegistryLockAtAsync(
+      test.registryFile,
+      async () => {
+        await probe;
+        expect(fs.existsSync(test.lockDir)).toBe(true);
+        return "observed";
+      },
+      exactDeps(),
+    );
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(() =>
+      withProcessBoundRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ maxRetries: 1, wait: () => undefined }),
+      ),
+    ).toThrow(ProcessBoundLockContentionError);
+    complete();
+    await expect(operation).resolves.toBe("observed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+  });
+
+  it("releases registry authority when an awaited probe rejects", async () => {
+    const test = fixture("nemoclaw-rejected-registry-");
+    await expect(
+      withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        async () => {
+          await Promise.resolve();
+          throw new Error("probe failed");
+        },
+        exactDeps(),
+      ),
+    ).rejects.toThrow("probe failed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+    expect(withProcessBoundRegistryLockAt(test.registryFile, () => "reacquired", exactDeps())).toBe(
+      "reacquired",
+    );
   });
 });

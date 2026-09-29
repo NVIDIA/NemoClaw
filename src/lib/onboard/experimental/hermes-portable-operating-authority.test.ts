@@ -83,7 +83,7 @@ function snapshot(withSuccessor = true): HermesPortableReceiptSnapshot & {
   readonly receipt: HermesPortableConfiguredReceipt;
 } {
   const openshellExecutableAuthority: HermesPortableOpenShellExecutableAuthority = {
-    version: "0.0.106",
+    version: "0.0.116",
     executable: executable("/usr/bin/openshell", "b".repeat(64)),
   };
   const podmanExecutableAuthority: HermesPortablePodmanExecutableAuthority = {
@@ -197,7 +197,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
   it("captures operation-local authority for an explicitly admitted schema-7 receipt (#10423)", () => {
     const captureSocketAuthority = vi.fn(() => socket("99"));
     const captureOpenShellExecutableAuthority = vi.fn(() => ({
-      version: "0.0.106" as const,
+      version: "0.0.116" as const,
       executable: executable("/usr/bin/openshell", "b".repeat(64)),
     }));
     const capturePodmanExecutableAuthority = vi.fn(() => ({
@@ -227,7 +227,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
       env: environment(),
       captureSocketAuthority: () => socket("99"),
       captureOpenShellExecutableAuthority: () => ({
-        version: "0.0.106",
+        version: "0.0.116",
         executable: executable("/usr/bin/openshell", "b".repeat(64)),
       }),
       capturePodmanExecutableAuthority: () => ({
@@ -245,7 +245,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
       env: environment(),
       captureSocketAuthority: () => socket("99", 0o40710),
       captureOpenShellExecutableAuthority: () => ({
-        version: "0.0.106",
+        version: "0.0.116",
         executable: executable("/usr/bin/openshell", "b".repeat(64)),
       }),
       capturePodmanExecutableAuthority: () => ({
@@ -285,7 +285,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
         env: environment(),
         captureSocketAuthority: capture,
         captureOpenShellExecutableAuthority: () => ({
-          version: "0.0.106",
+          version: "0.0.116",
           executable: executable("/usr/bin/openshell", "b".repeat(64)),
         }),
         capturePodmanExecutableAuthority: () => ({
@@ -302,7 +302,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
       env: environment(),
       captureSocketAuthority: () => socket(String(100 + captures++)),
       captureOpenShellExecutableAuthority: () => ({
-        version: "0.0.106",
+        version: "0.0.116",
         executable: executable("/usr/bin/openshell", "b".repeat(64)),
       }),
       capturePodmanExecutableAuthority: () => ({
@@ -321,7 +321,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
       env: environment(),
       captureSocketAuthority: () => socket("99"),
       captureOpenShellExecutableAuthority: () => ({
-        version: "0.0.106",
+        version: "0.0.116",
         executable: executable("/usr/bin/openshell", "b".repeat(64)),
       }),
       capturePodmanExecutableAuthority: () => ({
@@ -338,7 +338,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
 
   it("checks transaction identity without repeating executable behavior probes (#10423)", () => {
     const openshell = {
-      version: "0.0.106" as const,
+      version: "0.0.116" as const,
       executable: executable("/usr/bin/openshell", "b".repeat(64)),
     };
     const podman = {
@@ -374,7 +374,7 @@ describe("Hermes Portable schema-8 operation authority", () => {
           env: environment(),
           captureSocketAuthority: () => socket("99"),
           captureOpenShellExecutableAuthority: () => ({
-            version: "0.0.106",
+            version: "0.0.116",
             executable: executable(
               "/usr/bin/openshell",
               (owner === "openshell" ? "0" : "b").repeat(64),

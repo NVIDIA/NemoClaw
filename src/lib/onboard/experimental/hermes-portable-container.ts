@@ -481,12 +481,7 @@ function consumeCurrentObservation(
 }
 
 function isAuthenticatedHealthReady(observation: HermesPortableContainerInspection): boolean {
-  return (
-    observation.authority.running &&
-    !observation.paused &&
-    observation.authority.restartPolicy === "unless-stopped" &&
-    observation.status === "running"
-  );
+  return observation.authority.running && !observation.paused && observation.status === "running";
 }
 
 function captureAuthenticatedHealthWithPostInspection(
@@ -524,36 +519,6 @@ function captureAuthenticatedHealthWithPostInspection(
   return command.output;
 }
 
-/** Apply and verify the only enrollment-time Podman mutation by exact full ID. */
-export function configureHermesPortableRestartPolicy(
-  receipt: HermesPortableConfiguredReceipt,
-  deps: HermesPortableContainerDeps,
-): HermesPortableContainerInspection {
-  if (receipt.phase !== "configuring")
-    fail("restart-policy configuration requires configuring authority");
-  const before = assertCurrentHermesPortableContainer(receipt, deps);
-  if (before.authority.restartPolicy !== "unless-stopped") {
-    assertSocket(receipt, deps);
-    requireCommand(
-      deps.podman(
-        ["container", "update", "--restart=unless-stopped", receipt.container.containerId],
-        MUTATION_TIMEOUT_MS,
-      ),
-      "restart-policy update",
-    );
-    assertSocket(receipt, deps);
-  }
-  const after = assertCurrentHermesPortableContainer(receipt, deps);
-  if (
-    !after.authority.running ||
-    after.paused ||
-    after.authority.restartPolicy !== "unless-stopped"
-  ) {
-    fail("restart-policy configuration did not leave the exact container ready");
-  }
-  return after;
-}
-
 /** Read authenticated health without exposing the generated Bearer credential to the host. */
 export function observeHermesPortableAuthenticatedHealth(
   receipt: HermesPortableConfiguredReceipt,
@@ -565,9 +530,7 @@ export function observeHermesPortableAuthenticatedHealth(
     beforeObservation ?? assertCurrentHermesPortableContainer(receipt, deps),
   );
   if (!isAuthenticatedHealthReady(before)) {
-    fail(
-      "authenticated health requires the exact container to be running, unpaused, and restart-policy qualified",
-    );
+    fail("authenticated health requires the exact container to be running and unpaused");
   }
   assertSocket(receipt, deps);
   if (!deps.authenticatedHealth) {

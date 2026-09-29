@@ -78,126 +78,60 @@ describe("Docker-driver network inspection", () => {
 });
 
 describe("gateway reuse snapshot", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("bounds OpenShell gateway inspection probes (#6752)", () => {
-    const runCaptureOpenshell = vi.fn(() => "");
-    const helpers = createGatewayReuseHelpers({
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
-      cliDisplayName: () => "NemoClaw",
-    });
-
-    helpers.getGatewayReuseSnapshot();
-
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["status", "-g", "nemoclaw"], {
-      ignoreError: true,
-      includeStderr: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["gateway", "info", "-g", "nemoclaw"], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["gateway", "info"], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-  });
-
-  it("replaces ambient OpenShell selectors for a frozen reuse target (#10514)", () => {
-    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
-    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
-    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
-    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
-    const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
-    const helpers = createGatewayReuseHelpers({
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
-      cliDisplayName: () => "NemoClaw",
-    });
-
-    helpers.getGatewayReuseSnapshot({
-      gatewayName: "nemoclaw",
-      workspace: "default",
-      localTlsDir: "/recorded/tls",
-    });
-
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
-    const statusOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
-      | { env?: Record<string, string>; replaceEnv?: boolean }
-      | undefined;
-    const namedInfoOptions = runCaptureOpenshell.mock.calls[1]?.[1] as typeof statusOptions;
-    const activeInfoOptions = runCaptureOpenshell.mock.calls[2]?.[1] as typeof statusOptions;
-    expect(statusOptions).toMatchObject({
-      env: expect.objectContaining({
-        OPENSHELL_GATEWAY: "nemoclaw",
-        OPENSHELL_WORKSPACE: "default",
-        OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+  afterEach(() => vi.unstubAllEnvs());
+  it("does not select when typed observation denies recovery", async () => {
+    const lifecycle = { selectGateway: vi.fn() };
+    const observer = {
+      observeGatewayReuse: vi.fn().mockResolvedValue({
+        gatewayReuseState: "missing",
+        healthy: false,
+        namedMetadata: false,
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding: "unknown",
+        error: { kind: "authentication", message: "Gateway access denied." },
       }),
-      replaceEnv: true,
-    });
-    expect(namedInfoOptions?.env).toBe(statusOptions?.env);
-    expect(activeInfoOptions?.env).toBe(statusOptions?.env);
-    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
-    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
-  });
-
-  it("classifies status stderr connection refusals as stale when gateway info is unavailable (#7087)", () => {
-    const statusOutput = [
-      "Error:   × client error (Connect)",
-      "  ├─▶ tcp connect error",
-      "  ╰─▶ Connection refused (os error 61)",
-    ].join("\n");
-    const runCaptureOpenshell = vi.fn((args: string[], opts?: Record<string, unknown>) =>
-      args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
-    );
+    };
     const helpers = createGatewayReuseHelpers({
       gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
+      lifecycle,
+      observer,
       cliDisplayName: () => "NemoClaw",
     });
-
-    expect(helpers.getGatewayReuseSnapshot().gatewayReuseState).toBe("stale");
+    await expect(helpers.getGatewayReuseSnapshot()).rejects.toThrow("Gateway access denied.");
+    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
   });
-
-  it("preserves named active gateway metadata when mixed stdout and stderr report an auth error", () => {
-    const statusStdout = [
-      "Server Status",
-      "",
-      "  Gateway: nemoclaw",
-      "  Server: https://127.0.0.1:8080/",
-    ].join("\n");
-    const statusStderr = "Error: authentication failed";
-    const gatewayInfo = [
-      "Gateway Info",
-      "",
-      "Gateway: nemoclaw",
-      "Gateway endpoint: https://127.0.0.1:8080/",
-    ].join("\n");
-    const outputByCommand = new Map([
-      ["status -g", [statusStdout, statusStderr].join("\n")],
-      ["gateway info", gatewayInfo],
-    ]);
-    const runCaptureOpenshell = vi.fn(
-      (args: string[]) => outputByCommand.get(args.slice(0, 2).join(" ")) ?? "",
-    );
+  it("selects only the observed named registration and reobserves before reuse", async () => {
+    const before = {
+      gatewayReuseState: "foreign-active",
+      healthy: false,
+      namedMetadata: true,
+      shouldSelect: true,
+      endpoints: [],
+      endpointBinding: "unknown",
+    } as const;
+    const after = {
+      ...before,
+      gatewayReuseState: "healthy",
+      healthy: true,
+      shouldSelect: false,
+    } as const;
+    const observer = { observeGatewayReuse: vi.fn().mockResolvedValue(after) };
+    const lifecycle = {
+      selectGateway: vi.fn().mockResolvedValue({ ok: true, state: "completed" }),
+    };
     const helpers = createGatewayReuseHelpers({
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
+      gatewayName: "nemoclaw-8091",
+      lifecycle,
+      observer,
       cliDisplayName: () => "NemoClaw",
     });
-
-    expect(helpers.getGatewayReuseSnapshot().gatewayReuseState).toBe("missing");
+    expect(await helpers.selectNamedGatewayForReuseIfNeeded(before)).toEqual(after);
+    expect(lifecycle.selectGateway).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      runtimeSelection: undefined,
+    });
+    expect(observer.observeGatewayReuse).toHaveBeenCalledOnce();
   });
 });
 

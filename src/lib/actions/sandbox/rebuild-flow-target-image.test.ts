@@ -30,6 +30,12 @@ type RetainedContextMutation = {
 };
 
 const FIXED_CONTEXT_TIME = new Date("2026-01-01T00:00:00.000Z");
+const NVIDIA_PROVIDER_OUTPUT = [
+  "Name: nvidia-prod",
+  "Type: openai",
+  "Credential keys: NVIDIA_INFERENCE_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+].join("\n");
 const retainedContextMetadataMutations: RetainedContextMutation[] = [
   {
     label: "file special bits change",
@@ -418,8 +424,21 @@ describe("rebuildSandbox flow: target image", () => {
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
-        sandboxEntry: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+        sandboxEntry: {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
         sessionSandboxName: "some-other-sandbox",
+        runOpenshell: (args) =>
+          args[0] === "provider" && args[1] === "get"
+            ? {
+                status: 0,
+                output: NVIDIA_PROVIDER_OUTPUT,
+                stdout: NVIDIA_PROVIDER_OUTPUT,
+                stderr: "",
+              }
+            : undefined,
       });
       const staleEndpoint = "https://stale.example.test/v1";
       harness.session.endpointUrl = staleEndpoint;

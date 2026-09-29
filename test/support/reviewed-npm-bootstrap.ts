@@ -10,11 +10,11 @@ import path from "node:path";
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const BOOTSTRAP = path.join(
   REPO_ROOT,
-  ".github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh",
+  ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh",
 );
 
 export type ReviewedNpmIdentity = Record<
-  "npmArchiveSha256" | "npmIntegrity" | "npmVersion",
+  "npmArchiveSha256" | "npmIntegrity" | "npmVersion" | "registryOrigin",
   string
 >;
 
@@ -23,6 +23,7 @@ type FixtureOptions = {
   command?: string;
   configFile?: (root: string) => string;
   environment?: (root: string) => NodeJS.ProcessEnv;
+  installedVersion?: string;
   mutateIdentity?: (identity: ReviewedNpmIdentity) => ReviewedNpmIdentity;
   prepare?: (root: string) => void;
 };
@@ -60,6 +61,7 @@ export function prepareReviewedNpmBootstrap(options: FixtureOptions = {}) {
     npmArchiveSha256: createHash("sha256").update(archive).digest("hex"),
     npmIntegrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
     npmVersion: "12.0.2",
+    registryOrigin: "https://registry.npmjs.org/",
   };
   const configFile = options.configFile?.(root) ?? path.join(root, "reviewed-npm-audit.json");
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
@@ -74,8 +76,10 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
   pack)
+    pack_args="$*"
     while [ "$#" -gt 1 ]; do
       if [ "$1" = "--pack-destination" ]; then
+        [ "$pack_args" = "pack npm@12.0.2 --pack-destination $2 --userconfig /dev/null --registry https://registry.npmjs.org/ --ignore-scripts --no-audit --no-fund" ]
         cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$2/npm-12.0.2.tgz"
         exit 0
       fi
@@ -84,6 +88,7 @@ case "$1" in
     exit 2
     ;;
   install) : > "$NEMOCLAW_TEST_INSTALL_MARKER" ;;
+  --version) printf '%s\n' "$NEMOCLAW_TEST_INSTALLED_VERSION" ;;
   *) exit 2 ;;
 esac
 `,
@@ -103,6 +108,7 @@ esac
         ...options.environment?.(root),
         NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
         NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+        NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
         NEMOCLAW_TEST_NPM_LOG: npmLog,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: root,

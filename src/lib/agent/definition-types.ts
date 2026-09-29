@@ -26,6 +26,7 @@ export interface AgentConfigPaths {
 
 interface AgentStateDirectoryBehavior {
   backup: boolean;
+  clearWhenAbsent: boolean;
 }
 
 export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
@@ -42,7 +43,7 @@ export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryP
 
 export type AgentStateFileStrategy = "copy" | "sqlite_backup";
 
-export type StateFileRestoreMerge = "key-allowlist" | "openclaw-config";
+export type StateFileRestoreMerge = "key-allowlist";
 
 export type StateFileUserKeyType = "boolean" | "string" | "integer" | "number" | "enum";
 
@@ -67,16 +68,7 @@ export interface StateFileKeyAllowlistRestoreOwnership {
   requireFreshHeaders?: readonly StateFileFreshHeader[];
 }
 
-export interface StateFileOpenClawRestoreOwnership {
-  merge: "openclaw-config";
-  userKeys?: never;
-  requireFreshTables?: never;
-  requireFreshHeaders?: never;
-}
-
-export type StateFileRestoreOwnership =
-  | StateFileKeyAllowlistRestoreOwnership
-  | StateFileOpenClawRestoreOwnership;
+export type StateFileRestoreOwnership = StateFileKeyAllowlistRestoreOwnership;
 
 export interface AgentStateFile {
   path: string;
@@ -101,7 +93,7 @@ export interface AgentInference {
 }
 
 export type AgentMcpSupport = "bridge" | "disabled";
-export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+export type AgentMcpAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export interface AgentMcpCapability {
   support: AgentMcpSupport;
@@ -134,6 +126,7 @@ export interface AgentDefinition {
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
+  deferred_onboarding?: boolean;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
   state_files?: AgentStateFile[];

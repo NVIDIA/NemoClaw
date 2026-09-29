@@ -248,7 +248,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
   if (
     prepare?.uses !==
-    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75"
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c"
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }
@@ -261,15 +261,25 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     workflowSteps,
     "Validate protected runtime activation contract",
   );
+  if (activation?.id !== "runtime-contract") {
+    errors.push(`${JOB_ID} activation step must expose the reviewed runtime contract`);
+  }
   requireFragments(errors, activation, [
     'candidate_root=".candidate-runtime"',
     `activation="$candidate_root/${ACTIVATION_PATH}"`,
     '[[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
     '[[ -f "$activation" && ! -L "$activation" ]]',
     '(keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"]',
+    '(keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers", "runtimeUser"]',
+    ".contractVersion == 1",
+    ".contractVersion == 2",
+    '.runtimeUser == "sandbox"',
+    'then "root"',
+    'then "sandbox"',
     '.agents == ["openclaw", "hermes", "langchain-deepagents-code"]',
     '.platform == "linux/amd64"',
     '.providers == ["ollama", "nim", "vllm"]',
+    'printf \'runtime_user=%s\\n\' "$runtime_user" >> "$GITHUB_OUTPUT"',
   ]);
 
   const hermesBase = requireStep(
@@ -291,18 +301,33 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Resolve digest-pinned amd64 runtime base images",
   );
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
+    HERMES_BASE_REF:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
   });
   requireFragments(errors, bases, [
-    'docker buildx imagetools inspect "$alias" --raw',
-    '.platform.os == "linux" and .platform.architecture == "amd64"',
-    'reference="${repository}@${digest}"',
-    '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
-    "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+    'prepared_inputs="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/prepared-inputs"',
+    '[[ -f "$prepared_inputs" && ! -L "$prepared_inputs" ]]',
+    'read -r cached_revision cached_platform cached_openclaw cached_hermes cached_dcode extra < "$prepared_inputs"',
+    '[[ -z "$extra" &&',
+    '"$cached_revision" == "$CHECKOUT_SHA"',
+    '"$cached_platform" == "linux/amd64"',
+    '"$cached_hermes" == "$HERMES_BASE_REF"',
+    '"$cached_dcode" == "$DCODE_BASE_REF"',
+    '"$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode"',
+    '[[ "$cached_openclaw" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]]',
+    'openclaw_digest="${cached_openclaw##*@}"',
+    'docker buildx imagetools inspect "$cached_openclaw" --raw > "$work_dir/openclaw-exact.raw"',
+    '"sha256:$(sha256sum "$work_dir/openclaw-exact.raw" | awk \'{print $1}\')" == "$openclaw_digest"',
+    'printf \'openclaw=%s\\n\' "$cached_openclaw" >> "$GITHUB_OUTPUT"',
     'docker buildx imagetools inspect "$DCODE_BASE_REF" --raw',
     'dcode_digest="${DCODE_BASE_REF##*@}"',
     'printf \'dcode=%s\\n\' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"',
   ]);
+  if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must reuse the OpenClaw base from the prepared build cache`);
+  }
   if (text(bases?.run).includes("langchain-deepagents-code-sandbox-base:latest")) {
     errors.push(`${JOB_ID} must not resolve the DCode base from a mutable alias`);
   }
@@ -329,6 +354,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
+    '--runtime-user "$RUNTIME_USER"',
     '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
     '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
     '--audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit"',
@@ -344,6 +370,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
     BASE_HERMES:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
+    RUNTIME_USER: "${{ steps.runtime-contract.outputs.runtime_user }}",
   });
 
   const install = requireStep(errors, workflowSteps, "Install OpenShell CLI");

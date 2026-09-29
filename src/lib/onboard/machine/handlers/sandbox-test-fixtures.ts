@@ -232,6 +232,7 @@ export function createDeps(
     ),
     createSandbox: vi.fn(async () => "my-assistant"),
     finalizeRouteReservation: vi.fn(() => true),
+    reserveRoute: vi.fn(() => true),
     retireReplacedSandboxWorkload: vi.fn(() => ({
       status: "skipped" as const,
       reason: "replacement-unproven" as const,
@@ -324,6 +325,7 @@ export function createDeps(
       createSandbox: calls.createSandbox,
       retireReplacedSandboxWorkload: calls.retireReplacedSandboxWorkload,
       finalizeSandboxRouteReservation: calls.finalizeRouteReservation,
+      reserveSandboxInferenceRoute: calls.reserveRoute,
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
       recordStepComplete: calls.complete,

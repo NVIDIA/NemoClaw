@@ -33,6 +33,22 @@ it.each([
     args: [],
   },
   {
+    name: "unused declarations outside adapters",
+    file: "src/lib/example.ts",
+    source: "export function read() { const unused = 1; }",
+    diagnostic: "eslint(no-unused-vars)",
+    exitCode: 1,
+    args: [],
+  },
+  {
+    name: "explicitly unused underscore parameters",
+    file: "src/lib/example.ts",
+    source: "export function read(_context: unknown) { return 1; }",
+    diagnostic: "",
+    exitCode: 0,
+    args: [],
+  },
+  {
     name: "unnecessary escapes in CLI code",
     file: "src/lib/example.ts",
     source: String.raw`export const value = /\!/;`,

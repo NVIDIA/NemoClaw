@@ -131,7 +131,7 @@ function materializeDiscordCreatePlan(
   return materializeSandboxCreatePlan({
     ...resolved,
     fromRef: "/tmp/Dockerfile",
-    runProviderPreDeleteCleanup: vi.fn(),
+    runProviderPreDeleteCleanup: vi.fn(async () => {}),
     upsertMessagingProviders: vi.fn(() => [discordProviderName]),
     getHermesToolGatewayProviderName: vi.fn(),
     ...overrides,
@@ -170,7 +170,7 @@ async function expectCredentialBindingFailure({
     policyPath: "/tmp/policy.yaml",
     appliedPresets: [],
   }));
-  const cleanupProviders = vi.fn();
+  const cleanupProviders = vi.fn(async () => {});
   const upsertProviders = vi.fn(() => []);
 
   await expect(
@@ -220,7 +220,10 @@ describe("prepareSandboxCreatePolicy", () => {
     const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
     prepareSandboxCreatePolicy(intent, preparePolicy, messagingConfig);
 
-    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox", messagingConfig });
+    expect(seenOptions[0]).toMatchObject({
+      sandboxName: "bound-sandbox",
+      messagingConfig,
+    });
   });
 
   it("materializes the captured exact WeChat IDC endpoint in the create policy (#10606)", async () => {
@@ -269,7 +272,7 @@ describe("prepareSandboxCreatePolicy", () => {
       fromRef: "/tmp/Dockerfile",
       messagingTokenDefs,
       messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => [providerName]),
       getHermesToolGatewayProviderName: vi.fn(),
     });
@@ -470,7 +473,7 @@ describe("resolveSandboxCreateIntent", () => {
         discordProviderName,
       );
       expect(plan.messagingProviders).not.toContain(discordProviderName);
-      expect(plan.createArgs).not.toContain(discordProviderName);
+      expect(plan.createRequest.providers ?? []).not.toContain(discordProviderName);
       expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
         replaceExisting: true,
         allowedSandboxes: ["sandbox"],
@@ -490,7 +493,35 @@ describe("resolveSandboxCreateIntent", () => {
     expect(plan.initialSandboxPolicy.appliedPresets).toContain("discord");
     expect(plan.initialSandboxPolicy.credentialBindingProviders).toEqual([discordProviderName]);
     expect(plan.messagingProviders).toEqual([discordProviderName]);
-    expect(plan.createArgs).toContain(discordProviderName);
+    expect(plan.createRequest.providers).toContain(discordProviderName);
+    plan.initialSandboxPolicy.cleanup?.();
+  });
+
+  it("materializes Portable OpenClaw as a typed create plan", async () => {
+    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({ selected: true });
+    const portableIntent = {
+      ...intent,
+      gpuCreateArgs: ["--gpu"],
+      resourceCreateArgs: ["--cpu", "4"],
+    };
+
+    const plan = await materializeSandboxCreatePlan({
+      intent: portableIntent,
+      fromRef: "/tmp/Dockerfile",
+      portableLifecycle: true,
+      messagingTokenDefs,
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
+      upsertMessagingProviders: vi.fn(() => [discordProviderName]),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+
+    expect(plan.createRequest).toMatchObject({
+      sandboxName: "sandbox",
+      source: { reference: "/tmp/Dockerfile" },
+      gpu: {},
+      resources: { cpu: "4" },
+      providers: expect.arrayContaining([discordProviderName]),
+    });
     plan.initialSandboxPolicy.cleanup?.();
   });
 
@@ -514,7 +545,7 @@ describe("resolveSandboxCreateIntent", () => {
       selected: true,
     });
     const cleanupPolicy = vi.fn(() => true);
-    const cleanupProviders = vi.fn();
+    const cleanupProviders = vi.fn(async () => {});
     const upsertMessagingProviders = vi.fn(() => [discordProviderName]);
 
     await expect(
@@ -566,7 +597,7 @@ describe("resolveSandboxCreateIntent", () => {
       intent,
       fromRef: "/tmp/Dockerfile",
       messagingTokenDefs: [],
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders,
       getHermesToolGatewayProviderName: vi.fn(),
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -581,7 +612,7 @@ describe("resolveSandboxCreateIntent", () => {
     });
     expect(intent.reusableMessagingProviders).toEqual(["sandbox-discord-bridge"]);
     expect(plan.messagingProviders).toEqual(["sandbox-discord-bridge"]);
-    expect(plan.createArgs).toContain("sandbox-discord-bridge");
+    expect(plan.createRequest.providers).toContain("sandbox-discord-bridge");
   });
 
   it("keeps the real gateway provider while excluding direct host-local inference policy", async () => {
@@ -614,7 +645,7 @@ describe("resolveSandboxCreateIntent", () => {
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: preparePolicy,
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(() => "sandbox-hermes-tools"),
     });
@@ -626,8 +657,8 @@ describe("resolveSandboxCreateIntent", () => {
       [],
       expect.objectContaining({ additionalPresets: [], sandboxName: "sandbox" }),
     );
-    expect(plan.createArgs).toContain("vllm-local");
-    expect(plan.createArgs).not.toContain("local-inference");
+    expect(plan.createRequest.providers).toContain("vllm-local");
+    expect(plan.createRequest.providers).not.toContain("local-inference");
   });
 
   it("materializes policy and provider effects after resolving intent", async () => {
@@ -662,8 +693,16 @@ describe("resolveSandboxCreateIntent", () => {
     });
     const serializedIntent = JSON.stringify(intent);
     const events: string[] = [];
+    let completeCleanup!: () => void;
+    let cleanupStarted!: () => void;
+    const pendingCleanup = new Promise<void>((resolve) => {
+      completeCleanup = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
 
-    const result = await materializeSandboxCreatePlan({
+    const materializing = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
       messagingTokenDefs: tokenDefs,
@@ -675,7 +714,11 @@ describe("resolveSandboxCreateIntent", () => {
         events.push("disclose");
         expect(policy.appliedPresets).toEqual(["telegram"]);
       },
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
+      runProviderPreDeleteCleanup: async () => {
+        cleanupStarted();
+        await pendingCleanup;
+        events.push("cleanup");
+      },
       upsertMessagingProviders: vi.fn((receivedTokenDefs, options) => {
         events.push("upsert");
         expect(receivedTokenDefs).toEqual(tokenDefs);
@@ -691,28 +734,29 @@ describe("resolveSandboxCreateIntent", () => {
       },
     });
 
+    try {
+      await Promise.race([started, materializing]);
+      expect(events).not.toContain("upsert");
+    } finally {
+      completeCleanup();
+    }
+    const result = await materializing;
     expect(events).toEqual(["policy", "hermes", "disclose", "cleanup", "upsert"]);
-    expect(result.createArgs).toEqual([
-      "--from",
-      "/tmp/nemoclaw-build-1/Dockerfile",
-      "--name",
-      "sandbox",
-      "--policy",
-      "/tmp/policy.yaml",
-      "--driver-config-json",
-      '{"docker":{"cdi_devices":["nvidia.com/gpu=0"]},"podman":{"cdi_devices":["nvidia.com/gpu=0"]}}',
-      "--gpu",
-      "--memory",
-      "16g",
-      "--provider",
-      "sandbox-telegram-bridge",
-      "--provider",
-      "sandbox-existing-discord",
-      "--provider",
-      "sandbox-hermes-tools",
-      "--provider",
-      "custom-provider",
-    ]);
+    expect(result.createRequest).toEqual({
+      sandboxName: "sandbox",
+      source: { reference: "/tmp/nemoclaw-build-1/Dockerfile" },
+      policyPath: "/tmp/policy.yaml",
+      driverConfigJson:
+        '{"docker":{"cdi_devices":["nvidia.com/gpu=0"]},"podman":{"cdi_devices":["nvidia.com/gpu=0"]}}',
+      gpu: {},
+      resources: { memory: "16g" },
+      providers: [
+        "sandbox-telegram-bridge",
+        "sandbox-existing-discord",
+        "sandbox-hermes-tools",
+        "custom-provider",
+      ],
+    });
     expect(serializedIntent).not.toContain("telegram-super-secret");
     expect(JSON.stringify(intent)).toBe(serializedIntent);
   });
@@ -752,7 +796,9 @@ describe("resolveSandboxCreateIntent", () => {
       events.push("policy-cleanup");
       return true;
     });
-    const runProviderPreDeleteCleanup = vi.fn(() => events.push("provider-cleanup"));
+    const runProviderPreDeleteCleanup = vi.fn(async () => {
+      events.push("provider-cleanup");
+    });
     const upsertMessagingProviders = vi.fn(() => {
       events.push("upsert");
       return ["sandbox-telegram-bridge"];
@@ -815,13 +861,13 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],
       }),
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
-    expect(plan.createArgs).not.toContain("--provider");
+    expect(plan.createRequest.policyPath).toBe("/tmp/policy.yaml");
+    expect(plan.createRequest.providers).toBeUndefined();
   });
 
   it("materializes a raw GPU UUID as Docker and Podman CDI driver config", () => {
@@ -851,9 +897,7 @@ describe("resolveSandboxCreateIntent", () => {
       intent,
       fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
     });
-    const configIndex = plan.createArgs.indexOf("--driver-config-json");
-
-    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+    expect(JSON.parse(plan.createRequest.driverConfigJson!)).toEqual({
       docker: {
         cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
       },
@@ -861,8 +905,7 @@ describe("resolveSandboxCreateIntent", () => {
         cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
       },
     });
-    expect(plan.createArgs).toContain("--gpu");
-    expect(plan.createArgs).not.toContain("--gpu-device");
+    expect(plan.createRequest.gpu).toEqual({});
   });
 
   it("rejects GPU device driver config without the typed GPU request", async () => {
@@ -889,7 +932,7 @@ describe("resolveSandboxCreateIntent", () => {
         fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(),
-        runProviderPreDeleteCleanup: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(),
       }),
@@ -923,14 +966,11 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],
       })),
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(),
     });
-    const configIndex = plan.createArgs.indexOf("--driver-config-json");
-    const driverConfig = JSON.parse(plan.createArgs[configIndex + 1]!);
-
-    expect(configIndex).toBeGreaterThan(-1);
+    const driverConfig = JSON.parse(plan.createRequest.driverConfigJson!);
     expect(driverConfig.docker.mounts).toEqual([
       {
         type: "tmpfs",
@@ -984,13 +1024,11 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],
       })),
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(),
     });
-    const configIndex = plan.createArgs.indexOf("--driver-config-json");
-
-    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+    expect(JSON.parse(plan.createRequest.driverConfigJson!)).toEqual({
       docker: {
         mounts: [
           {
@@ -1039,13 +1077,11 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],
       })),
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(),
     });
-    const configIndex = plan.createArgs.indexOf("--driver-config-json");
-
-    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+    expect(JSON.parse(plan.createRequest.driverConfigJson!)).toEqual({
       "opaque-native-driver": { mounts: [mount] },
     });
   });
@@ -1088,7 +1124,7 @@ describe("resolveSandboxCreateIntent", () => {
           policyPath: "/tmp/policy.yaml",
           appliedPresets: [],
         })),
-        runProviderPreDeleteCleanup: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(),
       }),
@@ -1113,7 +1149,7 @@ describe("resolveSandboxCreateIntent", () => {
       sandboxGpuLogMessage: null,
     });
     const cleanupPolicy = vi.fn(() => true);
-    const cleanupProviders = vi.fn();
+    const cleanupProviders = vi.fn(async () => {});
     const upsertProviders = vi.fn(() => []);
 
     await expect(
@@ -1153,7 +1189,7 @@ describe("resolveSandboxCreateIntent", () => {
           appliedPresets: [],
           cleanup: cleanupPolicy,
         })),
-        runProviderPreDeleteCleanup: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: async () => {
           throw providerFailure;
         },
@@ -1244,13 +1280,11 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],
       })),
-      runProviderPreDeleteCleanup: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
       upsertMessagingProviders: vi.fn(() => []),
       getHermesToolGatewayProviderName: vi.fn(),
     });
-    const fromIndex = plan.createArgs.indexOf("--from");
-
-    expect(plan.createArgs.slice(fromIndex, fromIndex + 2)).toEqual(["--from", reference]);
-    expect(plan.createArgs.join(" ")).not.toContain("/Dockerfile");
+    expect(plan.createRequest.source.reference).toBe(reference);
+    expect(plan.createRequest.source.reference).not.toContain("/Dockerfile");
   });
 });

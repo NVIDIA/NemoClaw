@@ -45,10 +45,11 @@ export async function runLaunchCommand(
     timeoutMs: options.timeoutMs ?? 15_000,
   });
   const ownedStateRemoved = result.timedOut ? options.onTimeout?.() : undefined;
+  const processError = result.spawnError ?? result.cleanupError;
   return {
     signal: result.signal,
-    status: result.exitCode,
-    stderr,
+    status: processError ? -1 : result.exitCode,
+    stderr: processError ? [stderr, processError.message].filter(Boolean).join("\n") : stderr,
     stdout,
     timedOut: result.timedOut,
     ownedStateRemoved,

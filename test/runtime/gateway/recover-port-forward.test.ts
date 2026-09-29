@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,20 +13,31 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
 } from "../../helpers/launch-readiness-fixture";
-import { syntheticForwardNodeOptions } from "../../helpers/platform-override-node-options";
+import {
+  type ForwardOwnerProof,
+  syntheticForwardNodeOptions,
+} from "../../helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 const listenerProcesses: ChildProcess[] = [];
 const FIXTURE_LISTENER_READY_TIMEOUT_MS = 5_000;
 
-// Each fixture grabs a unique high port. Sharing port 18789 across tests
-// collides with real nemoclaw installs on the developer's machine: the
-// post-#3334 reachability probe sees the real forward answering and
-// (correctly) classifies the dead-list entry as healthy, skipping recovery.
-// Seed the base with the worker PID so parallel vitest workers (if ever
-// enabled for this file) can't reuse the same ports across processes.
-let nextFixturePort = 47000 + (process.pid % 10000);
+// A PID-derived port can already have a listener. Ask the kernel for an unused
+// port to avoid selecting an already occupied port.
+async function allocateFixturePort(): Promise<string> {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  assert(address && typeof address !== "string", "Fixture TCP port is unavailable.");
+  return String(address.port);
+}
 
 afterEach(() => {
   for (const child of listenerProcesses.splice(0)) {
@@ -97,9 +110,11 @@ interface Fixture {
   sandboxName: string;
   invocationLog: string;
   recoveryWaitMs: string;
+  port: string;
+  listenerPidFile: string;
 }
 
-function setupFixture(opts: {
+async function setupFixture(opts: {
   sandboxName: string;
   gatewayProbe: "RUNNING" | "STOPPED";
   forwardListStatus: "running" | "dead" | "missing";
@@ -109,11 +124,12 @@ function setupFixture(opts: {
   /** Number of post-start list probes that remain stale before ownership is visible. */
   forwardStartDelayPolls?: number;
   forwardReachable?: boolean;
+  /** "stale" makes the legacy row name a PID that is not the port's listener (#11149). */
+  forwardListPid?: "listener" | "stale";
   recoveryWaitMs?: string;
-  port?: string;
-}): Fixture {
+}): Promise<Fixture> {
   const sandboxName = opts.sandboxName;
-  const port = opts.port ?? String(nextFixturePort++);
+  const port = await allocateFixturePort();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recover-"));
   tmpFixtures.push(tmpDir);
   const homeLocalBin = path.join(tmpDir, ".local", "bin");
@@ -214,9 +230,15 @@ if (args[0] === "forward" && args[1] === "list") {
       state = "running";
     }
   }
-  process.stdout.write(state === "running"
+  // OpenShell lists the PID of the forward it tracks; the fixture's tracked
+  // forward is the listener started for this test, so the row names it. A
+  // stale row names a PID that is not listening on the port (#11149).
+  const livePid = fs.readFileSync(${JSON.stringify(listenerPidFile)}, "utf-8")
+    .trim().split(/\\s+/).filter(Boolean).at(-1) ?? "12345";
+  const rowPid = ${opts.forwardListPid === "stale"} ? String(Number(livePid) + 1) : livePid;
+  process.stdout.write((state === "running"
     ? ${JSON.stringify(recoveredForwardListBody)}
-    : ${JSON.stringify(initialForwardListBody)});
+    : ${JSON.stringify(initialForwardListBody)}).replace("12345", rowPid));
   process.exit(0);
 }
 
@@ -318,22 +340,35 @@ if (!(forwardIndex >= 0 && args[forwardIndex + 1] === "service")) process.exit(0
     sandboxName,
     invocationLog,
     recoveryWaitMs: opts.recoveryWaitMs ?? "2000",
+    port,
+    listenerPidFile,
   };
 }
 
-function runRecover(fixture: Fixture) {
+function runRecover(fixture: Fixture, ownerProof: ForwardOwnerProof = "synthetic") {
+  // Exercise the command action from source; oclif discovery loads dist commands.
   const repoRoot = path.join(import.meta.dirname, "../../..");
   return spawnSync(
     process.execPath,
-    [path.join(repoRoot, "bin", "nemoclaw.js"), fixture.sandboxName, "recover"],
+    [
+      "-e",
+      `require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts"))})` +
+        ".recoverSandboxWithHermesCronRestore(process.argv[1]).catch((error) => { console.error(error); process.exitCode = 1; });",
+      fixture.sandboxName,
+    ],
     {
       cwd: repoRoot,
       encoding: "utf-8",
       env: {
         ...process.env,
         HOME: fixture.tmpDir,
-        NODE_OPTIONS: syntheticForwardNodeOptions(fixture.tmpDir),
-        PATH: "/usr/bin:/bin",
+        NODE_OPTIONS: syntheticForwardNodeOptions(
+          fixture.tmpDir,
+          process.env.NODE_OPTIONS,
+          ownerProof,
+        ),
+        NEMOCLAW_OPENSHELL_BIN: path.join(fixture.tmpDir, ".local", "bin", "openshell"),
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
       },
@@ -346,13 +381,13 @@ describe("nemoclaw <name> recover", () => {
   it(
     "re-establishes the dashboard port-forward when the gateway is alive but the forward is dead",
     testTimeoutOptions(20_000),
-    () => {
-      const fixture = setupFixture({
+    async () => {
+      const fixture = await setupFixture({
         sandboxName: "alive-sandbox",
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
       });
-      const result = runRecover(fixture);
+      const result = runRecover(fixture, "adaptive");
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
@@ -363,23 +398,26 @@ describe("nemoclaw <name> recover", () => {
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
       const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
       const startIdx = calls.findIndex((line) => line.includes("forward service "));
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeGreaterThan(stopIdx);
+      expect(stopIdx).toBe(-1);
+      expect(
+        startIdx,
+        `Missing forward start on port ${fixture.port}:\n${calls.join("\n")}`,
+      ).toBeGreaterThanOrEqual(0);
     },
   );
 
   it(
     "launches OpenShell service forwarding without legacy owner polling",
     testTimeoutOptions(20_000),
-    () => {
-      const fixture = setupFixture({
+    async () => {
+      const fixture = await setupFixture({
         sandboxName: "delayed-owner-sb",
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
         forwardStartDelayPolls: 3,
         recoveryWaitMs: "2000",
       });
-      const result = runRecover(fixture);
+      const result = runRecover(fixture, "adaptive");
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
@@ -392,27 +430,101 @@ describe("nemoclaw <name> recover", () => {
     },
   );
 
-  it("migrates a reachable tracked legacy forward", testTimeoutOptions(20_000), () => {
-    const fixture = setupFixture({
-      sandboxName: "legacy-sandbox",
-      gatewayProbe: "RUNNING",
-      forwardListStatus: "running",
-    });
-    const result = runRecover(fixture);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  it(
+    "refuses a live legacy row without stopping or adopting its listener",
+    testTimeoutOptions(20_000),
+    async () => {
+      const fixture = await setupFixture({
+        sandboxName: "legacy-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "running",
+      });
+      const result = runRecover(fixture, "real");
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
 
-    const combined = (result.stdout || "") + (result.stderr || "");
-    expect(combined).toContain("gateway is running in 'legacy-sandbox'");
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'legacy-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
 
-    const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-    const stopIdx = calls.findIndex((line) => line.startsWith("forward stop "));
-    const startIdx = calls.findIndex((line) => line.includes("forward service "));
-    expect(stopIdx).toBeGreaterThanOrEqual(0);
-    expect(startIdx).toBeGreaterThan(stopIdx);
-  });
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
 
-  it("no-ops when a direct service is reachable and the legacy list is empty", () => {
-    const fixture = setupFixture({
+  it(
+    "exits non-zero and leaves an unrelated listener on the dashboard port untouched (#11149)",
+    testTimeoutOptions(20_000),
+    async () => {
+      const fixture = await setupFixture({
+        sandboxName: "squatted-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "missing",
+        forwardReachable: true,
+      });
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+
+      const result = runRecover(fixture, "real");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'squatted-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).toContain(
+        `but host port ${fixture.port} is held by a listener that NemoClaw cannot attribute`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
+      expect(combined).not.toContain("missing or dead");
+
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
+
+  it(
+    "refuses a stale legacy row whose PID is not the port's listener (#11149)",
+    testTimeoutOptions(20_000),
+    async () => {
+      const fixture = await setupFixture({
+        sandboxName: "stale-row-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "running",
+        forwardListPid: "stale",
+        forwardReachable: true,
+      });
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+
+      const result = runRecover(fixture, "real");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'stale-row-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
+
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
+
+  it("no-ops when a direct service is reachable and the legacy list is empty", async () => {
+    const fixture = await setupFixture({
       sandboxName: "healthy-sandbox",
       gatewayProbe: "RUNNING",
       forwardListStatus: "missing",

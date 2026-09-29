@@ -91,8 +91,16 @@ describe("external OpenShell observation boundary", () => {
 
   it.each([
     ["wrong release", { status: "healthy", release: "0.0.107" }, "release does not match"],
-    ["unhealthy", { status: "unhealthy", release: "0.0.106" }, "gateway is not healthy"],
-    ["invalid status", { status: "unknown", release: "0.0.106" }, "invalid public health"],
+    [
+      "unhealthy",
+      { status: "unhealthy", release: EXTERNAL_OPENSHELL_RELEASE },
+      "gateway is not healthy",
+    ],
+    [
+      "invalid status",
+      { status: "unknown", release: EXTERNAL_OPENSHELL_RELEASE },
+      "invalid public health",
+    ],
   ])("rejects a %s observation with a fixed message (#9872)", async (_name, value, message) => {
     observeHealth.mockResolvedValue({ ok: true, value });
 

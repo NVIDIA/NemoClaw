@@ -30,8 +30,6 @@ It adds an experimental external-component onboarding contract and improves inst
   Related change: [PR #10397](https://github.com/NVIDIA/NemoClaw/pull/10397).
   Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
 - Sandbox status now distinguishes an intentional stop from a failure, and connect directs you to start a stopped sandbox.
-  Portable Hermes start, stop, and recovery use OpenShell for lifecycle changes and verify the receipt-owned Podman container afterward.
-  Portable lifecycle operations share the same lock authority, including the host fence during startup.
   Related changes: [PR #11211](https://github.com/NVIDIA/NemoClaw/pull/11211), [PR #11336](https://github.com/NVIDIA/NemoClaw/pull/11336), [PR #11482](https://github.com/NVIDIA/NemoClaw/pull/11482), and [PR #11490](https://github.com/NVIDIA/NemoClaw/pull/11490).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - NVIDIA Endpoints validation now checks the selected inference route.
@@ -48,7 +46,7 @@ It adds an experimental external-component onboarding contract and improves inst
 ## v0.0.122
 
 NemoClaw v0.0.122 improves host detection and local inference selection for Docker, DGX Station, and N1x WSL.
-It also strengthens interrupted onboarding, Hermes Portable lifecycle recovery, configuration export, remote dashboard access, and uninstall failure reporting.
+It also strengthens interrupted onboarding, configuration export, remote dashboard access, and uninstall failure reporting.
 
 - Host readiness now runs Docker probes with the environment that later Docker commands use.
   It respects the selected Docker context and configuration, rejects unsafe explicit endpoints, and can select the rootless Linux socket after an unreachable default authority.
@@ -65,11 +63,6 @@ It also strengthens interrupted onboarding, Hermes Portable lifecycle recovery, 
   The global `nemoclaw doctor` command remains available without a sandbox name, including when a registered sandbox is named `doctor`.
   Related changes: [PR #11140](https://github.com/NVIDIA/NemoClaw/pull/11140), [PR #11205](https://github.com/NVIDIA/NemoClaw/pull/11205), [PR #11218](https://github.com/NVIDIA/NemoClaw/pull/11218), and [PR #11296](https://github.com/NVIDIA/NemoClaw/pull/11296).
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
-- Hermes Portable onboarding now records the selected OpenShell gateway for later recovery and uninstall operations.
-  Start and recovery repair the receipt-owned host forwards before reporting readiness, while stop retries an incomplete identity observation within its bounded settlement policy.
-  Upgrade recovery preserves the Portable lifecycle and forward identities instead of replacing them with ambient gateway state.
-  Related changes: [PR #11034](https://github.com/NVIDIA/NemoClaw/pull/11034), [PR #11266](https://github.com/NVIDIA/NemoClaw/pull/11266), and [PR #11312](https://github.com/NVIDIA/NemoClaw/pull/11312).
-  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
 - `nemoclaw config export` now supports native NVIDIA hosted inference only when the gateway uses the built-in `nvidia-prod` profile, its default endpoint, and no provider configuration overrides.
   Missing or inconsistent provider evidence stops the export without writing a configuration document.
   Related changes: [PR #11065](https://github.com/NVIDIA/NemoClaw/pull/11065) and [PR #11318](https://github.com/NVIDIA/NemoClaw/pull/11318).

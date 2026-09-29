@@ -30,11 +30,7 @@ import {
   getRebuildSandboxGpuOverrides,
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
-import {
-  type McpRebuildPreparation,
-  printMcpRebuildRetryCommand,
-  restoreMcpRegistryForRebuildRetry,
-} from "./rebuild-mcp-phase";
+import { type McpRebuildPreparation, printMcpRebuildRetryCommand } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
@@ -164,6 +160,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       s,
       onboardSession.createSession({
         mode: "non-interactive",
+        servingProfileProvenance: sb.servingProfileProvenance,
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
@@ -348,7 +345,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
 
     registryRollback.restoreForRetry();
-    restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
+    log("Recreate failed: preserved source-derived MCP handoff for retry");
 
     console.error("");
     if (recoveryRecreate) {

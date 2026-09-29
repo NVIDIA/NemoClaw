@@ -105,19 +105,25 @@ function normalizedNotFoundSuffix(value: string): string {
 
 function providerNameFromNotFoundLine(line: string): string | null {
   return (
-    providerNameFromNotFoundText(stripDiagnosticPrefixes(line)) ?? providerNameFromMessage(line)
+    resourceNameFromNotFoundText(stripDiagnosticPrefixes(line)) ?? resourceNameFromMessage(line)
   );
 }
 
-function providerNameFromNotFoundText(text: string): string | null {
+function resourceNameFromNotFoundText(
+  text: string,
+  resource: "provider" | "sandbox" = "provider",
+): string | null {
   let hasNotFoundStatusPrefix = false;
   if (text.toLowerCase().startsWith("notfound:")) {
     text = text.slice("notfound:".length).trimStart();
     hasNotFoundStatusPrefix = true;
   }
-  const providerPrefix = "provider ";
-  if (!text.toLowerCase().startsWith(providerPrefix)) return null;
-  const quoted = readQuotedValue(text, providerPrefix.length);
+  const resourcePrefix = `${resource} `;
+  if (!text.toLowerCase().startsWith(resourcePrefix)) return null;
+  if (resource === "sandbox" && !/^["'`]/u.test(text.slice(resourcePrefix.length).trimStart())) {
+    return null;
+  }
+  const quoted = readQuotedValue(text, resourcePrefix.length);
   if (!quoted) return null;
   const suffix = normalizedNotFoundSuffix(text.slice(quoted.end));
   return (suffix === "" && hasNotFoundStatusPrefix) || NOT_FOUND_SUFFIXES.has(suffix)
@@ -125,7 +131,10 @@ function providerNameFromNotFoundText(text: string): string | null {
     : null;
 }
 
-function providerNameFromMessage(line: string): string | null {
+function resourceNameFromMessage(
+  line: string,
+  resource: "provider" | "sandbox" = "provider",
+): string | null {
   const text = stripDiagnosticPrefixes(line);
   const markerIndex = text.toLowerCase().indexOf("message:");
   if (markerIndex < 0) return null;
@@ -135,9 +144,9 @@ function providerNameFromMessage(line: string): string | null {
   if (quote === "'" || quote === '"' || quote === "`") {
     const end = text.indexOf(quote, cursor + 1);
     if (end < 0) return null;
-    return providerNameFromNotFoundText(text.slice(cursor + 1, end));
+    return resourceNameFromNotFoundText(text.slice(cursor + 1, end), resource);
   }
-  return providerNameFromNotFoundText(text.slice(cursor));
+  return resourceNameFromNotFoundText(text.slice(cursor), resource);
 }
 
 function readMessageValue(line: string): string | null {
@@ -231,4 +240,43 @@ export function reportsExactProviderNotFound(
   }
 
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
+}
+
+/** A missing sandbox permits cleanup only when every diagnostic names the requested sandbox. */
+export function reportsExactSandboxNotFound(
+  output: string,
+  sandboxName: string,
+  diagnosticLimit: number,
+): boolean {
+  if (output.length > diagnosticLimit) return false;
+  const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
+  return (
+    lines.length > 0 &&
+    lines.every((line) => {
+      if (lineReportsMissingGateway(line)) return false;
+      const status = structuredStatusValue(line);
+      if (status && normalizeStatus(status) !== "notfound") return false;
+      const text = stripDiagnosticPrefixes(line).replace(/^NotFound,\s*/iu, "");
+      // Match the whole structured diagnostic, not a message embedded after
+      // another resource or conflicting status. Provider parsing is separate.
+      const message = /^(?:code\s*[:=]\s*NotFound,\s*)?message:\s*(["'`])(.+)\1$/iu.exec(text);
+      return resourceNameFromNotFoundText(message?.[2] ?? text, "sandbox") === sandboxName;
+    })
+  );
+}
+
+/** Accept an absent attachment only when the complete diagnostic matches this operation. */
+export function reportsProviderNotAttached(
+  output: string,
+  providerName: string,
+  sandboxName: string,
+): boolean {
+  const text = stripDiagnosticPrefixes(output.trim());
+  if (/^(?:NotAttached|provider not attached to sandbox)[.!]?$/iu.test(text)) return true;
+  const absent = /^provider (.+) was not attached to sandbox (.+?)[.!]?$/iu.exec(text);
+  if (absent) return absent[1] === providerName && absent[2] === sandboxName;
+  const compact = /^NotAttached, provider (["'`])(.+)\1 is not bound[.!]?$/iu.exec(text);
+  if (compact) return compact[2] === providerName;
+  const named = /^provider (?:(["'`])(.+)\1|([^\s]+)) is not attached[.!]?$/iu.exec(text);
+  return Boolean(named && (named[2] ?? named[3]) === providerName);
 }

@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const policies: typeof import("../policy") = require("../policy");
-const { waitUntil }: typeof import("../core/wait") = require("../core/wait");
+const { waitUntilAsync }: typeof import("../core/wait") = require("../core/wait");
 
-function waitForPolicyMutation(description: string, mutate: () => boolean | void): void {
+async function waitForPolicyMutation(
+  description: string,
+  mutate: () => boolean | void | Promise<boolean | void>,
+): Promise<void> {
   let lastError: Error | null = null;
-  const success = waitUntil(
-    () => {
+  const success = await waitUntilAsync(
+    async () => {
       try {
-        const result = mutate();
+        const result = await mutate();
         if (result === false) {
           throw new Error(`${description} returned false`);
         }
@@ -39,19 +42,22 @@ function waitForPolicyMutation(description: string, mutate: () => boolean | void
  *   - apply presets in `target` but not in `applied` (widen)
  *   - leave unchanged presets untouched (no wasteful re-apply)
  */
-function syncPresetSelection(
+async function syncPresetSelection(
   sandboxName: string,
   applied: string[],
   target: string[],
   accessByName: Record<string, string> | null = null,
-): void {
+): Promise<void> {
   const targetSet = new Set(target);
   const appliedSet = new Set(applied);
   const deselected = applied.filter((name) => !targetSet.has(name));
   const newlySelected = target.filter((name) => !appliedSet.has(name));
 
   for (const name of deselected) {
-    waitForPolicyMutation(`removePreset(${name})`, () => policies.removePreset(sandboxName, name));
+    await waitForPolicyMutation(
+      `removePreset(${name})`,
+      async () => await policies.removePreset(sandboxName, name),
+    );
   }
 
   if (!accessByName) {
@@ -60,22 +66,27 @@ function syncPresetSelection(
     const remainingNewlySelected = newlySelected.filter((name) => !builtInPresetNames.has(name));
 
     if (builtInNewlySelected.length > 0 && remainingNewlySelected.length === 0) {
-      waitForPolicyMutation(`applyPresets(${builtInNewlySelected.join(",")})`, () =>
-        policies.applyPresets(sandboxName, builtInNewlySelected),
+      await waitForPolicyMutation(
+        `applyPresets(${builtInNewlySelected.join(",")})`,
+        async () => await policies.applyPresets(sandboxName, builtInNewlySelected),
       );
       return;
     }
 
     for (const name of newlySelected) {
-      waitForPolicyMutation(`applyPreset(${name})`, () => policies.applyPreset(sandboxName, name));
+      await waitForPolicyMutation(
+        `applyPreset(${name})`,
+        async () => await policies.applyPreset(sandboxName, name),
+      );
     }
     return;
   }
 
   for (const name of newlySelected) {
     const options = { access: accessByName[name] };
-    waitForPolicyMutation(`applyPreset(${name})`, () =>
-      policies.applyPreset(sandboxName, name, options),
+    await waitForPolicyMutation(
+      `applyPreset(${name})`,
+      async () => await policies.applyPreset(sandboxName, name, options),
     );
   }
 }

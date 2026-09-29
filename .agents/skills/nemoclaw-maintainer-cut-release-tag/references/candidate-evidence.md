@@ -3,9 +3,68 @@
 
 # Candidate Evidence
 
-Candidate evidence is the release-specific evidence required for the planned candidate. Use the
-version and candidate from `plan.json`. These are read-only checks. Run every section before
-the general E2E decision. Keep the shell only until its evidence is copied into the release brief.
+Start with the plan-independent kickoff checks. After planning, initialize candidate evidence and
+run the applicable candidate-bound sections before the general E2E decision. These checks are
+read-only; preparation and recovery retain their existing authorization requirements.
+
+## Start Independent Checks at Kickoff
+
+Inspect documentation, images, general E2E context, and local tooling before waiting
+on any one prerequisite. Before planning, inspect the intended range and label those results
+preliminary. Do not initialize candidate evidence until `plan.json` exists.
+
+- Inspect the cumulative docs PR, remaining patch, review state, coverage, and release entry.
+  Start authorized docs preparation or review while images run. Preserve the branch ownership in
+  [docs automation](../../../../docs/AUTOMATION.md#post-merge-documentation-catch-up).
+- Before planning, inspect recent image runs with the command below. Their status is preliminary,
+  not proof of candidate eligibility. After planning, use [Image Evidence](#image-evidence).
+  Inspect retry prerequisites before proposing recovery from a pending or failed publication.
+- Read the newest full E2E context through `nemoclaw-maintainer-e2e`; do not dispatch a run automatically.
+- Run `npm run dev:doctor` when local docs preparation or review is needed.
+  Follow the [documentation review requirements](../../../../docs/CONTRIBUTING.md#obtain-independent-review).
+  If using `npm run review:local`, check its [documented prerequisites](../../../../tools/pr-review-advisor/README.md#local-run).
+  Docker readiness alone does not verify those prerequisites. Report unchecked review readiness as unverified.
+
+```bash
+gh run list --repo NVIDIA/NemoClaw --workflow base-image.yaml --branch main --event push \
+  --limit 10 --json databaseId,headSha,status,conclusion,url
+```
+
+Collect independent reads concurrently when possible. Keep prerequisite-dependent commands ordered.
+Keep each check's shell state separate. Stop a failed check; never consume its partial output.
+Preserve `run_or_stop` in candidate-bound checks. Follow the access hard stop for
+access errors. Otherwise, collect the remaining independent results before reporting readiness.
+
+Show one compact summary: item, ready/pending/blocked/unverified, evidence, and next action.
+Use pending for active work, blocked for a confirmed failed prerequisite, and unverified for missing
+or inconclusive evidence. Early results guide preparation; they do not replace candidate-bound
+evidence or maintainer decisions. Recheck affected evidence when the intended candidate changes.
+
+## Check Prerequisites Before a Retry
+
+Inspect the failed job and its upstream producer before asking for a rerun. Name the run, attempt,
+commit, workflow event, upstream result, and relevant failure diagnostics.
+Classify the failure before choosing the smallest permitted recovery.
+
+- **Canceled publisher:** establish eligible successful publication evidence before retrying dependent
+  E2E. A dependent rerun does not repair its publisher.
+- **Successful manual publisher:** check eligibility, not just success.
+  `tools/e2e/base-image-publication.mts` selects applicable `main` push publications; a manual image
+  publication does not satisfy that selection. This restriction does not prohibit manual E2E runs.
+- **Expired audit receipt:** refresh the audit producer before retrying its consumers.
+  A failed-job-only rerun can reuse the expired receipt from a successful producer.
+  Identify a supported producer-inclusive rerun before requesting approval; stop if none is available.
+
+Keep existing rerun authorization requirements. Do not add retries or waive evidence checks.
+Use existing build diagnostics to identify expired audit evidence.
+Do not infer validity from producer success or artifact retention.
+If validity is not established, report it as unverified. Existing image-build verification remains authoritative.
+After authorized recovery, read the new attempt and verify the prerequisite before retrying a dependent job.
+
+## Initialize Candidate Evidence After Planning
+
+Require `plan.json` before running this section or the candidate-bound sections below. Use its
+version and candidate. Keep the shell only until its evidence is copied into the release brief.
 
 ```bash
 set -euo pipefail
@@ -500,5 +559,6 @@ Record these values:
 If Launchable cleanup fails, report the workspace and follow the cleanup and credential-remediation
 boundary in `nemoclaw-maintainer-e2e`. This remains operational follow-up, not a tag gate.
 
-If the base-image aggregate is missing or failed, repair or rerun the affected publisher workflow
-and verifier. The general E2E decision cannot replace required image evidence.
+If the base-image aggregate is missing or failed, follow [retry prerequisites](#check-prerequisites-before-a-retry)
+before repairing or rerunning the affected publisher and verifier. The general E2E decision cannot
+replace required image evidence.

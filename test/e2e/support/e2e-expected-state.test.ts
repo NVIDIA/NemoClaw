@@ -1,18 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { loadAgent } from "../../../src/lib/agent/defs.ts";
-import {
-  getExpectedState,
-  listExpectedStates,
-  probesForState,
-  requireExpectedState,
-} from "../registry/expected-states.ts";
-import { loadManifest } from "../registry/manifests.ts";
-import { listTargets } from "../registry/registry.ts";
+import { probesForState, requireExpectedState } from "../registry/expected-states.ts";
 import type { ExpectedState, StateProbeId } from "../registry/types.ts";
 
 describe("typed expected-state registry behavior", () => {

@@ -454,20 +454,29 @@ describe("onboard performance evidence", () => {
     );
   });
 
-  it("records OpenClaw internal-agent duration with an explicit availability state", () => {
-    expect(
-      buildOpenClawFirstTurnLatencyEvidence(
-        `progress\n${JSON.stringify({
-          status: "ok",
-          result: { payloads: [], meta: { durationMs: 8_916 } },
-        })}`,
-        10_125,
-      ),
-    ).toEqual({
-      firstTurnAgentDuration: { durationMs: 8_916, status: "available" },
-      firstTurnCommandMs: 10_125,
-    });
-  });
+  it.each([
+    { commandMs: 10_125, agentMs: 8_916, outsideAgentMs: 1_209 },
+    { commandMs: 252_000, agentMs: 480, outsideAgentMs: 251_520 },
+    { commandMs: 252_000, agentMs: 251_000, outsideAgentMs: 1_000 },
+    { commandMs: 1_000, agentMs: 2_000, outsideAgentMs: undefined },
+  ])(
+    "records command time outside the reported agent duration ($commandMs ms)",
+    ({ commandMs, agentMs, outsideAgentMs }) => {
+      expect(
+        buildOpenClawFirstTurnLatencyEvidence(
+          `progress\n${JSON.stringify({
+            status: "ok",
+            result: { payloads: [], meta: { durationMs: agentMs } },
+          })}`,
+          commandMs,
+        ),
+      ).toEqual({
+        firstTurnAgentDuration: { durationMs: agentMs, status: "available" },
+        firstTurnCommandMs: commandMs,
+        ...(outsideAgentMs === undefined ? {} : { firstTurnHostOverheadMs: outsideAgentMs }),
+      });
+    },
+  );
 
   it("reads local OpenClaw duration metadata from the shared response envelope", () => {
     expect(
@@ -476,6 +485,18 @@ describe("onboard performance evidence", () => {
       ),
     ).toEqual({ durationMs: 4_200, status: "available" });
   });
+
+  it.each([{}, { durationMs: "unknown" }])(
+    "leaves host overhead unavailable without valid agent duration (%j)",
+    (meta) => {
+      expect(
+        buildOpenClawFirstTurnLatencyEvidence(
+          JSON.stringify({ payloads: [{ text: "ready" }], meta }),
+          10_000,
+        ).firstTurnHostOverheadMs,
+      ).toBeUndefined();
+    },
+  );
 
   it("ignores duration metadata nested in an event record", () => {
     expect(

@@ -110,5 +110,9 @@ export function makePreparedRecoveryManifest() {
     dir: "/sandbox/.openclaw",
     backupPath,
     blueprintDigest: null,
+    rebuildMcpHandoff: {
+      entries: [],
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" as const },
+    },
   };
 }

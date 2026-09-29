@@ -152,6 +152,11 @@ describe("inference health", () => {
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
       );
       expect(capturedArgv.join(" ")).not.toContain("gm-test-secret");
+      const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
+      expect(payload).toMatchObject({
+        model: "gemini-2.5-flash",
+        max_tokens: 256,
+      });
     });
 
     it("skips the invocation probe for gemini-api without a credential", () => {
@@ -187,7 +192,7 @@ describe("inference health", () => {
     });
 
     it.each(["nvidia-prod", "nvidia-nim"])(
-      "uses the NVIDIA Endpoints request shape for Nemotron 3 Super health through %s (#10880)",
+      "uses the NVIDIA Endpoints request shape for Nemotron 3 Super health through %s (#10880, #11965)",
       (provider) => {
         let capturedArgv: string[] = [];
         const result = probeRemoteProviderHealth(provider, {
@@ -203,7 +208,7 @@ describe("inference health", () => {
         expect(JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1])).toMatchObject({
           temperature: 1,
           top_p: 0.95,
-          chat_template_kwargs: { enable_thinking: false },
+          reasoning_effort: "none",
         });
       },
     );
@@ -457,7 +462,7 @@ describe("inference health", () => {
     });
 
     it.each([
-      ["gemini-api", "gemini-2.5-flash", "{}"],
+      ["gemini-api", "gemini-2.5-flash", '{"choices":[{"message":{"content":null}}]}'],
       ["nvidia-prod", "meta/llama-3.3-70b-instruct", '{"error":{"message":"model unavailable"}}'],
     ])("rejects malformed HTTP 200 responses from %s", (provider, model, body) => {
       const result = probeRemoteProviderHealth(provider, {

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "revision": 1,
+  "identity": "exact-head",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "interest": "security-standard-work",
+  "status": "findings",
+  "findings": [
+    {
+      "id": "F-security-standard-work-c0576369ed672f84bc23",
+      "interest": "security-standard-work",
+      "severity": "P1",
+      "kind": "security",
+      "summary": "The fallback exposes a credential.",
+      "path": "src/lib/example.ts",
+      "line": 42,
+      "impact": "A diagnostic includes the credential value.",
+      "smallestSafeFix": "Remove the credential from the diagnostic.",
+      "regressionTest": "Assert that the diagnostic contains no credential value.",
+      "exclusions": [
+        "credential-access",
+        "security-sensitive"
+      ]
+    }
+  ],
+  "noFindingsReason": null
+}

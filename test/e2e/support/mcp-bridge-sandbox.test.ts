@@ -149,7 +149,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
 
   it("runs the rebinding request beneath each adapter runtime identity", () => {
     const runtimes = {
-      mcporter: "nemoclaw-start node -e",
+      "openclaw-config": "nemoclaw-start node -e",
       "hermes-config": "/opt/hermes/.venv/bin/python -c",
       "deepagents-config": "/opt/venv/bin/python3 -c",
     } as const;
@@ -173,15 +173,15 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     });
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.106", () => {
-    const commit = "c4b500a7de64d0b66e3ee8098f58d14299092162";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.116", () => {
+    const commit = "d1155aa70042d3e2ee49dbfa15346b108b7c1d92";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
-      `${sourcePath}:3070-3096`,
-      `${sourcePath}:3121-3160`,
-      `${sourcePath}:3193-3251`,
-      `${sourcePath}:3208-3240`,
-      `${sourcePath}:4783-4850`,
+      `${sourcePath}:3857-3886`,
+      `${sourcePath}:3911-3951`,
+      `${sourcePath}:3983-4043`,
+      `${sourcePath}:3998-4031`,
+      `${sourcePath}:5613-5655`,
     ];
 
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
@@ -290,7 +290,7 @@ network_policies:
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
       .spyOn(policy, "setPolicyDocument")
-      .mockImplementation((_sandboxName, document, options) => {
+      .mockImplementation(async (_sandboxName, document, options) => {
         currentPolicy = document;
         policyMutations.push({ document, operation: options?.operation });
         return true;

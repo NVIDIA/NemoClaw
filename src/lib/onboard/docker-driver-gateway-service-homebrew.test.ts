@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
   OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
+  OpenShellGatewayServiceTrustError,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
@@ -29,7 +31,7 @@ function officialFormulaInfo(
     JSON.stringify({
       formulae: [
         {
-          installed: options.installed ?? [{ version: "0.0.106" }],
+          installed: options.installed ?? [{ version: "0.0.116" }],
           name: "openshell",
           service: { run: options.serviceProgram ?? SERVICE_PROGRAM },
           tap: options.tap ?? "nvidia/openshell",
@@ -85,6 +87,26 @@ function queryHomebrewService(records: HomebrewServiceRecord[]) {
 }
 
 describe("OpenShell Homebrew service boundary", () => {
+  it.each([
+    ["a null document", "null"],
+    ["a Boolean document", "true"],
+    ["no formula list", "{}"],
+    ["a non-array formula list", '{"formulae":{}}'],
+    ["no requested formula", '{"formulae":[]}'],
+    ["a null formula entry", '{"formulae":[null]}'],
+    ["a Boolean formula entry", '{"formulae":[true]}'],
+  ])("rejects valid JSON with %s (#11129)", (_case, stdout) => {
+    const detectService = () =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        homebrewFormulaOperation: () => spawnResult(0, "", stdout),
+        platform: "darwin",
+      });
+
+    expect(detectService).toThrow(OpenShellGatewayServiceTrustError);
+    expect(detectService).toThrow("formula identity check returned invalid data");
+  });
+
   it("rejects a Homebrew formula outside the official tap (#6903)", () => {
     const operation = vi.fn((args: string[]) =>
       args[0] === "info" ? officialFormulaInfo({ tap: "other/tap" }) : spawnResult(),
@@ -192,12 +214,12 @@ describe("OpenShell Homebrew service boundary", () => {
       throw new Error("managed start must not run");
     });
     const started = await startPackageManagedDockerDriverGateway({
+      observer: gatewayAdaptersForTest().observer,
       clearDockerDriverGatewayRuntimeFiles: () => {},
       exitOnFailure: false,
       gatewayName: "nemoclaw",
       hasOpenShellGatewayUserService: () => false,
       registerDockerDriverGatewayEndpoint: () => true,
-      runCaptureOpenshell: () => "",
       skipSandboxBridgeReachability: true,
       startOpenShellGatewayUserService: startService,
       verifySandboxBridgeGatewayReachableOrExit: async () => {},

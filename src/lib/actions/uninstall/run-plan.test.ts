@@ -47,12 +47,12 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
 }
 
-function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanProduction(
+async function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanProduction(
     options,
     withSuccessfulPreUninstallBackup(withManagedGatewayAuthority(deps)),
   );
@@ -107,7 +107,7 @@ describe("uninstall run plan", () => {
     );
   });
 
-  it("applies a non-destructive uninstall run with fake tools", () => {
+  it("applies a non-destructive uninstall run with fake tools", async () => {
     const logs: string[] = [];
     const run = vi.fn((command: string, args: string[]) => {
       if (args[0] === "-c") return ok("/fake/bin/tool\n");
@@ -117,12 +117,12 @@ describe("uninstall run plan", () => {
     const dockerCalls: string[][] = [];
     const runDocker = vi.fn((args: string[]) => {
       dockerCalls.push(args);
-      if (args[0] === "ps") return ok("abc openclaw:latest openshell-cluster-nemoclaw\n");
+      if (args[0] === "ps") return ok("abc openclaw:latest my-openclaw\n");
       if (args[0] === "images") return ok("img1 ghcr.io/nvidia/nemoclaw:test\n");
       return ok();
     });
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -144,21 +144,17 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(logs).toContain("NemoClaw Uninstaller");
     expect(logs).toContain("This will remove all NemoClaw resources.");
-    expect(logs).toContain("[3/6] NemoClaw CLI");
+    expect(logs).toContain("[4/6] NemoClaw CLI");
     expect(logs).toContain("Removed global NemoClaw CLI package");
     expect(logs).toContain("Claws retracted. Until next time.");
-    expect(dockerCalls).toEqual(
-      expect.arrayContaining([
-        ["rm", "-f", "abc"],
-        ["rmi", "-f", "img1"],
-      ]),
-    );
+    expect(dockerCalls).not.toContainEqual(["rm", "-f", "abc"]);
+    expect(dockerCalls).toContainEqual(["rmi", "-f", "img1"]);
     expect(
       dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw"),
     ).toBe(true);
   });
 
-  it("removes all managed OpenShell helper binaries from the writable user bin", () => {
+  it("removes all managed OpenShell helper binaries from the writable user bin", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-openshell-bins-"));
     const userBin = path.join(tmpHome, ".local", "bin");
     fs.mkdirSync(userBin, { recursive: true });
@@ -173,7 +169,7 @@ describe("uninstall run plan", () => {
     ]);
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
           commandExists: (command) =>
@@ -208,7 +204,7 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("removes sibling CLI wrapper shims via binName-aware fd-read classification (#6098)", () => {
+  it("removes sibling CLI wrapper shims via binName-aware fd-read classification (#6098)", async () => {
     // Symlinks classify via the metadata fast path. Wrapper scripts go through
     // classifyShimPath's fd-read branch which reads the file and matches the
     // wrapper contract with the per-alias binName. Both paths must remove.
@@ -231,7 +227,7 @@ describe("uninstall run plan", () => {
 
     const removed: string[] = [];
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
           commandExists: (command) =>
@@ -257,11 +253,11 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("uses NemoHermes uninstall copy when Hermes is the active agent", () => {
+  it("uses NemoHermes uninstall copy when Hermes is the active agent", async () => {
     const logs: string[] = [];
     const warnings: string[] = [];
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell",
@@ -286,16 +282,16 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("This will remove all NemoHermes resources.");
     expect(logs).toContain("  · All OpenShell sandboxes, gateway, and NemoHermes providers");
     expect(logs).toContain("  · Global NemoHermes CLI (npm package: nemoclaw)");
-    expect(logs).toContain("[3/6] NemoHermes CLI");
+    expect(logs).toContain("[4/6] NemoHermes CLI");
     expect(warnings).toContain("npm not found; skipping NemoHermes CLI uninstall.");
     expect(logs).toContain("NemoHermes");
     expect(logs).toContain("Hermes has left the tidepool.");
     expect(logs).not.toContain("NemoClaw Uninstaller");
-    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("[4/6] NemoClaw CLI");
     expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
-  it("accepts typed interactive confirmation", () => {
+  it("accepts typed interactive confirmation", async () => {
     const logs: string[] = [];
     const run = vi.fn((_command: string, args: string[]) => {
       if (args[0] === "-c") return ok("/fake/bin/tool\n");
@@ -303,7 +299,7 @@ describe("uninstall run plan", () => {
       return okWithKnownGatewayList(_command, args);
     });
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell",
@@ -324,10 +320,10 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Claws retracted. Until next time.");
   });
 
-  it("aborts without applying the plan when confirmation is declined", () => {
+  it("aborts without applying the plan when confirmation is declined", async () => {
     const logs: string[] = [];
     const run = vi.fn();
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => false,
@@ -343,10 +339,10 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("explains how to proceed when stdin yields no input at the confirm prompt", () => {
+  it("explains how to proceed when stdin yields no input at the confirm prompt", async () => {
     const logs: string[] = [];
     const run = vi.fn();
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => false,
@@ -365,10 +361,10 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("builds the default runtime without touching process.stdin (#5188)", () => {
+  it("builds the default runtime without touching process.stdin (#5188)", async () => {
     const stdinGet = vi.spyOn(process, "stdin", "get");
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: (command) => command === "openshell",
@@ -391,7 +387,7 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
+  it("kills the Ollama auth proxy via the persisted PID file (#2759)", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
@@ -403,7 +399,7 @@ describe("uninstall run plan", () => {
 
     try {
       const stub = psStub("44321", { exited });
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -440,7 +436,7 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("kills an orphan auth proxy via lsof :11435 when the PID file is gone", () => {
+  it("kills an orphan auth proxy via lsof :11435 when the PID file is gone", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
@@ -448,7 +444,7 @@ describe("uninstall run plan", () => {
       exited,
       cmdline: "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n",
     });
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -486,11 +482,11 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped Ollama auth proxy 55678");
   });
 
-  it("never stops a foreign-owned auth proxy on :11435 even if cmdline matches", () => {
+  it("never stops a foreign-owned auth proxy on :11435 even if cmdline matches", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const stub = psStub("77777", { exited: new Set(), owner: "someone-else" });
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -527,13 +523,13 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No Ollama auth proxy processes found");
   });
 
-  it("uses the persisted Ollama proxy port for orphan cleanup (#8704)", () => {
+  it("uses the persisted Ollama proxy port for orphan cleanup (#8704)", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const stub = psStub("33333", { exited });
     const lsofPorts: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -586,14 +582,14 @@ describe("uninstall run plan", () => {
 
   it.each(["ollama-auth-proxy-helper.mjs", "ollama-auth-proxy.mts.backup"])(
     "never kills the near-named %s process on :11435",
-    (scriptName) => {
+    async (scriptName) => {
       const logs: string[] = [];
       const killed: number[] = [];
       const stub = psStub("99999", {
         exited: new Set(),
         cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
       });
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -631,7 +627,7 @@ describe("uninstall run plan", () => {
     },
   );
 
-  it("kills the model router via onboard-session routerPid (#5169)", () => {
+  it("kills the model router via onboard-session routerPid (#5169)", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
@@ -643,7 +639,7 @@ describe("uninstall run plan", () => {
 
     try {
       const stub = psStub("55432", { exited, cmdline: MODEL_ROUTER_CMDLINE });
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -679,12 +675,12 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("kills an orphan model router via lsof :4000 when onboard-session is gone", () => {
+  it("kills an orphan model router via lsof :4000 when onboard-session is gone", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const stub = psStub("55679", { exited, cmdline: MODEL_ROUTER_CMDLINE });
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -725,7 +721,7 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped model router 55679");
   });
 
-  it("never stops a foreign-owned model router on :4000 even if cmdline matches", () => {
+  it("never stops a foreign-owned model router on :4000 even if cmdline matches", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const stub = psStub("77888", {
@@ -733,7 +729,7 @@ describe("uninstall run plan", () => {
       owner: "someone-else",
       cmdline: MODEL_ROUTER_CMDLINE,
     });
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -773,14 +769,14 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No model router processes found");
   });
 
-  it("never kills a process on :4000 whose cmdline is not the model router", () => {
+  it("never kills a process on :4000 whose cmdline is not the model router", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const stub = psStub("88888", {
       exited: new Set(),
       cmdline: "/usr/sbin/nginx -g daemon off;\n",
     });
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -820,7 +816,7 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No model router processes found");
   });
 
-  it("escalates to SIGKILL and reports failure when SIGTERM is ignored", () => {
+  it("escalates to SIGKILL and reports failure when SIGTERM is ignored", async () => {
     const logs: string[] = [];
     const warnings: string[] = [];
     const signals: NodeJS.Signals[] = [];
@@ -833,7 +829,7 @@ describe("uninstall run plan", () => {
       // exited stays empty — pidExists() always reports alive, simulating a
       // process that ignores SIGTERM and survives SIGKILL.
       const stub = psStub("44322", { exited: new Set() });
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -870,10 +866,10 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("warns instead of claiming success when lsof is unavailable for orphan scan", () => {
+  it("warns instead of claiming success when lsof is unavailable for orphan scan", async () => {
     const logs: string[] = [];
     const warnings: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "lsof",
@@ -898,9 +894,9 @@ describe("uninstall run plan", () => {
     expect(logs).not.toContain("No Ollama auth proxy processes found");
   });
 
-  it("logs and continues when no Ollama auth proxy is running", () => {
+  it("logs and continues when no Ollama auth proxy is running", async () => {
     const logs: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -924,10 +920,10 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No Ollama auth proxy processes found");
   });
 
-  it("does not report swap cleanup success when swapoff fails", () => {
+  it("does not report swap cleanup success when swapoff fails", async () => {
     const warnings: string[] = [];
     const logs: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
@@ -1005,7 +1001,7 @@ describe("uninstall run plan", () => {
       } = {},
     ): UninstallRunDeps {
       return {
-        commandExists: (command) => command === "openshell",
+        commandExists: (command) => command === "openshell" || command === "docker",
         env: {
           HOME: tmpHome,
           NEMOCLAW_NON_INTERACTIVE: "",
@@ -1069,11 +1065,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("purges the whole state dir when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set", () => {
+    it("purges the whole state dir when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             envOverrides: { NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1" },
@@ -1092,11 +1088,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("purges the whole state dir when destroyUserData is set, even with --yes on a non-TTY", () => {
+    it("purges the whole state dir when destroyUserData is set, even with --yes on a non-TTY", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs),
         );
@@ -1113,12 +1109,12 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("destroyUserData purges on a TTY without prompting", () => {
+    it("destroyUserData purges on a TTY without prompting", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       const readLine = vi.fn(() => "y");
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, { isTty: true, readLine }),
         );
@@ -1139,11 +1135,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("destroyUserData without --yes renders a purge-aware global confirmation and skips the user-data prompt", () => {
+    it("destroyUserData without --yes renders a purge-aware global confirmation and skips the user-data prompt", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: false, deleteModels: false, destroyUserData: true, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, { isTty: true, readLine: () => "y" }),
         );
@@ -1170,11 +1166,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("env var without --yes renders a purge-aware global confirmation", () => {
+    it("env var without --yes renders a purge-aware global confirmation", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             envOverrides: { NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1" },
@@ -1193,11 +1189,11 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("destroyUserData takes precedence over NEMOCLAW_UNINSTALL_DESTROY_USER_DATA env var", () => {
+    it("destroyUserData takes precedence over NEMOCLAW_UNINSTALL_DESTROY_USER_DATA env var", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             envOverrides: { NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1" },
@@ -1244,12 +1240,12 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("purges via interactive y/N prompt when user answers yes", () => {
+    it("purges via interactive y/N prompt when user answers yes", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
         const replies = ["yes", "y"];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             isTty: true,
@@ -1317,7 +1313,7 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("fails closed before cleanup when ~/.nemoclaw cannot be inspected", () => {
+    it("fails closed before cleanup when ~/.nemoclaw cannot be inspected", async () => {
       const { tmpHome, stateDir } = setupStateDir();
       const realLstat = fs.lstatSync;
       const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((p: fs.PathLike) => {
@@ -1331,7 +1327,7 @@ describe("uninstall run plan", () => {
       try {
         const logs: string[] = [];
         const warnings: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             ...preserveCaseDeps(tmpHome, logs),
@@ -1351,7 +1347,7 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("refuses to follow or remove ~/.nemoclaw when it is a symlink", () => {
+    it("refuses to follow or remove ~/.nemoclaw when it is a symlink", async () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const realTarget = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"),
@@ -1364,7 +1360,7 @@ describe("uninstall run plan", () => {
       try {
         const logs: string[] = [];
         const errors: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: (command) => command === "openshell",
@@ -1391,14 +1387,14 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("skips the preservation notice when no protected entries exist on disk", () => {
+    it("skips the preservation notice when no protected entries exist on disk", async () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(stateDir, { recursive: true });
       fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
       try {
         const logs: string[] = [];
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: (command) => command === "openshell",
@@ -1421,11 +1417,11 @@ describe("uninstall run plan", () => {
     });
   });
 
-  it("kills host openshell-gateway process during full uninstall (#3516)", () => {
+  it("kills host openshell-gateway process during full uninstall (#3516)", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
         commandExists: () => true,

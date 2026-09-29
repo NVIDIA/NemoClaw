@@ -6,9 +6,6 @@ import type {
   OpenShellProviderAdapter,
   OpenShellProviderMetadata,
 } from "../adapters/openshell/provider-adapter";
-import { endpointlessProviderProfilePath } from "../adapters/openshell/provider-profile";
-import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../adapters/openshell/provider-profile-registration";
-import { REPOSITORY_ROOT } from "../core/repository-root";
 import {
   assertInferenceSetProviderOwnership,
   prepareInferenceSetProviderBinding,
@@ -76,7 +73,6 @@ describe("inference set provider binding", () => {
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({ ok: true, value: metadata() })
       .mockResolvedValueOnce({ ok: true, value: metadata() })
-      .mockResolvedValueOnce({ ok: true, value: metadata() })
       .mockResolvedValueOnce({
         ok: true,
         value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 5 } }),
@@ -101,12 +97,8 @@ describe("inference set provider binding", () => {
       [{ target: TARGET, providerName: "compatible-endpoint" }],
       [{ target: TARGET, providerName: "compatible-endpoint" }],
       [{ target: TARGET, providerName: "compatible-endpoint" }],
-      [{ target: TARGET, providerName: "compatible-endpoint" }],
     ]);
-    expect(importProviderProfile).toHaveBeenCalledExactlyOnceWith({
-      target: TARGET,
-      profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
-    });
+    expect(importProviderProfile).not.toHaveBeenCalled();
     expect(updateProvider).toHaveBeenCalledExactlyOnceWith({
       target: TARGET,
       providerName: "compatible-endpoint",
@@ -314,33 +306,6 @@ describe("inference set provider binding", () => {
     expect(createProvider).toHaveBeenCalledOnce();
   });
 
-  it("does not update an OpenAI provider when provider profile preparation fails (#9895)", async () => {
-    const updateProvider = vi.fn(async () => ({ ok: true as const }));
-    const adapter = providerAdapter({
-      getProvider: vi.fn(async () => ({ ok: true as const, value: metadata() })),
-      importProviderProfile: vi.fn(async () => ({
-        ok: false as const,
-        error: {
-          kind: "command" as const,
-          reason: "failed" as const,
-          message: "redacted profile failure",
-        },
-      })),
-      updateProvider,
-    });
-    const mutation = await prepareInferenceSetProviderBinding({
-      gatewayName: "nemoclaw",
-      providerName: "compatible-endpoint",
-      binding: binding(),
-      providerAdapter: adapter,
-    });
-
-    await expect(mutation.commit()).rejects.toThrow(
-      "redacted profile failure. Fix the reported OpenShell provider profile error, then rerun this command.",
-    );
-    expect(updateProvider).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["foreign credential", metadata({ credentialKeys: ["FOREIGN_TOKEN"] })],
     ["missing revision", metadata({ revision: null })],
@@ -427,33 +392,6 @@ describe("inference set provider binding", () => {
     expect(updateProvider).not.toHaveBeenCalled();
   });
 
-  it("refuses a revision that changes while ensuring the provider profile (#9806)", async () => {
-    const getProvider = vi
-      .fn<OpenShellProviderAdapter["getProvider"]>()
-      .mockResolvedValueOnce({ ok: true, value: metadata() })
-      .mockResolvedValueOnce({ ok: true, value: metadata() })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: metadata({ revision: { id: PROVIDER_ID, resourceVersion: 5 } }),
-      });
-    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
-    const updateProvider = vi.fn(async () => ({ ok: true as const }));
-    const mutation = await prepareInferenceSetProviderBinding({
-      gatewayName: "nemoclaw",
-      providerName: "compatible-endpoint",
-      binding: binding(),
-      providerAdapter: providerAdapter({
-        getProvider,
-        importProviderProfile,
-        updateProvider,
-      }),
-    });
-
-    await expect(mutation.commit()).rejects.toThrow("changed after it was inspected");
-    expect(importProviderProfile).toHaveBeenCalledOnce();
-    expect(updateProvider).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["unchanged version", PROVIDER_ID, 4],
     ["replaced identity", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", 5],
@@ -502,7 +440,7 @@ describe("inference set provider binding", () => {
     await expect(mutation.commit()).rejects.toThrow(
       "OpenShell could not confirm the update operation for provider 'compatible-endpoint'. Provider state may be partial. redacted failure",
     );
-    expect(getProvider).toHaveBeenCalledTimes(3);
+    expect(getProvider).toHaveBeenCalledTimes(2);
   });
 
   it("reports partial provider state without reinspecting after a failed update command (#9806)", async () => {
@@ -529,7 +467,7 @@ describe("inference set provider binding", () => {
     await expect(mutation.commit()).rejects.toThrow(
       "OpenShell could not confirm the update operation for provider 'compatible-endpoint'. Provider state may be partial. redacted failure",
     );
-    expect(getProvider).toHaveBeenCalledTimes(3);
+    expect(getProvider).toHaveBeenCalledTimes(2);
   });
 
   it("reports a definite update failure without claiming partial provider state (#9806)", async () => {
@@ -555,7 +493,7 @@ describe("inference set provider binding", () => {
       "OpenShell could not update provider 'compatible-endpoint': safe validation failure",
     );
     await expect(commit).rejects.not.toThrow("partial");
-    expect(getProvider).toHaveBeenCalledTimes(3);
+    expect(getProvider).toHaveBeenCalledTimes(2);
   });
 
   it("deletes and verifies a newly created provider during rollback (#9806)", async () => {

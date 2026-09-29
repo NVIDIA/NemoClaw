@@ -163,9 +163,11 @@ exit 2
  * block and hide the leak, so the child must take a real `process.exit`.
  */
 function buildDriver(call: string): string {
-  return `const policy = require(${JSON.stringify(policyModulePath)});
-const returned = policy.${call};
+  return `(async () => {
+const policy = require(${JSON.stringify(policyModulePath)});
+const returned = await policy.${call};
 console.log(${JSON.stringify(RETURN_MARKER)} + String(returned));
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
 }
 

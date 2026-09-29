@@ -27,7 +27,7 @@ describe("release-pin update scripts pin curl to HTTPS (#9979)", () => {
     fs.chmodSync(fixtureScript, 0o755);
     fs.writeFileSync(
       path.join(tmp, "Dockerfile"),
-      `FROM node:22-trixie-slim@sha256:${"0".repeat(64)}\n`,
+      `FROM node:24.18.1-trixie-slim@sha256:${"0".repeat(64)}\n`,
     );
     writeExecutable(
       path.join(fakeBin, "curl"),

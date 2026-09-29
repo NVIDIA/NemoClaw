@@ -5,17 +5,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import {
-  createSyncCliOpenShellSandboxPolicyReader,
+  createCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
   type OpenShellSandboxError,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import {
-  buildGatewayInferenceGetArgs,
-  parseGatewayInference,
-  planInferenceRouteReconcile,
-} from "../../inference/config";
+import { planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -43,12 +39,12 @@ import {
   type LaunchReadinessIdentity,
   type LaunchReadinessLeaseRead,
   type LaunchReadinessStoreOptions,
+  type LaunchReadinessUnsafeAuthorityEvidence,
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
 import { withSandboxLifecycleLock as withSandboxMutationLock } from "./lifecycle/lock";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
-import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   cloneSandboxMessagingState,
@@ -61,6 +57,7 @@ import {
 import {
   captureLaunchReadiness,
   createBoundLaunchReadinessDeps,
+  createLaunchReadinessInferenceRouteObserver,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
@@ -81,6 +78,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+  parseOpenClawVersionFromText,
   type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
@@ -89,6 +87,8 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
+const LIVE_AGENT_VERSION_MAX_BYTES = 4 * 1_024;
+const LIVE_AGENT_VERSION_TIMEOUT_MS = 10_000;
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -168,7 +168,35 @@ export type LaunchReadinessPublicationResult =
 export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
-  | { kind: "unsafe" };
+  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/** Render only structured authority metadata; never include receipt contents or OS error messages. */
+export function formatLaunchReadinessUnsafeAuthorityEvidence(
+  evidence: LaunchReadinessUnsafeAuthorityEvidence | undefined,
+): string {
+  if (!evidence) {
+    return " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+  }
+  const displayPath = JSON.stringify(evidence.path);
+  const observedUid = evidence.observedUid === null ? "unavailable" : String(evidence.observedUid);
+  const observedMode = evidence.observedMode ?? "unavailable";
+  const repair =
+    evidence.repair === "chmod"
+      ? `Repair it with: chmod ${evidence.expectedMode} -- ${shellQuote(evidence.path)}.`
+      : "Repair this path only after verifying it is owned by the current user and has no links.";
+  const writeGuidance =
+    evidence.operation === "write"
+      ? " Check that the containing directory and filesystem allow writes and have free space."
+      : "";
+  const errorCode = evidence.errorCode
+    ? ` (${evidence.operation} error ${evidence.errorCode})`
+    : "";
+  return ` ${evidence.resource} ${displayPath} is unsafe: expected current-user UID ${evidence.expectedUid}, observed owner UID ${observedUid}; expected mode ${evidence.expectedMode}, observed mode ${observedMode}${errorCode}. ${repair}${writeGuidance} Then retry.`;
+}
 
 export type PortableOpenClawPairingSettlementResult =
   | { readonly kind: "not-portable" }
@@ -368,39 +396,6 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
     startupProfileSha256: workload.startupProfileSha256,
     credentialProxyReplayRequired: workload.credentialProxyReplayRequired,
     shared: workload.shared,
-  };
-}
-
-function projectMcpState(value: unknown): unknown {
-  const state = normalizeSandboxMcpState(value);
-  if (!state) return null;
-  if (state.destroyPreparedAt || state.destroyPendingAt) throw new ObservationError("config");
-  return {
-    bridges: Object.values(state.bridges)
-      .map((bridge) => {
-        if (bridge.addState) throw new ObservationError("config");
-        const endpoint = new URL(bridge.url);
-        if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
-          throw new ObservationError("config");
-        }
-        return {
-          server: bridge.server,
-          agent: bridge.agent,
-          adapter: bridge.adapter ?? null,
-          url: bridge.url,
-          env: [...bridge.env],
-          denyTools: bridge.denyTools ? [...bridge.denyTools] : null,
-          pendingDenyTools:
-            bridge.pendingDenyTools !== undefined ? [...bridge.pendingDenyTools] : null,
-          trustedPrivateHost: bridge.trustedPrivateHost ?? null,
-          allowedIps: bridge.allowedIps ? [...bridge.allowedIps] : null,
-          providerName: bridge.providerName ?? null,
-          providerId: bridge.providerId ?? null,
-          policyName: bridge.policyName,
-        };
-      })
-      .sort((left, right) => left.server.localeCompare(right.server)),
-    managedServerNames: [...(state.managedServerNames ?? [])].sort(),
   };
 }
 
@@ -631,7 +626,6 @@ export function buildLaunchReadinessRegistryProjection(
     observabilityEnabled: entry.observabilityEnabled === true,
     dcodeAutoApprovalMode: entry.dcodeAutoApprovalMode ?? null,
     messagingSha256: launchReadinessDigest(projectMessagingState(entry)),
-    mcpSha256: launchReadinessDigest(projectMcpState(entry.mcp)),
     hermesToolGateways: [...(entry.hermesToolGateways ?? [])],
     hermesInferenceProvider: normalizedString(entry.hermesInferenceProvider),
     hermesAuthMethod,
@@ -641,11 +635,6 @@ export function buildLaunchReadinessRegistryProjection(
     hermesDashboardTui: entry.hermesDashboardTui === true,
     dashboardPort: entry.dashboardPort ?? null,
     dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true,
-    openclawImagePluginInstalls: (entry.openclawImagePluginInstalls ?? []).map((install) => ({
-      id: install.id,
-      installPath: install.installPath,
-      loadPaths: install.loadPaths ? [...install.loadPaths] : null,
-    })),
   };
 }
 
@@ -655,13 +644,13 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-function validateLivePolicy(
+async function validateLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): void {
+): Promise<void> {
   const capture = deps.capture ?? captureLaunchReadiness;
-  const result = createSyncCliOpenShellSandboxPolicyReader({
+  const result = await createCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       capture(args, {
         ...options,
@@ -683,24 +672,39 @@ function validateLivePolicy(
   }
 }
 
+async function resolveOpenClawPairingVersion(
+  sandboxName: string,
+  gatewayName: string,
+  entry: SandboxEntry,
+  agent: AgentDefinition,
+  deps: LaunchReadinessDeps,
+): Promise<string | null> {
+  const recordedVersion = normalizedString(entry.agentVersion);
+  if (recordedVersion) return recordedVersion;
+  if (!normalizedString(entry.fromDockerfile)) return null;
+
+  const commandExecutor = deps.commandExecutor;
+  if (!commandExecutor) return null;
+  try {
+    const observed = await commandExecutor.runBuffered({
+      sandboxName,
+      target: namedOpenShellGateway(gatewayName),
+      command: ["sh", "-lc", agent.versionCommand],
+      timeoutMilliseconds: LIVE_AGENT_VERSION_TIMEOUT_MS,
+      outputLimitBytes: LIVE_AGENT_VERSION_MAX_BYTES,
+    });
+    return observed.outcome.kind === "completed" && observed.outcome.exitCode === 0
+      ? parseOpenClawVersionFromText(observed.stdout)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 class LaunchReadinessPolicyObservationError extends Error {
   constructor(readonly policyError: OpenShellSandboxError) {
     super(policyError.message);
   }
-}
-
-function reportsInferenceNotConfigured(output: string): boolean {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split("\n");
-  let inGatewayInference = false;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGatewayInference = true;
-      continue;
-    }
-    if (inGatewayInference && /^\S.*:$/.test(line)) return false;
-    if (inGatewayInference && /^Not configured$/i.test(line.trim())) return true;
-  }
-  return false;
 }
 
 async function captureLaunchIdentity(
@@ -783,7 +787,7 @@ async function captureLaunchIdentity(
 
   const policyStartedAt = performance.now();
   try {
-    validateLivePolicy(sandboxName, gatewayName, deps);
+    await validateLivePolicy(sandboxName, gatewayName, deps);
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "policy-get");
     throw error;
@@ -793,30 +797,31 @@ async function captureLaunchIdentity(
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
   const inferenceGetStartedAt = performance.now();
-  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  let inferenceResult: Awaited<
+    ReturnType<NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]>
+  >;
   try {
-    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-      buildGatewayInferenceGetArgs(gatewayName),
-    );
+    const observer =
+      deps.inferenceRouteObserver ??
+      createLaunchReadinessInferenceRouteObserver(
+        deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
+      );
+    inferenceResult = await observer.observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+    });
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw error;
   } finally {
     recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
   }
-  if (inferenceResult.status !== 0) {
+  if (!inferenceResult.ok) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw new LaunchReadinessEvidenceError();
   }
-  let liveInference: ReturnType<typeof parseGatewayInference>;
-  let liveInferenceAbsent: boolean;
-  try {
-    liveInference = parseGatewayInference(inferenceResult.output);
-    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
-  } catch (error) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw error;
-  }
+  const liveInference =
+    inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
+  const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
   if (inference.kind === "configured") {
     if (!liveInference && !liveInferenceAbsent) {
       recordLaunchReadinessObservationFailure(deps, "inference-get");
@@ -849,7 +854,16 @@ async function captureLaunchIdentity(
 
   let session: LaunchReadinessIdentity["session"] = null;
   if (agentName === "openclaw") {
-    const openclawVersion = normalizedString(entry.agentVersion);
+    // A custom Dockerfile intentionally has no managed version in the registry.
+    // Bind its readiness lease to the version observed from the exact live
+    // sandbox without promoting that observation into managed-image provenance.
+    const openclawVersion = await resolveOpenClawPairingVersion(
+      sandboxName,
+      gatewayName,
+      entry,
+      agent,
+      deps,
+    );
     const stateDirectory = normalizedString(agent.config?.dir);
     // Pairing qualification requires a versioned trusted definition. The
     // receipt binds the sandbox's recorded version, including supported stale
@@ -1390,7 +1404,8 @@ export async function withLaunchReadinessMutationGate<T>(
         epochId,
         deps.storeOptions,
       );
-      if (authority !== "current") return { kind: authority };
+      if (authority === "changed") return { kind: "changed" };
+      if (authority !== "current") return { kind: "unsafe", evidence: authority.evidence };
       return { kind: "entered", value: await operation() };
     });
   });

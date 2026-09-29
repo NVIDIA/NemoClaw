@@ -15,6 +15,20 @@ skill:
 NemoClaw can register one external host component during fresh sandbox onboarding.
 The experimental version 1 contract lets the component intercept selected OpenShell operations and activate resources for one verified sandbox.
 
+## Version 2 Is Not Yet a Supported Integration
+
+NemoClaw recognizes a version 2 declaration for authenticated interceptor and middleware connections during fresh Linux Docker-driver onboarding.
+NemoClaw has not qualified the complete version 2 onboarding lifecycle against a released OpenShell runtime.
+Do not rely on version 2 in an installed release.
+
+Version 2 uses HTTPS endpoints, CA certificates, gateway preparation, and optional interceptor-backed provider profiles.
+During preparation, it can create one missing attachable Docker bridge through the selected local Unix-socket connection.
+It preserves that bridge after a preparation or startup failure.
+It does not support TCP or SSH Docker connections.
+It does not change the version 1 declaration or `/v1/activate` protocol.
+NemoClaw continues to own generated gateway configuration and gateway lifecycle.
+The component supplies policy, and OpenShell validates and enforces the effective sandbox policy.
+
 ## Check the Version 1 Limits
 
 Use this contract only when all these conditions apply:
@@ -131,14 +145,14 @@ The policy version must match the live sandbox observation.
 
 NemoClaw sends identity to the component only after these checks pass.
 
-<AgentOnly variant="openclaw">
+<AgentOnly variant="openclaw,hermes">
 
 ### Select Interceptor-Supplied Policy
 
 To use the registered component for fresh providerless onboarding, explicitly select `--apf-interceptor`:
 
 ```bash
-nemoclaw onboard --fresh --apf-interceptor --name component-sandbox
+$$nemoclaw onboard --fresh --apf-interceptor --name component-sandbox
 ```
 
 The component must supply sandbox policy through the existing OpenShell `CreateSandbox` interceptor contract.
@@ -152,7 +166,11 @@ NemoClaw does not substitute its own policy or switch to ordinary onboarding.
 
 After OpenShell creates the sandbox, NemoClaw verifies its immutable identity and effective policy before invoking the same activation endpoint described below.
 Completion requires successful bounded activation and post-response verification.
-This flow skips ordinary agent configuration, policy selection, and inference setup.
+OpenClaw and Hermes start without a configured inference route or model.
+They cannot make an inference request until you configure a managed route.
+After a managed inference provider is available, use `$$nemoclaw inference set --provider <provider> --model <model> --sandbox component-sandbox`.
+Refer to [Switch Inference Providers](../inference/switch-providers) for the route requirements and verification behavior.
+
 Providerless onboarding without a registered component retains its existing behavior.
 
 </AgentOnly>

@@ -1,17 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
+import {
+  clearPendingHostLocalVllmRetirement,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  type HostLocalVllmRetirementResult,
+  readPendingHostLocalVllmRetirement,
+  recordPendingHostLocalVllmRetirement,
+  retireHostLocalVllmRuntime,
+} from "../../inference/local-model-profile/cleanup";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
-  isRouterHealthy,
+  isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
@@ -21,8 +30,15 @@ import type {
   releaseOnboardLock,
   Session,
 } from "../../state/onboard-session";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  removeSandboxFromOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -43,6 +59,38 @@ export type SandboxDestroyPreflight = {
   sandboxPresence?: DestroySandboxPresence;
 };
 
+export type SandboxDestroyRegistryAuthority = {
+  entry: SandboxEntry | null;
+  getSandbox: typeof registry.getSandbox;
+  listSandboxes: typeof registry.listSandboxes;
+  removeSandbox: typeof registry.removeSandbox;
+};
+
+/** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
+export function resolveSandboxDestroyRegistryAuthority(
+  sandboxName: string,
+): SandboxDestroyRegistryAuthority {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName);
+  if (!hit) {
+    return {
+      entry: registry.getSandbox(sandboxName),
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      removeSandbox: registry.removeSandbox,
+    };
+  }
+  return {
+    entry: hit.entry,
+    getSandbox: getSandboxAcrossGatewayRoots,
+    listSandboxes: () => ({
+      sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
+      defaultSandbox: null,
+    }),
+    removeSandbox: (name) =>
+      name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
+  };
+}
+
 export function resolveSandboxDestroyGatewayName(
   sandboxName: string,
   sandbox: SandboxEntry | null,
@@ -62,17 +110,11 @@ export function resolveSandboxDestroyGatewayName(
 }
 
 export function resolveSandboxDestroyRuntimeSelection(
-  sandbox: SandboxEntry | null,
+  _sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
-  if (
-    !sandbox ||
-    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
-  ) {
-    return undefined;
-  }
-  return (
-    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
-  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+  // MCP source inspection freezes its gateway target during preparation. The
+  // non-MCP registry is only a routing hint and cannot assert MCP ownership.
+  return undefined;
 }
 
 export function stopSandboxInferenceResources(
@@ -101,6 +143,164 @@ export function stopSandboxInferenceResources(
   }
 }
 
+const LOCAL_VLLM_PROVIDER = "vllm-local";
+const MANAGED_VLLM_INSPECT_HINT = `Inspect it with 'docker container inspect ${HOST_LOCAL_VLLM_CONTAINER_NAME}' before you stop it, or resolve the cause and rerun this destroy to retire it.`;
+
+export type ManagedVllmDestroyOutcome =
+  | { kind: "not-applicable" }
+  | { kind: "kept"; reason: "option" }
+  | { kind: "kept"; reason: "consumers"; consumers: number }
+  | { kind: "inventory-failed"; detail: string }
+  | ({ kind: "retirement" } & HostLocalVllmRetirementResult);
+
+export type ManagedVllmDestroyDeps = {
+  keepVllm?: boolean;
+  clearPendingRetirement?: typeof clearPendingHostLocalVllmRetirement;
+  listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
+  readPendingRetirement?: typeof readPendingHostLocalVllmRetirement;
+  recordPendingRetirement?: typeof recordPendingHostLocalVllmRetirement;
+  resolveHomeDir?: () => string;
+  retireRuntime?: typeof retireHostLocalVllmRuntime;
+  withHostLifecycleLock?: typeof withCurrentPortableHostFence;
+};
+
+function resolveDestroyHomeDir(deps: ManagedVllmDestroyDeps): string {
+  return (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
+}
+
+/** A sandbox whose runtime provider owns a host-local inference receipt retires its runtime through that provider. */
+function consumesManagedVllm(sandbox: SandboxEntry | null): sandbox is SandboxEntry {
+  return (
+    sandbox !== null &&
+    sandbox.provider === LOCAL_VLLM_PROVIDER &&
+    typeof sandbox.hostLocalInferenceReceipt !== "string"
+  );
+}
+
+/**
+ * Record the pending retirement before the registry row is removed. The row is
+ * the only proof that the sandbox used the container, so a destroy retry after
+ * an interrupted or preserved retirement needs this record to retire it.
+ */
+export function recordManagedVllmRetirementPending(
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): boolean {
+  if (deps.keepVllm === true || !consumesManagedVllm(sandbox)) return false;
+  (deps.recordPendingRetirement ?? recordPendingHostLocalVllmRetirement)(
+    sandbox.name,
+    resolveDestroyHomeDir(deps),
+  );
+  return true;
+}
+
+/** A settled outcome leaves no retirement for a retry to finish. */
+function managedVllmRetirementSettled(outcome: ManagedVllmDestroyOutcome): boolean {
+  return (
+    outcome.kind === "kept" ||
+    (outcome.kind === "retirement" &&
+      outcome.status !== "preserved" &&
+      outcome.status !== "partial")
+  );
+}
+
+/**
+ * Retire the host-global managed vLLM container after the destroyed sandbox's
+ * registry row is gone and no registered sandbox in any gateway state root
+ * still uses Local vLLM. A retry whose row is already gone owns the retirement
+ * only through the pending record for the same sandbox name.
+ */
+export async function retireManagedVllmForDestroyedSandbox(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): Promise<ManagedVllmDestroyOutcome> {
+  const home = resolveDestroyHomeDir(deps);
+  if (
+    !consumesManagedVllm(sandbox) &&
+    (deps.readPendingRetirement ?? readPendingHostLocalVllmRetirement)(home) !== sandboxName
+  ) {
+    return { kind: "not-applicable" };
+  }
+  const outcome = await decideManagedVllmRetirement(home, deps);
+  if (managedVllmRetirementSettled(outcome)) {
+    (deps.clearPendingRetirement ?? clearPendingHostLocalVllmRetirement)(home);
+  }
+  return outcome;
+}
+
+async function decideManagedVllmRetirement(
+  home: string,
+  deps: ManagedVllmDestroyDeps,
+): Promise<ManagedVllmDestroyOutcome> {
+  if (deps.keepVllm === true) return { kind: "kept", reason: "option" };
+  try {
+    return await (deps.withHostLifecycleLock ?? withCurrentPortableHostFence)(() => {
+      const consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(
+        home,
+      ).filter(({ entry }) => entry.provider === LOCAL_VLLM_PROVIDER).length;
+      if (consumers > 0) return { kind: "kept", reason: "consumers", consumers };
+      return {
+        kind: "retirement",
+        ...(deps.retireRuntime ?? retireHostLocalVllmRuntime)({ homeDir: home }),
+      };
+    });
+  } catch (error) {
+    return {
+      kind: "inventory-failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** Report the retirement outcome; a preserved container is a warning because the sandbox is already gone. */
+export function reportManagedVllmDestroyOutcome(
+  outcome: ManagedVllmDestroyOutcome,
+  output: { log: (message: string) => void; warn: (message: string) => void },
+): void {
+  const name = HOST_LOCAL_VLLM_CONTAINER_NAME;
+  switch (outcome.kind) {
+    case "not-applicable":
+      return;
+    case "kept":
+      output.log(
+        outcome.reason === "option"
+          ? `  Managed vLLM container '${name}' preserved (--keep-vllm).`
+          : `  Managed vLLM container '${name}' preserved: ${String(outcome.consumers)} other registered sandbox(es) use provider '${LOCAL_VLLM_PROVIDER}'.`,
+      );
+      return;
+    case "inventory-failed":
+      output.warn(
+        `Sandbox deletion succeeded, but NemoClaw could not safely confirm across the host that no sandbox still uses provider '${LOCAL_VLLM_PROVIDER}': ${outcome.detail}. The managed vLLM container '${name}' was left in place. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "retirement":
+      break;
+  }
+  switch (outcome.status) {
+    case "absent":
+      return;
+    case "kept":
+      output.log(`  Managed vLLM container '${name}' preserved: ${outcome.reason}.`);
+      return;
+    case "removed":
+      output.log(
+        `  Removed managed vLLM container '${name}' (${outcome.containerId.slice(0, 12)}); no registered sandbox uses provider '${LOCAL_VLLM_PROVIDER}'.`,
+      );
+      output.log("  Pass '--keep-vllm' or set NEMOCLAW_KEEP_VLLM=1 to keep it running next time.");
+      return;
+    case "preserved":
+      output.warn(
+        `Sandbox deletion succeeded, but the managed vLLM container '${name}' was left in place: ${outcome.reason}. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "partial":
+      output.warn(
+        `Sandbox deletion succeeded and the managed vLLM container '${name}' ${outcome.containerId ? `was removed (${outcome.containerId.slice(0, 12)})` : "is absent"}, but its private state cleanup is incomplete: ${outcome.reason}. Remaining state: ${outcome.remaining.join(", ")}. Resolve the cause, then rerun the same destroy command to finish cleanup.`,
+      );
+  }
+}
+
 export type StopModelRouterForDestroyedSandboxDeps = {
   acquireOnboardLock: typeof acquireOnboardLock;
   compareAndSwapSession: typeof compareAndSwapSession;
@@ -108,7 +308,7 @@ export type StopModelRouterForDestroyedSandboxDeps = {
   loadSession: () => Session | null;
   releaseOnboardLock: typeof releaseOnboardLock;
   inspectProcessForPort?: typeof inspectModelRouterProcessForPort;
-  isHealthy?: typeof isRouterHealthy;
+  isResponsive?: typeof isRouterResponsive;
   isRoutedProvider?: typeof isRoutedInferenceProvider;
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
   log?: (message: string) => void;
@@ -209,7 +409,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
-      const isHealthy = deps.isHealthy ?? isRouterHealthy;
+      const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
@@ -228,9 +428,9 @@ export async function stopModelRouterForDestroyedSandbox(
         }
         if (lookup.status === "found") {
           pid = lookup.pid;
-        } else if (await isHealthy(port, 1000)) {
+        } else if (await isResponsive(port, 1000)) {
           warn(
-            `No Model Router process could be confirmed for healthy port ${port}. ` +
+            `No Model Router process could be confirmed for responsive port ${port}. ` +
               "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
           );
           return;
@@ -263,7 +463,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       // Clear when either field is set: a matching session with only a
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unhealthy port confirms that
+      // is gone. A completed process scan plus an unresponsive port confirms that
       // no router remains when no PID was found.
       if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
         deps.compareAndSwapSession(
@@ -302,17 +502,19 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(
+export async function prepareSandboxDestroy(
   sandboxName: string,
   {
+    getSandbox = registry.getSandbox,
     retainedRecoveryGatewayName,
     operationRuntimeSelection,
   }: {
+    getSandbox?: typeof registry.getSandbox;
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): SandboxDestroyPreflight {
-  const sandbox = registry.getSandbox(sandboxName);
+): Promise<SandboxDestroyPreflight> {
+  const sandbox = getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
     typeof import("../../adapters/openshell/runtime"),
@@ -351,7 +553,12 @@ export function prepareSandboxDestroy(
           replaceEnv: true,
         })
     : undefined;
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
+  await selectGatewayForSandboxDestroy(
+    sandboxName,
+    cleanupGatewayName,
+    createCliOpenShellGatewayLifecycleFromRunner(selectedRunOpenshell),
+    runtimeSelection,
+  );
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
   const sandboxPresence = classifyDestroySandboxPresence(

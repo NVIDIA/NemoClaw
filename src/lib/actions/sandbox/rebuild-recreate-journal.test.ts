@@ -803,6 +803,57 @@ describe("rebuild replacement recovery backup", () => {
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
   });
 
+  it("preserves recovery handoffs when the default observer lists a legacy sandbox", () => {
+    manifest.rebuildMcpHandoff = {
+      entries: [],
+      runtimeSelection: { gatewayName: "nemoclaw-18080", workspace: "default" },
+    };
+    const { handoffPath, recordPath } = prepareUnsafeRecovery();
+    const retainedManifest = structuredClone(manifest);
+    const retainedRecord = fs.readFileSync(recordPath, "utf8");
+    const retainedPolicy = fs.readFileSync(handoffPath, "utf8");
+    const clearPolicyHandoff = vi.fn(() => true);
+    const clearMcpHandoff = vi.fn(() => true);
+    mocks.captureOpenshell.mockReset();
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            id: SANDBOX_ID,
+            name: "alpha",
+            labels: {},
+            resource_version: 1,
+            created_at: "2026-09-12T00:00:00Z",
+            phase: "Ready",
+            current_policy_version: 1,
+          },
+        ]),
+        stderr: "",
+      });
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), clearPolicyHandoff, clearMcpHandoff },
+      ),
+    ).toThrow("OpenShell still reports sandbox 'alpha' on recorded gateway 'nemoclaw-18080'");
+    expect(mocks.captureOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      ["sandbox", "list", "-g", "nemoclaw-18080", "-o", "json"],
+    ]);
+    expect(clearPolicyHandoff).not.toHaveBeenCalled();
+    expect(clearMcpHandoff).not.toHaveBeenCalled();
+    expect(fs.readFileSync(recordPath, "utf8")).toBe(retainedRecord);
+    expect(fs.readFileSync(handoffPath, "utf8")).toBe(retainedPolicy);
+    expect(manifest).toEqual(retainedManifest);
+  });
+
   it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {
     const { handoffPath, recordPath } = prepareUnsafeRecovery();
     const observePresence = vi.fn(() => "missing" as const);

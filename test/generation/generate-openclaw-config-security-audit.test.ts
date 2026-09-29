@@ -18,38 +18,27 @@ function buildSecurityAuditConfig(chatUiUrl: string, overrides: Record<string, s
 }
 
 describe("generate-openclaw-config.mts: managed security audit findings", () => {
-  it("explains NemoClaw-managed insecure auth findings (#6024)", () => {
+  it("does not suppress findings for the retired insecure-auth flag (#6024)", () => {
     const config = buildSecurityAuditConfig("http://127.0.0.1:18789");
     expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
-    expect(config.security.audit.suppressions).toEqual([
-      {
-        checkId: "gateway.control_ui.insecure_auth",
-        reason:
-          "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
-      },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
-        reason:
-          "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.",
-      },
-    ]);
-  });
-
-  it("keeps remote device auth findings active (#6024)", () => {
-    const config = buildSecurityAuditConfig("https://nemoclaw0-xxx.brevlab.com:18789", {
-      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-    });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
 
-  it("keeps all remote HTTP security findings active (#6024)", () => {
+  it("omits the retired device-auth bypass for remote HTTPS (#6024)", () => {
+    const config = buildSecurityAuditConfig("https://nemoclaw0-xxx.brevlab.com:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
+    expect(config.security).toBeUndefined();
+  });
+
+  it("omits both retired auth flags for remote HTTP (#6024)", () => {
     const config = buildSecurityAuditConfig("http://remote.example:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
     });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
@@ -58,8 +47,8 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     const config = buildSecurityAuditConfig("http://127.0.0.1:18789", {
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
     });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBe(true);
     expect(config.security?.audit?.suppressions ?? []).toEqual([]);
   });
@@ -70,8 +59,8 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
       NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
     });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
     expect(config.security?.audit?.suppressions ?? []).toEqual([]);
   });
@@ -81,36 +70,36 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
     });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
 
-  it("keeps an operator device auth opt-out active on loopback (#6024)", () => {
+  it("does not emit an operator device-auth opt-out on loopback (#6024)", () => {
     const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
       NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "operator",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
 
-  it("reports the managed onboarding device auth compatibility source truthfully (#6024)", () => {
+  it("does not emit suppressions for the retired managed onboarding opt-out (#6024)", () => {
     const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
       NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
     });
 
-    expect(config.security.audit.suppressions[0].reason).toContain("NemoClaw onboarding");
-    expect(config.security.audit.suppressions[0].reason).not.toContain("explicitly opts out");
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
+    expect(config.security).toBeUndefined();
   });
 
-  it("keeps device auth findings active when opt-out provenance is missing (#6024)", () => {
+  it("does not emit the retired bypass when opt-out provenance is missing (#6024)", () => {
     const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
     });
 
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
 

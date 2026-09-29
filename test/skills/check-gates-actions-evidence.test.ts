@@ -4,19 +4,17 @@
 import { describe, expect, it } from "vitest";
 import type { ActionJobFixture } from "./check-gates-test-fixtures.ts";
 import {
+  actionCheck,
+  actionRunFixture,
   BASE_SHA,
   CUSTOM_RUN_URL,
-  e2eChecks,
-  e2eGateCheck,
-  e2eJobs,
-  e2eRunFixture,
-  exactDiffGateRun,
+  exactDiffActionRun,
   HEAD_SHA,
-  INCOMPLETE_E2E,
+  prWorkflowJobs,
+  prWorkflowRun,
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,
-  successfulRequiredChecksWithoutE2e,
 } from "./check-gates-test-fixtures.ts";
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
@@ -84,6 +82,18 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
   };
 }
 
+function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string) {
+  return {
+    __typename: "CheckRun",
+    name: job.name,
+    workflowName: "CI / Pull Request",
+    detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${job.id}`,
+    startedAt,
+    status: (job.status ?? "completed").toUpperCase(),
+    conclusion: (job.conclusion ?? "success")?.toUpperCase(),
+  };
+}
+
 describe("maintainer merge-gate contributor compliance", () => {
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
@@ -103,7 +113,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       ],
       actionRunAttempts: {
         "443": {
-          ...exactDiffGateRun("success", [{ id: 41, name: "optional-check" }]),
+          ...exactDiffActionRun("success", [{ id: 41, name: "optional-check" }]),
           headSha: "stale",
           pullRequestHeadSha: HEAD_SHA,
         },
@@ -406,6 +416,77 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
   });
 
+  it.each([
+    {
+      order: "before",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:30Z",
+    },
+    {
+      order: "after",
+      createdAt: "2026-01-01T00:02:00Z",
+      updatedAt: "2026-01-01T00:02:30Z",
+    },
+  ])(
+    "uses the successful code run when a metadata edit runs $order it",
+    ({ createdAt, updatedAt }) => {
+      const runId = 9_100;
+      const jobs = prWorkflowJobs("skipped", {
+        checks: { conclusion: "success" },
+      });
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          ...jobs.map((job) => prWorkflowCheck(runId, job, createdAt)),
+        ],
+        actionRunAttempts: {
+          [String(runId)]: {
+            ...prWorkflowRun("success", jobs, false),
+            createdAt,
+            updatedAt,
+          },
+        },
+      });
+
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
+
+  it("keeps a metadata edit with an unknown job merge-relevant", () => {
+    const runId = 9_101;
+    const jobs = [
+      ...prWorkflowJobs("skipped", {
+        checks: { conclusion: "success" },
+      }),
+      { id: 99, name: "future-job", conclusion: "skipped" },
+    ];
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        ...jobs.map((job) => prWorkflowCheck(runId, job, "2026-01-01T00:02:00Z")),
+      ],
+      actionRunAttempts: {
+        [String(runId)]: {
+          ...prWorkflowRun("success", jobs, false),
+          createdAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:02:30Z",
+        },
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false } },
+    });
+  });
+
   it.each(["push", "dynamic"])(
     "accepts an optional %s check tied to the current head SHA",
     (event) => {
@@ -469,7 +550,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       ],
       actionRunAttempts: {
         "447": {
-          ...exactDiffGateRun("skipped", [skippedJob(41)]),
+          ...exactDiffActionRun("skipped", [skippedJob(41)]),
           event: "push",
           path: ".github/workflows/request-nvskills-ci.yml",
         },
@@ -493,18 +574,18 @@ describe("maintainer merge-gate contributor compliance", () => {
 
   it("uses the latest attempt for duplicate check-run contexts", () => {
     const result = runGate(
-      e2eRunFixture(
+      actionRunFixture(
         [
           [100, 1, "CANCELLED"],
           [101, 2, "SUCCESS"],
         ],
         {
           "100": {
-            ...exactDiffGateRun("cancelled", [{ id: 1, name: "E2E / PR Gate" }]),
+            ...exactDiffActionRun("cancelled", [{ id: 1, name: "optional-check" }]),
             createdAt: "2026-01-01T00:00:00Z",
           },
           "101": {
-            ...exactDiffGateRun("success", [{ id: 2, name: "E2E / PR Gate" }]),
+            ...exactDiffActionRun("success", [{ id: 2, name: "optional-check" }]),
             createdAt: "2026-01-01T00:01:00Z",
           },
         },
@@ -565,8 +646,8 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
   it("accepts SHA evidence from a non-PR Actions event", () => {
-    const fixture = e2eRunFixture(e2eChecks([874, 2, "SUCCESS"]), {
-      "874": exactDiffGateRun("success", e2eJobs(2)),
+    const fixture = actionRunFixture([[874, 2, "SUCCESS"]], {
+      "874": exactDiffActionRun("success", [{ id: 2, name: "optional-check" }]),
       "875": {
         attempt: 1,
         headSha: HEAD_SHA,
@@ -578,61 +659,19 @@ describe("maintainer merge-gate contributor compliance", () => {
       },
     });
     fixture.statusChecks?.push(
-      e2eGateCheck([875, 1, "SUCCESS", undefined, undefined, "CodeQL", "optional-check"]),
+      actionCheck([875, 1, "SUCCESS", undefined, undefined, "CodeQL", "optional-check"]),
     );
     expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
   });
   it("uses the latest attempt for custom check-run details URLs", () => {
-    const fixture = e2eRunFixture(
+    const fixture = actionRunFixture(
       [
         [874, 2, "SUCCESS"],
         [0, 0, "FAILURE", "2026-01-01T00:00:00Z", `${CUSTOM_RUN_URL}1`, "CodeQL", "custom-check"],
         [0, 0, "SUCCESS", "2026-01-01T00:02:00Z", `${CUSTOM_RUN_URL}2`, "CodeQL", "custom-check"],
       ],
-      { "874": exactDiffGateRun("success", e2eJobs(2)) },
+      { "874": exactDiffActionRun("success", [{ id: 2, name: "optional-check" }]) },
     );
     expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
-  });
-  it("uses an envelope-bound E2E run when a later association-less label run is skipped", () => {
-    const fixture = e2eRunFixture(
-      [
-        [400, 40, "SUCCESS"],
-        [401, 41, "SKIPPED"],
-      ],
-      {
-        "400": {
-          ...exactDiffGateRun("success", [
-            { id: 40, name: "E2E / PR Gate" },
-            {
-              id: 42,
-              name: "initialize",
-              startedAt: "2026-01-01T00:01:00Z",
-              completedAt: "2026-01-01T00:03:00Z",
-            },
-          ]),
-          pullRequests: [],
-          createdAt: "2026-01-01T00:01:00Z",
-          updatedAt: "2026-01-01T00:03:00Z",
-        },
-        "401": {
-          ...exactDiffGateRun("skipped", [
-            { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
-          ]),
-          pullRequests: [],
-          createdAt: "2026-01-01T00:04:00Z",
-          updatedAt: "2026-01-01T00:05:00Z",
-          displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
-        },
-      },
-    );
-    const result = runGate({
-      ...fixture,
-      statusChecks: fixture.statusChecks?.filter((check) => check.name !== "initialize"),
-    });
-
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
   });
 });

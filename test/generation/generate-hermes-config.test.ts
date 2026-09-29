@@ -249,6 +249,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "hermes-managed-route.ts"),
     path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
   );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
+    path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
+  );
   return fixtureScriptPath;
 }
 

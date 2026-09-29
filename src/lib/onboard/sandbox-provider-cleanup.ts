@@ -3,7 +3,11 @@
 
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
-import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderMutationResult,
+} from "../adapters/openshell/provider-adapter";
 
 export {
   applyExtraProviderReconciliation,
@@ -40,6 +44,7 @@ export type SandboxProviderRunOpenshell = (
 
 export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
+  providerAdapter?: OpenShellProviderAdapter;
   revalidateSandboxIdentity?: (operation: string) => void;
   /**
    * Treat OpenShell `sandbox not found` outputs as success-equivalent. Used
@@ -51,17 +56,7 @@ export type DetachSandboxProvidersDeps = {
 };
 
 export type DeleteProviderWithRecoveryDeps = DetachSandboxProvidersDeps & {
-  /**
-   * Security containment for the force-detach recovery path. When provided,
-   * `deleteProviderWithRecovery` may only force-detach sandboxes whose names
-   * appear in this set — the authorized set for the onboarding operation
-   * (normally exactly the sandbox being onboarded). If the gateway's
-   * FailedPrecondition diagnostic lists ANY sandbox outside this set, the
-   * recovery fails closed (no detach is issued) so a mis-parsed, racing, or
-   * otherwise unexpected attachment can never silently detach an unrelated
-   * sandbox. When omitted, recovery is unconstrained — callers that own the
-   * whole gateway (resume-after-prune / credential-reset) opt out explicitly.
-   */
+  /** Only detach attachments in this set. An omitted set authorizes gateway-wide recovery. */
   allowedSandboxes?: readonly string[];
 };
 
@@ -90,69 +85,41 @@ export const SANDBOX_PROVIDER_SUFFIXES = [
 
 export type SandboxProviderSuffix = string;
 
-const TOLERATED_DETACH_OUTPUT_RE =
-  /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
-
-const MISSING_SANDBOX_OUTPUT_RE = /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
-
-const ATTACHED_TO_SANDBOX_RE = /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
+/** Deletes registrations after sandbox removal. Failures can leave stale registrations. */
+export async function deleteSandboxProviderRegistrations(
+  sandboxName: string,
+  scope: "messaging" | "all",
+  deps: DetachSandboxProvidersDeps = {},
+): Promise<void> {
+  const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
+  const suffixes =
+    scope === "messaging"
+      ? listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, ""))
+      : SANDBOX_PROVIDER_SUFFIXES;
+  for (const suffix of suffixes) {
+    await adapter.deleteProvider({
+      target: { kind: "selected" },
+      providerName: `${sandboxName}-${suffix}`,
+    });
+  }
+}
 
 const MAX_WARNING_OUTPUT_CHARS = 500;
-
-function bufferOrStringToText(value: string | Buffer | null | undefined): string {
-  if (typeof value === "string") return value;
-  if (value && typeof (value as Buffer).toString === "function") {
-    return (value as Buffer).toString();
-  }
-  return "";
-}
-
-function defaultRunOpenshell(
-  args: string[],
-  opts?: Record<string, unknown>,
-): ReturnType<SandboxProviderRunOpenshell> {
-  const runtime = require("../adapters/openshell/runtime") as {
-    runOpenshell: SandboxProviderRunOpenshell;
-  };
-  return runtime.runOpenshell(args, opts);
-}
 
 function identityRedact(input: string): string {
   return input;
 }
 
 /**
- * Detach every per-sandbox messaging and search provider before the sandbox
- * itself is removed. OpenShell `sandbox delete` does not auto-detach
- * providers, so a follow-up `provider delete` (or `provider create` after a
- * `replaceExisting` upsert) trips on FailedPrecondition with
- * "is attached to sandbox(es): <name>" — the canonical pattern is detach
- * first, then delete the sandbox, then delete the provider.
- *
- * Source boundary and removal condition: this helper owns the
- * NemoClaw-side workaround for OpenShell's sandbox-deletion lifecycle. The
- * source-of-truth fix lives in OpenShell — `sandbox delete` should either
- * fail fast on attached providers or release the attachment as part of the
- * deletion. When OpenShell guarantees one of those behaviours (released by
- * a future gateway/CLI version that surfaces a structured "detached on
- * delete" signal), this helper and both production call sites can be
- * removed in one pass.
- *
- * Best-effort across the full suffix set. Tolerated diagnostics are
- * narrowly scoped — `NotAttached` / "not attached" (the attachment is
- * already gone) and `provider … NotFound` / `provider … not found` (the
- * provider itself never existed or has already been deleted). Bare
- * `NotFound` is intentionally NOT tolerated because the same wording is
- * also used for missing-sandbox errors during the resume / pruned-sandbox
- * path, where the attachment may still be stale and require manual recovery.
- * Non-matching failures are returned in `failures` for the caller to
- * surface; the caller decides whether to abort or continue.
+ * Detach owned messaging and search providers before sandbox removal.
+ * Return failures to the lifecycle owner; it decides whether cleanup can continue.
+ * Missing sandboxes are tolerated only by the explicit resume-after-prune caller.
  */
-export function detachSandboxProviders(
+export async function detachSandboxProviders(
   sandboxName: string,
   deps: DetachSandboxProvidersDeps = {},
-): DetachSandboxProvidersResult {
-  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
+): Promise<DetachSandboxProvidersResult> {
+  const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
   const detached: string[] = [];
   const failures: Array<{ name: string; output: string }> = [];
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
@@ -161,23 +128,25 @@ export function detachSandboxProviders(
     // replacement and stop later detaches; they do not make this command an atomic,
     // identity-bound mutation. Operators must not mutate the sandbox concurrently.
     deps.revalidateSandboxIdentity?.(`detaching provider '${name}' from sandbox '${sandboxName}'`);
-    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      suppressOutput: true,
+    const result = await adapter.detachProvider({
+      target: { kind: "selected" },
+      sandboxName,
+      providerName: name,
     });
     deps.revalidateSandboxIdentity?.(
       `confirming provider '${name}' detach from sandbox '${sandboxName}'`,
     );
-    if (result.status === 0) {
-      detached.push(name);
+    if (result.ok) {
+      if (result.value.changed) detached.push(name);
       continue;
     }
-    const output = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
-    if (TOLERATED_DETACH_OUTPUT_RE.test(output)) {
-      continue;
-    }
-    if (deps.tolerateMissingSandbox && MISSING_SANDBOX_OUTPUT_RE.test(output)) {
+    const output = result.error.message;
+    if (result.error.kind === "command" && result.error.reason === "not_found") continue;
+    if (
+      deps.tolerateMissingSandbox &&
+      result.error.kind === "command" &&
+      result.error.reason === "sandbox_not_found"
+    ) {
       continue;
     }
     failures.push({ name, output: output.trim() });
@@ -185,93 +154,13 @@ export function detachSandboxProviders(
   return { detached, failures };
 }
 
-/**
- * Parse the sandbox names from an OpenShell `provider delete` FailedPrecondition
- * diagnostic of the shape
- *   `provider 'X' is attached to sandbox(es): A, B`
- * Returns an empty array when the input has no recognisable list.
- */
-export function parseAttachedSandboxes(output: string): string[] {
-  const match = ATTACHED_TO_SANDBOX_RE.exec(output);
-  if (!match) return [];
-  return match[1]
-    .split(/[,\s]+/)
-    .map((s) => s.trim().replace(/[.'"`]+$/u, ""))
-    .filter((s) => s.length > 0 && s.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(s));
-}
-
-export type RecoverProviderResult = {
-  detached: string[];
-  failures: Array<{ sandbox: string; output: string }>;
-};
-
-/**
- * Recovery path for `provider delete` failures whose attachment list points
- * at a sandbox that the local recreate / destroy pass could not reach (the
- * resume-after-prune case: sandbox already gone, but the gateway still
- * tracks the orphaned attachment). Issues `sandbox provider detach
- * <sandbox> <provider>` for each listed sandbox, then returns the per-name
- * outcome so the caller can retry the original delete.
- */
-export function recoverAttachedProvider(
-  providerName: string,
-  attachedSandboxes: string[],
-  deps: DetachSandboxProvidersDeps = {},
-): RecoverProviderResult {
-  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
-  const detached: string[] = [];
-  const failures: Array<{ sandbox: string; output: string }> = [];
-  for (const sandbox of attachedSandboxes) {
-    const result = runOpenshell(["sandbox", "provider", "detach", sandbox, providerName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      suppressOutput: true,
-    });
-    if (result.status === 0) {
-      detached.push(sandbox);
-      continue;
-    }
-    const out = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
-    if (TOLERATED_DETACH_OUTPUT_RE.test(out)) {
-      detached.push(sandbox);
-      continue;
-    }
-    failures.push({ sandbox, output: out.trim() });
-  }
-  return { detached, failures };
-}
-
-/**
- * Run the recreate / destroy preflight that detaches every per-sandbox
- * messaging and search provider, then surfaces any non-tolerated failure
- * through the injected `warn` channel with the failure output redacted and
- * length-capped. Returns the same result as `detachSandboxProviders` so
- * callers can inspect / re-test specific names if they want to short-circuit
- * downstream work.
- *
- * Non-tolerated detach failures are advisory rather than fatal because the
- * downstream operations that immediately follow the cleanup already surface
- * the same residual attachment with an actionable, name-scoped error:
- *
- *   - The onboard recreate path runs typed messaging provider application with
- *     `replaceExisting: true` next; a residual attachment rejects with a
- *     name-scoped `MessagingProviderApplyError` and preserves retry state.
- *   - The destroy path runs `runOpenshell(["sandbox", "delete", sandboxName])`
- *     next; that call hard-fails on non-`alreadyGone` errors before any
- *     registry state is removed, so a real gateway outage stops destroy
- *     before it can drop state needed for retry.
- *
- * Treating a non-tolerated detach return as a hard failure here would
- * regress the merely-flaky-gateway case (where the subsequent operation
- * succeeds) without gaining any signal that the immediately-following step
- * does not already provide. Callers that want stricter semantics inspect
- * the returned `failures` array directly.
- */
-export function runSandboxProviderPreDeleteCleanup(
+/** Report bounded, redacted detach failures; the following lifecycle mutation remains authoritative. */
+export async function runSandboxProviderPreDeleteCleanup(
   sandboxName: string,
   deps: SandboxRecreateCleanupDeps = {},
-): DetachSandboxProvidersResult {
-  const result = detachSandboxProviders(sandboxName, {
+): Promise<DetachSandboxProvidersResult> {
+  const result = await detachSandboxProviders(sandboxName, {
+    providerAdapter: deps.providerAdapter,
     runOpenshell: deps.runOpenshell,
     revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     tolerateMissingSandbox: deps.tolerateMissingSandbox,
@@ -288,73 +177,43 @@ export function runSandboxProviderPreDeleteCleanup(
   return result;
 }
 
-export type ProviderDeleteWithRecoveryResult = {
-  ok: boolean;
-  status: number | null;
-  stderr: string;
-  stdout: string;
+export type ProviderDeleteWithRecoveryResult = OpenShellProviderMutationResult & {
   recoveryFailures: Array<{ sandbox: string; output: string }>;
 };
 
 /**
- * Delete an OpenShell provider, recovering from a FailedPrecondition that
- * reports the provider as still attached to one or more sandboxes. The
- * source-of-truth fix lives in OpenShell: `provider delete` should either
- * cascade through the gateway-side attachment record or expose a structured
- * "force" path. Until that lands, this helper parses the attached-sandbox
- * list out of the diagnostic, force-detaches each entry (rejecting any
- * parsed name that fails NemoClaw's sandbox-name validator before issuing
- * a detach), and retries the delete once. Removable in the same future
- * OpenShell version that lets `runSandboxProviderPreDeleteCleanup` go away.
- *
- * Security containment: when `deps.allowedSandboxes` is supplied, the parsed
- * attachment list is revalidated against that authorized set BEFORE any
- * detach is issued. If any listed sandbox falls outside the set, the recovery
- * fails closed — no detach runs and the original delete failure is returned —
- * so a stale, racing, or mis-parsed diagnostic can never force-detach a
- * sandbox the caller did not authorize. Callers that omit `allowedSandboxes`
- * (they own the whole gateway) keep the unconstrained behaviour.
- *
- * Returns the final `provider delete` outcome plus the list of per-sandbox
- * detach failures, so the caller can fold those into the user-facing error
- * if the retry still doesn't land.
+ * Delete once. On a confirmed attachment failure, detach only authorized sandboxes,
+ * then retry once after every detach succeeds. Preserve uncertain or partial failures.
  */
-export function deleteProviderWithRecovery(
+export async function deleteProviderWithRecovery(
   providerName: string,
   deps: DeleteProviderWithRecoveryDeps = {},
-): ProviderDeleteWithRecoveryResult {
-  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
-  let result = runOpenshell(["provider", "delete", providerName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    suppressOutput: true,
-  });
-  let recoveryFailures: Array<{ sandbox: string; output: string }> = [];
-  if (result.status !== 0) {
-    const raw = `${bufferOrStringToText(result.stderr)}${bufferOrStringToText(result.stdout)}`;
-    const attached = parseAttachedSandboxes(raw);
+): Promise<ProviderDeleteWithRecoveryResult> {
+  const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
+  const request = { target: { kind: "selected" as const }, providerName };
+  let result = await adapter.deleteProvider(request);
+  const recoveryFailures: Array<{ sandbox: string; output: string }> = [];
+  if (!result.ok && result.error.kind === "command" && result.error.reason === "attached") {
+    const attached = [...(result.error.attachedSandboxes ?? [])];
     // Fail closed when the diagnostic names any sandbox outside the caller's
     // authorized set: force-detaching it could break an unrelated sandbox.
     const allowed = deps.allowedSandboxes;
     const outsideAuthorizedSet =
       allowed !== undefined && attached.some((name) => !allowed.includes(name));
     if (attached.length > 0 && !outsideAuthorizedSet) {
-      const recovery = recoverAttachedProvider(providerName, attached, { runOpenshell });
-      recoveryFailures = recovery.failures;
-      result = runOpenshell(["provider", "delete", providerName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-      });
+      for (const sandboxName of attached) {
+        const detached = await adapter.detachProvider({ ...request, sandboxName });
+        if (
+          !detached.ok &&
+          !(detached.error.kind === "command" && detached.error.reason === "not_found")
+        ) {
+          recoveryFailures.push({ sandbox: sandboxName, output: detached.error.message });
+        }
+      }
+      if (recoveryFailures.length === 0) result = await adapter.deleteProvider(request);
     }
   }
-  return {
-    ok: result.status === 0,
-    status: result.status,
-    stderr: bufferOrStringToText(result.stderr),
-    stdout: bufferOrStringToText(result.stdout),
-    recoveryFailures,
-  };
+  return { ...result, recoveryFailures };
 }
 
 /**

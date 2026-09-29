@@ -70,7 +70,7 @@ describe("remote dashboard bind production lifecycle", () => {
     ],
     ["pre-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-generator"],
     ["pre-generator SHELL", 'SHELL ["/tmp/bypass-shell", "-c"]', "before-generator"],
-    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-hash"],
+    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-mode"],
     ["post-generator PYTHONPATH", "ENV PYTHONPATH=/tmp/bypass", "before-proxy-patch"],
     ["replacement HEALTHCHECK", "HEALTHCHECK CMD /tmp/bypass-healthcheck", "append"],
     ["replacement ENTRYPOINT", 'ENTRYPOINT ["/tmp/bypass-entrypoint"]', "append"],
@@ -83,15 +83,14 @@ describe("remote dashboard bind production lifecycle", () => {
     const generator =
       "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node /scripts/generate-openclaw-config.mts";
     const proxyPatch = 'RUN python3 -c "\\\n';
-    const configHash =
-      "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash";
+    const configMode = "RUN chmod 660 /sandbox/.openclaw/openclaw.json";
     const body =
       location === "before-generator"
         ? stockDockerfile.replace(generator, `${instruction}\n${generator}`)
         : location === "before-proxy-patch"
           ? stockDockerfile.replace(proxyPatch, `${instruction}\n${proxyPatch}`)
-          : location === "before-config-hash"
-            ? stockDockerfile.replace(configHash, `${instruction}\n${configHash}`)
+          : location === "before-config-mode"
+            ? stockDockerfile.replace(configMode, `${instruction}\n${configMode}`)
             : `${stockDockerfile}\n${instruction}\n`;
     fs.writeFileSync(dockerfile, body);
 
@@ -438,7 +437,6 @@ describe("remote dashboard bind production lifecycle", () => {
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
         "RUN node /scripts/generate-openclaw-config.mts",
         "RUN chmod 660 /sandbox/.openclaw/openclaw.json",
-        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ].join("\n"),
     );
 
@@ -452,17 +450,32 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("allows the managed token/proxy patch and hash refresh after the remote-bind generator (#6024)", () => {
+  it("rejects the retired OpenClaw config hash after the remote-bind generator (#11764)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-managed-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-hash-"));
     const dockerfile = path.join(directory, "Dockerfile");
     fs.writeFileSync(
       dockerfile,
       remoteBindDockerfile(
-        MANAGED_PROXY_PATCH,
-        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash && chmod 660 /sandbox/.openclaw/.config-hash && chown sandbox:sandbox /sandbox/.openclaw/.config-hash",
+        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ),
     );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows the managed token/proxy patch after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-managed-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(dockerfile, remoteBindDockerfile(MANAGED_PROXY_PATCH));
 
     try {
       expect(() =>
@@ -548,7 +561,7 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
+  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -559,14 +572,14 @@ describe("remote dashboard bind production lifecycle", () => {
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(await ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("not prepared for remote exposure"));
   });
 
-  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", () => {
+  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", async () => {
     const ensureDashboardForward = vi.fn();
-    expect(() =>
+    await expect(
       applyReusedSandboxDashboardState({
         sandboxName: "beta",
         chatUiUrl: "http://127.0.0.1:18789",
@@ -586,7 +599,7 @@ describe("remote dashboard bind production lifecycle", () => {
         },
         updateReusedSandboxMetadata: vi.fn(),
       }),
-    ).toThrow(/--recreate-sandbox/);
+    ).rejects.toThrow(/--recreate-sandbox/);
     expect(ensureDashboardForward).not.toHaveBeenCalled();
   });
 });

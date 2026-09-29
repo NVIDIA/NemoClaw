@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +21,7 @@ import {
   buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -40,13 +50,14 @@ function bufferedResult(status: number, stdout: string, stderr: string) {
 /**
  * Run the generated probe command under a real shell with a stub curl that
  * serves `body` at `code`, so the in-sandbox classification is exercised rather
- * than simulated. Returns the probe's stdout.
+ * than simulated. Returns the probe output and the arguments received by curl.
  */
 function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-): string {
+  probeInput = input,
+): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
     const bin = path.join(dir, "bin");
@@ -56,6 +67,7 @@ function runProbeCommandWithBody(
       path.join(bin, "curl"),
       [
         "#!/bin/sh",
+        `printf '%s\\n' "$@" > ${JSON.stringify(path.join(dir, "argv.txt"))}`,
         'out=""; prev=""',
         'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
         `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
@@ -63,11 +75,14 @@ function runProbeCommandWithBody(
       ].join("\n"),
       { mode: 0o755 },
     );
-    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(input)], {
+    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
     });
-    return run.stdout || "";
+    return {
+      stdout: run.stdout || "",
+      argv: readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n"),
+    };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -80,6 +95,30 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("ignores personal curl configuration when an inference request fails (#11520)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-curl-config-"));
+    try {
+      const trace = path.join(dir, "hostile-trace");
+      writeFileSync(path.join(dir, ".curlrc"), `trace = "${trace}"\n`);
+      // Keep the real curl process local; this tests config loading, not routing.
+      const command = buildSandboxInferenceInvocationCommand(input).replace(
+        "https://inference.local/v1/chat/completions",
+        "http://127.0.0.1:1/v1/chat/completions",
+      );
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: dir, CURL_HOME: dir, XDG_CONFIG_HOME: dir },
+        timeout: 10_000,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toMatch(/^curl-error:\d+\n$/);
+      expect(existsSync(trace)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 
@@ -186,7 +225,7 @@ describe("sandbox inference invocation probe", () => {
       // one contract in nvcf-model-access.ts and must not drift.
       expect(isNvcfFunctionNotFoundForAccount(body)).toBe(true);
 
-      const stdout = runProbeCommandWithBody("404", body);
+      const { stdout } = runProbeCommandWithBody("404", body);
 
       expect(stdout).toContain("nemoclaw-probe:nvcf-function-not-found");
       expect(stdout).not.toContain("acct-42");
@@ -199,7 +238,7 @@ describe("sandbox inference invocation probe", () => {
 
     expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
 
-    const stdout = runProbeCommandWithBody("404", body);
+    const { stdout } = runProbeCommandWithBody("404", body);
 
     expect(stdout.trim()).toBe("404");
     expect(stdout).not.toContain("nemoclaw-probe:nvcf-function-not-found");
@@ -221,13 +260,13 @@ describe("sandbox inference invocation probe", () => {
 
     expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
 
-    const stdout = runProbeCommandWithBody("404", body);
+    const { stdout } = runProbeCommandWithBody("404", body);
 
     expect(stdout.trim()).toBe("404");
   });
 
   it("keeps a non-404 failure body out of the probe output (#6195)", () => {
-    const stdout = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
+    const { stdout } = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
 
     expect(stdout.trim()).toBe("500");
     expect(stdout).not.toContain("canary-replay-marker");
@@ -259,7 +298,7 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
+      { gatewayName: "recorded-gateway" },
     );
   });
 
@@ -285,7 +324,7 @@ describe("sandbox inference invocation probe", () => {
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
+      { gatewayName: "nemoclaw-19080" },
     );
     expect(execute).toHaveBeenCalledOnce();
   });
@@ -327,6 +366,35 @@ describe("sandbox inference invocation probe", () => {
     ]);
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "preserves filtered runtime authority for Deep Agents Code (selected=%s)",
+    (selected) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+      vi.stubEnv("OPENSHELL_WORKSPACE", "/ambient-workspace");
+      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient-tls");
+      vi.stubEnv("GITHUB_TOKEN", "fixture-private-token");
+      try {
+        const runtimeSelection = selected
+          ? { gatewayName: "recorded-gateway", workspace: "/recorded-workspace" }
+          : undefined;
+        const request = buildDcodeSandboxInferenceInvocationRequest(
+          { ...input, runtimeSelection },
+          100_000,
+        );
+        expect(request.environment).toMatchObject({
+          OPENSHELL_GATEWAY: selected ? "recorded-gateway" : "ambient-gateway",
+          OPENSHELL_WORKSPACE: selected ? "/recorded-workspace" : "/ambient-workspace",
+        });
+        expect(request.environment?.OPENSHELL_LOCAL_TLS_DIR).toBe(
+          selected ? undefined : "/ambient-tls",
+        );
+        expect(request.environment).not.toHaveProperty("GITHUB_TOKEN");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("rejects startup output before Deep Agents Code invocation evidence (#10080)", async () => {
     const runBuffered = vi.fn(async () =>
@@ -427,6 +495,12 @@ describe("sandbox inference invocation probe", () => {
       '200\n{"error":{"message":"provider failed"}}',
     ],
     ["Chat Completions", "openai-completions", "the wrong result shape", '200\n{"choices":[]}'],
+    [
+      "Chat Completions",
+      "openai-completions",
+      "null content",
+      '200\n{"choices":[{"message":{"content":null}}]}',
+    ],
     ["Responses", "openai-responses", "an empty response", "204\n"],
     ["Responses", "openai-responses", "malformed JSON", "200\nnot-json"],
     [
@@ -480,6 +554,27 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain('"max_completion_tokens"');
   });
 
+  it.each([
+    ["gemini-api", "gemini-2.5-flash", 256],
+    ["compatible-endpoint", "nvidia/nemotron", 16],
+  ])("sends the %s budget through the shell request", (provider, model, maxTokens) => {
+    const { stdout, argv } = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      { ...input, provider, model },
+    );
+    expect(stdout).toContain('200\n{"choices":');
+    expect(JSON.parse(argv[argv.indexOf("--data-binary") + 1])).toMatchObject({
+      model,
+      max_tokens: maxTokens,
+    });
+    expect(argv[argv.indexOf("--max-time") + 1]).toBe("90");
+    expect(Number(argv[argv.indexOf("--max-time") + 1]) * 1000).toBeLessThan(
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+  });
+
   it("sends max_output_tokens on the responses route", () => {
     const command = buildSandboxInferenceInvocationCommand({
       ...input,
@@ -514,4 +609,25 @@ describe("sandbox inference invocation probe", () => {
       expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
     },
   );
+});
+
+describe("native inference transport failures", () => {
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "returns unavailable for %s without retry",
+    async (kind) => {
+      const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toMatchObject({
+        ok: false,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      });
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates unexpected errors", async () => {
+    const error = new Error("authority refusal");
+    await expect(
+      probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
+    ).rejects.toBe(error);
+  });
 });

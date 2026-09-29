@@ -69,7 +69,7 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "vim-tiny=2:9.2.0858-1",
   "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
   "libssl3t64=3.5.7-1~deb13u2",
-  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
   "perl=5.44.0-1nemoclaw1",
 ] as const;
@@ -77,6 +77,12 @@ const EXPECTED_OPENCLAW_SECURITY_PACKAGE_INVENTORY = [
   ...EXPECTED_SECURITY_PACKAGE_INVENTORY,
   "libevent-core-2.1-7t64=2.1.13-stable-1",
 ] as const;
+const PUBLISHED_HERMES_SECURITY_PACKAGE_INVENTORY = EXPECTED_SECURITY_PACKAGE_INVENTORY.map(
+  (entry) =>
+    entry === "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1"
+      ? "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"
+      : entry,
+);
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
@@ -159,14 +165,27 @@ function baseAptSecurityFunctionsWithLibeventVersion(
   );
 }
 
+function baseAptSecurityFunctionsWithPythonFixVersion(
+  architecture: (typeof ARCHITECTURES)[number],
+  version: string,
+): string[] {
+  return baseAptSecurityFunctions(architecture).map((definition) =>
+    definition.replace(
+      'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u5+nemoclaw1"',
+      `nemoclaw-python3.13-htmlparser-fix) printf "${version}"`,
+    ),
+  );
+}
+
 function completedImageSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
   tmp: string,
   architecture: (typeof ARCHITECTURES)[number],
+  packageInventory: readonly string[] = image.expectedInventory,
 ): { command: string; inventory: string; pythonShim: string } {
   const inventory = path.join(tmp, "security-packages.txt");
   const { fixedParser, pythonShim } = stageFixedParser(tmp);
-  fs.writeFileSync(inventory, securityInventory(architecture, image.expectedInventory), {
+  fs.writeFileSync(inventory, securityInventory(architecture, packageInventory), {
     mode: 0o444,
   });
   const dockerfile = fs.readFileSync(image.finalDockerfile, "utf-8");
@@ -307,6 +326,51 @@ describe("sandbox base security packages", () => {
           { timeoutMs: 15_000 },
         );
         expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(ARCHITECTURES)(
+    "accepts the exact published Hermes Python package on %s",
+    (architecture) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-published-security-"));
+      const hermes = SECURITY_IMAGES.find((image) => image.name === "Hermes")!;
+      const prepared = completedImageSecurityCommand(
+        hermes,
+        tmp,
+        architecture,
+        PUBLISHED_HERMES_SECURITY_PACKAGE_INVENTORY,
+      );
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            [
+              "stat() {",
+              `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+              '  printf "0:0:444\\n"',
+              "}",
+            ].join("\n"),
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsWithPythonFixVersion(
+                architecture,
+                "3.13.5-2+deb13u4+nemoclaw1",
+              ),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect({ status: result.status, stderr: result.stderr }).toEqual({
+          status: 0,
+          stderr: "",
+        });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

@@ -4,7 +4,7 @@
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
-import { buildRevisionScopedMcpAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
+import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
 
 export async function assertDeepAgentsMcpConfig(
   sandbox: SandboxClient,
@@ -15,7 +15,7 @@ export async function assertDeepAgentsMcpConfig(
     hostSecret: string;
   },
 ): Promise<void> {
-  const authorizationPattern = buildRevisionScopedMcpAuthorizationPattern("FAKE_MCP_SECRET");
+  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "python3 - <<'PY'",

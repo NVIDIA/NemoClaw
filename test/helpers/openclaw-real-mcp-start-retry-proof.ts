@@ -22,6 +22,14 @@ interface ProofScenario {
   run2Diagnostics: string[];
 }
 
+function listJavaScriptFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listJavaScriptFiles(entryPath);
+    return entry.isFile() && entry.name.endsWith(".js") ? [entryPath] : [];
+  });
+}
+
 function requireSuccess(
   result: { status: number | null; stdout?: string | null; stderr?: string | null },
   label: string,
@@ -61,21 +69,19 @@ export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
     throw new Error("MCP startup recovery audit did not confirm the patched dist");
   }
 
-  const runtimeTargets = fs
-    .readdirSync(options.dist)
-    .filter((file) => /^agent-bundle-mcp-runtime-.+\.js$/.test(file))
+  const runtimeTargets = listJavaScriptFiles(options.dist)
+    .filter((file) => /^agent-bundle-mcp-runtime(?:-.+)?\.js$/.test(path.basename(file)))
     .filter((file) =>
       fs
-        .readFileSync(path.join(options.dist, file), "utf8")
+        .readFileSync(file, "utf8")
         .includes("/* nemoclaw mcp transient startup recovery (#7958) */"),
     );
   requireEqual(String(runtimeTargets.length), "1", "MCP startup recovery patch target count");
 
-  const syntax = spawnSync(
-    options.nodeExecutable,
-    ["--check", path.join(options.dist, runtimeTargets[0] as string)],
-    { encoding: "utf8", timeout: options.timeoutMs },
-  );
+  const syntax = spawnSync(options.nodeExecutable, ["--check", runtimeTargets[0] as string], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(syntax, "validate patched bundle-mcp runtime syntax");
 
   // This behavioral proof imports the reviewed bundle-mcp runtime, so install
@@ -150,12 +156,15 @@ export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
   if (unauthorized.run1Diagnostics[0].includes("temporary MCP transport failure")) {
     throw new Error("authorization failure was reported as a temporary transport failure");
   }
-  // OpenClaw surfaces the server's OAuth rejection payload rather than the
-  // status line, so the preserved diagnostic reads
-  // `Error POSTing to endpoint: {"error":"invalid_token"}`. That `invalid_token`
-  // token is also what the patch's blocked-text pattern keys on, so asserting it
-  // pins both the preserved attribution and the reason the retry was refused.
-  if (!/invalid_token|401|unauthoriz|credential/i.test(unauthorized.run1Diagnostics[0])) {
+  // Older OpenClaw bundles preserve the server's OAuth rejection token, while
+  // 2026.9.1 deliberately redacts the response body. The one-attempt assertions
+  // above prove both forms remained non-retryable; pin the surviving diagnostic
+  // so the failure is not silently discarded or rewritten as transient.
+  if (
+    !/invalid_token|401|unauthoriz|credential|streamable http error: error posting to endpoint: \[redacted response body\]/i.test(
+      unauthorized.run1Diagnostics[0],
+    )
+  ) {
     throw new Error(
       `authorization diagnostic does not attribute the failure to the credential rejection: ${unauthorized.run1Diagnostics[0]}`,
     );
@@ -169,11 +178,20 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const distDir = path.resolve(process.argv[1], "..");
-const pick = (pattern) => fs.readdirSync(distDir).find((file) => pattern.test(file));
-const runtimeMod = await import(pathToFileURL(path.join(distDir, pick(/^agent-bundle-mcp-runtime-.+\\.js$/))).href);
-const materializeMod = await import(pathToFileURL(path.join(distDir, pick(/^agent-bundle-mcp-materialize-.+\\.js$/))).href);
-const createSessionMcpRuntime = runtimeMod.n;
-const materializeBundleMcpToolsForRun = materializeMod.r;
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const entryPath = path.join(dir, entry.name);
+  return entry.isDirectory() ? walk(entryPath) : entry.isFile() && entry.name.endsWith(".js") ? [entryPath] : [];
+});
+const files = walk(distDir);
+const runtimePath = files.find((file) => /^agent-bundle-mcp-runtime(?:-.+)?\\.js$/.test(path.basename(file)) && fs.readFileSync(file, "utf8").includes("/* nemoclaw mcp transient startup recovery (#7958) */"));
+if (!runtimePath) throw new Error("patched bundle-mcp runtime not found");
+const siblingMaterializePath = path.join(path.dirname(runtimePath), "agent-bundle-mcp-materialize.js");
+const materializePath = fs.existsSync(siblingMaterializePath) ? siblingMaterializePath : files.find((file) => /^agent-bundle-mcp-materialize-.+\\.js$/.test(path.basename(file)));
+if (!materializePath) throw new Error("bundle-mcp materializer not found");
+const runtimeMod = await import(pathToFileURL(runtimePath).href);
+const materializeMod = await import(pathToFileURL(materializePath).href);
+const createSessionMcpRuntime = runtimeMod.n ?? runtimeMod.createSessionMcpRuntime;
+const materializeBundleMcpToolsForRun = materializeMod.r ?? materializeMod.materializeBundleMcpToolsForRun;
 
 const TOOLS = [{ name: "search_docs", description: "Search the remote knowledge base.", inputSchema: { type: "object", properties: { query: { type: "string" } } } }];
 

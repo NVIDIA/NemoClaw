@@ -25,7 +25,6 @@ import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceFactRequirement,
-  ManagedInferencePresetRequirement,
   ManagedInferenceReadinessRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolution,
@@ -33,11 +32,8 @@ import type {
   ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceSelectionIntent,
   ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ManagedInferenceTopologyRequirement,
-  ResolvedHostLocalInferenceSelection,
-  ResolvedManagedInferenceSelection,
   ServingReadinessComparison,
 } from "./types.js";
 

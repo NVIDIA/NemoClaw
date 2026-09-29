@@ -660,7 +660,7 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     bloated.topProcesses = Array.from({ length: 500 }, (_, i) => ({
       rssKb: i,
     }));
-    bloated.containers = Array.from({ length: 500 }, (_, i) => ({
+    bloated.containers = Array.from({ length: 500 }, (_, _i) => ({
       cpuPercent: 1,
       memBytes: 1,
       memLimitBytes: 1,

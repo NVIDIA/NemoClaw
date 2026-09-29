@@ -3,6 +3,24 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("./mcp-bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge")>()),
+  prepareMcpBridgesForDestroy: async (
+    _sandboxName: string,
+    options: { runtimeSelection?: OpenShellRuntimeSelection } = {},
+  ) => ({
+    entries: [],
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  }),
+  prepareMcpBridgesForAbsentSandboxDestroy: async (
+    _sandboxName: string,
+    options: { runtimeSelection?: OpenShellRuntimeSelection } = {},
+  ) => ({
+    entries: [],
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  }),
+}));
+
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import { llamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
@@ -183,6 +201,8 @@ async function runDestroy(
     peers?: SandboxEntry[];
     currentAfterDelete?: SandboxEntry | null;
     deleteResult?: { status: number; stdout: string; stderr: string };
+    listResult?: { status: number; stdout: string; stderr: string };
+    lookupResults?: { status: number; stdout: string; stderr: string }[];
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -214,23 +234,33 @@ async function runDestroy(
   const stopInferenceResources = vi.fn(() => {
     runtimeProvider.events.push("legacy inference cleanup");
   });
+  let lookupAttempt = 0;
+  let convergenceClockMs = 0;
   const runOpenshell = vi.fn((args: string[]) => {
     const command = args.join(" ");
     runtimeProvider.events.push(command);
-    current =
-      args[0] === "sandbox" && args[1] === "delete" && args.at(-1) === "alpha"
-        ? afterDelete
-        : current;
-    return (
-      options.deleteResult ?? {
-        status: 0,
-        stdout: "",
-        stderr: "",
+    switch (`${String(args[0])}:${String(args[1])}`) {
+      case "sandbox:list":
+        return options.listResult ?? { status: 0, stdout: "", stderr: "" };
+      case "sandbox:get": {
+        const sequenced =
+          options.lookupResults?.[Math.min(lookupAttempt, options.lookupResults.length - 1)];
+        lookupAttempt += 1;
+        const fallback = options.listResult?.stdout.trim()
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+        return sequenced ?? fallback;
       }
-    );
+      case "sandbox:delete":
+        current = args.at(-1) === "alpha" ? afterDelete : current;
+        return options.deleteResult ?? { status: 0, stdout: "", stderr: "" };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
   });
   const result = await executeSandboxDestroy({
     force: options.force ?? false,
+    deleteGatewayName: "nemoclaw",
     ...(options.includeRegistryReaders === false ? {} : { getSandbox, listSandboxes }),
     runOpenshell,
     sandbox: entry,
@@ -249,6 +279,12 @@ async function runDestroy(
           }
         : {}),
       wipeSandboxState: () => undefined,
+      deleteConvergence: {
+        now: () => convergenceClockMs,
+        sleep: (milliseconds) => {
+          convergenceClockMs += milliseconds;
+        },
+      },
     },
   });
   return {
@@ -359,6 +395,7 @@ describe("sandbox destroy host-local inference transaction", () => {
 
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox,
       listSandboxes: () => ({ sandboxes: [entry] }),
       runOpenshell,
@@ -472,9 +509,14 @@ describe("sandbox destroy host-local inference transaction", () => {
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox: () => current,
       listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      runOpenshell: vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
+          : { status: 0, stdout: "", stderr: "" },
+      ),
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
@@ -503,9 +545,14 @@ describe("sandbox destroy host-local inference transaction", () => {
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox: () => entry,
       listSandboxes: () => ({ sandboxes: [entry] }),
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      runOpenshell: vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
+          : { status: 0, stdout: "", stderr: "" },
+      ),
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
@@ -678,6 +725,82 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runtimeProvider.events).not.toContain("cleanup");
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("preserves recovery authority when an accepted delete remains present", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      listResult: { status: 0, stdout: "alpha Ready", stderr: "" },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      deleteOutput: expect.stringContaining(
+        "final probe still observed it in phase 'Ready' on gateway 'nemoclaw'",
+      ),
+    });
+    expect(result.deleteOutput).toContain("Local recovery state was preserved");
+    expect(result.deleteOutput).toContain(
+      "Inspect the sandbox on that gateway, then retry destroy",
+    );
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("reports the final gateway failure after an accepted delete", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      lookupResults: [
+        {
+          status: 1,
+          stdout: "",
+          stderr: "tcp connect error: Connection refused (os error 61)",
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      gatewayUnreachable: true,
+      deleteOutput: expect.stringContaining(
+        "final absence probe could not reach gateway 'nemoclaw'",
+      ),
+    });
+    expect(result.deleteOutput).toContain("Local recovery state was preserved");
+    expect(result.deleteOutput).toContain("Restore gateway access, then retry destroy");
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("waits for accepted deletion to become explicitly absent without retrying it (#11941)", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      lookupResults: [
+        { status: 0, stdout: "Name: alpha\nPhase: Deleting", stderr: "" },
+        { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+      ],
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(3);
+  });
+
+  it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      deleteResult: {
+        status: 1,
+        stdout: "",
+        stderr: "transport error: connection reset",
+      },
+      listResult: { status: 0, stdout: "", stderr: "" },
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
   });
 
   it("reconciles retained authority only after stable sandbox absence", async () => {

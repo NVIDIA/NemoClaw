@@ -232,4 +232,31 @@ describe("handleSandboxState Ready sandbox messaging", () => {
     expect(writePlanToEnv).not.toHaveBeenCalled();
     expect(getSession().messagingPlan).toEqual(registryPlan);
   });
+
+  it("reuses a Ready sandbox without channels when only the process environment carries channel configuration", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getStoredMessagingChannelConfig: () => null,
+        hydrateMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "0" }),
+        messagingChannelConfigsEqual: () => false,
+      },
+      session,
+    );
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.note).not.toHaveBeenCalledWith(
+      "  [resume] Messaging channel configuration changed; recreating sandbox.",
+    );
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
+    expect(result.selectedMessagingChannels).toEqual([]);
+  });
 });

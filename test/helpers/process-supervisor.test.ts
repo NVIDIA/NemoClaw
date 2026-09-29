@@ -67,6 +67,33 @@ describe("helpers/process-supervisor", () => {
     expect(elapsed).toBeLessThan(5_000);
   });
 
+  it("waits for descendants after the process-group leader exits on SIGTERM", async () => {
+    let descendantStdout = "";
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        `trap 'exit 0' TERM; bash -c 'trap "" TERM; while :; do sleep 1; done' >/dev/null 2>&1 & echo $!; wait`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const result = await superviseChild(child, {
+      timeoutMs: 200,
+      killGraceMs: 200,
+      onStdout: (chunk) => {
+        descendantStdout += chunk;
+      },
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.cleanupError).toBeUndefined();
+    const descendantPidText = descendantStdout.trim();
+    expect(descendantPidText).toMatch(/^[1-9]\d*$/);
+    const descendantPid = Number(descendantPidText);
+    expect(Number.isSafeInteger(descendantPid)).toBe(true);
+    expect(() => process.kill(descendantPid, 0)).toThrow();
+  });
+
   it("honors an AbortSignal without flagging the run as a timeout", async () => {
     const controller = new AbortController();
     const child = spawn("bash", ["-c", "sleep 10"], {

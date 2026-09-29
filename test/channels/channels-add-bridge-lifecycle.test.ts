@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+import * as commandTransport from "../../src/lib/adapters/sandbox/command-transport";
 //
 // Bridge-provider lifecycle on the DIRECT `channels add` path (#6120): a
 // bridge-backed channel (googlechat) declares no manifest credentials, so the
@@ -18,7 +20,6 @@ import {
   stopSandboxChannel,
 } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as runtime from "../../src/lib/adapters/openshell/runtime";
 import * as store from "../../src/lib/credentials/store";
 import * as gatewayRuntime from "../../src/lib/gateway-runtime-action";
@@ -156,7 +157,7 @@ function printedText(): string {
 }
 
 function withoutGateway(args: readonly string[]): string[] {
-  const index = args[2] === "-g" ? 2 : args[3] === "-g" ? 3 : -1;
+  const index = [0, 2, 3].find((position) => args[position] === "-g") ?? -1;
   return index < 0 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
@@ -203,18 +204,18 @@ beforeEach(() => {
   ]);
 
   appliedPresets = [];
-  vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+  vi.spyOn(policies, "loadPresetForSandbox").mockResolvedValue(
     "network_policies:\n  stub:\n    egress:\n      - host: example.com\n",
   );
-  vi.spyOn(policies, "applyPreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "applyPreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = [...new Set([...appliedPresets, preset])];
     return true;
   });
-  vi.spyOn(policies, "removePreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = appliedPresets.filter((name) => name !== preset);
     return true;
   });
-  vi.spyOn(policies, "getAppliedPresets").mockImplementation(() => [...appliedPresets]);
+  vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => [...appliedPresets]);
 
   vi.spyOn(store, "getCredential").mockImplementation((key) => process.env[key] || null);
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
@@ -233,8 +234,13 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
+  vi.spyOn(policyChannelDependencies, "resolveConfigRuntimeSelection").mockReturnValue({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+    localTlsDir: "/recorded/tls",
+  });
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
   vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
     LIVE_IDENTITY_FINGERPRINT,
@@ -349,9 +355,10 @@ beforeEach(() => {
 
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -360,15 +367,13 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
-    status: 0,
-    stdout: "",
-    stderr: "",
-  });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new Error("Bridge-provider lifecycle must not execute native sandbox commands"),
+  );
 });
 
 afterEach(() => {
+  const nativeCommandCalls = vi.mocked(commandTransport.executeSandboxExecCommand).mock.calls;
   vi.restoreAllMocks();
   stdinIsTty
     ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
@@ -376,6 +381,7 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
+  expect(nativeCommandCalls).toEqual([]);
 });
 
 describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
@@ -495,6 +501,18 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     resetGatewayObservations();
     await removeSandboxChannel("test-sb", { channel: "googlechat" });
 
+    expect(policyChannelDependencies.resolveConfigRuntimeSelection).toHaveBeenCalledWith("test-sb");
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(["-g", "nemoclaw", "sandbox", "exec", "test-sb"]),
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+        }),
+      }),
+    );
     expect(detachedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).not.toContain(

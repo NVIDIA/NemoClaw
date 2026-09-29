@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import type { GatewayReuseState } from "../../state/gateway";
 import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
+import { assertProviderlessSandboxAgent } from "../sandbox-agent";
 import {
   ExternalComponentContractError,
   type PreparedExternalComponent,
@@ -38,10 +39,10 @@ export type InitialOnboardFlowContext<
 
 type SpawnSync = typeof spawnSync;
 
-export function getInitialGatewayReuseStateForOwner(
+export async function getInitialGatewayReuseStateForOwner(
   owner: GatewayOwner,
-  getManagedReuseState: () => GatewayReuseState,
-): GatewayReuseState {
+  getManagedReuseState: () => GatewayReuseState | Promise<GatewayReuseState>,
+): Promise<GatewayReuseState> {
   return isExternallySupervised(owner) ? "missing" : getManagedReuseState();
 }
 
@@ -69,7 +70,7 @@ export interface InitialOnboardFlowPhaseOptions<
     PreflightStateOptions<Gpu, SandboxEntry, Host, Config>["deps"],
     "assertGatewayReadiness"
   >;
-  getInitialGatewayReuseState(): GatewayReuseState;
+  getInitialGatewayReuseState(): GatewayReuseState | Promise<GatewayReuseState>;
   assertGatewayReadiness(): Promise<void>;
   prepareExternalComponent?(session: Context["session"]): PreparedExternalComponent | null;
   gatewayName: string;
@@ -143,6 +144,9 @@ export function createInitialOnboardFlowPhases<
     state: "preflight",
     async run(context) {
       const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
+      if (context.session?.apfInterceptorRequested === true) {
+        assertProviderlessSandboxAgent(context.agent);
+      }
       if (externalComponent && (context.resume || options.recreateSandbox())) {
         throw new ExternalComponentContractError("lifecycle_unsupported");
       }
@@ -211,7 +215,7 @@ export function createInitialOnboardFlowPhases<
       const gatewayResult = await handleGatewayState({
         resume: context.resume,
         session: context.session,
-        initialGatewayReuseState: getInitialGatewayReuseStateForOwner(
+        initialGatewayReuseState: await getInitialGatewayReuseStateForOwner(
           owner,
           options.getInitialGatewayReuseState,
         ),

@@ -7,6 +7,7 @@ import { validateCurlProbeArgs } from "../../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../../adapters/http/probe";
 import { isSafeLlamaCppServedModelAlias, probeLlamaCppAttachment } from "./index";
 
+/** Build an HTTP probe response without making a network request. */
 function response(httpStatus: number, body: string): CurlProbeResult {
   return {
     ok: httpStatus >= 200 && httpStatus < 300,
@@ -18,6 +19,7 @@ function response(httpStatus: number, body: string): CurlProbeResult {
   } as CurlProbeResult;
 }
 
+/** Represent a curl transport failure without an HTTP response. */
 function curlFailure(curlStatus: number): CurlProbeResult {
   return {
     ok: false,
@@ -29,6 +31,7 @@ function curlFailure(curlStatus: number): CurlProbeResult {
   };
 }
 
+/** Provide native metadata with distinct served and training context windows. */
 function nativeModel(id = "team/model-alias") {
   return {
     id,
@@ -38,6 +41,7 @@ function nativeModel(id = "team/model-alias") {
   };
 }
 
+/** Supply successful authentication and native-server fingerprint responses. */
 function nativeResponses(model = "team/model-alias"): CurlProbeResult[] {
   return [
     response(401, '{"error":"unauthorized"}'),
@@ -56,6 +60,7 @@ function nativeResponses(model = "team/model-alias"): CurlProbeResult[] {
   ];
 }
 
+/** Validate each probe's arguments and return its next scripted response. */
 function scriptedProbe(responses: CurlProbeResult[]) {
   let index = 0;
   return vi.fn((argv: string[], options?: CurlProbeOptions) => {
@@ -78,6 +83,45 @@ describe("isSafeLlamaCppServedModelAlias", () => {
 });
 
 describe("probeLlamaCppAttachment", () => {
+  it("returns the selected model's served context rather than its training limit (#11527)", () => {
+    const responses = nativeResponses();
+    responses[1] = response(
+      200,
+      JSON.stringify({
+        data: [
+          {
+            ...nativeModel(),
+            meta: { ...nativeModel().meta, n_ctx: 65536, n_ctx_train: 262144 },
+          },
+        ],
+      }),
+    );
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toEqual({ ok: true, model: "team/model-alias", contextWindow: 65536 });
+  });
+
+  it.each([undefined, null, 0, -1, 1.5, "65536", Number.MAX_SAFE_INTEGER])(
+    "does not return invalid context metadata %s (#11527)",
+    (n_ctx) => {
+      const responses = nativeResponses();
+      responses[1] = response(
+        200,
+        JSON.stringify({
+          data: [
+            {
+              ...nativeModel(),
+              meta: { ...nativeModel().meta, n_ctx, n_params: 1000, size: 2000 },
+            },
+          ],
+        }),
+      );
+      expect(
+        probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+      ).toEqual({ ok: true, model: "team/model-alias" });
+    },
+  );
+
   it("requires an operator-supplied native API key (#8161)", () => {
     expect(probeLlamaCppAttachment("  ")).toMatchObject({
       ok: false,
@@ -102,6 +146,7 @@ describe("probeLlamaCppAttachment", () => {
     expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toEqual({
       ok: true,
       model: "team/model-alias",
+      contextWindow: 8192,
     });
     expect(probe).toHaveBeenCalledTimes(5);
     probe.mock.calls.forEach(([argv, options]) => {
@@ -125,6 +170,7 @@ describe("probeLlamaCppAttachment", () => {
     expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toEqual({
       ok: true,
       model: "team/model-alias",
+      contextWindow: 8192,
     });
     expect(probe.mock.calls.map(([argv]) => argv.at(-1))).toEqual([
       "http://127.0.0.1:8081/v1/models",
@@ -170,7 +216,7 @@ describe("probeLlamaCppAttachment", () => {
       runCurlProbeImpl: scriptedProbe(responses),
     });
 
-    expect(result).toEqual({ ok: true, model: "second/model" });
+    expect(result).toEqual({ ok: true, model: "second/model", contextWindow: 8192 });
   });
 
   it("does not use an unscoped fallback when multiple models are served (#9592)", () => {
@@ -244,7 +290,7 @@ describe("probeLlamaCppAttachment", () => {
     ];
     expect(
       probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
-    ).toEqual({ ok: true, model: "team/model-alias" });
+    ).toEqual({ ok: true, model: "team/model-alias", contextWindow: 8192 });
   });
 
   it("rejects a non-llama.cpp server with public /v1/models (#8302)", () => {
@@ -412,7 +458,7 @@ describe("probeLlamaCppAttachment", () => {
 
     expect(
       probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
-    ).toEqual({ ok: true, model: "team/model-alias" });
+    ).toEqual({ ok: true, model: "team/model-alias", contextWindow: 8192 });
   });
 
   it("rejects properties that report a null served model alias (#9603)", () => {

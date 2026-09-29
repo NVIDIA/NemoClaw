@@ -94,7 +94,7 @@ function resetSeededRecoveryMocks(): void {
     .mockResolvedValue({ recovered: true } as never);
   vi.mocked(getNamedGatewayLifecycleState)
     .mockReset()
-    .mockReturnValue({ state: "missing_named" } as never);
+    .mockResolvedValue({ state: "missing_named" } as never);
   vi.mocked(captureOpenshell)
     .mockReset()
     .mockReturnValue({ output: "No sandboxes found.", status: 0 } as never);
@@ -209,7 +209,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
       },
     } as never);
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockResolvedValue({ state: "healthy_named" } as never);
     vi.mocked(captureOpenshell).mockReturnValue({
       output: "dcode-station Ready",
       status: 0,
@@ -220,9 +220,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     // Read-only path: never invokes the mutating gateway recovery, inspects
     // lifecycle directly, and surfaces the live sandbox display-only.
     expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
-      ignoreProbeErrors: true,
-    });
+    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith();
     const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
       | { recoveredFromGateway?: boolean }
       | undefined;
@@ -291,9 +289,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
@@ -328,7 +324,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     // The unseeded #5714 `list` path reads the same list and must be scoped as
     // well, or a plain `nemoclaw list` advertises a sibling gateway's sandbox
     // that the next sandbox-scoped command cannot act on.
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockResolvedValue({ state: "healthy_named" } as never);
     vi.mocked(captureOpenshell).mockImplementation(
       (args: string[]) =>
         ({

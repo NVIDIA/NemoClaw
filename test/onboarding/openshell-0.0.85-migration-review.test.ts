@@ -71,19 +71,18 @@ describe("OpenShell migration executable contracts", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.106.json",
+          "openshell-child-visible-credentials.v0.0.116.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.106"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.106"');
-    expect(manifest.openshellVersion).toBe("0.0.106");
+    expect(blueprint).toContain('min_openshell_version: "0.0.116"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.116"');
+    expect(manifest.openshellVersion).toBe("0.0.116");
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
     const migratedConsumers = [
-      ["test/e2e/live/brave-search-helpers.ts", ["singleLineShell", "base64 -d"]],
       ["test/e2e/live/network-policy.test.ts", ["shellEvalArg", "nemoclaw-web-fetch-e2e.mjs"]],
       ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts", ["base64 -d | sh"]],
       ["test/e2e/live/kimi-inference-compat-helpers.ts", ["base64 -d", 'toString("base64")']],
@@ -96,14 +95,6 @@ describe("OpenShell migration executable contracts", () => {
       ["test/e2e/live/openclaw-inference-switch.test.ts", ["singleLineSandboxShellScript"]],
       ["test/e2e/live/openclaw-skill-cli.test.ts", ["singleLineSandboxScript"]],
       ["test/e2e/live/phase6-messaging-helpers.ts", ["sandboxEncodedSh", "base64(script)"]],
-      [
-        "test/e2e/live/gateway-guard-recovery.test.ts",
-        ["SUPERVISOR_TOPOLOGY_COMMAND", "b64decode"],
-      ],
-      [
-        "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-        ["data:text/javascript;base64", "nemoclaw-exdev-guard.sh"],
-      ],
       [
         "test/e2e/live/mcp-bridge.test.ts",
         ["mcpCallScriptB64", "nemoclaw-mcp-provider-rewrite-proof.cjs"],

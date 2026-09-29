@@ -36,6 +36,32 @@ function dispatchHarness() {
 }
 
 describe("runCapturedProcess", () => {
+  it.each([
+    { mode: "headless", stdinIsTty: false, forwarded: [["SIGINT"]] },
+    { mode: "terminal", stdinIsTty: true, forwarded: [] },
+  ])(
+    "handles SIGINT for a $mode caller without duplicate delivery (#11371)",
+    async ({ stdinIsTty, forwarded }) => {
+      const harness = dispatchHarness();
+      const pending = runCapturedProcess(
+        "openshell",
+        ["sandbox", "exec"],
+        { stdinIsTty },
+        {
+          signalSource: harness.signalSource,
+          spawnChild: () => harness.child,
+        },
+      );
+      try {
+        harness.signalEvents.emit("SIGINT");
+        expect(vi.mocked(harness.child.kill).mock.calls).toEqual(forwarded);
+      } finally {
+        harness.childEvents.emit("close", null, "SIGINT");
+        expect(await pending).toMatchObject({ status: null, signal: "SIGINT" });
+      }
+    },
+  );
+
   it("forwards host SIGTERM to OpenShell and captures output before signal exit (#8723)", async () => {
     const harness = dispatchHarness();
     const pending = runCapturedProcess(
@@ -100,6 +126,9 @@ describe("runCapturedProcess", () => {
   });
 });
 describe("capturedProcessStdio", () => {
+  it("closes an idle input pipe when stdin is disabled (#11371)", () => {
+    expect(capturedProcessStdio(false, false)).toEqual(["ignore", "pipe", "pipe"]);
+  });
   it("withholds an interactive terminal from fd 0", () => {
     expect(capturedProcessStdio(true)).toEqual(["ignore", "pipe", "pipe"]);
   });

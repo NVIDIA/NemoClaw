@@ -17,6 +17,10 @@ import {
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
   MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
 } from "./mcp-dev-workflow-boundary-digests.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -46,12 +50,17 @@ const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
 const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const REVIEWED_SDK_ARTIFACT_JOB = "package-openshell-sdk";
+const REVIEWED_SDK_DOWNLOAD_NAME = "Download reviewed OpenShell SDK archive";
+const REVIEWED_SDK_DOWNLOAD_PATH = "${{ runner.temp }}/openshell-sdk";
+const REVIEWED_SDK_ARTIFACT_NAME = "${{ needs.package-openshell-sdk.outputs.artifact_name }}";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
-const DEV_ARTIFACT_TRUSTED_PATHS =
+const DEV_ARTIFACT_TOOL_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
+const DEV_ARTIFACT_TRUSTED_PATHS = `.github/actions/setup-reviewed-npm\nci/reviewed-npm-audit.json\nscripts/lib/reviewed-npm-audit.mts\n${DEV_ARTIFACT_TOOL_PATHS}`;
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TOOL_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
@@ -81,11 +90,11 @@ const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window l
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
+  "c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "ea6b6f327b759097f0018478f2eef7bbd11eba3a88a3fbb631431f5a48c2611c";
+  "3cfce1666262924082f93257212eadc6f133c60eb705263c715aa9f79c293943";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "c2b5483a704eb73784dfc1c466cd13f584c0a91c7696d9723c2b7a9783a0e060";
+  "8fb967344552c39a0c01b2901b6ec7bfa527f248e7d3aaf3edf63fbcc1c376c0";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -206,7 +215,7 @@ function validateJobIdentity(
     JSON.stringify(
       jobName === "mcp-bridge-dev"
         ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
-        : ["base-image-publication", "generate-matrix"],
+        : ["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -269,9 +278,12 @@ function validateJobIdentity(
       "mcp-bridge must use the trusted execution plan",
     );
   } else {
-    if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
-      errors.push("mcp-bridge-dev must remain default-enabled");
-    }
+    requireEqual(
+      errors,
+      env.E2E_DEFAULT_ENABLED,
+      "0",
+      "mcp-bridge-dev must remain explicit-only after the stable 0.0.116 cutover",
+    );
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_CHANNEL,
@@ -494,6 +506,35 @@ function validateJobExecution(
       );
     }
   } else {
+    const sdkDownload = namedStep(job, REVIEWED_SDK_DOWNLOAD_NAME);
+    const sdkInstall = namedStep(job, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+    requireEqual(
+      errors,
+      sdkDownload.uses,
+      DEV_ARTIFACT_DOWNLOAD_ACTION,
+      "mcp-bridge must use the reviewed SDK artifact downloader",
+    );
+    if (
+      !hasExactEntries(asRecord(sdkDownload.with), {
+        name: REVIEWED_SDK_ARTIFACT_NAME,
+        path: REVIEWED_SDK_DOWNLOAD_PATH,
+      })
+    ) {
+      errors.push("mcp-bridge must restore exactly the run-scoped reviewed SDK archive");
+    }
+    if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+      errors.push("mcp-bridge must install the reviewed SDK with the shared action");
+    }
+    const restoreCli = namedStep(job, "Restore exact-commit CLI artifact");
+    if (
+      steps.indexOf(sdkDownload) < 0 ||
+      steps.indexOf(sdkInstall) <= steps.indexOf(sdkDownload) ||
+      steps.indexOf(restoreCli) <= steps.indexOf(sdkInstall)
+    ) {
+      errors.push(
+        "mcp-bridge must install the reviewed SDK before restoring candidate execution artifacts",
+      );
+    }
     requireEqual(
       errors,
       installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
@@ -572,6 +613,7 @@ function validateJobExecution(
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
     const prepare = namedStep(job, "Prepare E2E workspace");
+    const reviewedNpm = namedStep(job, "Install reviewed npm for trusted OpenShell verification");
     const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
     const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
     const dockerAuthIndex = steps.indexOf(dockerAuth);
@@ -580,18 +622,26 @@ function validateJobExecution(
     const installIndex = steps.indexOf(install);
     const restoreCliIndex = steps.indexOf(restoreCli);
     const trustedInstallSequence = [
+      reviewedNpm,
       trustedCheckout,
       restoreArtifact,
       verifyArtifact,
       devCleanup,
       install,
     ];
+    requireEqual(
+      errors,
+      reviewedNpm.uses,
+      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
+      "mcp-bridge-dev must install reviewed npm from the immutable trusted action",
+    );
     if (
       dockerAuthIndex !== trustedNodeSetupIndex + 2 ||
-      trustedCheckoutIndex !== dockerAuthIndex + 1 ||
+      steps.indexOf(reviewedNpm) !== dockerAuthIndex + 1 ||
+      trustedCheckoutIndex !== dockerAuthIndex + 2 ||
       prepareIndex !== installIndex + 1 ||
       restoreCliIndex !== prepareIndex + 1 ||
-      trustedInstallSequence.some((step, offset) => steps[trustedCheckoutIndex + offset] !== step)
+      trustedInstallSequence.some((step, offset) => steps[dockerAuthIndex + 1 + offset] !== step)
     ) {
       errors.push(
         "mcp-bridge-dev must complete trusted Node.js setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
@@ -905,7 +955,7 @@ function validateCredentialWindowJob(
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
-      "Credential expiry rotation detach and rebuild preserve the intended access window",
+      "Stable-handle refresh, revocation, detach, re-add, and valid rebuild preserve authorization epochs; expired inference credentials block rebuild before source deletion",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,

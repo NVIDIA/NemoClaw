@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../../src/lib/adapters/openshell/provider-adapter-cli";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+} from "../../../src/lib/adapters/openshell/provider-adapter";
 
 import {
   deleteProviderWithRecovery,
   detachSandboxProviders,
   type DetachSandboxProvidersDeps,
   emitProviderDetachResidualHint,
-  parseAttachedSandboxes,
-  recoverAttachedProvider,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../../src/lib/onboard/sandbox-provider-cleanup.js";
@@ -31,7 +34,7 @@ function buildRunOpenshell(
 }
 
 describe("SANDBOX_PROVIDER_SUFFIXES", () => {
-  it("covers the full set of per-sandbox messaging and search providers", () => {
+  it("covers the full set of per-sandbox messaging and search providers", async () => {
     expect([...SANDBOX_PROVIDER_SUFFIXES].sort()).toEqual(
       [
         "telegram-bridge",
@@ -49,10 +52,10 @@ describe("SANDBOX_PROVIDER_SUFFIXES", () => {
 });
 
 describe("detachSandboxProviders", () => {
-  it("issues 'sandbox provider detach' for every suffix in the shared set", () => {
+  it("issues 'sandbox provider detach' for every suffix in the shared set", async () => {
     const { runOpenshell, calls } = buildRunOpenshell(new Map());
 
-    const result = detachSandboxProviders("spark-nemo", { runOpenshell });
+    const result = await detachSandboxProviders("spark-nemo", { runOpenshell });
 
     const detachCalls = calls.filter(
       (argv) => argv[0] === "sandbox" && argv[1] === "provider" && argv[2] === "detach",
@@ -70,7 +73,7 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
-  it("detects a same-name replacement after one detach and stops later detaches (#9833)", () => {
+  it("detects a same-name replacement after one detach and stops later detaches (#9833)", async () => {
     const calls: string[][] = [];
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;
@@ -87,7 +90,9 @@ describe("detachSandboxProviders", () => {
     });
     const deps: DetachSandboxProvidersDeps = { runOpenshell, revalidateSandboxIdentity };
 
-    expect(() => detachSandboxProviders("alpha", deps)).toThrow(/sandbox identity changed/u);
+    await expect(detachSandboxProviders("alpha", deps)).rejects.toThrow(
+      /sandbox identity changed/u,
+    );
     expect(calls).toHaveLength(1);
     expect(revalidateSandboxIdentity.mock.calls.map(([operation]) => operation)).toEqual([
       expect.stringMatching(/^detaching provider /u),
@@ -95,13 +100,13 @@ describe("detachSandboxProviders", () => {
     ]);
   });
 
-  it("treats provider-scoped NotFound / not attached outputs as success-equivalent", () => {
+  it("treats provider-scoped NotFound / not attached outputs as success-equivalent", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach alpha alpha-telegram-bridge",
         {
           status: 1,
-          stderr: "Error: status: NotFound, provider 'alpha-telegram-bridge' not found",
+          stderr: "Error: provider 'alpha-telegram-bridge' not found",
         },
       ],
       [
@@ -111,7 +116,7 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("alpha", { runOpenshell });
+    const result = await detachSandboxProviders("alpha", { runOpenshell });
 
     expect(result.failures).toEqual([]);
     expect(result.detached).toContain("alpha-discord-bridge");
@@ -119,7 +124,7 @@ describe("detachSandboxProviders", () => {
     expect(result.detached).not.toContain("alpha-brave-search");
   });
 
-  it("tolerates the compact NotAttached status spelling", () => {
+  it("tolerates the compact NotAttached status spelling", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach gamma gamma-slack-bridge",
@@ -128,13 +133,13 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("gamma", { runOpenshell });
+    const result = await detachSandboxProviders("gamma", { runOpenshell });
 
     expect(result.failures).toEqual([]);
     expect(result.detached).not.toContain("gamma-slack-bridge");
   });
 
-  it("does not tolerate a bare sandbox-not-found diagnostic — stale attachment may remain", () => {
+  it("does not tolerate a bare sandbox-not-found diagnostic — stale attachment may remain", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach zulu zulu-telegram-bridge",
@@ -143,17 +148,17 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("zulu", { runOpenshell });
+    const result = await detachSandboxProviders("zulu", { runOpenshell });
 
     expect(result.failures).toEqual([
       {
         name: "zulu-telegram-bridge",
-        output: "Error: status: NotFound, sandbox 'zulu' not found",
+        output: "OpenShell sandbox not found: 'zulu'.",
       },
     ]);
   });
 
-  it("does not tolerate unrelated gateway errors that incidentally contain 'not attached'", () => {
+  it("does not tolerate unrelated gateway errors that incidentally contain 'not attached'", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach yankee yankee-telegram-bridge",
@@ -166,16 +171,42 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("yankee", { runOpenshell });
+    const result = await detachSandboxProviders("yankee", { runOpenshell });
 
-    // Stricter expectation would require structured status codes — until OpenShell
-    // exposes those, this stays as a regression marker: when a real diagnostic of
-    // this shape ships and shows up here, tighten the tolerance regex around the
-    // canonical detach diagnostics rather than the word fragments.
-    expect(result.failures.some((f) => f.name === "yankee-telegram-bridge")).toBe(false);
+    expect(result.failures).toEqual([
+      {
+        name: "yankee-telegram-bridge",
+        output:
+          "Error: internal gateway error: shield 'sentry' is not attached to its expected anchor",
+      },
+    ]);
   });
 
-  it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", () => {
+  it("retains a detach failure for a different missing sandbox even when absence is tolerated", async () => {
+    const { runOpenshell } = buildRunOpenshell(
+      new Map([
+        [
+          "sandbox provider detach phantom phantom-telegram-bridge",
+          {
+            status: 1,
+            stderr: "Error: status: NotFound, sandbox 'other-box' not found",
+          },
+        ],
+      ]),
+    );
+    const result = await detachSandboxProviders("phantom", {
+      runOpenshell,
+      tolerateMissingSandbox: true,
+    });
+    expect(result.failures).toEqual([
+      {
+        name: "phantom-telegram-bridge",
+        output: "Error: status: NotFound, sandbox 'other-box' not found",
+      },
+    ]);
+  });
+
+  it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach phantom phantom-telegram-bridge",
@@ -184,7 +215,7 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("phantom", {
+    const result = await detachSandboxProviders("phantom", {
       runOpenshell,
       tolerateMissingSandbox: true,
     });
@@ -192,13 +223,13 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
-  it("suppresses output for tolerated missing-sandbox detach probes", () => {
+  it("suppresses output for tolerated missing-sandbox detach probes", async () => {
     const { runOpenshell } = buildRunOpenshell(new Map(), {
       status: 1,
       stderr: "Error: status: NotFound, sandbox 'phantom' not found",
     });
 
-    const result = detachSandboxProviders("phantom", {
+    const result = await detachSandboxProviders("phantom", {
       runOpenshell,
       tolerateMissingSandbox: true,
     });
@@ -214,7 +245,7 @@ describe("detachSandboxProviders", () => {
     });
   });
 
-  it("collects non-tolerated failures without aborting the loop", () => {
+  it("collects non-tolerated failures without aborting the loop", async () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach beta beta-telegram-bridge",
@@ -223,7 +254,7 @@ describe("detachSandboxProviders", () => {
     ]);
     const { runOpenshell, calls } = buildRunOpenshell(responses);
 
-    const result = detachSandboxProviders("beta", { runOpenshell });
+    const result = await detachSandboxProviders("beta", { runOpenshell });
 
     const detachCalls = calls.filter(
       (argv) => argv[0] === "sandbox" && argv[1] === "provider" && argv[2] === "detach",
@@ -235,10 +266,10 @@ describe("detachSandboxProviders", () => {
     expect(result.detached).toHaveLength(SANDBOX_PROVIDER_SUFFIXES.length - 1);
   });
 
-  it("includes Brave and Tavily search providers in the detach set", () => {
+  it("includes Brave and Tavily search providers in the detach set", async () => {
     const { runOpenshell, calls } = buildRunOpenshell(new Map());
 
-    detachSandboxProviders("spark-nemo", { runOpenshell });
+    await detachSandboxProviders("spark-nemo", { runOpenshell });
 
     const braveCall = calls.find(
       (argv) =>
@@ -260,17 +291,17 @@ describe("detachSandboxProviders", () => {
 });
 
 describe("runSandboxProviderPreDeleteCleanup", () => {
-  it("emits no warning when every detach succeeds", () => {
+  it("emits no warning when every detach succeeds", async () => {
     const { runOpenshell } = buildRunOpenshell(new Map());
     const warn = vi.fn();
 
-    const result = runSandboxProviderPreDeleteCleanup("spark-nemo", { runOpenshell, warn });
+    const result = await runSandboxProviderPreDeleteCleanup("spark-nemo", { runOpenshell, warn });
 
     expect(warn).not.toHaveBeenCalled();
     expect(result.failures).toEqual([]);
   });
 
-  it("redacts the OpenShell failure output before warning", () => {
+  it("redacts the OpenShell failure output before warning", async () => {
     const tokenOutput =
       "Error: token AKIA0123456789ABCDEF failed: status Internal, gateway timeout";
     const responses = new Map<string, RunResult>([
@@ -280,18 +311,22 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
     const warn = vi.fn();
     const redact = vi.fn((s: string) => s.replace(/AKIA[0-9A-Z]+/, "[REDACTED]"));
 
-    const result = runSandboxProviderPreDeleteCleanup("delta", { runOpenshell, warn, redact });
+    const result = await runSandboxProviderPreDeleteCleanup("delta", {
+      runOpenshell,
+      warn,
+      redact,
+    });
 
     expect(result.failures).toHaveLength(1);
     expect(redact).toHaveBeenCalledWith(result.failures[0].output);
     expect(warn).toHaveBeenCalledTimes(1);
     const warning = warn.mock.calls[0][0] as string;
-    expect(warning).toContain("[REDACTED]");
+    expect(warning).toContain("<REDACTED>");
     expect(warning).not.toContain("AKIA0123456789ABCDEF");
     expect(warning).toContain("delta-telegram-bridge");
   });
 
-  it("caps the warning output length to bound terminal noise on huge stderr", () => {
+  it("caps the warning output length to bound terminal noise on huge stderr", async () => {
     const longTail = "X".repeat(2000);
     const responses = new Map<string, RunResult>([
       [
@@ -302,17 +337,17 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
     const { runOpenshell } = buildRunOpenshell(responses);
     const warn = vi.fn();
 
-    runSandboxProviderPreDeleteCleanup("echo", { runOpenshell, warn });
+    await runSandboxProviderPreDeleteCleanup("echo", { runOpenshell, warn });
 
     expect(warn).toHaveBeenCalledTimes(1);
     const warning = warn.mock.calls[0][0] as string;
     expect(warning.length).toBeLessThan(900);
   });
 
-  it("runs the detach pass before any caller-driven sandbox delete", () => {
+  it("runs the detach pass before any caller-driven sandbox delete", async () => {
     const { runOpenshell, calls } = buildRunOpenshell(new Map());
 
-    runSandboxProviderPreDeleteCleanup("foxtrot", { runOpenshell });
+    await runSandboxProviderPreDeleteCleanup("foxtrot", { runOpenshell });
     runOpenshell(["sandbox", "delete", "foxtrot"], { ignoreError: true });
 
     const detachCount = calls.filter(
@@ -324,100 +359,179 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
   });
 });
 
-describe("parseAttachedSandboxes", () => {
-  it("parses a single sandbox name from a FailedPrecondition diagnostic", () => {
-    const output =
-      "Error: × status: FailedPrecondition, message: \"provider 'spark-nemo-telegram-bridge' is attached to sandbox(es): spark-nemo\"";
-    expect(parseAttachedSandboxes(output)).toEqual(["spark-nemo"]);
+describe("deleteProviderWithRecovery", () => {
+  it.each([
+    { status: 0 },
+    { status: 1, stderr: "status: NotAttached, provider 'p' is not bound" },
+    { status: 1, stderr: "provider 'p' not found" },
+  ])("confirms every authorized attachment before the single delete retry: %#", async (detach) => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "provider 'p' is attached to sandbox(es): first, second",
+      })
+      .mockReturnValueOnce(detach)
+      .mockReturnValueOnce(detach)
+      .mockReturnValueOnce({ status: 0 });
+    await expect(
+      deleteProviderWithRecovery("p", {
+        runOpenshell,
+        allowedSandboxes: ["first", "second"],
+      }),
+    ).resolves.toEqual({ ok: true, recoveryFailures: [] });
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "delete", "p"],
+      ["sandbox", "provider", "detach", "first", "p"],
+      ["sandbox", "provider", "detach", "second", "p"],
+      ["provider", "delete", "p"],
+    ]);
   });
 
-  it("parses an OpenShell diagnostic wrapped with continuation markers", () => {
-    const output =
-      "Error: × code: 'The system is not in a state required for the operation's\n" +
-      "│ execution', message: \"provider 'compatible-endpoint' is attached to\n" +
-      '│ sandbox(es): e2e-diag"';
-    expect(parseAttachedSandboxes(output)).toEqual(["e2e-diag"]);
-  });
+  it("does not retry deletion when detach reports a different provider as missing", async () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "provider 'owned-provider' is attached to sandbox(es): mine",
+      })
+      .mockReturnValueOnce({ status: 1, stderr: "provider 'other-provider' not found" });
 
-  it("parses multiple sandbox names from the same diagnostic", () => {
-    const output = "provider 'x' is attached to sandbox(es): alpha, beta, gamma";
-    expect(parseAttachedSandboxes(output)).toEqual(["alpha", "beta", "gamma"]);
-  });
-
-  it("returns empty when the diagnostic has no attached-to list", () => {
-    expect(parseAttachedSandboxes("some unrelated error message")).toEqual([]);
-  });
-
-  it("rejects names that fail NemoClaw sandbox-name validation", () => {
-    expect(
-      parseAttachedSandboxes(
-        "attached to sandbox(es): --rm, UPPERCASE, valid-name, " +
-          "thisnameiswaytoolongtobeavalidkubernetesresourcelabel-but-keeps-going-1234567890",
-      ),
-    ).toEqual(["valid-name"]);
-  });
-});
-
-describe("recoverAttachedProvider", () => {
-  it("calls detach for each attached sandbox and reports the cleared ones", () => {
-    const { runOpenshell, calls } = buildRunOpenshell(new Map());
-
-    const result = recoverAttachedProvider("orphan-provider", ["sandbox-a", "sandbox-b"], {
+    const result = await deleteProviderWithRecovery("owned-provider", {
       runOpenshell,
+      allowedSandboxes: ["mine"],
     });
 
-    expect(result.detached).toEqual(["sandbox-a", "sandbox-b"]);
-    expect(result.failures).toEqual([]);
-    expect(calls).toEqual([
-      ["sandbox", "provider", "detach", "sandbox-a", "orphan-provider"],
-      ["sandbox", "provider", "detach", "sandbox-b", "orphan-provider"],
+    expect(result.ok).toBe(false);
+    expect(result.recoveryFailures).toEqual([
+      { sandbox: "mine", output: "provider 'other-provider' not found" },
+    ]);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "delete", "owned-provider"],
+      ["sandbox", "provider", "detach", "mine", "owned-provider"],
     ]);
   });
 
-  it("treats NotAttached / provider-not-found as already-cleared (not failure)", () => {
-    const responses = new Map<string, RunResult>([
-      [
-        "sandbox provider detach ghost orphan-provider",
-        { status: 1, stderr: "status: NotAttached, provider 'orphan-provider' is not bound" },
-      ],
-    ]);
-    const { runOpenshell } = buildRunOpenshell(responses);
-
-    const result = recoverAttachedProvider("orphan-provider", ["ghost"], { runOpenshell });
-
-    expect(result.detached).toEqual(["ghost"]);
-    expect(result.failures).toEqual([]);
+  it("waits for every typed detach before retrying an attached provider deletion", async () => {
+    const events: string[] = [];
+    let releaseDetach!: () => void;
+    const pendingDetach = new Promise<void>((resolve) => {
+      releaseDetach = resolve;
+    });
+    const adapter: OpenShellProviderAdapter = {
+      ...createCliOpenShellProviderAdapter({
+        run: () => {
+          throw new Error("unexpected transport");
+        },
+      }),
+      deleteProvider: vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
+        events.push("delete");
+        return events.length === 1
+          ? {
+              ok: false as const,
+              error: {
+                kind: "command" as const,
+                reason: "attached" as const,
+                message: "attached",
+                attachedSandboxes: ["owned"],
+              },
+            }
+          : { ok: true as const };
+      }),
+      detachProvider: vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
+        events.push("detach-start");
+        await pendingDetach;
+        events.push("detach-complete");
+        return { ok: true as const, value: { changed: true } };
+      }),
+    };
+    const cleanup = deleteProviderWithRecovery("provider", {
+      providerAdapter: adapter,
+      allowedSandboxes: ["owned"],
+    });
+    await vi.waitFor(() => expect(events).toEqual(["delete", "detach-start"]));
+    releaseDetach();
+    await expect(cleanup).resolves.toMatchObject({ ok: true });
+    expect(events).toEqual(["delete", "detach-start", "detach-complete", "delete"]);
   });
 
-  it("returns non-tolerated detach failures for the caller to surface", () => {
-    const responses = new Map<string, RunResult>([
-      [
-        "sandbox provider detach alpha orphan-provider",
-        { status: 1, stderr: "Error: status: Internal, gateway timeout" },
-      ],
-    ]);
-    const { runOpenshell } = buildRunOpenshell(responses);
+  it.each<OpenShellProviderError>([
+    { kind: "timeout", message: "timed out" },
+    { kind: "transport", reason: "connection_loss", message: "connection lost" },
+    { kind: "command", reason: "uncertain", message: "outcome unknown" },
+  ])(
+    "preserves recovery state without another delete after a failed detach: $kind",
+    async (error) => {
+      const adapter: OpenShellProviderAdapter = {
+        ...createCliOpenShellProviderAdapter({
+          run: () => {
+            throw new Error("unexpected transport");
+          },
+        }),
+        deleteProvider: vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "attached",
+            message: "attached",
+            attachedSandboxes: ["owned"],
+          },
+        })),
+        detachProvider: vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+          ok: false,
+          error,
+        })),
+      };
+      await expect(
+        deleteProviderWithRecovery("provider", {
+          providerAdapter: adapter,
+          allowedSandboxes: ["owned"],
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        recoveryFailures: [{ sandbox: "owned", output: error.message }],
+      });
+      expect(adapter.deleteProvider).toHaveBeenCalledOnce();
+    },
+  );
 
-    const result = recoverAttachedProvider("orphan-provider", ["alpha"], { runOpenshell });
-
-    expect(result.detached).toEqual([]);
-    expect(result.failures).toEqual([
-      { sandbox: "alpha", output: "Error: status: Internal, gateway timeout" },
-    ]);
+  it("does not detach or retry an uncertain delete even if its diagnostic names attachments", async () => {
+    const adapter: OpenShellProviderAdapter = {
+      ...createCliOpenShellProviderAdapter({
+        run: () => {
+          throw new Error("unexpected transport");
+        },
+      }),
+      deleteProvider: vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "uncertain",
+          message: "attached to sandbox(es): owned",
+          attachedSandboxes: ["owned"],
+        },
+      })),
+      detachProvider: vi.fn<OpenShellProviderAdapter["detachProvider"]>(),
+    };
+    await expect(
+      deleteProviderWithRecovery("provider", {
+        providerAdapter: adapter,
+        allowedSandboxes: ["owned"],
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(adapter.detachProvider).not.toHaveBeenCalled();
   });
-});
-
-describe("deleteProviderWithRecovery", () => {
-  it("returns ok on first-attempt success without recovery", () => {
+  it("returns ok on first-attempt success without recovery", async () => {
     const { runOpenshell } = buildRunOpenshell(new Map());
 
-    const result = deleteProviderWithRecovery("happy-provider", { runOpenshell });
+    const result = await deleteProviderWithRecovery("happy-provider", { runOpenshell });
 
     expect(result.ok).toBe(true);
     expect(result.recoveryFailures).toEqual([]);
   });
 
-  it("retries delete after force-detaching a sandbox from a wrapped diagnostic", () => {
+  it("retries delete after force-detaching a sandbox from a wrapped diagnostic", async () => {
     let attempt = 0;
     const calls: string[][] = [];
     const runOpenshell = vi.fn((args: string[]) => {
@@ -439,7 +553,7 @@ describe("deleteProviderWithRecovery", () => {
       return { status: 0, stdout: "", stderr: "" };
     });
 
-    const result = deleteProviderWithRecovery("p", { runOpenshell });
+    const result = await deleteProviderWithRecovery("p", { runOpenshell });
 
     expect(result.ok).toBe(true);
     expect(result.recoveryFailures).toEqual([]);
@@ -450,7 +564,7 @@ describe("deleteProviderWithRecovery", () => {
     ]);
   });
 
-  it("returns recovery failures and final delete failure when the retry still trips", () => {
+  it("returns recovery failures and final delete failure when the retry still trips", async () => {
     const runOpenshell = vi.fn((args: string[]) => {
       if (args[0] === "provider" && args[1] === "delete") {
         return {
@@ -466,7 +580,7 @@ describe("deleteProviderWithRecovery", () => {
       return { status: 0, stdout: "", stderr: "" };
     });
 
-    const result = deleteProviderWithRecovery("p", { runOpenshell });
+    const result = await deleteProviderWithRecovery("p", { runOpenshell });
 
     expect(result.ok).toBe(false);
     expect(result.recoveryFailures).toEqual([
@@ -474,7 +588,7 @@ describe("deleteProviderWithRecovery", () => {
     ]);
   });
 
-  it("force-detaches when every attached sandbox is inside the allowed set", () => {
+  it("force-detaches when every attached sandbox is inside the allowed set", async () => {
     const calls: string[][] = [];
     let attempt = 0;
     const runOpenshell = vi.fn((args: string[]) => {
@@ -491,7 +605,10 @@ describe("deleteProviderWithRecovery", () => {
         : { status: 0, stdout: "", stderr: "" };
     });
 
-    const result = deleteProviderWithRecovery("p", { runOpenshell, allowedSandboxes: ["mine"] });
+    const result = await deleteProviderWithRecovery("p", {
+      runOpenshell,
+      allowedSandboxes: ["mine"],
+    });
 
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
@@ -501,7 +618,7 @@ describe("deleteProviderWithRecovery", () => {
     ]);
   });
 
-  it("fails closed without detaching when a sandbox outside the allowed set appears (security)", () => {
+  it("fails closed without detaching when a sandbox outside the allowed set appears (security)", async () => {
     const calls: string[][] = [];
     const runOpenshell = vi.fn((args: string[]) => {
       calls.push(args);
@@ -513,7 +630,10 @@ describe("deleteProviderWithRecovery", () => {
       };
     });
 
-    const result = deleteProviderWithRecovery("p", { runOpenshell, allowedSandboxes: ["mine"] });
+    const result = await deleteProviderWithRecovery("p", {
+      runOpenshell,
+      allowedSandboxes: ["mine"],
+    });
 
     expect(result.ok).toBe(false);
     expect(result.recoveryFailures).toEqual([]);
@@ -523,13 +643,13 @@ describe("deleteProviderWithRecovery", () => {
 });
 
 describe("emitProviderDetachResidualHint", () => {
-  it("emits nothing when there are no failures", () => {
+  it("emits nothing when there are no failures", async () => {
     const warn = vi.fn();
     emitProviderDetachResidualHint("alpha", [], warn);
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("emits a detach-then-delete sequence keyed to the sandbox name", () => {
+  it("emits a detach-then-delete sequence keyed to the sandbox name", async () => {
     const warn = vi.fn();
     emitProviderDetachResidualHint(
       "alpha",

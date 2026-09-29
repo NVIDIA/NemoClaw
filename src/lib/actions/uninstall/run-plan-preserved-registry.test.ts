@@ -31,8 +31,8 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(
     options,
     withSuccessfulPreUninstallBackup({
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -78,7 +78,7 @@ function preserveCaseDeps(
   opts: { envOverrides?: Record<string, string> } = {},
 ): UninstallRunDeps {
   return {
-    commandExists: (command) => command === "openshell",
+    commandExists: (command) => command === "openshell" || command === "docker",
     env: {
       HOME: tmpHome,
       NEMOCLAW_NON_INTERACTIVE: "",

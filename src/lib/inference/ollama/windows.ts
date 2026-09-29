@@ -237,10 +237,19 @@ function captureWindowsOllamaHostSnapshot(): WindowsOllamaHostSnapshot | null {
     [
       "powershell.exe",
       "-Command",
-      "$userHost = [Environment]::GetEnvironmentVariable('OLLAMA_HOST','User'); " +
-        "$watcherPath = Get-Process 'ollama app' -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path; " +
-        "$daemonPath = Get-Process ollama -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path; " +
-        "[PSCustomObject]@{userHost=$userHost;watcherPath=$watcherPath;daemonPath=$daemonPath} | ConvertTo-Json -Compress",
+      "$ErrorActionPreference='Stop'; " +
+        "$userHost = [Environment]::GetEnvironmentVariable('OLLAMA_HOST','User'); " +
+        "$ollamaProcesses = @(Get-Process | Where-Object { $_.ProcessName -in @('ollama app','ollama') }); " +
+        // Initialize absent paths explicitly: an empty PowerShell pipeline can serialize as {}.
+        "$processPaths = @{watcherPath=$null;daemonPath=$null}; " +
+        "foreach ($entry in @{watcherPath='ollama app';daemonPath='ollama'}.GetEnumerator()) { " +
+        "$ollamaProcess = $ollamaProcesses | Where-Object ProcessName -eq $entry.Value | Select-Object -First 1; " +
+        "if ($null -ne $ollamaProcess) { " +
+        "$ollamaProcessPath = $ollamaProcess.Path; " +
+        "if ($ollamaProcessPath -isnot [string] -or [string]::IsNullOrWhiteSpace($ollamaProcessPath)) { " +
+        "throw 'Could not inspect the existing Ollama process path' }; " +
+        "$processPaths[$entry.Key] = $ollamaProcessPath } }; " +
+        "[PSCustomObject]@{userHost=$userHost;watcherPath=$processPaths.watcherPath;daemonPath=$processPaths.daemonPath} | ConvertTo-Json -Compress",
     ],
     { ignoreError: true, suppressOutput: true },
   );

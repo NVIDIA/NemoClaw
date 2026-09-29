@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-classify-ci-failure
-description: Classify one NemoClaw GitHub Actions job failure from bounded, redacted logs and an optional retained artifact. Use for CI failure classification, failed job diagnosis, or artifact-backed failure evidence.
+description: "Classify one failed NemoClaw GitHub Actions job using bounded, redacted logs and optional retained artifacts."
 user_invocable: true
 ---
 

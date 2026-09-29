@@ -59,6 +59,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     "openshell:resolve:env:GITHUB_MCP_TOKEN",
     "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
     "openshell:resolve:env:v1442987827285932589_GITHUB_MCP_TOKEN",
+    `openshell:resolve:env:s${"a".repeat(64)}_GITHUB_MCP_TOKEN`,
   ])(
     "allows exact same-name OpenShell env placeholder candidate %# in runtime and dotenv",
     (placeholder) => {

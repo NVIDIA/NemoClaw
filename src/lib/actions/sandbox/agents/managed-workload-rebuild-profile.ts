@@ -96,7 +96,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
   );
   const upstreamProvider =
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
-      ? catalogHandoff.previousProfile.inference.upstreamProvider
+      ? (catalogHandoff.previousProfile.inference?.upstreamProvider ?? resumeConfig.provider)
       : resumeConfig.provider;
   const currentOpenClawContextWindow =
     agent === "openclaw"
@@ -108,8 +108,8 @@ export function prepareManagedRebuildProfileHandoff(input: {
   if (
     agent === "openclaw" &&
     currentOpenClawContextWindow === null &&
-    (catalogHandoff.previousProfile.inference.model !== resumeConfig.model ||
-      catalogHandoff.previousProfile.inference.upstreamProvider !== resumeConfig.provider)
+    (catalogHandoff.previousProfile.inference?.model !== resumeConfig.model ||
+      catalogHandoff.previousProfile.inference?.upstreamProvider !== resumeConfig.provider)
   ) {
     throw new Error(
       `Cannot determine a context window for the current OpenClaw target '${resumeConfig.provider}/${resumeConfig.model}'.`,

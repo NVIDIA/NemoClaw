@@ -93,6 +93,8 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  /** Preserve raw command materialization for the Portable consumer deferred to #12119. */
+  portableLifecycle?: boolean;
   managedStateMounts?: readonly ManagedStateVolumeMount[];
   /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
   managedStateMountDriverId?: string | null;
@@ -104,7 +106,9 @@ export type MaterializeSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;
-  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {

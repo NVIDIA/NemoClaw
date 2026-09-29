@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cross-issue-sweep
-description: Scan open issues to find issues that a PR can also fix or conflict with. Report each relationship with file and line evidence. Use this skill during PR review to find related fixes and risks.
+description: "Find open issues that a NemoClaw PR may also fix or conflict with. Use when related-issue analysis is requested."
 user_invocable: true
 ---
 
@@ -25,18 +25,6 @@ Find open issues that a PR can affect in addition to its linked issue. Report tw
 The defaults use NemoClaw conventions. Edit `repo-policy.md` for another repository.
 
 ## Workflow
-
-Copy this checklist into your response and check off each step:
-
-```text
-Cross-issue sweep progress:
-- [ ] Step 1: Extract fingerprint (files, symbols, error strings, primary issue)
-- [ ] Step 2: Search candidate issues (capped at 30, primary excluded)
-- [ ] Step 3: Classify each candidate (4-class with evidence)
-- [ ] Step 4: Apply reverse-link boost
-- [ ] Step 5: Filter (drop UNRELATED, SAME_ISSUE_DIFF, low-confidence)
-- [ ] Step 6: Render report using templates/report.md
-```
 
 ### Step 1: Extract fingerprint
 
@@ -105,7 +93,7 @@ See `templates/report.md` for the format.
 - [templates/report.md](templates/report.md) — Output template.
 - [validation/backtest.md](validation/backtest.md) — Historical test cases for the skill.
 
-## Scripts (execute, do not read)
+## Scripts
 
 - `scripts/extract-fingerprint.sh` — symbols, paths, and error strings
 - `scripts/search-candidate-issues.sh` — GitHub Search wrapper, dedupe, cap

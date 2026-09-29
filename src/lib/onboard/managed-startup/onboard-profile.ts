@@ -38,6 +38,7 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_PROXY_PORT",
     "NEMOCLAW_REASONING",
     "NEMOCLAW_REASONING_EFFORT",
+    "NEMOCLAW_SERVING_PRESET",
   ],
   hermes: ["NEMOCLAW_CONTEXT_WINDOW", "NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
   "langchain-deepagents-code": [
@@ -58,7 +59,7 @@ const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
 
 export interface ManagedStartupOnboardProfileInput {
   readonly agentName: string;
-  readonly inference: ManagedStartupResolvedInferenceInput;
+  readonly inference: ManagedStartupResolvedInferenceInput | null;
   readonly chatUiUrl: string;
   readonly effectiveDashboardPort: number;
   readonly manageDashboard: boolean;

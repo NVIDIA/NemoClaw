@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-skills-guide"
-description: "Start here. Introduces what NemoClaw is, what agent skills are available, and which skill to use for a given task. Use when discovering NemoClaw capabilities, choosing the right skill, or orienting in the project. Trigger keywords - skills, capabilities, what can I do, help, guide, index, overview, start here."
+description: "Find the repository skill for a NemoClaw task or browse the skill catalog. Use when skill selection needs help."
 license: "Apache-2.0"
 ---
 
@@ -9,38 +9,12 @@ license: "Apache-2.0"
 
 # NemoClaw Skills Guide
 
-NVIDIA NemoClaw runs OpenClaw always-on assistants inside hardened OpenShell sandboxes with NVIDIA inference (Nemotron).
-It provides CLI tooling, guided onboarding, a security blueprint, routed inference, and workspace management.
+Choose the skill whose capability matches the task. Use the catalog when selection is unclear;
+go directly to a known skill otherwise. Infer the audience from the request and repository context.
 
-This guide lists every agent skill shipped with NemoClaw, organized by audience.
-Load the specific skill you need after identifying it here.
-
-## Skill Buckets
-
-Skills are grouped into three buckets by audience.
-The prefix in each skill name indicates who it is for.
-
-### `nemoclaw-user-*` (1 skill)
-
-For end users operating a NemoClaw sandbox.
-Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
-
-### `nemoclaw-maintainer-*`
-
-For project maintainers.
-Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, CI failure classification, CI performance analysis, pull request value-stream analysis, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
-
-### `nemoclaw-contributor-*` (6 skills)
-
-For contributors to the NemoClaw codebase.
-The lifecycle runs from checkout setup through planning, implementation, and publication.
-Each stage has one owner: `nemoclaw-contributor-plan-issue` refines an issue into capability slices,
-`nemoclaw-contributor-implement-issue` implements a slice and owns its tests, and
-`nemoclaw-contributor-create-pr` publishes the branch and follows CI and automated review.
-Load `nemoclaw-contributor-update-dependencies` for a dependency upgrade and
-`nemoclaw-contributor-update-docs` for documentation catch-up.
-The dependency workflow runs inside the implementation stage.
-Component-specific guidance lives with the package it describes, not in a skill.
+Contributor stages compose within one task: setup when needed, planning when requested,
+implementation for code and tests, and publication when the user requests a PR. A stage boundary
+does not require renewed authorization for work the user already requested.
 
 ## Skill Catalog
 
@@ -63,7 +37,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
-| [`nemoclaw-maintainer-e2e`](../nemoclaw-maintainer-e2e/SKILL.md) | Run exact detached commits locally, inspect automatic `main` E2E, dispatch the latest PR commit or current `main` commit, and verify applicable workflow evidence. |
+| [`nemoclaw-maintainer-e2e`](../nemoclaw-maintainer-e2e/SKILL.md) | Route requested local E2E, trusted GitHub dispatch, or read-only release evidence. |
 | `nemoclaw-maintainer-classify-ci-failure` | Classify one failed GitHub Actions job from bounded, redacted logs and an optional validated artifact. |
 | `nemoclaw-maintainer-analyze-ci-performance` | Analyze retained CLI test timings and base-image publication latency with bounded, read-only GitHub evidence. |
 | `nemoclaw-maintainer-analyze-pr-value-stream` | Measure one PR from its earliest observable branch push through merge, separate approval delay from automation time, and compare the latest revision with a target. |
@@ -84,25 +58,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 |-------|---------|
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-plan-issue` | Research, refine, and divide a named issue into independently valuable capability slices without implementing or publishing them. |
-| `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation and no pull request publication. |
+| `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation, then continue to publication when requested. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
 | `nemoclaw-contributor-update-docs` | Find user-visible changes merged to `main` and update their owning documentation under current repository policy. |
-
-## Getting Started
-
-Ask the user which role best describes them:
-
-- **User** — operating a NemoClaw sandbox (running, configuring, monitoring).
-- **Contributor** — contributing code or docs to the NemoClaw project.
-- **Maintainer** — triaging, reviewing, releasing, and managing the project day-to-day.
-
-Skills are cumulative. Each role includes the skills from the roles above it:
-
-| Role | Skills included | Start with |
-|------|----------------|------------|
-| User | `nemoclaw-user-*` | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | `nemoclaw-maintainer-morning` |
-
-After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

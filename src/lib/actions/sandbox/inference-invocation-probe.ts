@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxBufferedCommandRequest,
@@ -10,11 +11,14 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
-import { buildOpenShellRuntimeSelectionEnv } from "../../adapters/openshell/runtime-selection";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
-import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
+import {
+  MIN_PROBE_REPLY_TOKENS,
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "../../inference/max-tokens-field";
 import {
   NVCF_FUNCTION_NOT_FOUND_MARKER,
   NVCF_FUNCTION_NOT_FOUND_SHELL_ERE,
@@ -22,13 +26,13 @@ import {
   nvcfFunctionNotFoundMessage,
 } from "../../inference/nvcf-model-access";
 import { ROOT, shellQuote } from "../../runner";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
+  buildSandboxCommandEnvironment,
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
-} from "./process-recovery";
+} from "../../adapters/sandbox/command-transport";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
@@ -60,9 +64,13 @@ export type SandboxInferenceInvocationDeps = {
  * Status and start run in an interactive wait and use the shorter timeout.
  */
 export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
-export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
+// The request itself permits up to 90 seconds, so readiness must also allow
+// bounded process startup and cleanup rather than cancelling a valid response.
+export const INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS = 90;
+export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 95_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
+/** Build the protocol-specific request used to verify sandbox inference. */
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
   headers: string[];
@@ -100,7 +108,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: MIN_PROBE_REPLY_TOKENS,
+      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },
@@ -127,7 +135,7 @@ export function buildSandboxInferenceInvocationCommand(
     "umask 077",
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
-    `code=$(curl -sS --connect-timeout 5 --max-time 90 --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already
@@ -155,9 +163,7 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       ENV: "",
       HOME: "/usr/local/lib/nemoclaw",
     },
-    environment: input.runtimeSelection
-      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), input.runtimeSelection)
-      : buildSubprocessEnv(),
+    environment: buildSandboxCommandEnvironment(input.runtimeSelection),
     tty: false,
     timeoutMilliseconds,
   };
@@ -206,14 +212,16 @@ export async function probeSandboxInferenceInvocation(
     const execOptions: SandboxExecCommandOptions = {
       ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
       ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
-      localDockerFallbackPolicy: "never",
     };
     result = await execute(
       input.sandboxName,
       buildSandboxInferenceInvocationCommand(input),
       timeoutMs,
       execOptions,
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    });
   }
   if (!result) {
     return {

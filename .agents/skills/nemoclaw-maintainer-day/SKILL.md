@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-day
-description: Run one NemoClaw daytime maintainer pass. Prioritize items for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow and report progress. Use during the workday to land PRs and close issues. Designed for /loop, for example /loop 10m /nemoclaw-maintainer-day. Trigger keywords - maintainer day, work on PRs, land PRs, make progress, what's next, keep going, maintainer loop.
+description: "Run a NemoClaw daytime maintainer pass over release-targeted work. Use for the maintainer queue or a requested recurring pass."
 user_invocable: true
 ---
 

@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as f from "./snapshot-restore-test-fixture";
+import * as providerAdapters from "../../adapters/openshell/managed-provider-adapter";
 
 const tempHomes: string[] = [];
+beforeAll(async () => {
+  await import("./snapshot");
+}, 60_000);
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-restore-home-"));
@@ -82,121 +85,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["user.md"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    const output = consoleLog.mock.calls.flat().join("\n");
-    expect(output).toContain("Using latest snapshot v4 name=stable");
-    expect(output).toContain("Restoring snapshot into 'alpha'");
-    expect(output).toContain("Restored 1 directories, 1 files");
-  });
-
-  it("repairs an empty managed projection but leaves custom-image MCP state to the image (#10756)", async () => {
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", [], {
-      gatewayName: "nemoclaw-8091",
-      workspace: "default",
-    });
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockClear();
-    f.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      fromDockerfile: "/tmp/Dockerfile",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).not.toHaveBeenCalled();
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("repairs the managed Deep Agents MCP projection before restoring snapshot files (#10756)", async () => {
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    f.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-          jira: {
-            server: "jira",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://mcp.atlassian.com/v1/",
-            env: ["JIRA_MCP_TOKEN"],
-            providerName: "alpha-mcp-jira",
-            policyName: "mcp-bridge-jira",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-          slack: {
-            server: "slack",
-            agent: "openclaw",
-            adapter: "mcporter",
-            url: "https://mcp.slack.com/v1/",
-            env: ["SLACK_MCP_TOKEN"],
-            providerName: "alpha-mcp-slack",
-            policyName: "mcp-bridge-slack",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(async () => {
-      f.lifecycleMock.events.push("restore-mcp-projection");
-    });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
     f.restoreSandboxStateMock.mockImplementation(() => {
       f.lifecycleMock.events.push("restore-snapshot-state");
       return {
         success: true,
-        restoredDirs: [".state"],
-        restoredFiles: ["config.toml"],
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
         failedDirs: [],
         failedFiles: [],
       };
@@ -205,142 +100,137 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith(
-      "alpha",
-      [expect.objectContaining({ server: "github" }), expect.objectContaining({ server: "jira" })],
-      { gatewayName: "nemoclaw-8091", workspace: "default" },
-    );
-    expect(f.lifecycleMock.events).toEqual(["restore-mcp-projection", "restore-snapshot-state"]);
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(f.lifecycleMock.events).toEqual([
+      "begin-openclaw-backup-quiesce",
+      "restore-snapshot-state",
+      "finish-openclaw-native-start",
+    ]);
+    expect(f.abortOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("Using latest snapshot v4 name=stable");
+    expect(output).toContain("Restoring snapshot into 'alpha'");
+    expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
-    const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-recovery-"));
-    tempHomes.push(sandboxRoot);
-    const occupiedRecoveryPath = path.join(sandboxRoot, ".nemoclaw-mcp.json.recovery");
-    const projectionPath = path.join(sandboxRoot, ".deepagents", ".nemoclaw-mcp.json");
-    const sandboxName = "alpha $(printf injected)";
-    fs.mkdirSync(occupiedRecoveryPath, { recursive: true });
-    fs.writeFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "existing recovery\n");
-    fs.mkdirSync(projectionPath, { recursive: true });
-    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set([sandboxName]));
+  it("aborts the OpenClaw gateway-down window when in-place restore fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.restoreSandboxStateMock.mockImplementation(() => {
+      f.lifecycleMock.events.push("restore-snapshot-state");
+      return {
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["workspace"],
+        failedFiles: [],
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.lifecycleMock.events).toEqual([
+      "begin-openclaw-backup-quiesce",
+      "restore-snapshot-state",
+      "abort-openclaw-backup-quiesce",
+    ]);
+    expect(f.finishOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "OpenClaw sandbox 'alpha' remains stopped after restore failure",
+    );
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "nemoclaw alpha start', verify that it is ready, then retry",
+    );
+  });
+
+  it("requires another start when restore abort cannot confirm the sandbox stopped", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: false,
+      restoredDirs: [],
+      restoredFiles: [],
+      failedDirs: ["workspace"],
+      failedFiles: [],
+    });
+    f.abortOpenClawPostRestoreDoctorMock.mockResolvedValue({
+      ok: false,
+      stage: "abort",
+      detail: "could not prove the sandbox stopped",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output.match(/nemoclaw alpha start/g)).toHaveLength(2);
+    expect(output).toContain("consumed the OpenClaw maintenance abort");
+    expect(output).toContain("Verify that the sandbox is ready, then retry");
+  });
+
+  it("reports exact recovery when the OpenClaw gateway-down window cannot begin", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.beginOpenClawBackupQuiesceMock.mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "sandbox did not enter maintenance",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.abortOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output).toContain("Sandbox 'alpha' may remain stopped");
+    expect(output).toContain("nemoclaw alpha stop', then 'nemoclaw alpha start'");
+    expect(output).toContain("retry the same snapshot restore command");
+  });
+
+  it("requires another start when maintenance entry cannot retire its abort", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.beginOpenClawBackupQuiesceMock.mockResolvedValue({
+      ok: false,
+      stage: "abort",
+      detail: "could not prove the sandbox stopped",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output.match(/nemoclaw alpha start/g)).toHaveLength(2);
+    expect(output).toContain("consumed the OpenClaw maintenance abort");
+    expect(output).toContain("Verify that the sandbox is ready, then retry");
+  });
+
+  it("migrates a restored Hermes legacy dashboard home before reporting success", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
-      name: "stable",
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
-    f.getSandboxMock.mockReturnValue({
-      name: sandboxName,
-      agent: "langchain-deepagents-code",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    f.restoreDeepAgentsManagedMcpProjectionMock
-      .mockImplementationOnce(async () => {
-        throw new Error("managed MCP projection path is a directory");
-      })
-      .mockImplementationOnce(() => {});
-    const { runSandboxSnapshot, SnapshotCommandError } = await import("./snapshot");
-
-    const failure = await runSandboxSnapshot(sandboxName, { kind: "restore" }).catch(
-      (error: unknown) => error,
-    );
-    expect(failure).toBeInstanceOf(SnapshotCommandError);
-    expect(failure).toMatchObject({
-      exitCode: 1,
-      lines: [
-        `Snapshot files were not restored into '${sandboxName}'.`,
-        expect.stringContaining("managed MCP projection path is a directory"),
-        expect.any(String),
-      ],
-    });
-    const recoveryGuidance = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
-    const recoveryAction = recoveryGuidance.match(/run `([^`]+)`/)?.[1] ?? "";
-    expect(recoveryAction).not.toBe("");
-    const recoveryActionPath = path.join(sandboxRoot, "run-recovery-action.sh");
-    fs.writeFileSync(
-      recoveryActionPath,
-      `nemoclaw() { printf "%s\\0" "$@"; }\n${recoveryAction}\n`,
-    );
-    const parsedRecoveryAction = spawnSync("sh", [recoveryActionPath]);
-    expect(parsedRecoveryAction.status, parsedRecoveryAction.stderr.toString()).toBe(0);
-    const recoveryArguments = parsedRecoveryAction.stdout.toString().split("\0").filter(Boolean);
-    expect(recoveryArguments).toEqual([sandboxName, "exec", "--", "sh", "-c", expect.any(String)]);
-
-    const recoveryScript = recoveryArguments[5].replaceAll("/sandbox", sandboxRoot);
-    const recoveryScriptPath = path.join(sandboxRoot, "run-recovery-script.sh");
-    fs.writeFileSync(recoveryScriptPath, recoveryScript);
-    fs.rmSync(projectionPath, { recursive: true });
-    const validProjection = '{"mcpServers":{}}\n';
-    fs.writeFileSync(projectionPath, validProjection, { mode: 0o600 });
-    const staleRecoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
-    expect(staleRecoveryResult.status).toBe(1);
-    expect(staleRecoveryResult.stderr).toContain("is no longer a directory");
-    expect(fs.readFileSync(projectionPath, "utf8")).toBe(validProjection);
-    expect(
-      fs
-        .readdirSync(sandboxRoot)
-        .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery.")),
-    ).toEqual([]);
-
-    fs.rmSync(projectionPath);
-    fs.mkdirSync(projectionPath);
-    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
-    const recoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
-    expect(recoveryResult.status, recoveryResult.stderr).toBe(0);
-    expect(fs.existsSync(projectionPath)).toBe(false);
-    expect(fs.readFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "utf8")).toBe(
-      "existing recovery\n",
-    );
-    const recoveryDirectories = fs
-      .readdirSync(sandboxRoot)
-      .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery."));
-    expect(recoveryDirectories).toHaveLength(1);
-    const recoveredProjectionPath = path.join(sandboxRoot, recoveryDirectories[0], "projection");
-    expect(fs.readFileSync(path.join(recoveredProjectionPath, "managed.json"), "utf8")).toBe(
-      '{"managed":true}\n',
-    );
-    expect(recoveryResult.stdout).toBe(
-      `Moved managed MCP projection to ${recoveredProjectionPath}\n`,
-    );
-    expect(recoveryScript).toContain(`recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`);
-    expect(recoveryGuidance).toContain('mv -- "$projection" "$recovery_dir/projection"');
-    expect(recoveryGuidance).toContain(
-      'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
-    );
-    expect(recoveryGuidance).not.toContain(
-      "mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery",
-    );
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-
-    await runSandboxSnapshot(sandboxName, { kind: "restore" });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith(sandboxName, "/tmp/backup-alpha");
-  });
-
-  it("repairs mutable permissions after restoring OpenClaw config", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    f.getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["openclaw.json"],
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
       failedDirs: [],
       failedFiles: [],
     });
@@ -348,82 +238,114 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(f.mutableConfigMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
-    expect(f.applyPresetMock).not.toHaveBeenCalled();
-    const output = consoleLog.mock.calls.flat().join("\n");
-    expect(output).toContain("OpenClaw config permissions restored");
-    expect(output).toContain("Restored 1 directories, 1 files");
-    expect(output.indexOf("OpenClaw config permissions restored")).toBeLessThan(
-      output.indexOf("Restored 1 directories, 1 files"),
-    );
+    expect(f.migrateHermesLegacyDashboardStateMock).toHaveBeenCalledWith("alpha");
   });
 
-  it("fails after restore when OpenClaw config permission verification fails", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("fails a Hermes snapshot restore when legacy dashboard migration fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["openclaw.json"],
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
       failedDirs: [],
       failedFiles: [],
     });
-    f.mutableConfigMock.repairMutableConfigPermsMock.mockReturnValue({
-      applied: true,
-      verified: false,
-      errors: ["openclaw.json remains read-only"],
+    f.migrateHermesLegacyDashboardStateMock.mockResolvedValue({
+      status: 1,
+      stdout: "",
+      stderr: "migration conflict",
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
-      exitCode: 1,
-      lines: [
-        "State restored into 'alpha', but OpenClaw config permissions could not be verified.",
-        expect.stringContaining("nemoclaw alpha doctor --fix"),
-        "Details: openclaw.json remains read-only",
-      ],
-    });
-    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain(
-      "Restored 1 directories, 1 files",
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toThrow();
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Hermes legacy dashboard-state migration did not complete",
+    );
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "may contain a partial legacy dashboard-state migration",
     );
   });
 
-  it("fails after restore when OpenClaw config permission repair throws", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("reports reconciliation guidance when Hermes migration transport times out", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["openclaw.json"],
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
       failedDirs: [],
       failedFiles: [],
     });
-    f.mutableConfigMock.repairMutableConfigPermsMock.mockImplementationOnce(() => {
-      throw new Error("permission repair unavailable");
-    });
+    f.migrateHermesLegacyDashboardStateMock.mockRejectedValue(
+      new Error("Sandbox command transport failed (timeout)"),
+    );
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
-      exitCode: 1,
-      lines: [
-        "State restored into 'alpha', but OpenClaw config permissions could not be verified.",
-        expect.stringContaining("nemoclaw alpha doctor --fix"),
-        "Details: permission repair unavailable",
-      ],
-    });
-    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain(
-      "Restored 1 directories, 1 files",
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toThrow();
+
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output).toContain("Sandbox command transport failed (timeout)");
+    expect(output).toContain(
+      "Hermes home /sandbox/.hermes in sandbox 'alpha' may contain a partial legacy dashboard-state migration",
     );
+    expect(output).toContain("before retrying restore");
   });
 
-  it("force-deletes a restore destination before creating its replacement", async () => {
+  it.each([
+    { label: "managed", fromDockerfile: undefined },
+    { label: "custom-image", fromDockerfile: "/tmp/Dockerfile" },
+  ])(
+    "leaves user-managed Deep Agents MCP config untouched for $label restores",
+    async ({ fromDockerfile }) => {
+      f.getLatestBackupMock.mockReturnValue({
+        snapshotVersion: 4,
+        name: "stable",
+        timestamp: "2026-06-15T00:00:00.000Z",
+        backupPath: "/tmp/backup-alpha",
+      });
+      f.getSandboxMock.mockReturnValue({
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        ...(fromDockerfile ? { fromDockerfile } : {}),
+      });
+      f.restoreDeepAgentsNativeMcpConfigMock.mockImplementation(() => {
+        throw new Error("Snapshot restore must not rewrite user-managed native MCP config");
+      });
+      f.restoreSandboxStateMock.mockImplementation(() => {
+        f.lifecycleMock.events.push("restore-snapshot-state");
+        return {
+          success: true,
+          restoredDirs: [".state"],
+          restoredFiles: ["config.toml"],
+          failedDirs: [],
+          failedFiles: [],
+        };
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      await runSandboxSnapshot("alpha", { kind: "restore" });
+
+      expect(f.restoreDeepAgentsNativeMcpConfigMock).not.toHaveBeenCalled();
+      expect(f.getMcpProviderInspectionRuntimeSelectionMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).toEqual(["restore-snapshot-state"]);
+      expect(f.beginOpenClawBackupQuiesceMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    },
+  );
+
+  it("finishes destination messaging cleanup before creating a forced-restore replacement (#9806)", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -458,16 +380,75 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       failedDirs: [],
       failedFiles: [],
     });
+    const createAdapter = providerAdapters.createManagedProviderAdapter;
+    let releaseCleanup!: () => void;
+    let signalCleanupStarted!: () => void;
+    const cleanupPending = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      signalCleanupStarted = resolve;
+    });
+    vi.spyOn(providerAdapters, "createManagedProviderAdapter").mockImplementation((run) => {
+      const adapter = createAdapter(run);
+      return {
+        ...adapter,
+        async deleteProvider(request) {
+          const result = await adapter.deleteProvider(request);
+          signalCleanupStarted();
+          await cleanupPending;
+          return result;
+        },
+      };
+    });
+    const providerDeletes = () =>
+      f.runOpenshellMock.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && args[1] === "delete");
+    let providerDeletesAtCreation: string[][] = [];
+    f.streamSandboxCreateMock.mockImplementation(async () => {
+      providerDeletesAtCreation = providerDeletes();
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", {
+    const restore = runSandboxSnapshot("alpha", {
       kind: "restore",
       to: "beta",
       force: true,
       yes: true,
     });
+    try {
+      await Promise.race([
+        cleanupStarted,
+        restore.then(() => {
+          throw new Error("Restore finished without awaiting provider cleanup.");
+        }),
+      ]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(
+        f.runOpenshellMock.mock.calls.map(([args]) => args).filter((args) => args[1] === "delete"),
+      ).toEqual([
+        ["sandbox", "delete", "-g", "nemoclaw", "beta"],
+        ["provider", "delete", expect.stringMatching(/^beta-/u)],
+      ]);
+      expect(providerDeletes()).toHaveLength(1);
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    } finally {
+      releaseCleanup();
+      await restore;
+    }
 
-    expect(f.lifecycleMock.events).toContain("delete");
+    expect(providerDeletesAtCreation.map((args) => args[2]).sort()).toEqual([
+      "beta-discord-bridge",
+      "beta-slack-app",
+      "beta-slack-bridge",
+      "beta-teams-bridge",
+      "beta-telegram-bridge",
+      "beta-wechat-bridge",
+    ]);
+    expect(providerDeletes()).toEqual(providerDeletesAtCreation);
     expect(f.streamSandboxCreateMock).toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
@@ -785,56 +766,84 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
   });
 
-  it("proves the clone supervisor is ready before restoring snapshot state (#7818)", async () => {
-    const events: string[] = [];
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : null,
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.streamSandboxCreateMock.mockResolvedValue({
-      status: 0,
-      output: "Sandbox reported Ready before create stream exited; continuing.",
-      sawProgress: true,
-      forcedReady: true,
-    });
-    f.waitForRestoredSandboxGatewaySupervisorMock.mockImplementation(() => {
-      events.push("supervisor-ready");
-      return true;
-    });
-    f.restoreSandboxStateMock.mockImplementation(() => {
-      events.push("snapshot-restored");
-      return {
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: [],
-        failedDirs: [],
-        failedFiles: [],
-      };
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each([
+    {
+      outcome: "success",
+      success: true,
+      exitCode: 0,
+      finishCalls: 1,
+      finalEvent: "finish-openclaw-native-start",
+    },
+    {
+      outcome: "failure",
+      success: false,
+      exitCode: 1,
+      finishCalls: 0,
+      finalEvent: "abort-openclaw-backup-quiesce",
+    },
+  ])(
+    "protects clone restore with a maintenance window on $outcome",
+    async ({ success, exitCode, finishCalls, finalEvent }) => {
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha"
+          ? {
+              name: "alpha",
+              agent: "openclaw",
+              imageTag: "nemoclaw-alpha:test",
+              openshellDriver: "docker",
+              provider: "nvidia-nim",
+              model: "nvidia/model-a",
+            }
+          : null,
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.streamSandboxCreateMock.mockImplementation(async () => {
+        f.lifecycleMock.events.push("create-clone");
+        return {
+          status: 0,
+          output: "Sandbox reported Ready before create stream exited; continuing.",
+          sawProgress: true,
+          forcedReady: true,
+        };
+      });
+      f.restoreSandboxStateMock.mockImplementation(() => {
+        f.lifecycleMock.events.push("snapshot-restored");
+        return {
+          success,
+          restoredDirs: success ? ["workspace"] : [],
+          restoredFiles: [],
+          failedDirs: success ? [] : ["workspace"],
+          failedFiles: [],
+        };
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+      const restore = runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+      await expect(
+        restore.then(
+          () => ({ exitCode: 0 }),
+          (error: unknown) => error,
+        ),
+      ).resolves.toMatchObject({ exitCode });
 
-    expect(f.waitForRestoredSandboxGatewaySupervisorMock).toHaveBeenCalledWith("beta");
-    expect(events).toEqual(["supervisor-ready", "snapshot-restored"]);
-  });
+      expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).toEqual([
+        "create-clone",
+        "begin-openclaw-backup-quiesce",
+        "snapshot-restored",
+        finalEvent,
+      ]);
+      expect(f.finishOpenClawPostRestoreDoctorMock).toHaveBeenCalledTimes(finishCalls);
+    },
+  );
 
-  it("leaves snapshot state untouched when the clone supervisor never becomes ready (#7818)", async () => {
+  it("restores snapshot state without a NemoClaw supervisor gate", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -859,13 +868,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await expect(
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBeUndefined();
 
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalled();
   });
 
-  it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
+  it("preserves a changed destination row when clone finalization fails", async () => {
     const entries = new Map<string, f.SandboxRecord>([
       [
         "alpha",
@@ -880,9 +889,21 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       ],
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
-    f.registerSandboxMock.mockImplementation((entry) => entries.set(entry.name, entry));
-    f.removeSandboxMock.mockImplementation((name) => entries.delete(name));
-    f.finalizePendingSandboxRegistrationMock.mockReturnValue(false);
+    f.registerSandboxMock.mockImplementation((entry) => {
+      const registered = { ...entry, pendingRouteReservation: true };
+      entries.set(entry.name, registered);
+      return registered;
+    });
+    let replacement: f.SandboxRecord | null = null;
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      const next = {
+        ...expected,
+        lifecycleGeneration: "replacement-generation",
+      };
+      replacement = next;
+      entries.set("beta", next);
+      return false;
+    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -897,7 +918,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ).rejects.toMatchObject({
       exitCode: 1,
       lines: expect.arrayContaining([
-        "  Snapshot state was not restored and the clone was not registered.",
+        "Snapshot state was not restored. The current registry row was preserved.",
       ]),
     });
 
@@ -906,15 +927,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       undefined,
       { pending: true },
     );
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
-    expect(f.removeSandboxMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
+    expect(f.removeSandboxMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0],
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mock.invocationCallOrder[0],
     );
-    expect(f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.removeSandboxMock.mock.invocationCallOrder[0],
-    );
-    expect(entries.has("beta")).toBe(false);
+    expect(entries.get("beta")).toEqual(replacement);
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
@@ -952,10 +972,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current?.pendingRouteReservation).toBe(true);
-      entries.set(name, { ...current!, pendingRouteReservation: undefined });
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      expect(expected.pendingRouteReservation).toBe(true);
+      entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
       return true;
     });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -969,7 +988,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
     expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
@@ -1009,14 +1030,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current).toMatchObject({
-        pendingRouteReservation: true,
-        reservationSessionId: "onboard-session",
-      });
-      return false;
-    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -1030,7 +1043,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(entries.get("beta")).toMatchObject({
       pendingRouteReservation: true,
@@ -1080,13 +1093,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         entries.delete(name);
         return { status: "complete", removed: true };
       });
-      f.registerSandboxMock.mockImplementation((entry) =>
-        entries.set(entry.name, { ...entry, pendingRouteReservation: true }),
-      );
-      f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-        const current = entries.get(name);
-        expect(current?.pendingRouteReservation).toBe(true);
-        entries.set(name, { ...current!, pendingRouteReservation: undefined });
+      f.registerSandboxMock.mockImplementation((entry) => {
+        const registered = { ...entry, pendingRouteReservation: true };
+        entries.set(entry.name, registered);
+        return registered;
+      });
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+        expect(expected.pendingRouteReservation).toBe(true);
+        entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
         return true;
       });
       f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });

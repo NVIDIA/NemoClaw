@@ -29,22 +29,12 @@ function failPreparedRecoveryPreDelete(
   return bail(errorMessage);
 }
 
-function registryEntryWithoutOpenClawPluginProvenance(
-  entry: RebuildSandboxEntry,
-): Omit<RebuildSandboxEntry, "openclawImagePluginInstalls"> {
-  const { openclawImagePluginInstalls: _provenance, ...rest } = entry;
-  return rest;
-}
-
 function isPreparedRecoveryImageAllowed(
   manifest: sandboxState.RebuildManifest,
   entry: RebuildSandboxEntry,
   allowLegacyManagedImageRecovery: boolean,
 ): boolean {
-  return (
-    sandboxState.hasAuthoritativeOpenClawImagePluginProvenance(manifest) ||
-    sandboxState.isManagedImageRecoveryAllowed(entry, allowLegacyManagedImageRecovery)
-  );
+  return sandboxState.isManagedImageRecoveryAllowed(entry, allowLegacyManagedImageRecovery);
 }
 
 export function validatePreparedRecoveryManifest(
@@ -108,14 +98,7 @@ export function revalidatePreparedRecoveryBeforeDelete(
       bail,
     );
   }
-  const authoritativePluginProvenance =
-    sandboxState.hasAuthoritativeOpenClawImagePluginProvenance(candidate);
-  const registryConfigurationMatches = authoritativePluginProvenance
-    ? isDeepStrictEqual(
-        registryEntryWithoutOpenClawPluginProvenance(currentEntry),
-        registryEntryWithoutOpenClawPluginProvenance(initialEntry),
-      )
-    : isDeepStrictEqual(currentEntry, initialEntry);
+  const registryConfigurationMatches = isDeepStrictEqual(currentEntry, initialEntry);
   if (!registryConfigurationMatches) {
     return failPreparedRecoveryPreDelete(
       "registered sandbox configuration changed during preflight",
@@ -126,9 +109,7 @@ export function revalidatePreparedRecoveryBeforeDelete(
 
   const latestManifest = sandboxState.getLatestBackup(sandboxName);
   // candidate and latestManifest are two reads of the same prepared backup,
-  // enforced by the identity check below. Their plugin IDs are therefore one
-  // provenance domain; fresh-vs-previous ownership is validated later by the
-  // restore planner after the replacement image has been created.
+  // enforced by the identity check below.
   if (
     !latestManifest ||
     latestManifest.timestamp !== candidate.timestamp ||
