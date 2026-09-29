@@ -375,6 +375,24 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     ).toThrow();
   });
 
+  it("retains the amd64 authority boundary when an arm64 endpoint matches its host (#11518)", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture({ info: podmanInfo({ arch: "arm64" }) });
+    const deps = {
+      ...authorityDeps(capture, executableDeps(generation)),
+      architecture: "arm64" as const,
+    };
+
+    expect(() =>
+      captureHermesPortablePodmanExecutableAuthority(
+        socketAuthority(),
+        runtimeAuthority(),
+        { PATH: "/usr/bin", HOME: "/home/test" },
+        deps,
+      ),
+    ).toThrow("exact client, server, rootless, cgroup, platform, or network matrix disagrees");
+  });
+
   it("rejects binary, parent, and PATH replacement before another child", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     let resolved = PODMAN_PATH;

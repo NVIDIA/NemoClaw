@@ -57,10 +57,18 @@ it("formats existing source through the commit hook without a comparison ref", (
     expect(init.status, init.stderr).toBe(0);
     const add = spawnSync("git", ["add", "--", file], { cwd: root, encoding: "utf8" });
     expect(add.status, add.stderr).toBe(0);
+    const hookEnv = {
+      ...process.env,
+      PREK_NO_FAST_PATH: "1",
+    };
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
       ["run", "oxfmt", "--files", file],
-      { cwd: root, encoding: "utf8" },
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: hookEnv,
+      },
     );
     expect(result.status, result.stdout + result.stderr).toBe(1);
     const check = spawnSync(path.resolve("node_modules/.bin/oxfmt"), ["--check", file], {

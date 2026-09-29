@@ -19,6 +19,7 @@ describe("PR review advisor completion comment", () => {
         "**PR Review Advisor finished for commit `abcdef1`.** " +
         "Include the [Advisor findings](https://github.com/NVIDIA/NemoClaw/actions/runs/123) " +
         "in the complete PR feedback collection. Verify and group valid findings before repair.\n\n" +
+        "Request review only when **Require no Advisor blockers** is green.\n\n" +
         "[All previous runs](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-review-advisor.yaml)\n",
     );
   });

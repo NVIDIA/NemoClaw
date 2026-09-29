@@ -229,6 +229,24 @@ describe("listBackups computes virtual versions", () => {
     expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(false);
   });
+  it("keeps a retained failed recovery backup out of listing and restore selection", () => {
+    const published = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      name: "strict-recovery",
+      backupComplete: true,
+    });
+    expect(sandboxState.listBackups("test-sandbox")).toHaveLength(1);
+
+    const incomplete = sandboxState.markRebuildBackupIncomplete(published as never);
+
+    expect(incomplete.backupComplete).toBe(false);
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+    expect(sandboxState.findBackup("test-sandbox", "strict-recovery").match).toBeNull();
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(String(published.backupPath), "rebuild-manifest.json"), "utf8"),
+      ),
+    ).toMatchObject({ backupComplete: false });
+  });
   it.each([
     {
       scenario: "an explicit directory failure",
@@ -389,15 +407,15 @@ describe("listBackups computes virtual versions", () => {
     });
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-  it("does not restore backed-up directory entries that are plain files", () => {
-    const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+  it("does not restore backed-up directory entries that are plain files", async () => {
+    const { backupPath } = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });
     writeAgentRegistry("test-sandbox", "openclaw");
-    fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
+    fs.writeFileSync(path.join(String(backupPath), "workspace"), "not a directory");
 
-    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+    const restore = await sandboxState.restoreSandboxState("test-sandbox", String(backupPath));
 
     expect(restore).toEqual({
       success: true,
@@ -588,19 +606,6 @@ describe("parseRestoreArgs", () => {
 });
 
 describe("sandbox directory backup semantics", () => {
-  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", () => {
-    writeOpenClawRegistry("custom-openclaw", {
-      fromDockerfile: "/tmp/Dockerfile.custom",
-    });
-
-    const backup = sandboxState.backupSandboxState("custom-openclaw");
-
-    expect(backup.success).toBe(false);
-    expect(backup.manifest).toBeUndefined();
-    expect(backup.error).toBe("registered OpenClaw image plugin provenance is missing or invalid");
-    expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
-  });
-
   it("backs up declared empty and dynamic directories without trusting undeclared discovery output (#8006)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
@@ -639,24 +644,22 @@ describe("sandbox directory backup semantics", () => {
           unsafeDiscoveryMarker,
         }),
       );
-
-      writeOpenClawRegistry("alpha", {
-        fromDockerfile: "/tmp/Dockerfile.custom",
-        openclawImagePluginInstalls: [],
-      });
+      writeOpenClawRegistry("alpha", { fromDockerfile: "/tmp/Dockerfile.custom" });
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.TMPDIR = stagingRoot;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = sandboxState.backupSandboxState("alpha", { deferCompletionPublication: true });
       expect(backup.success).toBe(true);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
-      expect(backup.manifest?.backupComplete).toBe(true);
+      expect(backup.manifest?.backupComplete).toBe(false);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
-      expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
-      expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
+      expect(sandboxState.listBackups("alpha")).toEqual([]);
+      expect(sandboxState.findBackup("alpha", "v1").match).toBeNull();
+      sandboxState.markRebuildBackupComplete(backup.manifest!);
+      expect(sandboxState.listBackups("alpha")).toHaveLength(1);
       const discoveryCommand = fs
         .readFileSync(sshLog, "utf-8")
         .trim()
@@ -698,7 +701,6 @@ describe("sandbox directory backup semantics", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("returns a structured failure when the archive staging file cannot be created", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-backup-staging-failure-"));
     const oldPath = process.env.PATH;
@@ -749,7 +751,7 @@ process.exit(0);
     }
   });
 
-  it("classifies tar-failed directories and excludes them from the restorable manifest", () => {
+  it("classifies tar-failed directories and excludes them from the restorable manifest", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -827,7 +829,7 @@ process.exit(0);
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
 
-      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
 
@@ -840,8 +842,6 @@ process.exit(0);
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/workspace");
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
-      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
     } finally {
       if (oldOpenshell === undefined) {
@@ -1349,7 +1349,7 @@ process.exit(0);
 });
 
 describe("Deep Agents Code durable state files", () => {
-  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1485,7 +1485,7 @@ process.exit(0);
       expect(loggedCommands).not.toContain(".mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
       fs.rmSync(path.join(deepAgentsDir, "hooks.json"));
-      const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
+      const restore = await sandboxState.restoreSandboxState("deepagents", backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
       expect(fs.readFileSync(path.join(deepAgentsDir, "hooks.json"), "utf-8")).toBe(hooks);

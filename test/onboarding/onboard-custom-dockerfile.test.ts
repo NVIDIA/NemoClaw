@@ -398,6 +398,7 @@ const { createSandbox } = require(${onboardPath});
       const script = String.raw`
 const fs = require("node:fs");
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).installForwardServiceReachabilityFixture();
 const registry = require(${registryPath});
 const outcomePath = ${JSON.stringify(outcomePath)};
 const customDockerfile = ${JSON.stringify(customDockerfile)};
@@ -506,6 +507,7 @@ createSandbox(
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).installForwardServiceReachabilityFixture();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -572,6 +574,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).installForwardServiceReachabilityFixture();
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -645,6 +648,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).installForwardServiceReachabilityFixture();
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -721,6 +725,7 @@ const { createSandbox } = require(${onboardPath});
 const fs = require("node:fs");
 const path = require("node:path");
 const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).installForwardServiceReachabilityFixture();
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});

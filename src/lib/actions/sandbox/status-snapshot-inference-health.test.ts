@@ -31,13 +31,15 @@ function snapshotDeps(
     suppressInferenceProbe: false,
     deps: {
       getSandbox: () => sandbox,
-      listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
+      listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
       reconcile: async () => ({ state: "present" as const, output: "Phase: Ready" }),
       // The live-route RPC lookup is independent of the authoritative
       // inference.local gateway probe under test; throwing here just leaves
       // liveRoute/routeDrift null without needing a fabricated exec transcript.
-      captureOpenshellForStatusImpl: async () => {
-        throw new Error("live route lookup not needed for this test");
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => {
+          throw new Error("live route lookup not needed for this test");
+        },
       },
       probeProviderHealthImpl: () => providerHealth,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway,

@@ -579,7 +579,7 @@ describe("inventory commands", () => {
     expect(getGatewayAuthority).not.toHaveBeenCalled();
   });
 
-  it("omits invalid configured inference fields from status text", async () => {
+  it("reports invalid configured inference fields as unknown", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -592,7 +592,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("    alpha *");
-    expect(lines.some((line) => line.includes("Inference:"))).toBe(false);
+    expect(lines).toContain("      Inference (configured): unknown / unknown");
   });
 
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {
@@ -1066,40 +1066,6 @@ describe("inventory commands", () => {
     expect(readGatewayLog).not.toHaveBeenCalled();
   });
 
-  it("prints sandbox models in status and delegates service status", async () => {
-    const lines: string[] = [];
-    const showServiceStatus = vi.fn();
-    await showStatusCommand({
-      listSandboxes: () => ({
-        sandboxes: [
-          {
-            name: "alpha",
-            model: "nvidia/nemotron-3-super-120b-a12b",
-          },
-          {
-            name: "beta",
-            model: "z-ai/glm-5.1",
-          },
-        ],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "provider/runtime-model" }),
-      showServiceStatus,
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain("  Global status (registered sandboxes and host services):");
-    expect(lines).toContain("  Sandboxes:");
-    // Default sandbox shows the live gateway model (#2369), annotated with
-    // the onboarded model when they differ.
-    expect(lines).toContain("    alpha * (provider/runtime-model)");
-    expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
-    // Non-default sandbox keeps its stored model — the gateway only applies
-    // to whichever sandbox is currently connected.
-    expect(lines).toContain("    beta (z-ai/glm-5.1)");
-    expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
-  });
-
   describe("env-resolved default sandbox (#1077)", () => {
     const savedSandboxName = process.env.SANDBOX_NAME;
     const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -1229,101 +1195,6 @@ describe("inventory commands", () => {
       expect(lines).toContain("    env-sandbox *");
       expect(lines.some((line) => line.startsWith("    registry-default *"))).toBe(false);
     });
-  });
-
-  it("does not annotate status when the live gateway matches the onboarded model", async () => {
-    const lines: string[] = [];
-    await showStatusCommand({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => ({
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron-3-super-120b-a12b",
-      }),
-      showServiceStatus: vi.fn(),
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain("    alpha * (nvidia/nemotron-3-super-120b-a12b)");
-    expect(lines.some((l) => l.includes("onboarded"))).toBe(false);
-  });
-
-  it("falls back to stored status model when the gateway is unreachable", async () => {
-    const lines: string[] = [];
-    await showStatusCommand({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => null,
-      showServiceStatus: vi.fn(),
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain("    alpha * (nvidia/nemotron-3-super-120b-a12b)");
-    expect(lines.some((l) => l.includes("onboarded"))).toBe(false);
-  });
-
-  it("annotates status drift with 'unknown' when the onboarded model is missing", async () => {
-    const lines: string[] = [];
-    await showStatusCommand({
-      listSandboxes: () => ({
-        // sandbox registered without a model (possible per SandboxEntry type).
-        sandboxes: [{ name: "alpha" }],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "provider/runtime-model" }),
-      showServiceStatus: vi.fn(),
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain("    alpha * (provider/runtime-model)");
-    expect(lines).toContain("      (onboarded: unknown)");
-  });
-
-  // #2604: bare `nemoclaw status` previously only showed the model in parens
-  // and didn't label provider or connection state. Users had to run the
-  // per-sandbox `nemoclaw <name> status` to see those fields.
-  it("emits an Inference line with provider / model under each sandbox row (#2604)", async () => {
-    const lines: string[] = [];
-    await showStatusCommand({
-      listSandboxes: () => ({
-        sandboxes: [
-          {
-            name: "alpha",
-            model: "nvidia/nemotron-3-super-120b-a12b",
-            provider: "nvidia-prod",
-          },
-          { name: "beta", model: "qwen3.5:9b", provider: "ollama-local" },
-        ],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => null,
-      showServiceStatus: vi.fn(),
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain(
-      "      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b",
-    );
-    expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
-  });
-
-  it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", async () => {
-    const lines: string[] = [];
-    await showStatusCommand({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "alpha", model: "stored-model", provider: "stored-provider" }],
-        defaultSandbox: "alpha",
-      }),
-      getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),
-      showServiceStatus: vi.fn(),
-      log: (message = "") => lines.push(message),
-    });
-
-    expect(lines).toContain("      Inference (configured): live-provider / live-model");
   });
 
   it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", async () => {

@@ -41,7 +41,6 @@ export interface JournalBoundPreUpgradeBackupResult<Runtime> {
 export interface SandboxRecreateProtectionOptions {
   sandboxName: string;
   sandboxEntry: SandboxEntry | null;
-  customOpenClawImage: boolean;
   note(message: string): void;
 }
 
@@ -62,7 +61,7 @@ export function createSandboxRecreateProtection(
   options: SandboxRecreateProtectionOptions,
   deps: SandboxRecreateProtectionDeps = defaultDeps,
 ) {
-  const { sandboxName, sandboxEntry, customOpenClawImage, note } = options;
+  const { sandboxName, sandboxEntry, note } = options;
 
   const selectPreUpgradeBackup = (binding: PreUpgradeBackupBinding): string | null =>
     deps.selectPreUpgradeBackupForCreate({
@@ -72,8 +71,6 @@ export function createSandboxRecreateProtection(
       registryEntry: sandboxEntry,
       readRegistryEntry: binding.readRegistryEntry,
       observation: binding.observation,
-      existingSandboxEntry: sandboxEntry,
-      requireOpenClawImagePluginProvenance: customOpenClawImage,
       sandboxName,
       note,
     });
@@ -104,13 +101,11 @@ export function createSandboxRecreateProtection(
       }
     },
     resolveNotReadyOutcome(): notReadyRecreate.NonInteractiveNotReadyOutcome {
-      return deps.resolveNotReadyOutcome(sandboxName, note, sandboxEntry, customOpenClawImage);
+      return deps.resolveNotReadyOutcome(sandboxName, note);
     },
     backup(): PreRecreateBackupResult {
       return deps.backupSandboxBeforeRecreate({
         sandboxName,
-        sandboxEntry,
-        requireOpenClawImagePluginProvenance: customOpenClawImage,
       });
     },
   };

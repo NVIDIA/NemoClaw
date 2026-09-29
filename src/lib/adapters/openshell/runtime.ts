@@ -10,10 +10,11 @@ import {
   captureOpenshellCommandAsync,
   captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshellCommand,
-} from "./client";
+} from "./command-execution";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
-import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
@@ -30,7 +31,7 @@ export {
 } from "./command-argv";
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
-export { classifyManagedGatewayEndpointBinding } from "./client";
+export { classifyManagedGatewayEndpointBinding } from "./command-execution";
 export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {

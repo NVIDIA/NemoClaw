@@ -47,9 +47,9 @@ Both run the real blueprint runner against a real OpenShell gateway and sandbox.
 
 The scenarios enable provider-derived policy and restore its prior setting.
 They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
-They prove that a child launched after token refresh retains the same stable credential handle while the protected resource receives the refreshed bearer.
-The handle changes only after an authorization-binding epoch change, such as removing and restoring the credential key.
-They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
+They prove that the existing placeholder resolves to the refreshed bearer after credential rotation.
+They prove that OpenShell rejects unreviewed credential delivery before the bearer reaches the protected resource.
+They also check that `apply` output contains no OAuth secret material and that the runner refuses unsafe rollback without removing the reused sandbox or provider.
 `TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the Microsoft Graph `GET /v1.0/me` credential-delivery rule.
 It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
 The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.

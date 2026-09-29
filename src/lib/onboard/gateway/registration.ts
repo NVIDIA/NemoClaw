@@ -1,161 +1,86 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Buffer } from "node:buffer";
-
-import {
-  type OpenShellRuntimeSelection,
-  withSelectedOpenShellCommandOptions,
-} from "../../adapters/openshell/command-argv";
-import { removeGatewayRegistrationWithPolicy } from "../gateway-teardown-authority";
-
-type RunResult = ReturnType<typeof import("../../runner").run>;
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
+import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse";
 
 export interface GatewayRegistrationDeps {
   gatewayName(): string;
+  gatewayPort(): number;
   getDockerDriverGatewayEndpointArg(): string;
   getGatewayLocalEndpoint(): string;
-  hasStaleGateway(gatewayInfo: string): boolean;
-  isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isLinuxDockerDriverGatewayEnabled(): boolean;
-  removeDockerDriverGatewayRegistration(): boolean;
-  runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
-  runOpenshell(
-    args: string[],
-    options?: {
-      env?: Record<string, string>;
-      ignoreError?: boolean;
-      replaceEnv?: boolean;
-      stdio?: ["ignore", "pipe", "pipe"];
-      suppressOutput?: boolean;
-    },
-  ): RunResult;
-  runQuietOpenshell(args: string[]): {
-    status: number | null;
-    stdout?: string | Buffer;
-    stderr?: string | Buffer;
-  };
+  lifecycle: OpenShellGatewayLifecycle;
+  observer: OpenShellGatewayReuseObserver;
+  revalidateAuthority(): void;
 }
 
 export interface GatewayRegistration {
-  attachGatewayMetadataIfNeeded(options?: { forceRefresh?: boolean }): boolean;
-  registerDockerDriverGatewayEndpoint(runtimeSelection?: OpenShellRuntimeSelection): boolean;
+  attachGatewayMetadataIfNeeded(options?: { forceRefresh?: boolean }): Promise<boolean>;
+  registerDockerDriverGatewayEndpoint(
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): Promise<boolean>;
 }
 
 export function createGatewayRegistration(deps: GatewayRegistrationDeps): GatewayRegistration {
-  function registerDockerDriverGatewayEndpoint(
+  async function registerDockerDriverGatewayEndpoint(
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): boolean {
-    if (runtimeSelection && runtimeSelection.gatewayName !== deps.gatewayName()) {
+  ): Promise<boolean> {
+    const gatewayName = deps.gatewayName();
+    if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
       throw new Error(
-        `Gateway registration target '${deps.gatewayName()}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
+        `Gateway registration target '${gatewayName}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
       );
     }
-    const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
-    const runCaptureOpenshell: GatewayRegistrationDeps["runCaptureOpenshell"] = (
-      args,
-      options = {},
-    ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
-    const runOpenshell: GatewayRegistrationDeps["runOpenshell"] = (args, options = {}) =>
-      deps.runOpenshell(args, { ...options, ...runtimeOptions });
-    const runQuietOpenshell = (args: string[]) =>
-      runtimeSelection
-        ? runOpenshell(args, {
-            ignoreError: true,
-            stdio: ["ignore", "pipe", "pipe"],
-            suppressOutput: true,
-          })
-        : deps.runQuietOpenshell(args);
-    const removeRegistration = (): boolean => {
-      if (!runtimeSelection) return deps.removeDockerDriverGatewayRegistration();
-      return removeGatewayRegistrationWithPolicy({
-        allowLegacyDestroy: true,
-        gatewayLabel: deps.gatewayName(),
-        run: runQuietOpenshell,
-      }).ok;
-    };
-    const selectExisting = runQuietOpenshell(["gateway", "select", deps.gatewayName()]);
-    if (selectExisting.status === 0) {
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
-        ignoreError: true,
-      });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      if (deps.isGatewayHealthy(status, namedInfo, currentInfo)) {
-        process.env.OPENSHELL_GATEWAY = deps.gatewayName();
-        return true;
-      }
-    }
-
-    let addResult = runOpenshell(
-      [
-        "gateway",
-        "add",
-        deps.getDockerDriverGatewayEndpointArg(),
-        "--local",
-        "--name",
-        deps.gatewayName(),
-      ],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (addResult.status !== 0) {
-      if (!removeRegistration()) return false;
-      addResult = runOpenshell(
-        [
-          "gateway",
-          "add",
-          deps.getDockerDriverGatewayEndpointArg(),
-          "--local",
-          "--name",
-          deps.gatewayName(),
-        ],
-        { ignoreError: true, suppressOutput: true },
-      );
-    }
-    const selectResult = runOpenshell(["gateway", "select", deps.gatewayName()], {
-      ignoreError: true,
-      suppressOutput: true,
+    const request = { target: { kind: "named" as const, gatewayName }, runtimeSelection };
+    const existing = await deps.observer.observeGatewayReuse({
+      ...request,
+      expectedGatewayPort: deps.gatewayPort(),
     });
-    const ok =
-      (addResult.status === 0 && selectResult.status === 0) ||
-      (selectResult.status === 0 &&
-        deps.isGatewayHealthy(
-          runCaptureOpenshell(["status"], { ignoreError: true }),
-          runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
-            ignoreError: true,
-          }),
-          runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
-        ));
-    if (ok) {
-      process.env.OPENSHELL_GATEWAY = deps.gatewayName();
-    } else if (process.env.OPENSHELL_GATEWAY === deps.gatewayName()) {
-      delete process.env.OPENSHELL_GATEWAY;
+    if (existing.error) return false;
+    if (existing.namedMetadata && existing.endpointBinding === "match") {
+      const selected = await deps.lifecycle.selectGateway(request);
+      if (!selected.ok) return false;
+      process.env.OPENSHELL_GATEWAY = gatewayName;
+      return true;
     }
-    return ok;
-  }
-
-  function attachGatewayMetadataIfNeeded({
-    forceRefresh = false,
-  }: {
-    forceRefresh?: boolean;
-  } = {}): boolean {
-    const gatewayInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
-      ignoreError: true,
+    const added = await deps.lifecycle.registerGateway({
+      ...request,
+      endpoint: deps.getDockerDriverGatewayEndpointArg(),
     });
-    // The CLI can return stale but present metadata. Preserve the metadata unless
-    // the repair flow recreates the bootstrap secrets and forces a refresh.
-    if (!forceRefresh && deps.hasStaleGateway(gatewayInfo)) return true;
-    if (deps.isLinuxDockerDriverGatewayEnabled()) {
-      return registerDockerDriverGatewayEndpoint();
+    if (!added.ok) {
+      deps.revalidateAuthority();
+      // An unsuccessful add can already have changed registration. Observe it,
+      // retain ownership evidence, and stop without removal or a second add.
+      await deps.observer.observeGatewayReuse(request);
+      return false;
     }
-    const addResult = deps.runOpenshell(
-      ["gateway", "add", deps.getGatewayLocalEndpoint(), "--local", "--name", deps.gatewayName()],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (addResult.status !== 0) return false;
-    console.log("  ✓ Gateway metadata reattached");
+    const selected = await deps.lifecycle.selectGateway(request);
+    if (!selected.ok) return false;
+    process.env.OPENSHELL_GATEWAY = gatewayName;
     return true;
   }
 
+  async function attachGatewayMetadataIfNeeded({
+    forceRefresh = false,
+  }: { forceRefresh?: boolean } = {}): Promise<boolean> {
+    const request = { target: { kind: "named" as const, gatewayName: deps.gatewayName() } };
+    const existing = await deps.observer.observeGatewayReuse(request);
+    if (existing.error) return false;
+    if (!forceRefresh && existing.namedMetadata) return true;
+    if (deps.isLinuxDockerDriverGatewayEnabled()) return registerDockerDriverGatewayEndpoint();
+    const added = await deps.lifecycle.registerGateway({
+      ...request,
+      endpoint: deps.getGatewayLocalEndpoint(),
+    });
+    if (!added.ok) {
+      deps.revalidateAuthority();
+      await deps.observer.observeGatewayReuse(request);
+      return false;
+    }
+    console.log("  ✓ Gateway metadata reattached");
+    return true;
+  }
   return { attachGatewayMetadataIfNeeded, registerDockerDriverGatewayEndpoint };
 }

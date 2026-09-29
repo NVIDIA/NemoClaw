@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  buildLiveTargetInventory,
   buildLiveTargetMatrix,
   liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
@@ -28,16 +27,15 @@ import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
+  catalogueHostPackages,
   catalogueMatrix,
-  catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
-  E2E_OPTIONAL_CREDENTIALS,
+  E2E_HOST_PACKAGES,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
-  type E2eOptionalCredential,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -98,7 +96,6 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
   "github-read": "catalogue-github-read",
-  "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -106,6 +103,7 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
+  "tools/e2e/onboard-timeout-contract.mts",
 ] as const;
 const DCODE_SKILL_OWNING_PATHS = [
   "agents/langchain-deepagents-code/manifest.yaml",
@@ -187,8 +185,6 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "runner",
       "runtime",
       "suites",
-      "supportReasons",
-      "supported",
       "timeout_minutes",
       "unresolvedReason",
     ])
@@ -217,13 +213,11 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.observableOutcome === "string" &&
     typeof value.environmentOrInferenceEndpoint === "string" &&
     typeof value.unresolvedReason === "string" &&
-    typeof value.supported === "boolean" &&
     typeof value.timeout_minutes === "number" &&
     Number.isSafeInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
-    isStringArray(value.supportReasons) &&
     isStringArray(value.pendingRuntimeSuites) &&
     hasValidExecutionMetadata(value)
   );
@@ -328,7 +322,10 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     Number.isInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     typeof value.host_packages === "string" &&
-    /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
+    (value.host_packages === "" ||
+      value.host_packages
+        .split(" ")
+        .every((name) => E2E_HOST_PACKAGES.some((packageName) => packageName === name))) &&
     typeof value.install_non_interactive === "boolean" &&
     typeof value.cloudflared === "boolean" &&
     typeof value.runner_comparison === "boolean" &&
@@ -337,9 +334,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.shard === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
     (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
-    (value.host_preparation === "none" ||
-      value.host_preparation === "hermes-swap" ||
-      value.host_preparation === "rebuild-swap") &&
+    (value.host_preparation === "none" || value.host_preparation === "hermes-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -412,7 +407,7 @@ function isCatalogueMatrixRowForProfile(
     target.installNonInteractive === value.install_non_interactive &&
     target.restoreCli === value.restore_cli &&
     target.cloudflared === value.cloudflared &&
-    target.hostPackages.join(" ") === value.host_packages &&
+    catalogueHostPackages(target, value.runtime_provider) === value.host_packages &&
     target.hostPreparation === value.host_preparation &&
     target.runnerComparison === value.runner_comparison &&
     target.runnerPressure === value.runner_pressure &&
@@ -447,7 +442,6 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     "nvidia-api": [],
     "nvidia-inference": [],
     "github-read": [],
-    "brave-nvidia-inference": [],
   };
 }
 
@@ -985,27 +979,6 @@ function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
   return selected.length === 0 || selected.includes(HERMES_JOB_ID);
 }
 
-export function withoutUnavailableOptionalCredentialTargets(
-  plan: E2eWorkflowPlan,
-  availableCredentials: ReadonlySet<E2eOptionalCredential>,
-): E2eWorkflowPlan {
-  const catalogueMatrices = Object.fromEntries(
-    E2E_EXECUTION_PROFILES.map((profile) => [
-      profile,
-      plan.catalogueMatrices[profile].filter((row) =>
-        catalogueTarget(row.id).requiredOptionalCredentials.every((credential) =>
-          availableCredentials.has(credential),
-        ),
-      ),
-    ]),
-  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
-  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
-  return withCoverageMatrix(
-    { ...planWithoutCoverage, catalogueMatrices },
-    readFreeStandingJobsInventory(),
-  );
-}
-
 type RuntimeExclusion = {
   id: string;
   excluded: E2eGatewayRuntime[];
@@ -1088,7 +1061,6 @@ export function renderE2eWorkflowPlanSummary(
     plan.explicitOnlyJobs.includes(row.id),
   );
   const runtimeExclusions = runtimeExclusionsForPlan(plan, inventory);
-  const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
@@ -1137,24 +1109,6 @@ export function renderE2eWorkflowPlanSummary(
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
     );
   }
-  lines.push(
-    "",
-    "### Unsupported or unresolved typed declarations",
-    "",
-    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
-    "| --- | --- | --- | --- | --- |",
-  );
-  for (const row of unsupportedDeclarations) {
-    lines.push(
-      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
-    );
-  }
-  lines.push(
-    "",
-    "### Combinatorial gaps",
-    "",
-    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
-  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -1178,15 +1132,7 @@ export function writeE2eWorkflowPlanCiOutput(
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
   const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
-  const availableOptionalCredentials = new Set<E2eOptionalCredential>(
-    E2E_OPTIONAL_CREDENTIALS.filter(
-      (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
-    ),
-  );
-  const availabilityScopedPlan = hasPlannerSelectors
-    ? planned
-    : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
-  const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
+  const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
@@ -1203,7 +1149,6 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-      `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,

@@ -65,29 +65,43 @@ import {
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
   validSafeEvidence,
 } from "./onboard-session/retained-sandbox-recovery";
+import {
+  acquireOnboardStateLock,
+  assertOnboardStateLockOwned,
+  isOnboardStateLockOwned,
+  onboardStateRoot,
+  releaseOnboardStateLock,
+  type OnboardLockResult,
+  type OnboardStateLockHandle,
+} from "./onboard-session/lock";
 import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
-import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
+export type {
+  OnboardLockInfo as LockInfo,
+  OnboardLockResult as LockResult,
+} from "./onboard-session/lock";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
 export const CANCELLATION_RECOVERY_STATUS = "recovery_required";
 const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
-export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
+export const SESSION_DIR = onboardStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
 const LEGACY_STATE_MIGRATION_LOCK = path.join(
-  nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
+  onboardStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
   ".gateway-state-migration.lock",
 );
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
@@ -289,6 +303,8 @@ export interface Session {
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
   routerPid: number | null;
+  /** Host port last used by the managed Model Router; retained for exact cleanup. */
+  routerPort: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
@@ -344,21 +360,6 @@ export interface WechatConfig {
   userId?: string;
 }
 
-export interface LockInfo {
-  pid: number;
-  startedAt: string | null;
-  command: string | null;
-}
-
-export interface LockResult {
-  acquired: boolean;
-  lockFile: string;
-  stale: boolean;
-  holderPid?: number;
-  holderStartedAt?: string | null;
-  holderCommand?: string | null;
-}
-
 export interface SessionUpdates {
   // Nullable fields accept `null` as an explicit clear (e.g. a provider
   // switch from remote→local clears `credentialEnv`). `undefined` means
@@ -375,6 +376,7 @@ export interface SessionUpdates {
   compatibleEndpointReasoningEffort?: ReasoningEffort | null;
   nimContainer?: string | null;
   routerPid?: number;
+  routerPort?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
@@ -564,6 +566,11 @@ function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMe
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readTcpPort(value: SessionJsonValue | undefined): number | null {
+  const port = readPositiveInteger(value);
+  return port !== null && port <= 65535 ? port : null;
 }
 
 function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
@@ -780,15 +787,6 @@ function parseStoredCheckpoint(value: unknown): OnboardCheckpoint | null {
   return inspected.status === "loaded" ? inspected.checkpoint : null;
 }
 
-function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
-  if (!isObject(value) || typeof value.pid !== "number") return null;
-  return {
-    pid: value.pid,
-    startedAt: readString(value.startedAt),
-    command: readString(value.command),
-  };
-}
-
 // redactSensitiveText and redactUrl imported from ./redact (#2381).
 export { redactSensitiveText, redactUrl };
 
@@ -870,7 +868,8 @@ function parseExternalComponentActivation(
     !activationId ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(activationId) ||
     !componentId ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(componentId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u.test(componentId) ||
+    componentId.startsWith("openshell/") ||
     !lifecycleGeneration ||
     !validSafeEvidence(lifecycleGeneration) ||
     !sandboxIdentityFingerprint ||
@@ -1025,6 +1024,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
+    routerPort: readTcpPort(overrides.routerPort),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(
@@ -1163,6 +1163,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     compatibleEndpointReasoningEffort,
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
+    routerPort: readTcpPort(data.routerPort),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
@@ -1264,7 +1265,11 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
-  const lockOwned = heldLockFd !== null;
+  return loadSessionFile(SESSION_FILE);
+}
+
+function loadSessionFile(filePath: string): Session | null {
+  const lockOwned = heldLockHandle !== null;
   let descriptor: number | null = null;
   try {
     if (lockOwned) assertOnboardLockOwned();
@@ -1272,22 +1277,22 @@ export function loadSession(): Session | null {
     if (lockOwned) {
       try {
         descriptor = fs.openSync(
-          SESSION_FILE,
-          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+          filePath,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
-          assertOnboardLockOwned();
+          if (lockOwned) assertOnboardLockOwned();
           return null;
         }
         throw error;
       }
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
       contents = String(fs.readFileSync(descriptor, "utf-8"));
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
     } else {
-      if (!fs.existsSync(SESSION_FILE)) return null;
-      contents = fs.readFileSync(SESSION_FILE, "utf-8");
+      if (!fs.existsSync(filePath)) return null;
+      contents = fs.readFileSync(filePath, "utf-8");
     }
     const parsed = JSON.parse(contents);
     const normalized = normalizeSession(parsed);
@@ -1307,6 +1312,102 @@ export function loadSession(): Session | null {
   }
 }
 
+function rebuildSessionFile(sandboxName: string): string {
+  return path.join(SESSION_DIR, retainedRebuildSessionFileName(sandboxName));
+}
+
+function loadRetainedRebuildSession(sandboxName: string): Session | null {
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  const value = readRetainedRebuildSession(SESSION_DIR, sandboxName);
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  if (value === null) return null;
+  const retained = normalizeSession(value);
+  if (!retained) {
+    throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
+  }
+  return retained;
+}
+
+/** Read the target's recovery before preflight acquires the onboarding lock. */
+export function loadRebuildSession(sandboxName: string): Session | null {
+  const current = loadSession();
+  return current?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName
+    ? current
+    : (loadRetainedRebuildSession(sandboxName) ?? current);
+}
+
+function moveSessionFile(source: string, target: string): void {
+  assertOnboardLockOwned();
+  const descriptor = fs.openSync(
+    source,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    assertSessionFileIdentity(descriptor, source);
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    assertOnboardLockOwned();
+    fs.renameSync(source, target);
+    assertOnboardLockOwned();
+    assertSessionFileIdentity(descriptor, target);
+    fs.fsyncSync(heldLockHandle!.directoryDescriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Select one rebuild's session without discarding another sandbox's recovery. */
+export function selectRebuildSession(sandboxName: string): void {
+  assertOnboardLockOwned();
+  const targetFile = rebuildSessionFile(sandboxName);
+  const current = loadSession();
+  if (current?.externalComponentActivation) {
+    throw new Error(
+      "Cannot select rebuild recovery while external component activation is incomplete. " +
+        "Preserve the current session, sandbox registry, and sandbox.",
+    );
+  }
+  if (!current && fs.existsSync(SESSION_FILE)) {
+    throw new Error("Cannot select rebuild recovery: the current onboarding session is invalid.");
+  }
+  const retained = loadRetainedRebuildSession(sandboxName);
+  const transaction = current?.checkpoint?.sandboxRecreate;
+  if (retained && !transaction && current?.resumable) {
+    throw new Error(
+      `Cannot select rebuild recovery for '${sandboxName}': ` +
+        `onboarding for ${JSON.stringify(current.sandboxName ?? "(unnamed)")} is unfinished. ` +
+        "Resume or clear that onboarding session before retrying.",
+    );
+  }
+  if (transaction?.sandboxName === sandboxName) {
+    if (retained) {
+      throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
+    }
+    return;
+  }
+  if (transaction) {
+    const sourceFile = rebuildSessionFile(transaction.sandboxName);
+    // Refuse an existing destination, including a dangling symlink.
+    try {
+      fs.lstatSync(sourceFile);
+      throw new Error(
+        `Sandbox '${transaction.sandboxName}' already has retained rebuild recovery.`,
+      );
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    // Renaming leaves one owner. If the process stops before selection finishes,
+    // the next rebuild can recover this session from its sandbox's file.
+    moveSessionFile(SESSION_FILE, sourceFile);
+  }
+  if (retained) {
+    moveSessionFile(targetFile, SESSION_FILE);
+  } else if (transaction || !current) {
+    // Preflight has not started onboarding or recorded a rebuild transaction yet.
+    saveSession({ ...createSession({ sandboxName }), resumable: false });
+  }
+}
+
 function serializeSessionForDisk(session: Session): Record<string, unknown> {
   const { externalComponentActivation, ...persistentSession } = session;
   return {
@@ -1322,9 +1423,14 @@ function serializeSessionForDisk(session: Session): Record<string, unknown> {
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
-  const lockOwned = heldLockFd !== null;
+  const lockOwned = heldLockHandle !== null;
   if (lockOwned) assertOnboardLockOwned();
-  const directory = lockOwned ? heldLockDirectory! : openPinnedSessionDirectory();
+  const directory = lockOwned
+    ? {
+        descriptor: heldLockHandle!.directoryDescriptor,
+        stat: heldLockHandle!.directoryStat,
+      }
+    : openPinnedSessionDirectory();
   const tmpFile = path.join(
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
@@ -1373,7 +1479,7 @@ export function saveSession(session: Session): Session {
 }
 
 export function clearSession(): void {
-  const lockOwned = heldLockFd !== null;
+  const lockOwned = heldLockHandle !== null;
   let descriptor: number | null = null;
   try {
     if (lockOwned) {
@@ -1417,129 +1523,50 @@ export function clearSession(): void {
 
 // ── Locking ──────────────────────────────────────────────────────
 
-function parseLockFile(contents: string): LockInfo | null {
-  try {
-    return parseLockInfo(JSON.parse(contents));
-  } catch {
-    return null;
-  }
-}
-
-interface LockFileSnapshot {
-  info: LockInfo | null;
-  inode: bigint;
-  mtimeMs: number;
-}
-
-function readLockFileSnapshot(): LockFileSnapshot {
-  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  try {
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (!stat.isFile()) {
-      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
-    }
-    return {
-      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
-      inode: stat.ino,
-      mtimeMs: Number(stat.mtimeMs),
-    };
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-const MALFORMED_STALE_SECONDS = 30;
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-function readProcProcessStartMs(pid: number): number | null {
-  try {
-    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const btimeLine = fs
-      .readFileSync("/proc/stat", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("btime "));
-    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
-    const closeParen = statText.lastIndexOf(")");
-    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
-
-    const fieldsAfterComm = statText
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = Number(fieldsAfterComm[19]);
-    if (!Number.isFinite(startTicks)) return null;
-
-    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
-    // stable value on supported NemoClaw Linux hosts.
-    const clockTicksPerSecond = 100;
-    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
-  } catch {
-    return null;
-  }
-}
-
-function lockHolderStillMatches(lock: LockInfo): boolean {
-  if (!isProcessAlive(lock.pid)) return false;
-  if (lock.pid === process.pid) return true;
-
-  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
-  if (!Number.isFinite(lockStartedMs)) return true;
-
-  const processStartMs = readProcProcessStartMs(lock.pid);
-  if (processStartMs === null) return true;
-
-  // The original lock holder must have started before it wrote the lock. If
-  // the currently-live PID started after the lock timestamp, the PID was reused
-  // and the lock is stale even though kill(pid, 0) succeeds.
-  return processStartMs <= lockStartedMs + 1000;
-}
-
-// File descriptor we hold across the lifetime of an acquired lock. On
-// release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
-// still resolves to the file we created — closing the residual TOCTOU
-// window in the inode-only check by tying ownership to a live
-// descriptor rather than a value re-read from disk. See #1281.
-let heldLockFd: number | null = null;
-let heldLockDirectory: PinnedSessionDirectory | null = null;
+let heldLockHandle: OnboardStateLockHandle | null = null;
 
 export function assertOnboardLockOwned(): void {
-  if (heldLockFd === null || heldLockDirectory === null) {
+  if (heldLockHandle === null) {
     throw new Error("This process does not own the NemoClaw onboarding lock.");
   }
-  revalidatePinnedSessionDirectory(heldLockDirectory);
-  assertSessionDirectoryHasNoSymlinks();
-  const descriptorStat = fs.fstatSync(heldLockFd);
-  const pathStat = fs.lstatSync(LOCK_FILE);
-  if (
-    !descriptorStat.isFile() ||
-    descriptorStat.nlink !== 1 ||
-    pathStat.isSymbolicLink() ||
-    !pathStat.isFile() ||
-    pathStat.nlink !== 1 ||
-    descriptorStat.dev !== pathStat.dev ||
-    descriptorStat.ino !== pathStat.ino
-  ) {
-    throw new Error("NemoClaw onboarding lock ownership changed during the operation.");
-  }
+  assertOnboardStateLockOwned(heldLockHandle);
+}
+
+const ONBOARD_LOCK_CONTENTION_LEAD =
+  "Cannot update onboarding recovery because the onboarding lock is unavailable.";
+
+type OnboardLockContentionDetails = Pick<
+  OnboardLockResult,
+  "stale" | "holderPid" | "holderStartedAt" | "holderCommand"
+>;
+
+/**
+ * Format recorded ownership details without assuming the identity was verified.
+ *
+ * The caller's lead sentence stays first so the original internal wording is
+ * preserved, then the recorded holder details and a remediation step follow.
+ */
+function onboardLockContentionGuidance(
+  lock: OnboardLockContentionDetails,
+  lead: string = ONBOARD_LOCK_CONTENTION_LEAD,
+): string {
+  const holderDetails = [
+    lock.holderPid ? `Recorded lock PID: ${lock.holderPid}.` : "",
+    lock.holderStartedAt ? `Started: ${lock.holderStartedAt}.` : "",
+    lock.holderCommand ? `Recorded lock command: ${lock.holderCommand}.` : "",
+  ].filter((detail) => detail.length > 0);
+  const remediation = lock.stale
+    ? "Wait briefly, then rerun to retry lock acquisition."
+    : "Wait for any active onboarding run to finish, then rerun.";
+  return [lead, ...holderDetails, remediation].join(" ");
 }
 
 function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
-  const managesOnboardLock = heldLockFd === null;
+  const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
-      throw new Error(
-        "Cannot update onboarding recovery while another onboarding run owns the lock.",
-      );
+      throw new Error(onboardLockContentionGuidance(lock));
     }
   }
   try {
@@ -1554,228 +1581,26 @@ function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
 
 /** Report whether this process holds the exclusive onboarding writer lock. */
 export function isOnboardLockHeldByCurrentProcess(): boolean {
-  if (heldLockFd === null) return false;
-  try {
-    return (
-      fs.fstatSync(heldLockFd, { bigint: true }).ino ===
-      fs.statSync(LOCK_FILE, { bigint: true }).ino
-    );
-  } catch {
-    return false;
-  }
+  return heldLockHandle !== null && isOnboardStateLockOwned(heldLockHandle);
 }
 
-export function acquireOnboardLock(command: string | null = null): LockResult {
-  ensureSessionDir();
-  const payload = JSON.stringify(
-    {
-      pid: process.pid,
-      startedAt: new Date().toISOString(),
-      command: typeof command === "string" ? command : null,
-    },
-    null,
-    2,
+export function acquireOnboardLock(command: string | null = null): OnboardLockResult {
+  const acquisition = acquireOnboardStateLock(
+    SESSION_DIR,
+    process.env.HOME || "/tmp",
+    command,
+    LEGACY_STATE_MIGRATION_LOCK,
   );
-
-  // The retry budget here used to be 2, which is the bare minimum needed
-  // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
-  // below it can take a few additional spins under contention because
-  // multiple concurrent stale-cleaners can race and lose to each other
-  // before one reclaims, so give the loop a little more room.
-  // See issue #1281.
-  const MAX_ATTEMPTS = 5;
-
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    let fd: number;
-    try {
-      // openSync(..., "wx", mode) is the atomic create-or-fail
-      // primitive. We hold the resulting fd at module scope so
-      // releaseOnboardLock() can later confirm the on-disk path still
-      // resolves to the same file we created (fstat ino vs stat ino).
-      fd = fs.openSync(LOCK_FILE, "wx", 0o600);
-    } catch (error) {
-      if (!isErrnoException(error) || error.code !== "EEXIST") {
-        throw error;
-      }
-
-      // Capture both the parsed lock and the inode so we can verify the
-      // file we're about to unlink is STILL the same stale file we read.
-      // Without the inode check, two concurrent processes can both read
-      // the same stale lock, and the slower one will unlink the fresh
-      // lock the faster one just claimed, breaking mutual exclusion.
-      // See issue #1281.
-      let snapshot: LockFileSnapshot;
-      try {
-        snapshot = readLockFileSnapshot();
-      } catch (readError) {
-        if (isErrnoException(readError) && readError.code === "ENOENT") {
-          continue;
-        }
-        throw readError;
-      }
-      const { info: existing, inode: staleInode } = snapshot;
-      if (!existing) {
-        // Malformed lock file. If the file is very recent (<30 s), a
-        // concurrent process may be mid-write — leave it and retry.
-        // Otherwise the file is stale debris from a crash between
-        // openSync("wx") and writeSync() — remove it so subsequent
-        // onboard runs are not permanently blocked (#2765).
-        const ageMs = Date.now() - snapshot.mtimeMs;
-        if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
-          unlinkIfInodeMatches(LOCK_FILE, staleInode);
-        }
-        continue;
-      }
-      if (lockHolderStillMatches(existing)) {
-        return {
-          acquired: false,
-          lockFile: LOCK_FILE,
-          stale: false,
-          holderPid: existing.pid,
-          holderStartedAt: existing.startedAt,
-          holderCommand: existing.command,
-        };
-      }
-
-      // Stale: unlink ONLY if the file on disk is still the same inode
-      // we just read. If a concurrent process already cleaned up and
-      // claimed the lock, the inode will have changed and we'll fall
-      // through to the next iteration where openSync(wx) will either
-      // succeed (we win) or fail EEXIST against the new holder (and we
-      // re-read it).
-      unlinkIfInodeMatches(LOCK_FILE, staleInode);
-      continue;
-    }
-
-    // Atomic create succeeded — write the payload and keep the fd open
-    // for the lifetime of the lock so releaseOnboardLock() can verify
-    // ownership via the live descriptor.
-    try {
-      fs.writeSync(fd, payload);
-    } catch (writeError) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        /* ignore */
-      }
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch {
-        /* ignore */
-      }
-      throw writeError;
-    }
-    heldLockFd = fd;
-    try {
-      heldLockDirectory = openPinnedSessionDirectory();
-      assertOnboardLockOwned();
-      // Legacy-port migration holds its lock before checking every onboard
-      // writer lock. Recheck here after atomically claiming onboard.lock so
-      // either the writer or the migrator wins, never both.
-      if (fs.existsSync(LEGACY_STATE_MIGRATION_LOCK)) {
-        releaseOnboardLock();
-        return { acquired: false, lockFile: LOCK_FILE, stale: false };
-      }
-    } catch (error) {
-      heldLockFd = null;
-      if (heldLockDirectory !== null) fs.closeSync(heldLockDirectory.descriptor);
-      heldLockDirectory = null;
-      fs.closeSync(fd);
-      throw error;
-    }
-    return { acquired: true, lockFile: LOCK_FILE, stale: false };
-  }
-
-  return { acquired: false, lockFile: LOCK_FILE, stale: true };
-}
-
-/**
- * Unlink LOCK_FILE only if its current inode equals `expectedInode`.
- * The dual stat-then-unlink is the only portable POSIX primitive Node
- * exposes for this — there's no atomic "unlink-if-inode" syscall — so
- * a sufficiently unlucky race can still slip through. The window is
- * orders of magnitude smaller than the unconditional unlink it
- * replaces, and the outer loop will detect a wrong unlink on its next
- * `writeFileSync(wx)` attempt because either we re-create the file
- * or we observe the new lock with a different inode.
- */
-function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): void {
-  if (expectedInode === null) {
-    return;
-  }
-  try {
-    const stat = fs.statSync(filePath, { bigint: true });
-    if (stat.ino !== expectedInode) {
-      // Someone else replaced the file. Leave it alone.
-      return;
-    }
-  } catch (statError) {
-    if (isErrnoException(statError) && statError.code === "ENOENT") {
-      return;
-    }
-    throw statError;
-  }
-  try {
-    fs.unlinkSync(filePath);
-  } catch (unlinkError) {
-    if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
-      throw unlinkError;
-    }
-  }
+  if (acquisition.handle) heldLockHandle = acquisition.handle;
+  const { handle: _handle, ...result } = acquisition;
+  return result;
 }
 
 export function releaseOnboardLock(): void {
-  // Preferred path: we hold the fd from a successful acquireOnboardLock.
-  // Verify the on-disk path still resolves to the same file (fstat ino
-  // == stat ino) before unlinking. If they disagree, another process
-  // has already replaced the lock and we must NOT touch their file.
-  if (heldLockFd !== null) {
-    const fd = heldLockFd;
-    const directory = heldLockDirectory;
-    heldLockFd = null;
-    heldLockDirectory = null;
-    try {
-      const fdStat = fs.fstatSync(fd, { bigint: true });
-      let pathInode: bigint | null = null;
-      try {
-        const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
-        pathInode = pathStat.ino;
-      } catch (error) {
-        if (!(isErrnoException(error) && error.code === "ENOENT")) {
-          // Unexpected — fall through to closing the fd.
-        }
-      }
-      if (pathInode !== null && pathInode === fdStat.ino) {
-        try {
-          fs.unlinkSync(LOCK_FILE);
-        } catch (unlinkError) {
-          if (!(isErrnoException(unlinkError) && unlinkError.code === "ENOENT")) {
-            // Best effort — surfacing this would mask the real error.
-          }
-        }
-      }
-    } catch {
-      // fstat can fail if the fd was already closed somehow; nothing
-      // safe to do beyond closing it below.
-    } finally {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // ignore
-      }
-      if (directory !== null) {
-        try {
-          fs.closeSync(directory.descriptor);
-        } catch {
-          // ignore
-        }
-      }
-    }
-    return;
-  }
-
-  // A PID match does not prove ownership across hosts or PID namespaces.
-  // Without the retained descriptor, this process has no cleanup authority.
+  if (heldLockHandle === null) return;
+  const handle = heldLockHandle;
+  heldLockHandle = null;
+  releaseOnboardStateLock(handle);
 }
 
 // ── Step management ──────────────────────────────────────────────
@@ -1907,6 +1732,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     updates.routerPid > 0
   ) {
     safe.routerPid = updates.routerPid;
+  }
+  if (
+    typeof updates.routerPort === "number" &&
+    Number.isInteger(updates.routerPort) &&
+    updates.routerPort > 0 &&
+    updates.routerPort <= 65535
+  ) {
+    safe.routerPort = updates.routerPort;
   }
   if (typeof updates.routerCredentialHash === "string") {
     safe.routerCredentialHash = updates.routerCredentialHash;
@@ -2319,7 +2152,7 @@ export function compareAndSwapSession(
   mutator: (session: Session) => Session | void,
   command = "nemoclaw session compare-and-swap",
 ): CompareAndSwapSessionResult {
-  const managesOnboardLock = heldLockFd === null;
+  const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) return "busy";
@@ -2634,12 +2467,15 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
   if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
     throw new Error("DGX Station Express receipt generation is invalid.");
   }
-  const ownsOnboardLock = heldLockFd === null;
+  const ownsOnboardLock = heldLockHandle === null;
   if (ownsOnboardLock) {
     const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
     if (!lock.acquired) {
       throw new Error(
-        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+        onboardLockContentionGuidance(
+          lock,
+          "Cannot reconcile DGX Station Express receipt retirement because the onboarding lock is unavailable.",
+        ),
       );
     }
   }

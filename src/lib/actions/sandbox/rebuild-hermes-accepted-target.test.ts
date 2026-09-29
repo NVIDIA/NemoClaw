@@ -299,6 +299,10 @@ describe("Hermes accepted replacement recovery", () => {
         backupPath: recoveryBackupPath,
         timestamp: "2026-08-28T00-00-00-000Z",
         rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+        rebuildMcpHandoff: {
+          entries: [],
+          runtimeSelection: { gatewayName: gatewayAuthority.gatewayName, workspace: "default" },
+        },
       },
     });
 
@@ -306,11 +310,7 @@ describe("Hermes accepted replacement recovery", () => {
       rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(phaseMocks.observeMcpStateForRebuild).toHaveBeenCalledWith(
-      { name: "alpha" },
-      undefined,
-      false,
-    );
+    expect(phaseMocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
   });
 
   it("retries intentional-stop cleanup before accepting recovered replacement", async () => {

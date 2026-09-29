@@ -3,8 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   openClawHasConfiguredTelegram,
+  telegramArtifactContainsCredential,
   type OpenClawTelegramState,
 } from "../live/channels-add-remove-helpers.ts";
 
@@ -41,5 +43,36 @@ describe("channels-add-remove Telegram configuration predicate", () => {
         accountPresent: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("Telegram artifact credential detection", () => {
+  const token = "test-fake-telegram-token-add-remove-e2e";
+
+  it("accepts retained probe code that contains a placeholder regex without a credential", () => {
+    const artifacts = new ArtifactSink("/tmp/unused-telegram-artifact-test", [token]);
+    const evidence = artifacts.redact(
+      JSON.stringify({
+        command: [
+          "python3",
+          "-c",
+          "re.fullmatch(r'openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN', runtime_token)",
+        ],
+        stdout: '{"runtimeCredentialState":"revision-scoped"}',
+      }),
+    );
+    expect(telegramArtifactContainsCredential(evidence, token)).toBe(false);
+  });
+
+  it.each([
+    token,
+    "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    "openshell:resolve:env:v4242_TELEGRAM_BOT_TOKEN",
+    `openshell:resolve:env:s${"a".repeat(64)}_TELEGRAM_BOT_TOKEN`,
+    "OPENSHELL-RESOLVE-ENV-v7_TELEGRAM_BOT_TOKEN",
+  ])("detects credential material in retained artifacts [case %#]", (credential) => {
+    expect(telegramArtifactContainsCredential(JSON.stringify({ stdout: credential }), token)).toBe(
+      true,
+    );
   });
 });

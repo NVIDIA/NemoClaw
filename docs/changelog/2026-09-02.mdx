@@ -30,7 +30,6 @@ It also improves local inference selection, Hermes recovery, interrupted-install
   Hermes Langfuse Cloud credentials use an endpoint-bound OpenShell profile for the exact public and secret key names instead of relying on destination-independent placeholder rewriting.
   Related changes: [PR #10759](https://github.com/NVIDIA/NemoClaw/pull/10759) and [PR #10844](https://github.com/NVIDIA/NemoClaw/pull/10844).
 - An interrupted install or upgrade now reports that the compiled CLI is incomplete and directs you to rerun the installer, which attempts sandbox recovery.
-  Ordinary onboarding ignores an abandoned Portable configuration directory when no lifecycle authority exists, while protected Portable state remains fail-closed with corrective guidance.
   Related changes: [PR #10444](https://github.com/NVIDIA/NemoClaw/pull/10444) and [PR #10743](https://github.com/NVIDIA/NemoClaw/pull/10743).
 - A bare sandbox action now reports the required `nemoclaw <name> <action>` grammar without exposing arbitrary input.
   `nemoclaw <sandbox> exec` runs without a pseudo-terminal by default so formatted output and stderr redirection behave predictably; pass `--tty` for an interactive terminal.

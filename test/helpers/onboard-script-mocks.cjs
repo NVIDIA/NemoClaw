@@ -7,6 +7,53 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+function installForwardAdapterReachabilityFixture(forwardCli, isReachable) {
+  const originalCreate = forwardCli.createCliOpenShellForwardAdapter;
+  if (typeof originalCreate !== "function") {
+    throw new Error("typed OpenShell forward adapter fixture could not find its factory");
+  }
+  forwardCli.createCliOpenShellForwardAdapter = (deps) =>
+    originalCreate({
+      ...deps,
+      inspect:
+        deps.inspect ??
+        (async (_forward, expectedPid) =>
+          isReachable() ? { state: "owned", pid: expectedPid ?? 42_101 } : { state: "unbound" }),
+      inspectLegacy:
+        deps.inspectLegacy ??
+        (async (_forward, expectedPid) =>
+          isReachable() ? { state: "owned", pid: expectedPid } : { state: "not_owned" }),
+      probePort: deps.probePort ?? (async () => ({ state: isReachable() ? "bound" : "unbound" })),
+      run:
+        deps.run ??
+        (async () => ({
+          status: 0,
+          stdout: "",
+          stderr: "No active forwards.\n",
+        })),
+    });
+}
+
+function installForwardRuntimeReachabilityFixture(forwardRuntime, forwardCli, isReachable) {
+  forwardRuntime.createOpenShellForwardAdapterForAuthority = (authority, options = {}) =>
+    forwardCli.createCliOpenShellForwardAdapter({
+      executable: options.executable ?? process.execPath,
+      environment: options.environment ?? process.env,
+      gatewayEndpoint: authority.gatewayEndpoint,
+      runtimeSelection: {
+        gatewayName: authority.gatewayName,
+        workspace: authority.workspace,
+        ...(authority.localTlsDir ? { localTlsDir: authority.localTlsDir } : {}),
+      },
+      inspect: async (_forward, expectedPid) =>
+        isReachable() ? { state: "owned", pid: expectedPid ?? 42_101 } : { state: "unbound" },
+      inspectLegacy: async (_forward, expectedPid) =>
+        isReachable() ? { state: "owned", pid: expectedPid } : { state: "not_owned" },
+      probePort: async () => ({ state: isReachable() ? "bound" : "unbound" }),
+      run: async () => ({ status: 0, stdout: "", stderr: "No active forwards.\n" }),
+    });
+}
+
 if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
   let detachedForwardReady = false;
   const childProcess = require("node:child_process");
@@ -35,22 +82,10 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
       return loaded;
     }
     if (
-      resolved.includes(
-        `${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`,
-      ) &&
-      typeof loaded?.probeLocalForwardListener === "function"
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-cli.`) &&
+      typeof loaded?.createCliOpenShellForwardAdapter === "function"
     ) {
-      loaded.probeLocalForwardListener = () => {
-        const ready = detachedForwardReady;
-        detachedForwardReady = false;
-        return ready;
-      };
-    }
-    if (
-      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-service.`) &&
-      typeof loaded?.isForwardServiceListenerOwner === "function"
-    ) {
-      loaded.isForwardServiceListenerOwner = () => true;
+      installForwardAdapterReachabilityFixture(loaded, () => detachedForwardReady);
     }
     return loaded;
   };
@@ -93,15 +128,16 @@ function registerSourceRequire() {
 }
 
 function installForwardServiceReachabilityFixture(initiallyReachable = false) {
-  const listener = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
+  mockStandaloneGatewayTeardownAuthority();
+  const forwardCli = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-cli.ts"),
   );
-  const forwardService = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service.ts"),
+  const forwardRuntime = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-runtime.ts"),
   );
   let reachable = initiallyReachable;
-  listener.probeLocalForwardListener = () => reachable;
-  forwardService.isForwardServiceListenerOwner = () => reachable;
+  installForwardAdapterReachabilityFixture(forwardCli, () => reachable);
+  installForwardRuntimeReachabilityFixture(forwardRuntime, forwardCli, () => reachable);
   return {
     recordSpawn(args) {
       const argv = Array.isArray(args[1]) ? args[1] : [];
@@ -1189,7 +1225,7 @@ function mockStandaloneGatewayTeardownAuthority() {
   const authority = require(
     path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
   );
-  authority.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
+  const standaloneOwner = ({ gatewayName, gatewayPort }) => ({
     gatewayName,
     gatewayPort,
     mode: "nemoclaw-managed",
@@ -1199,17 +1235,43 @@ function mockStandaloneGatewayTeardownAuthority() {
     supervisor: null,
     requiredCapabilities: [],
   });
+  authority.resolveGatewayTeardownAuthority = standaloneOwner;
+  authority.resolveGatewayForwardAuthority = standaloneOwner;
+  const gatewayHostRuntime = require(
+    path.resolve(__dirname, "../../src/lib/onboard/gateway-host-runtime.ts"),
+  );
+  if (gatewayHostRuntime.__nemoclawForwardAuthorityFixture !== true) {
+    const createGatewayHostRuntime = gatewayHostRuntime.createGatewayHostRuntime;
+    gatewayHostRuntime.createGatewayHostRuntime = (deps) => ({
+      ...createGatewayHostRuntime(deps),
+      getGatewayForwardRuntimeAuthority: () => ({
+        gatewayEndpoint: `https://127.0.0.1:${String(deps.gatewayPort())}`,
+      }),
+    });
+    Object.defineProperty(gatewayHostRuntime, "__nemoclawForwardAuthorityFixture", {
+      value: true,
+    });
+  }
 }
 
 function mockManagedStateVolumeOnboardLifecycle() {
   const managedWorkloadOnboard = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
   );
+  const managedStartupRootApply = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/provider-root-apply.ts"),
+  );
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
     roots,
     materializeSandboxCreatePlan: (input, materialize) => materialize(input),
     commit: () => {},
   });
+  managedStartupRootApply.applyProviderManagedStartupRootRequest = () => null;
+  managedStartupRootApply.finalizeProviderManagedStartupSharedState = ({ supervisorReady }) => ({
+    supervisorReady,
+    failure: null,
+  });
+  managedStartupRootApply.releaseProviderManagedStartupHold = () => {};
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {
@@ -1231,10 +1293,11 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.includes("openshell.ai/sandbox-id")
     ) {
-      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
-      return state.finalCommitReleased || state.legacyRecoverySandboxId
-        ? row
-        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+      const containerId =
+        state.finalCommitReleased || state.legacyRecoverySandboxId
+          ? ONBOARD_SANDBOX_NEW_CONTAINER_ID
+          : ONBOARD_SANDBOX_OLD_CONTAINER_ID;
+      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
@@ -1311,17 +1374,6 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   }
 }
 
-function mockFreshOpenClawPluginDiscovery() {
-  const pluginRestore = require(
-    path.resolve(__dirname, "../../src/lib/state/openclaw-plugin-restore.ts"),
-  );
-  pluginRestore.discoverFreshOpenClawImagePluginInstalls = () => ({
-    ok: true,
-    extensionDirs: [],
-    pluginInstalls: [],
-  });
-}
-
 function mockManagedImageCatalog() {
   const catalog = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
@@ -1361,163 +1413,8 @@ function mockManagedImageCatalog() {
     );
 }
 
-function mockManagedImageBootstrap() {
-  const crypto = require("node:crypto");
-  const adapter = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/adapter.ts"),
-  );
-  const bootstrap = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker.ts"),
-  );
-  const authorityStore = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
-  );
-
-  authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
-    async recordPreparedAuthority(authority) {
-      return {
-        schemaVersion: authority.schemaVersion,
-        sandbox: authority.sandbox,
-        bootstrapIdentity: authority.bootstrapIdentity,
-        authorityFingerprint: authority.authorityFingerprint,
-        recordId: "test-managed-onboard-authority",
-        recordedAt: "2026-08-04T12:00:00.000Z",
-      };
-    },
-  });
-  bootstrap.createDockerManagedBootstrapAdapter = () => {
-    const runtimeId = "a".repeat(64);
-    const replacementRuntimeId = "c".repeat(64);
-    const runtimeImageContentId = `sha256:${"b".repeat(64)}`;
-    const originalSpecCanonicalJson = '{"runtime":"original"}\n';
-    const preparedSpecCanonicalJson = '{"runtime":"prepared"}\n';
-    const replacementSpecCanonicalJson = '{"runtime":"replacement"}\n';
-    const digest = (value) => crypto.createHash("sha256").update(value, "utf8").digest("hex");
-    const originalSpecHash = digest(originalSpecCanonicalJson);
-    const preparedSpecHash = digest(preparedSpecCanonicalJson);
-    const replacementSpecHash = digest(replacementSpecCanonicalJson);
-    return {
-      async recoverUnfinishedTransactions() {
-        return { receipts: [], failures: [] };
-      },
-      async createHeldWorkload(input) {
-        const bootstrapIdentity = input.bootstrapIdentity;
-        const heldWorkloadArgv = adapter.renderManagedBootstrapHeldCommand(
-          input.request,
-          bootstrapIdentity,
-          input.plan.intendedWorkloadArgv,
-        );
-        const createReceipt = await input.launch({ heldWorkloadArgv, bootstrapIdentity });
-        return {
-          schemaVersion: 1,
-          sandbox: createReceipt.sandbox,
-          bootstrapIdentity,
-          heldWorkloadArgv,
-          intendedWorkloadArgv: input.plan.intendedWorkloadArgv,
-          plan: input.plan,
-          createReceipt,
-        };
-      },
-      async cleanupIncompleteCreate({ createReceipt, bootstrapIdentity }) {
-        return {
-          schemaVersion: 1,
-          sandbox: createReceipt.sandbox,
-          bootstrapIdentity,
-          outcome: "rolled-back",
-          restoredRuntimeId: null,
-          restoredSpecHash: null,
-          heldWorkloadRemoved: true,
-          alreadyRolledBack: false,
-          finalizedAt: "2026-08-04T12:00:00.000Z",
-        };
-      },
-      async discoverHeldWorkload(input) {
-        return { sandbox: input.sandbox, runtimeId, bootstrapIdentity: input.bootstrapIdentity };
-      },
-      async inspectHeldWorkload({ handle, discovered }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          runtimeId: discovered.runtimeId,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          specHash: originalSpecHash,
-          specCanonicalJson: originalSpecCanonicalJson,
-          agentIdentity: handle.plan.agentIdentity,
-          supervisorArgv: handle.plan.expectedSupervisorArgv,
-          heldWorkloadArgv: handle.heldWorkloadArgv,
-          metadata: handle.plan.metadata,
-        };
-      },
-      async prepareBootstrapReplacement({ handle, snapshot, request }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          originalRuntimeId: snapshot.runtimeId,
-          preparedRuntimeId: replacementRuntimeId,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          originalSpecHash,
-          preparedSpecHash,
-          preparedSpecCanonicalJson,
-          expectedActivatedSpecHash: replacementSpecHash,
-          expectedActivatedSpecCanonicalJson: replacementSpecCanonicalJson,
-          profileFingerprint: request.profileFingerprint,
-          rollbackAuthority: "test-managed-onboard-rollback-authority",
-        };
-      },
-      async activateBootstrapReplacement({ handle, prepared }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          originalRuntimeId: prepared.originalRuntimeId,
-          replacementRuntimeId: prepared.preparedRuntimeId,
-          image: prepared.image,
-          runtimeImageContentId: prepared.runtimeImageContentId,
-          originalSpecHash: prepared.originalSpecHash,
-          replacementSpecHash,
-          replacementSpecCanonicalJson,
-          profileFingerprint: prepared.profileFingerprint,
-        };
-      },
-      async awaitBootstrap({ handle, replacement }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          runtimeId: replacement.replacementRuntimeId,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          originalSpecHash,
-          replacementSpecHash,
-          profileFingerprint: handle.plan.profile.fingerprint,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          transactionPending: true,
-          completedAt: "2026-07-29T12:01:00.000Z",
-        };
-      },
-      async finalizeBootstrap({ outcome, handle, snapshot }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          outcome: outcome === "commit" ? "committed" : "rolled-back",
-          restoredRuntimeId: outcome === "rollback" ? (snapshot?.runtimeId ?? null) : null,
-          restoredSpecHash: outcome === "rollback" ? (snapshot?.specHash ?? null) : null,
-          heldWorkloadRemoved: false,
-          alreadyRolledBack: false,
-          finalizedAt: "2026-07-29T12:02:00.000Z",
-        };
-      },
-    };
-  };
-}
-
 if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
   mockManagedImageCatalog();
-  mockManagedImageBootstrap();
 }
 
 module.exports = {
@@ -1531,7 +1428,6 @@ module.exports = {
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
-  mockFreshOpenClawPluginDiscovery,
   createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,

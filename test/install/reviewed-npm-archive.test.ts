@@ -11,6 +11,7 @@ import {
   type ReviewedNpmCacheRequest,
   removeReviewedNpmArchive,
   resolveReviewedNpmArchivePath,
+  singleNpmPackResult,
   verifyReviewedNpmCache,
   verifyReviewedNpmLockPackages,
   verifyReviewedNpmMetadata,
@@ -86,7 +87,11 @@ function writeSyntheticLock(
 
 function cachedArchiveRunner(
   calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }>,
-  mutation?: Readonly<{ filename?: string; integrity?: string; packageSpec: string }>,
+  mutation?: Readonly<{
+    filename?: string;
+    integrity?: string;
+    packageSpec: string;
+  }>,
 ) {
   return (args: readonly string[], reviewed: ReviewedNpmArchiveRequest): string => {
     calls.push({ args: [...args], request: reviewed });
@@ -101,7 +106,11 @@ function cachedArchiveRunner(
 function cachedArchivePackResponse(
   args: readonly string[],
   reviewed: ReviewedNpmArchiveRequest,
-  mutation?: Readonly<{ filename?: string; integrity?: string; packageSpec: string }>,
+  mutation?: Readonly<{
+    filename?: string;
+    integrity?: string;
+    packageSpec: string;
+  }>,
 ): string {
   const destination = args[3] as string;
   const filename =
@@ -127,6 +136,20 @@ afterEach(() => {
 });
 
 describe("reviewed npm archive", () => {
+  it.each([
+    ["legacy array", [{ filename: "reviewed.tgz" }], { filename: "reviewed.tgz" }],
+    [
+      "npm 12 package-keyed object",
+      { reviewed: { filename: "reviewed.tgz" } },
+      { filename: "reviewed.tgz" },
+    ],
+    ["multiple results", { first: {}, second: {} }, undefined],
+    ["non-object result", "reviewed.tgz", undefined],
+    ["single non-object entry", ["reviewed.tgz"], undefined],
+  ])("normalizes %s pack JSON", (_label, value, expected) => {
+    expect(singleNpmPackResult(value)).toEqual(expected);
+  });
+
   it("verifies exact registry metadata and returns only a contained local archive", () => {
     const calls: string[][] = [];
     const archive = packReviewedNpmArchive(request(), (args, reviewed) => {
@@ -141,7 +164,10 @@ describe("reviewed npm archive", () => {
           const destination = args[3] as string;
           fs.writeFileSync(path.join(destination, "reviewed-1.2.3.tgz"), "reviewed bytes");
           return JSON.stringify([
-            { filename: "reviewed-1.2.3.tgz", integrity: reviewed.expectedIntegrity },
+            {
+              filename: "reviewed-1.2.3.tgz",
+              integrity: reviewed.expectedIntegrity,
+            },
           ]);
         })()
       );
@@ -150,12 +176,44 @@ describe("reviewed npm archive", () => {
     expect(calls).toEqual([
       ["view", PACKAGE_SPEC, "dist.integrity"],
       ["view", PACKAGE_SPEC, "dist.tarball"],
-      ["pack", TARBALL_URL, "--pack-destination", archive.rootDirectory, "--json"],
+      ["pack", PACKAGE_SPEC, "--pack-destination", archive.rootDirectory, "--json"],
     ]);
     expect(archive.archivePath).toBe(path.join(archive.rootDirectory, "reviewed-1.2.3.tgz"));
     expect(fs.existsSync(archive.archivePath)).toBe(true);
     removeReviewedNpmArchive(archive);
     expect(fs.existsSync(archive.rootDirectory)).toBe(false);
+  });
+
+  it("accepts npm 12's package-keyed pack JSON without weakening the single-result boundary", () => {
+    const archive = packReviewedNpmArchive(request(), (args, reviewed) => {
+      return args[0] === "view"
+        ? args[2] === "dist.integrity"
+          ? INTEGRITY
+          : TARBALL_URL
+        : (() => {
+            const destination = args[3] as string;
+            const filename = "reviewed-1.2.3.tgz";
+            fs.writeFileSync(path.join(destination, filename), "reviewed bytes");
+            return JSON.stringify({
+              reviewed: { filename, integrity: reviewed.expectedIntegrity },
+            });
+          })();
+    });
+
+    expect(archive.archivePath).toBe(path.join(archive.rootDirectory, "reviewed-1.2.3.tgz"));
+    removeReviewedNpmArchive(archive);
+  });
+
+  it("rejects npm 12 pack JSON containing more than one result", () => {
+    expect(() =>
+      packReviewedNpmArchive(request(), (args) => {
+        return args[0] === "view"
+          ? args[2] === "dist.integrity"
+            ? INTEGRITY
+            : TARBALL_URL
+          : JSON.stringify({ first: {}, second: {} });
+      }),
+    ).toThrow("did not report filename and integrity");
   });
 
   it.each([
@@ -217,7 +275,10 @@ describe("reviewed npm archive", () => {
   });
 
   it("re-packs every locked cache archive offline through the shared verifier", () => {
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
     const reviewed = cacheRequest();
     expect(verifyReviewedNpmCache(reviewed, cachedArchiveRunner(calls))).toEqual([
       CACHE_PACKAGE_SPEC,
@@ -257,7 +318,10 @@ describe("reviewed npm archive", () => {
         2,
       )}\n`,
     );
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
 
     expect(
       verifyReviewedNpmCache({ ...reviewed, lockfilePath }, cachedArchiveRunner(calls)),
@@ -277,14 +341,206 @@ describe("reviewed npm archive", () => {
       resolved: TARBALL_URL,
       version: "1.2.3",
     });
-    const request = { lockfilePath, registryOrigin: "https://registry.npmjs.org/" };
+    const request = {
+      lockfilePath,
+      registryOrigin: "https://registry.npmjs.org/",
+    };
 
     expect(() => verifyReviewedNpmLockPackages(request)).toThrow(
       "must not delegate to nested shrinkwrap",
     );
-    expect(verifyReviewedNpmLockPackages({ ...request, allowNestedShrinkwrap: true })).toEqual([
-      PACKAGE_SPEC,
-    ]);
+    expect(
+      verifyReviewedNpmLockPackages({
+        ...request,
+        allowNestedShrinkwrap: true,
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+  });
+
+  it("trusts only archive-owned bundled dependency subtrees", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            dependencies: { transitive: "3.0.0" },
+            inBundle: true,
+            version: "2.0.0",
+          },
+          "node_modules/@example/reviewed/node_modules/transitive": {
+            inBundle: true,
+            version: "3.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+
+    const lock = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
+    delete lock.packages["node_modules/@example/reviewed"].bundleDependencies;
+    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock)}\n`);
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow("reviewed npm lock has an unowned bundled package");
+  });
+
+  it("rejects a missing regular dependency in an authenticated bundled subtree", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "missing-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            dependencies: { missing: "3.0.0" },
+            inBundle: true,
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow(
+      "reviewed npm lock is missing a bundled dependency: node_modules/@example/reviewed/node_modules/bundled-child: missing",
+    );
+  });
+
+  it.each([
+    ["optional", { optionalDependencies: { missing: "3.0.0" } }],
+    ["peer", { peerDependencies: { missing: "3.0.0" } }],
+    [
+      "optional-over-regular",
+      {
+        dependencies: { missing: "3.0.0" },
+        optionalDependencies: { missing: "3.0.0" },
+      },
+    ],
+  ])("allows a missing %s dependency in an authenticated bundled subtree", (_label, edge) => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "allowed-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            ...edge,
+            inBundle: true,
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+  });
+
+  it("validates root-bundled dependencies with their own registry identities", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "root-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { bundleDependencies: ["bundled-child"] },
+          "node_modules/bundled-child": {
+            dependencies: { transitive: "3.0.0" },
+            integrity: INTEGRITY,
+            inBundle: true,
+            resolved: "https://registry.npmjs.org/bundled-child/-/bundled-child-2.0.0.tgz",
+            version: "2.0.0",
+          },
+          "node_modules/transitive": {
+            integrity: INTEGRITY,
+            inBundle: true,
+            resolved: "https://registry.npmjs.org/transitive/-/transitive-3.0.0.tgz",
+            version: "3.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual(["bundled-child@2.0.0", "transitive@3.0.0"]);
+  });
+
+  it("does not exempt declared bundle entries without npm's inBundle ownership marker", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "forged-bundle-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow("must use a committed sha512 npm integrity value");
   });
 
   it("validates but does not archive an approved package without integrity", () => {
@@ -348,16 +604,25 @@ describe("reviewed npm archive", () => {
   it.each([
     {
       expected: "downloaded tarball integrity mismatch",
-      mutation: { integrity: "sha512-drift", packageSpec: CACHE_PACKAGE_TWO_SPEC },
+      mutation: {
+        integrity: "sha512-drift",
+        packageSpec: CACHE_PACKAGE_TWO_SPEC,
+      },
       name: "packed SRI drift",
     },
     {
       expected: "reported unsafe archive filename",
-      mutation: { filename: "../../cache-two.tgz", packageSpec: CACHE_PACKAGE_TWO_SPEC },
+      mutation: {
+        filename: "../../cache-two.tgz",
+        packageSpec: CACHE_PACKAGE_TWO_SPEC,
+      },
       name: "an unsafe packed filename",
     },
   ])("rejects $name in the final cache", ({ expected, mutation }) => {
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
     expect(() =>
       verifyReviewedNpmCache(cacheRequest(), cachedArchiveRunner(calls, mutation)),
     ).toThrow(expected);

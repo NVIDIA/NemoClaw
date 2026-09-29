@@ -32,6 +32,8 @@ import {
   type RebuildLiveState,
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
+  prepareRebuildStoppedAgentState,
+  restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -56,6 +58,7 @@ import {
 import {
   pinRebuildTargetGatewayForReadiness,
   prepareRebuildTargetPreflights,
+  type RebuildPreparedTarget,
 } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
@@ -68,12 +71,14 @@ import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 export { finalizePreparedRebuildImageMessagingPlan } from "./rebuild-custom-image-preflight";
 
 export interface RebuildPreflightPhaseResult {
+  stoppedSource?: NonNullable<Awaited<ReturnType<typeof prepareRebuildStoppedAgentState>>>;
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
   versionCheck: RebuildVersionCheck;
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
+  recheckMessagingConflicts: RebuildPreparedTarget["recheckMessagingConflicts"];
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;
@@ -144,6 +149,7 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
+  restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
@@ -198,9 +204,14 @@ export async function runRebuildPreflightPhase(
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const versionCheck = await runRebuildGatewayIntentPreflight({
-    checkGatewaySchema: () =>
+    checkGatewaySchema: async () =>
       isDcodeRebuildAgent(rebuildAgent) ||
-      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection),
+      (await checkRebuildGatewaySchemaPreflight(
+        sandboxName,
+        sandboxEntry,
+        bail,
+        mcpRuntimeSelection,
+      )),
     confirmIntent: () =>
       confirmRebuildIntent(
         sandboxName,
@@ -244,6 +255,8 @@ export async function runRebuildPreflightPhase(
   let retainPreparedImage = false;
   let baseImagePreflight: RebuildAgentBaseImagePreflight | null = null;
   let retainBaseImagePreflight = false;
+  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedAgentState>> = null;
+  let retainStoppedSource = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
     if (!releaseOnboardLock) return null;
@@ -286,13 +299,20 @@ export async function runRebuildPreflightPhase(
       );
       if (!liveState) return null;
       if (isDcodeRebuildAgent(rebuildAgent)) {
+        stoppedSource = await prepareRebuildStoppedAgentState(
+          expectedSandboxEntry,
+          liveState,
+          recoveryManifest !== null,
+          (name) => (name === sandboxName ? getRebuildSandboxEntryOrBail(name, bail) : null),
+        );
+        stoppedSource?.assertCurrent();
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
           preparedTarget.targetConfig.durableConfig.webSearchConfig,
           preparedTarget.targetConfig.durableConfig.toolDisclosure,
           preparedTarget.targetConfig.durableConfig.dcodeAutoApprovalMode,
-          recoveryRecreate,
+          recoveryRecreate || stoppedSource !== null,
           preparedTarget.recreateOptions.targetGatewayPort,
           {
             resolutionHint: preparedTarget.recreateOptions.baseImageResolutionHint,
@@ -300,6 +320,7 @@ export async function runRebuildPreflightPhase(
           preparedTarget.recreateOptions.runtimeSelection,
         );
         if (!imageReady) return null;
+        stoppedSource?.assertCurrent();
         if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {
           if (!dcodePreflight.preparedReplacement) return null;
           preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
@@ -326,7 +347,9 @@ export async function runRebuildPreflightPhase(
       retainDcodePreflight = true;
       retainPreparedImage = true;
       retainBaseImagePreflight = true;
+      retainStoppedSource = true;
       return {
+        ...(stoppedSource ? { stoppedSource } : {}),
         sandboxEntry: expectedSandboxEntry,
         rebuildAgent,
         versionCheck,
@@ -345,6 +368,15 @@ export async function runRebuildPreflightPhase(
       }
     }
   } finally {
+    if (stoppedSource && !retainStoppedSource) {
+      try {
+        stoppedSource.dispose();
+      } catch {
+        console.warn(
+          `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
+        );
+      }
+    }
     if (!retainDcodePreflight) dcodePreflight.cleanup();
     if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
     if (

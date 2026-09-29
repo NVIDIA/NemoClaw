@@ -22,12 +22,15 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   env?: Record<string, string>;
+  if?: string;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
   steps?: WorkflowStep[];
   "timeout-minutes"?: number;
   needs?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 };
 
 type Workflow = {
@@ -35,6 +38,8 @@ type Workflow = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
+const SANDBOX_IMAGES_WORKFLOW_PATH = ".github/workflows/sandbox-images.yaml";
+const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
@@ -43,6 +48,17 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
+] as const;
+const SHARED_ADMIN_APPROVAL_PATHS = [
+  "test/e2e/fixtures/admin-approval-connect.sh",
+  "test/e2e/fixtures/admin-approval-connect.ts",
+  "test/e2e/fixtures/admin-request-selector.ts",
+  "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+  "test/e2e/lib/issue-4462-admin-request-selector.py",
+] as const;
+const ARM64_PROOF_AUTHORITY_PATHS = [
+  "src/lib/container-gpu-proof.ts",
+  "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
 ] as const;
 
 type RunProcessResult = {
@@ -85,6 +101,14 @@ function selectorScript(): string {
   return script;
 }
 
+function hermesSelectorScript(): string {
+  const script = workflow().jobs["select-hermes-root-entrypoint"]?.steps?.find(
+    (step) => step.name === "Select Hermes root-entrypoint qualification from PR files",
+  )?.run;
+  assert(typeof script === "string", "Hermes root-entrypoint selector script is missing");
+  return script;
+}
+
 function declaredSelectionPaths(): readonly string[] {
   const script = selectorScript();
   const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
@@ -102,14 +126,17 @@ function declaredSelectionPaths(): readonly string[] {
   return paths;
 }
 
-async function selectGenericGpuLane(
+async function executeSelector(
+  script: string,
+  fixtureName: string,
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
+  filesRequestStatus = 0,
+  reportedChangedFileCount = changedFiles.length,
+  expectedStatus = filesRequestStatus,
 ) {
-  const script = selectorScript();
-
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-generic-gpu-selector-"));
+  const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
   const outputPath = join(directory, "github-output");
   const ghPath = join(binDirectory, "gh");
@@ -122,6 +149,7 @@ if [[ "\${!#}" == "repos/NVIDIA/NemoClaw/pulls/8748" ]]; then
   printf '%s' "$PR_JSON"
 else
   printf '%s' "$PR_FILES_JSON"
+  exit "$PR_FILES_EXIT"
 fi
 `,
   );
@@ -141,26 +169,168 @@ fi
         GITHUB_SHA: copiedSha,
         PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
         PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+        PR_FILES_EXIT: String(filesRequestStatus),
         PR_JSON: JSON.stringify({
           number: 8748,
           base: { sha: baseSha },
+          changed_files: reportedChangedFileCount,
           head: { sha: CANDIDATE_SHA },
         }),
       },
     );
-    assert.equal(result.status, 0, result.stderr);
-    return readFileSync(outputPath, "utf8").trim();
+    assert.equal(result.status, expectedStatus, result.stderr);
+    return expectedStatus === 0
+      ? readFileSync(outputPath, "utf8").trim()
+      : `status=${result.status}`;
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
 }
 
+function selectGenericGpuLane(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+) {
+  return executeSelector(selectorScript(), "generic-gpu", changedFiles, copiedSha, baseSha);
+}
+
+function selectHermesRootEntrypoint(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+  filesRequestStatus = 0,
+  reportedChangedFileCount = changedFiles.length,
+  expectedStatus = filesRequestStatus,
+) {
+  return executeSelector(
+    hermesSelectorScript(),
+    "hermes-root-entrypoint",
+    changedFiles,
+    copiedSha,
+    baseSha,
+    filesRequestStatus,
+    reportedChangedFileCount,
+    expectedStatus,
+  );
+}
+
 describe.concurrent("generic NVIDIA GPU PR selection", () => {
+  // source-shape-contract: security -- The copied PR workflow must run the exact Hermes root-entrypoint recovery proof while excluding unrelated image jobs
+  it("runs the Hermes root-entrypoint recovery proof for the copied PR revision", ({ expect }) => {
+    const selector = workflow().jobs["select-hermes-root-entrypoint"];
+    const caller = workflow().jobs["hermes-root-entrypoint-smoke"];
+    expect(selector).toMatchObject({
+      outputs: { selected: "${{ steps.changed.outputs.selected }}" },
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+    });
+    expect(caller).toMatchObject({
+      if: "${{ needs.select-hermes-root-entrypoint.outputs.selected == 'true' }}",
+      needs: "select-hermes-root-entrypoint",
+      uses: "./.github/workflows/sandbox-images.yaml",
+      with: { hermes_only: true },
+    });
+
+    const reusable = YAML.parse(readFileSync(SANDBOX_IMAGES_WORKFLOW_PATH, "utf8")) as {
+      on: { workflow_call: { inputs: Record<string, unknown> } };
+      jobs: Record<string, WorkflowJob>;
+    };
+    expect(reusable.on.workflow_call.inputs.hermes_only).toMatchObject({
+      default: false,
+      required: false,
+      type: "boolean",
+    });
+    expect(reusable.jobs["test-hermes-sandbox-image"]?.needs).toBe("build-hermes-sandbox-image");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
+      )?.run,
+    ).toContain("test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Upload Hermes root entrypoint smoke artifacts",
+      ),
+    ).toMatchObject({
+      if: "always()",
+      with: { path: "e2e-artifacts/live/hermes-root-entrypoint-smoke/" },
+    });
+    expect(
+      Object.fromEntries(
+        Object.entries(reusable.jobs)
+          .filter(
+            ([jobName]) =>
+              jobName !== "build-hermes-sandbox-image" && jobName !== "test-hermes-sandbox-image",
+          )
+          .map(([jobName, job]) => [jobName, job.if]),
+      ),
+    ).toEqual({
+      "build-sandbox-images": "${{ inputs.hermes_only != true }}",
+      "build-sandbox-images-arm64": "${{ inputs.hermes_only != true && inputs.run_arm64 }}",
+      "managed-image-openclaw-security": "${{ inputs.hermes_only != true }}",
+      "messaging-plan-image-boundary": "${{ inputs.hermes_only != true }}",
+      "port-override-image-contract": "${{ inputs.hermes_only != true }}",
+    });
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove a Hermes runtime owner retains the trusted root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes runtime change", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["agents/hermes/start.sh"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
+  // source-shape-contract: security -- Hermes lifecycle source changes must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes lifecycle source-only change", async ({
+    expect,
+  }) => {
+    await expect(
+      selectHermesRootEntrypoint(["src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"]),
+    ).resolves.toBe("selected=true");
+  });
+
+  // source-shape-contract: security -- Every source copied into the Hermes image must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a copied Hermes runtime source", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["src/lib/hermes-managed-route.ts"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
+  // source-shape-contract: security -- Changed-file discovery failures must stop trusted copied-PR qualification instead of silently skipping it
+  it("fails Hermes qualification when changed files cannot be fetched", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(["agents/hermes/start.sh"], CANDIDATE_SHA, BASE_SHA, 17),
+    ).resolves.toBe("status=17");
+  });
+
+  // source-shape-contract: security -- A truncated PR-file response must fail closed instead of skipping trusted qualification
+  it("fails Hermes qualification when changed-file discovery is incomplete", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(
+        ["docs/get-started/quickstart.mdx"],
+        CANDIDATE_SHA,
+        BASE_SHA,
+        0,
+        2,
+        1,
+      ),
+    ).resolves.toBe("status=1");
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove unrelated documentation cannot consume trusted Hermes image runners
+  it("skips Hermes qualification for unrelated documentation", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["docs/get-started/quickstart.mdx"])).resolves.toBe(
+      "selected=false",
+    );
+  });
+
   it.for(declaredSelectionPaths())(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
     },
   );
 
@@ -168,7 +338,29 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     "independently requires the generic GPU E2E when runtime authority owner %s changes",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
+    },
+  );
+
+  it.for(SHARED_ADMIN_APPROVAL_PATHS)(
+    "selects the generic GPU E2E when shared admin approval owner %s changes",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
+    },
+  );
+
+  it.for(ARM64_PROOF_AUTHORITY_PATHS)(
+    "does not select the Docker-qualified AMD64 GPU job for ARM64 proof owner %s",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+      );
     },
   );
 
@@ -176,21 +368,27 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("does not treat an N1x identity-only change as generic x86 GPU evidence", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/inference/platform-identity/n1x.ts"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["docs/get-started/quickstart.mdx"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("rejects a copied branch whose commit does not match the current PR head", async ({
@@ -207,12 +405,19 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     await expect(rejected).rejects.toThrow();
   });
 
-  it("pins the Docker-qualified GPU job to the Docker runtime provider", ({ expect }) => {
+  it("pins the Docker-qualified GPU job and captures post-request runtime diagnostics", ({
+    expect,
+  }) => {
+    assert.match(
+      readFileSync(LLAMA_LIVE_TEST_PATH, "utf8"),
+      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
+      "llama.cpp runtime logs must be captured after the agent request and before its exit assertion",
+    );
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
   });
 
-  // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision
-  it("binds trusted base publication to the generic NVIDIA GPU job", ({ expect }) => {
+  // source-shape-contract: security -- The copied PR workflow must use the base-reviewed verifier to bind the exact PR managed-image publication before the generic GPU job receives its revision
+  it("binds the exact PR publication to the generic NVIDIA GPU job", ({ expect }) => {
     const value = workflow();
     const selector = value.jobs["select-llama-cpp-generic-gpu"];
 
@@ -235,21 +440,32 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       },
     });
 
+    const reviewedNpm = selector?.steps?.find((step) => step.name === "Install reviewed npm");
+    expect(reviewedNpm).toMatchObject({
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
+    });
+
     const publication = selector?.steps?.find((step) => step.id === "publication");
     expect(publication).toMatchObject({
       env: {
-        EXPECTED_SHA: "${{ steps.changed.outputs.base_sha }}",
+        BASE_SHA: "${{ steps.changed.outputs.base_sha }}",
+        CANDIDATE_REPOSITORY: "${{ github.repository }}",
+        CANDIDATE_SHA: "${{ steps.changed.outputs.head_sha }}",
         GITHUB_TOKEN: "${{ github.token }}",
-        PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1",
-        REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
-        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
+        MANAGED_IMAGE_SHA: "${{ steps.changed.outputs.head_sha }}",
+        PR_NUMBER: "${{ steps.changed.outputs.pr_number }}",
       },
       if: "${{ steps.changed.outputs.selected == 'true' }}",
     });
+    expect(publication?.run).toContain("tools/e2e/pr-managed-image-publication.mts");
+    expect(publication?.run).toContain("candidate-catalog)");
+    expect(publication?.run).toContain("base-cohort)");
+    expect(publication?.run).toContain("sleep 30");
     expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
     expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
     expect(publication?.run).toContain(
-      "node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      "node --no-warnings tools/e2e/base-image-publication.mts \\",
     );
 
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(

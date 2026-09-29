@@ -6,95 +6,81 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import * as crossPort from "../../state/registry/cross-port";
+import * as runtime from "../../adapters/openshell/runtime";
+import * as resolution from "../../adapters/openshell/resolve";
 import { selectSandboxOwningGateway } from "./gateway-select";
 
-function mockSandboxGatewayPort(gatewayPort: number): void {
-  vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
-    entry: { name: "sandbox", gatewayPort },
-    gatewayPort,
-    registryFile: "/test/sandboxes.json",
-  });
-}
-
 describe("selectSandboxOwningGateway", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+  afterEach(() => vi.restoreAllMocks());
+  it.each([
+    [8080, "nemoclaw"],
+    [8091, "nemoclaw-8091"],
+  ] as const)("selects the recorded gateway on port %d", async (gatewayPort, gatewayName) => {
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort },
+      gatewayPort,
+      registryFile: "/test/sandboxes.json",
+    });
+    const selectGateway = vi.fn().mockResolvedValue({ ok: true, state: "completed" });
+    expect(await selectSandboxOwningGateway("alpha", { selectGateway })).toEqual({
+      outcome: "selected",
+      gatewayName,
+    });
+    expect(selectGateway).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName },
+    });
   });
-
-  it("selects the owning non-default gateway for a registered sandbox", () => {
-    mockSandboxGatewayPort(8091);
-    const run = vi.fn(() => ({ status: 0 }) as never);
-
-    const selected = selectSandboxOwningGateway("beta", run);
-
-    expect(selected).toEqual({ outcome: "selected", gatewayName: "nemoclaw-8091" });
-    expect(run).toHaveBeenCalledWith(
-      ["gateway", "select", "nemoclaw-8091"],
-      expect.objectContaining({
-        ignoreError: true,
-        stdio: ["inherit", "pipe", "inherit"],
-      }),
+  it("preserves the CLI availability diagnostic before selection", async () => {
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort: 8080 },
+      gatewayPort: 8080,
+      registryFile: "/test/sandboxes.json",
+    });
+    const resolveOpenshell = resolution.resolveOpenshell;
+    vi.spyOn(resolution, "resolveOpenshell").mockImplementation(() =>
+      resolveOpenshell({ commandVResult: null, checkExecutable: () => false }),
     );
-  });
-
-  it("replays selection output through the stdio adapter", () => {
-    mockSandboxGatewayPort(8080);
-    const output = "\u001b[32m✓ Active gateway set to 'nemoclaw'\u001b[0m\n";
-    const run = vi.fn(() => ({ status: 0, stdout: output }) as never);
-    const write = vi.fn();
-
-    expect(selectSandboxOwningGateway("alpha", run, write)).toEqual({
-      outcome: "selected",
-      gatewayName: "nemoclaw",
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("missing CLI exit");
     });
-    expect(write).toHaveBeenCalledWith(output);
+    const capture = vi.spyOn(runtime, "captureResolvedOpenshell");
+    await expect(selectSandboxOwningGateway("alpha")).rejects.toThrow("missing CLI exit");
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(diagnostic).toHaveBeenCalledWith(
+      "openshell CLI not found. Install OpenShell before using sandbox commands.",
+    );
+    expect(capture).not.toHaveBeenCalled();
   });
-
-  it("keeps the bare default gateway name for a default-port sandbox", () => {
-    mockSandboxGatewayPort(8080);
-    const run = vi.fn(() => ({ status: 0 }) as never);
-
-    expect(selectSandboxOwningGateway("alpha", run)).toEqual({
-      outcome: "selected",
-      gatewayName: "nemoclaw",
-    });
-    expect(run).toHaveBeenCalledWith(["gateway", "select", "nemoclaw"], expect.anything());
-  });
-
-  it("does not touch the active gateway for an unregistered sandbox", () => {
+  it("does not change selection for an unregistered sandbox", async () => {
     vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue(null);
-    const run = vi.fn(() => ({ status: 0 }) as never);
-
-    expect(selectSandboxOwningGateway("ghost", run)).toEqual({
+    const selectGateway = vi.fn();
+    expect(await selectSandboxOwningGateway("ghost", { selectGateway })).toEqual({
       outcome: "unregistered",
       gatewayName: null,
     });
-    expect(run).not.toHaveBeenCalled();
+    expect(selectGateway).not.toHaveBeenCalled();
   });
-
-  it("reports failure when the gateway select command exits nonzero", () => {
-    mockSandboxGatewayPort(8091);
-    const run = vi.fn(() => ({ status: 1 }) as never);
-
-    expect(selectSandboxOwningGateway("beta", run)).toEqual({
+  it("propagates a typed selection failure without retrying", async () => {
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort: 8091 },
+      gatewayPort: 8091,
+      registryFile: "/test/sandboxes.json",
+    });
+    const selectGateway = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { kind: "authentication", message: "Access denied." },
+      unsupported: false,
+      ambiguous: false,
+    });
+    expect(await selectSandboxOwningGateway("beta", { selectGateway })).toEqual({
       outcome: "failed",
       gatewayName: "nemoclaw-8091",
     });
+    expect(selectGateway).toHaveBeenCalledTimes(1);
   });
-
-  it("reports failure when the gateway select command errors on spawn", () => {
-    mockSandboxGatewayPort(8091);
-    const run = vi.fn(() => ({ status: null, error: new Error("spawn failed") }) as never);
-
-    expect(selectSandboxOwningGateway("beta", run)).toEqual({
-      outcome: "failed",
-      gatewayName: "nemoclaw-8091",
-    });
-  });
-
-  it("resolves the owning gateway from a sibling gateway-port registry root", () => {
+  it("resolves the owning gateway from a sibling gateway-port registry root", async () => {
     // Regression: with two gateways on one host, the sandbox's recorded
     // binding lives under ~/.nemoclaw/gateways/<its port>/ even when the
     // process points at another gateway port.
@@ -111,16 +97,15 @@ describe("selectSandboxOwningGateway", () => {
           sandboxes: { "owner-a": { name: "owner-a", gatewayPort: 8245 } },
         }),
       );
-      const run = vi.fn(() => ({ status: 0 }) as never);
+      const selectGateway = vi.fn().mockResolvedValue({ ok: true, state: "completed" });
 
-      expect(selectSandboxOwningGateway("owner-a", run)).toEqual({
+      expect(await selectSandboxOwningGateway("owner-a", { selectGateway })).toEqual({
         outcome: "selected",
         gatewayName: "nemoclaw-8245",
       });
-      expect(run).toHaveBeenCalledWith(
-        ["gateway", "select", "nemoclaw-8245"],
-        expect.objectContaining({ ignoreError: true }),
-      );
+      expect(selectGateway).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw-8245" },
+      });
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(home, { recursive: true, force: true });

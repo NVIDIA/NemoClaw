@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: install-reviewed-openshell-sdk
+description: Install the lock-selected reviewed OpenShell SDK archive without package credentials or lifecycle scripts.
+
+runs:
+  using: composite
+  steps:
+    - name: Install reviewed OpenShell SDK archive without package credentials
+      shell: bash
+      run: |
+        set -euo pipefail
+        export NPM_CONFIG_USERCONFIG=/dev/null
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+          bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none artifact
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+          node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'

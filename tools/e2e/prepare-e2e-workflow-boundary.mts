@@ -78,7 +78,11 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     {
       name: "Set up Node",
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": 22, cache: "npm" },
+      with: { "node-version": "24.18.1", cache: "npm" },
+    },
+    {
+      name: "Install reviewed npm",
+      uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
     },
     {
       name: "Install root dependencies",
@@ -93,7 +97,9 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     },
   ];
   if (!isDeepStrictEqual(runs.steps, expectedSteps)) {
-    errors.push("prepare-e2e must pin Node 22, run npm ci, and conditionally build the CLI");
+    errors.push(
+      "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
+    );
   }
   return errors;
 }
@@ -202,7 +208,12 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} prepare-e2e invocation must not override its canonical contract`);
     }
 
-    for (const retiredStep of ["Set up Node", "Install root dependencies", "Build CLI"]) {
+    for (const retiredStep of [
+      "Set up Node",
+      "Install reviewed npm",
+      "Install root dependencies",
+      "Build CLI",
+    ]) {
       if (jobSteps.some((step) => step.name === retiredStep)) {
         errors.push(`${jobName} must not duplicate prepare-e2e step '${retiredStep}'`);
       }
@@ -213,7 +224,14 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} must check out the repository before prepare-e2e`);
     }
     const authIndex = jobSteps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-    if (authIndex >= 0 && prepareIndex <= authIndex) {
+    // The protected multiarch job intentionally installs with --ignore-scripts,
+    // builds its candidate boundary, and only then receives Docker credentials.
+    // Its exact post-build auth position is owned by the managed-image validator.
+    if (
+      jobName !== "managed-image-multiarch-startup" &&
+      authIndex >= 0 &&
+      prepareIndex <= authIndex
+    ) {
       errors.push(`${jobName} must authenticate to Docker Hub before prepare-e2e`);
     }
   }

@@ -17,7 +17,7 @@ describe("OpenClaw gateway credential environment", () => {
   it.each([
     ["truncate", "current"],
     ["append", "current"],
-    ["append", "gateway"],
+    ["append", "sandbox"],
   ])(
     "keeps gateway tokens private and scopes Git and user tools for %s logging as %s (#8693)",
     (logMode, identity) => {
@@ -41,7 +41,7 @@ describe("OpenClaw gateway credential environment", () => {
         safeTmpHelpers(source),
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret GIT_CONFIG_GLOBAL=/nonexistent/native.gitconfig",
-        "STEP_DOWN_PREFIX_GATEWAY=(/usr/bin/env)",
+        "STEP_DOWN_PREFIX_SANDBOX=(/usr/bin/env)",
         `launch_openclaw_gateway_process ${logMode} ${identity} sh -c 'printf "ENV=%s\\nGIT=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$GIT_CONFIG_GLOBAL" "$*"; nemoclaw-user-bin-sentinel 2>/dev/null || printf "USER_TOOL=unavailable\\n"' sh`,
         'wait "$GATEWAY_PID"',
         'printf "%s" "$GIT_CONFIG_GLOBAL"',
@@ -54,9 +54,8 @@ describe("OpenClaw gateway credential environment", () => {
         });
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toBe("/nonexistent/native.gitconfig");
-        const gitConfig =
-          identity === "gateway" ? "/tmp/.gitconfig" : "/nonexistent/native.gitconfig";
-        const expectedOutput = `ENV=unset\nGIT=${gitConfig}\nARGS=\nUSER_TOOL=unavailable\n`;
+        const expectedOutput =
+          "ENV=unset\nGIT=/nonexistent/native.gitconfig\nARGS=\nUSER_TOOL=unavailable\n";
         expect(fs.readFileSync(gatewayLog, "utf8")).toBe(
           logMode === "append" ? `${seed}${expectedOutput}` : expectedOutput,
         );
@@ -69,7 +68,7 @@ describe("OpenClaw gateway credential environment", () => {
   describe.skipIf(!fs.existsSync("/proc/self/cmdline"))("Linux process inspection", () => {
     it.each([
       { logMode: "truncate", launchPath: "initial launch" },
-      { logMode: "append", launchPath: "automatic respawn" },
+      { logMode: "append", launchPath: "native relaunch" },
     ])(
       "keeps the gateway token out of process cmdline and environ during $launchPath (#8693)",
       ({ logMode }) => {

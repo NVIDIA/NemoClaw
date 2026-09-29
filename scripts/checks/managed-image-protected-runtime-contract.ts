@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../../src/lib/adapters/openshell/sandbox-lifecycle-cli.ts";
+import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 
@@ -124,4 +126,32 @@ export function managedImageProtectedSandboxName(
   routeKind: ManagedImageProtectedRouteKind,
 ): string {
   return `${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}${PROTECTED_SANDBOX_AGENT_TOKENS[agent]}-${PROTECTED_SANDBOX_ROUTE_TOKENS[routeKind]}`;
+}
+
+export function managedImageFailureDetail(
+  error: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const redactor = createDockerGpuDiagnosticRedactor();
+  redactor.rememberInspect({
+    Config: { Env: Object.entries(env).map(([key, value]) => `${key}=${value ?? ""}`) },
+  });
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return redactor.redactText(detail).slice(0, 8_000);
+}
+
+export function createManagedImageSandboxWithDiagnostics(
+  run: Parameters<typeof createCliOpenShellSandboxLifecycleFromRunner>[0],
+  resolveBinary: () => string,
+) {
+  const { createSandbox } = createCliOpenShellSandboxLifecycleFromRunner(run, { resolveBinary });
+  return async (...args: Parameters<typeof createSandbox>) => {
+    const result = await createSandbox(...args);
+    if (result.status !== 0 || result.ambiguous) {
+      console.error(
+        `Managed-image create evidence: ${managedImageFailureDetail(result.diagnostic)}`,
+      );
+    }
+    return result;
+  };
 }
