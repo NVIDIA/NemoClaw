@@ -93,6 +93,7 @@ import {
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
+  listRecordedModelRouterPorts,
   readGatewayRegistryFile,
   releaseManagedGatewayStateLifecycleLock,
   registryEntryGatewayPort,
@@ -132,6 +133,7 @@ import {
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
+  readOnboardSessionModelRouter,
   removeForceFreshReceiptVolumes,
   selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
@@ -1139,27 +1141,6 @@ function stopOllamaAuthProxy(
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
-const DEFAULT_MODEL_ROUTER_PORT = 4000;
-
-function resolveModelRouterPort(_runtime: UninstallRuntime): number {
-  // Routed onboard profiles use blueprint port 4000 by default; a custom port
-  // would require reading the blueprint, which uninstall does not do today.
-  return DEFAULT_MODEL_ROUTER_PORT;
-}
-
-function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
-  const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
-  try {
-    const raw = fs.readFileSync(sessionFile, "utf-8");
-    const data = JSON.parse(raw) as { routerPid?: unknown };
-    const pid = data.routerPid;
-    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
-  } catch {
-    /* ignore — State step deletes the file shortly anyway */
-  }
-  return null;
-}
-
 function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
   runtime.kill(pid);
   if (waitForPidExit(pid, runtime, 1000)) {
@@ -1175,49 +1156,138 @@ function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean 
   return false;
 }
 
-function stopModelRouter(
-  paths: UninstallPaths,
+function stopModelRouterOnPort(
+  routerPort: number,
+  recordedPid: number | null,
   runtime: UninstallRuntime,
-  scanOrphans = true,
-): void {
-  // The model router is a detached child started during routed onboard that
-  // listens on port 4000 by default. Without this cleanup, uninstall +
-  // reinstall fails with "Port 4000 already has a healthy router endpoint".
-  // The tracked PID lives in ~/.nemoclaw/onboard-session.json (routerPid), not
-  // a dedicated .pid file. Mirrors stopOllamaAuthProxy() and issue #5169.
+): boolean {
   const stopped = new Set<number>();
-  const routerPort = resolveModelRouterPort(runtime);
-
-  const recordedPid = readOnboardSessionRouterPid(paths);
   if (
     recordedPid !== null &&
     pidOwnedByCurrentUser(recordedPid, runtime) &&
     isModelRouterPid(recordedPid, routerPort, runtime)
   ) {
-    if (tryStopModelRouterPid(recordedPid, runtime)) stopped.add(recordedPid);
+    if (!tryStopModelRouterPid(recordedPid, runtime)) return false;
+    stopped.add(recordedPid);
   }
-
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway model router found");
-    return;
-  }
-
   if (!runtime.commandExists("lsof")) {
-    if (stopped.size === 0) {
-      runtime.warn("lsof not found; skipping orphan model router scan.");
-    }
-    return;
+    if (stopped.size > 0) return true;
+    runtime.warn(
+      `Cannot verify Model Router cleanup on port ${routerPort}: lsof is unavailable. Recovery state was retained.`,
+    );
+    return false;
   }
-  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
-  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
-  for (const pid of pids) {
+  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`, "-w"], { env: runtime.env });
+  const lines = splitNonEmptyLines(lsof.stdout);
+  if (
+    (lsof.status !== 0 && lsof.status !== 1) ||
+    lsof.stderr.trim() ||
+    (lsof.status === 1 && lines.length > 0) ||
+    lines.some((line) => !/^[1-9]\d*$/.test(line) || !Number.isSafeInteger(Number(line)))
+  ) {
+    runtime.warn(
+      `Cannot verify Model Router listeners on port ${routerPort}. Recovery state was retained.`,
+    );
+    return false;
+  }
+  for (const pid of lines.map(Number)) {
     if (stopped.has(pid)) continue;
     if (!pidOwnedByCurrentUser(pid, runtime)) continue;
     if (!isModelRouterPid(pid, routerPort, runtime)) continue;
-    if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
+    if (!tryStopModelRouterPid(pid, runtime)) return false;
+    stopped.add(pid);
   }
-
   if (stopped.size === 0) runtime.log("No model router processes found");
+  return true;
+}
+
+function stopModelRouter(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  scanOrphans = true,
+): boolean {
+  // The model router is a detached child started during routed onboarding.
+  // The latest PID and port live in onboard-session.json. Older routes retain
+  // their ports in sandbox registries; none may be guessed from today's blueprint.
+  const recorded = readOnboardSessionModelRouter(paths.nemoclawStateDir);
+  if (recorded.readFailed) {
+    runtime.warn(
+      `Model Router cleanup cannot read a valid onboarding session at ${path.join(paths.nemoclawStateDir, "onboard-session.json")}. Restore file access or repair the session before rerunning uninstall. The session was retained for recovery.`,
+    );
+    return false;
+  }
+  if (recorded.port === null && recorded.expected) {
+    const observed =
+      recorded.pid === null
+        ? null
+        : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
+    // Only ps's no-match result proves absence. A command or permission
+    // failure must retain the cleanup receipt for another attempt.
+    if (observed?.status === 1 && !observed.stdout.trim() && !observed.stderr.trim()) {
+      runtime.log(`Recorded Model Router PID ${recorded.pid} is absent; continuing state cleanup.`);
+    } else {
+      const pidDetail =
+        recorded.pid === null ? "" : ` The recorded process is PID ${recorded.pid}.`;
+      const recovery =
+        recorded.pid === null
+          ? "Recover the router's recorded port before retrying uninstall."
+          : "Stop the verified Model Router process, then rerun nemoclaw uninstall.";
+      runtime.warn(
+        `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} ${recovery} The onboarding session was retained for recovery.`,
+      );
+      return false;
+    }
+  }
+  let ports: number[];
+  try {
+    // Read before registry removal, even when the latest session was cleared.
+    ports = [
+      ...new Set([
+        ...(recorded.port === null ? [] : [recorded.port]),
+        ...listRecordedModelRouterPorts(runtime.env.HOME || os.homedir()),
+      ]),
+    ];
+  } catch {
+    runtime.warn("Cannot read all recorded Model Router ports. Recovery state was retained.");
+    return false;
+  }
+  if (ports.length === 0) {
+    runtime.log("No model router processes found");
+    return true;
+  }
+  // A scoped uninstall must leave shared inference services running, including
+  // their owning state and virtual environment. Do not advance to state removal
+  // while sibling gateways may still depend on this recorded router.
+  if (!scanOrphans) {
+    const process =
+      recorded.pid === null
+        ? { status: 1, stdout: "", stderr: "" }
+        : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
+    const listenersAbsent = ports.every((port) => {
+      const listener = runtime.commandExists("lsof")
+        ? runtime.run("lsof", ["-ti", `:${port}`, "-w"], { env: runtime.env })
+        : null;
+      return listener?.status === 1 && !listener.stdout.trim() && !listener.stderr.trim();
+    });
+    if (
+      process.status === 1 &&
+      !process.stdout.trim() &&
+      !process.stderr.trim() &&
+      listenersAbsent
+    ) {
+      runtime.log("The recorded shared Model Router is absent; continuing state cleanup.");
+      return true;
+    }
+    runtime.warn(
+      `Sibling gateways remain; kept the shared Model Router and its onboarding session and runtime files. Stop the verified routers on ports ${ports.join(", ")} only after their dependent sandboxes no longer need them, then rerun uninstall. Uninstall must confirm both process and listener absence before removing this shared state.`,
+    );
+    return false;
+  }
+  for (const port of ports) {
+    if (!stopModelRouterOnPort(port, port === recorded.port ? recorded.pid : null, runtime))
+      return false;
+  }
+  return true;
 }
 
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
@@ -4479,7 +4549,9 @@ async function executePreparedPlan(
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
-      stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      if (!stopModelRouter(paths, runtime, !scopedToSelectedGateway)) {
+        return { ok: false, scopedToSelectedGateway };
+      }
       stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (openShellCleanup === "reservation-removed") {

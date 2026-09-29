@@ -152,6 +152,7 @@ export async function setupRemoteProviderInference(
     endpointUrl: string | null;
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
+    allowLegacyRecordedNoAuthEndpoint?: boolean;
     skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
@@ -167,6 +168,7 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
+    allowLegacyRecordedNoAuthEndpoint,
     skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
@@ -253,7 +255,11 @@ export async function setupRemoteProviderInference(
   > => {
     const previousProxyCredential = credentialEnv ? process.env[credentialEnv] : undefined;
     const proxy =
-      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
+      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV
+        ? allowLegacyRecordedNoAuthEndpoint
+          ? noAuth(endpointUrl!, { allowLegacyRecordedEndpoint: true })
+          : noAuth(endpointUrl!)
+        : null;
     if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
     let proxySettled = proxy === null;
     const restoreUncommittedProxy = () => {
@@ -398,6 +404,15 @@ export async function setupRemoteProviderInference(
         }
         const applyResult = runOpenshell(argsv, { ignoreError: true });
         if (applyResult.status === 0) {
+          // Publish the pending owner before releasing the proxy lifecycle lock.
+          // Otherwise concurrent teardown can stop the newly configured proxy.
+          if (
+            proxy &&
+            sandboxName &&
+            registry.updateSandbox(sandboxName, { model, provider }) === false
+          ) {
+            throw new Error(`Could not reserve the inference route for sandbox '${sandboxName}'.`);
+          }
           proxy?.persist();
           proxySettled = true;
           break;

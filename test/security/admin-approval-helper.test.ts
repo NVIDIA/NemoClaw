@@ -11,6 +11,11 @@ import { describe, expect, it } from "vitest";
 import { adminApprovalConnectScript } from "../e2e/fixtures/admin-approval-connect.ts";
 import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selector.ts";
 import {
+  ADMIN_APPROVAL_TEST_CLI_SH,
+  ADMIN_APPROVAL_TEST_PTY_PY,
+  removeStagedAdminScript,
+} from "../support/admin-approval-connect-fixture.ts";
+import {
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
@@ -128,10 +133,19 @@ function runAdminApprovalScript(
   failureCommand?: FakeFailureCommand,
   failureOutputPaddingBytes = 0,
   requestId = EXPECTED_REQUEST_ID,
-  options: { expectedRequestId?: string; verifyCronConsumer?: boolean } = {},
+  options: {
+    expectedRequestId?: string;
+    verifyCronConsumer?: boolean;
+    terminal?: boolean;
+    cleanupFails?: boolean;
+    tamperScript?: boolean;
+    requireNonInteractiveBody?: boolean;
+    omitPreparedWrapper?: boolean;
+  } = {},
 ): {
   commands: string[];
   capturedApprovalBytes: number;
+  stagedScriptRetained: boolean;
   result: SpawnSyncReturns<string>;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
@@ -140,17 +154,29 @@ function runAdminApprovalScript(
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
   const mktempCounterPath = path.join(root, "mktemp-counter");
+  const stagedScriptReceipt = path.join(root, "staged-script");
   const stateRoot = writeLocalIdentity(root);
   const helperPath = writePairingStateHelper(root);
+  const terminalProbe = path.join(root, "terminal-probe.py");
+  fs.writeFileSync(terminalProbe, ADMIN_APPROVAL_TEST_PTY_PY);
+  const terminalRc = path.join(root, "connect.bashrc");
   fs.writeFileSync(
-    cliPath,
-    `#!/bin/sh
-set -eu
-[ "$#" -eq 2 ] && [ "$1" = "e2e-issue-4462" ] && [ "$2" = "connect" ]
-exec /bin/bash
+    terminalRc,
+    `trap 'printf "ADMIN_CONNECT_SHELL_CLEANED\\n"' EXIT
+openclaw() {
+  case "$ADMIN_REQUIRE_NONINTERACTIVE_BODY:$-" in 1:*i*) return 95 ;; esac
+  local approval_errexit=0 approval_status=0
+  case $- in *e*) approval_errexit=1 ;; esac
+  set +e
+  (unset OPENCLAW_GATEWAY_TOKEN; ADMIN_CONNECT_WRAPPER_USED=1 command openclaw "$@")
+  approval_status=$?
+  if [ "$approval_errexit" = 1 ]; then set -e; else set +e; fi
+  return "$approval_status"
+}
+${options.omitPreparedWrapper ? "unset -f openclaw" : ""}
 `,
-    { mode: 0o755 },
   );
+  fs.writeFileSync(cliPath, ADMIN_APPROVAL_TEST_CLI_SH, { mode: 0o755 });
   fs.writeFileSync(
     path.join(root, "mktemp"),
     `#!/bin/sh
@@ -165,11 +191,22 @@ printf '%s\n' "$output"
 `,
     { mode: 0o755 },
   );
-  fs.writeFileSync(path.join(root, "rm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(root, "rm"),
+    `#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$2" = -- ]; then
+  printf '%s' "$3" >"$FAKE_ADMIN_SCRIPT_RECEIPT"
+  if [ "$FAKE_ADMIN_CLEANUP_FAIL" = 1 ]; then exit 91; fi
+  exec /bin/rm "$@"
+fi
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     openclawPath,
     `#!/bin/sh
 set -eu
+if [ -n "\${ADMIN_CONNECT_TERMINAL_PROBE:-}" ] && [ "\${ADMIN_CONNECT_WRAPPER_USED:-}" != 1 ]; then exit 94; fi
 printf '%s\\n' "$*" >> "$FAKE_OPENCLAW_LOG"
 if [ "\${FAKE_OPENCLAW_FAIL:-}" = "$1:$2" ]; then
   case "$1:$2" in
@@ -207,6 +244,12 @@ esac
     OPENCLAW_GATEWAY_URL: "",
     OPENCLAW_GATEWAY_PORT: "18789",
     OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+    ADMIN_CONNECT_TERMINAL_PROBE: options.terminal ? terminalProbe : "",
+    ADMIN_CONNECT_RC: terminalRc,
+    ADMIN_TAMPER_SCRIPT: options.tamperScript ? "1" : "0",
+    ADMIN_REQUIRE_NONINTERACTIVE_BODY: options.requireNonInteractiveBody ? "1" : "0",
+    FAKE_ADMIN_SCRIPT_RECEIPT: stagedScriptReceipt,
+    FAKE_ADMIN_CLEANUP_FAIL: options.cleanupFails ? "1" : "0",
   };
   try {
     const result = spawnSync("bash", [], {
@@ -227,13 +270,103 @@ esac
     const capturedApprovalBytes = fs.existsSync(approvalCapturePath)
       ? fs.statSync(approvalCapturePath).size
       : 0;
-    return { capturedApprovalBytes, commands, result };
+    const stagedScriptRetained =
+      fs.existsSync(stagedScriptReceipt) &&
+      fs.existsSync(fs.readFileSync(stagedScriptReceipt, "utf8"));
+    return { capturedApprovalBytes, commands, result, stagedScriptRetained };
   } finally {
+    removeStagedAdminScript(stagedScriptReceipt);
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
 describe("prepared connect-shell administrative approval", () => {
+  it("refuses approval when the prepared OpenClaw wrapper is missing", () => {
+    const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { terminal: true, omitPreparedWrapper: true },
+    );
+    expect(result.status).toBe(1);
+    expect(commands).toEqual([]);
+    expect(result.stdout).toContain("ADMIN_CONNECT_BODY_STATUS=1");
+    expect(result.stdout).toContain("ADMIN_CONNECT_STATUS=1");
+    expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
+    expect(stagedScriptRetained).toBe(false);
+  });
+  it("runs verified approval in a non-interactive interpreter with the prepared wrapper", () => {
+    const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      { terminal: true, requireNonInteractiveBody: true },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`.slice(-2_000)).toBe(0);
+    expect(commands).toContain(`devices approve ${EXPECTED_REQUEST_ID}`);
+    expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
+    expect(stagedScriptRetained).toBe(false);
+  });
+  it("rejects a replaced script before running approval in the prepared shell", () => {
+    const { result, commands, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        terminal: true,
+        tamperScript: true,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("ADMIN_SCRIPT_INTEGRITY_FAILED");
+    expect(result.stdout).not.toContain("ADMIN_TAMPER_EXECUTED");
+    expect(commands).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+  it("fails when the transferred approval script cannot be removed", () => {
+    const { result, stagedScriptRetained } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        cleanupFails: true,
+      },
+    );
+    expect(result.status).toBe(32);
+    expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(result.stderr).toContain("ADMIN_SCRIPT_CLEANUP_FAILED");
+    expect(stagedScriptRetained).toBe(true);
+  });
+  it.each([
+    [undefined, true],
+    ["devices:approve", true],
+    [undefined, false],
+  ] as const)(
+    "preserves connect-shell wrappers and approval status through a terminal (%s, cron=%s)",
+    (failureCommand, verifyCronConsumer) => {
+      const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+        failureCommand,
+        0,
+        EXPECTED_REQUEST_ID,
+        {
+          terminal: true,
+          verifyCronConsumer,
+        },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`.slice(-2_000)).toBe(
+        failureCommand ? 27 : 0,
+      );
+      expect(result.stdout).toContain("ADMIN_CONNECT_SHELL_CLEANED");
+      expect(commands).toContain(`devices approve ${EXPECTED_REQUEST_ID}`);
+      expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(!failureCommand);
+      const stagedScript = result.stdout.match(
+        /(\/tmp\/nemoclaw-admin-approval-[a-zA-Z0-9_]+[.]sh)/,
+      )?.[1];
+      expect(stagedScript).toBeDefined();
+      expect(fs.existsSync(stagedScript!)).toBe(false);
+      expect(stagedScriptRetained).toBe(false);
+    },
+  );
   it.each([
     [
       "approval boundary",
