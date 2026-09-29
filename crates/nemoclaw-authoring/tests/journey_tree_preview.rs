@@ -190,6 +190,21 @@ fn invalid_supplied_name_remains_visible_in_the_preview() {
 }
 
 #[test]
+fn invalid_supplied_sdk_leaf_is_visible_without_printing_its_value() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]["name"] = serde_json::json!("PRIVATE INVALID NAME");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let tree = JourneyDefinition::new("invalid-sandbox", base)
+        .print_tree(&Capabilities::available())
+        .unwrap();
+    assert!(tree.contains("/spec/sandboxes/0/name: <string>"), "{tree}");
+    assert!(tree.contains("invalid supplied value"), "{tree}");
+    assert!(!tree.contains("PRIVATE INVALID NAME"), "{tree}");
+}
+
+#[test]
 fn harness_without_a_fabric_schema_does_not_claim_zero_questions() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))

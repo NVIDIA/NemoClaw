@@ -109,6 +109,71 @@ fn missing_object_parent_exposes_its_unconditional_required_fields() {
 }
 
 #[test]
+fn invalid_supplied_sdk_leaf_is_an_editable_question_without_guidance() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]["name"] = json!("Bad Name");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("repair", base)
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/sandboxes/0/name";
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(path)
+            .unwrap()
+            .reason(),
+        JourneyQuestionReason::InvalidSupplied
+    );
+    state
+        .answer(&capabilities, path, Some(json!("valid-name")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+}
+
+#[test]
+fn invalid_optional_sdk_leaf_can_be_omitted_without_guidance() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("unsupported");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("repair-optional", base)
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/sandboxes/0/runtime/provider";
+    let question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(path)
+        .cloned()
+        .unwrap();
+    assert_eq!(question.reason(), JourneyQuestionReason::InvalidSupplied);
+    assert!(!question.required());
+    state.answer(&capabilities, path, None).unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+}
+
+#[test]
 fn sparse_journey_follows_nested_fabric_conditionals() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();

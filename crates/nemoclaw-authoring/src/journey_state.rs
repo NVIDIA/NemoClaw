@@ -498,23 +498,27 @@ impl JourneyState {
             }
         }
 
-        // The SDK decides requiredness. A missing scalar is answerable even
-        // when the journey did not list it in `ask`. Unconditional leaves of
-        // missing objects can be traversed; arrays and conditional alternatives
-        // remain an explicit frontier until their structure can be resolved.
+        // The SDK decides requiredness and supplied-value validity. A known
+        // scalar can be answered even when the journey did not list it in
+        // `ask`. Unconditional leaves of missing objects can be traversed;
+        // arrays and conditional alternatives remain an explicit frontier.
         for issue in assessment.issues() {
-            if issue.kind() != PartialIssueKind::Missing
-                || issue.path() == NAME
+            if issue.path() == NAME
                 || issue.path() == HARNESS
-                || self.values.pointer(issue.path()).is_some()
                 || questions.iter().any(|question| question.id == issue.path())
             {
                 continue;
             }
+            let supplied = self.values.pointer(issue.path());
+            match issue.kind() {
+                PartialIssueKind::Missing if supplied.is_none() => {}
+                PartialIssueKind::Invalid if supplied.is_some() => {}
+                _ => continue,
+            }
             let Some((parent, _)) = issue.path().rsplit_once('/') else {
                 continue;
             };
-            let Some((schema, _)) = sdk_field_schema(issue.path()) else {
+            let Some((schema, required)) = sdk_field_schema(issue.path()) else {
                 continue;
             };
             if self.values.pointer(parent).is_none() {
@@ -522,21 +526,27 @@ impl JourneyState {
             }
             let choices = finite_choices(&schema);
             if !scalar_question(&schema, &choices) {
-                collect_required_leaf_questions(
-                    &self.values,
-                    issue.path(),
-                    &schema,
-                    &mut questions,
-                    0,
-                );
+                if issue.kind() == PartialIssueKind::Missing {
+                    collect_required_leaf_questions(
+                        &self.values,
+                        issue.path(),
+                        &schema,
+                        &mut questions,
+                        0,
+                    );
+                }
                 continue;
             }
             questions.push(JourneyQuestion {
                 id: issue.path().into(),
-                reason: JourneyQuestionReason::Missing,
-                required: true,
+                reason: if issue.kind() == PartialIssueKind::Missing {
+                    JourneyQuestionReason::Missing
+                } else {
+                    JourneyQuestionReason::InvalidSupplied
+                },
+                required: required || issue.kind() == PartialIssueKind::Missing,
                 choices,
-                suggestion: schema.get("default").cloned(),
+                suggestion: supplied.cloned().or_else(|| schema.get("default").cloned()),
                 schema,
             });
         }
