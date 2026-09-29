@@ -211,6 +211,48 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
   ].join("; ");
 }
 
+function waitFor(file: string): string {
+  return `for _ in $(seq 1 2000); do [ -f ${JSON.stringify(file)} ] && break; /bin/sleep 0.01; done`;
+}
+
+function writeMarker(f: ReturnType<typeof fixture>, value: string): string {
+  const staged = `${f.marker}.next`;
+  return [
+    `printf '%s\\n' ${value} >${JSON.stringify(staged)}`,
+    `chmod 600 ${JSON.stringify(staged)}`,
+    `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}`,
+  ].join("; ");
+}
+
+function assertNoReadyReceipt(f: ReturnType<typeof fixture>): string {
+  return `/bin/sleep 0.3; [ ! -e ${JSON.stringify(f.ready)} ] || : >${JSON.stringify(f.leaseViolation)}`;
+}
+
+// Simulate the host acting after a backup request reached the doctor check
+// instead of the early backup check.
+function runLateBackupRequest(
+  source: string,
+  f: ReturnType<typeof fixture>,
+  hostSteps: string[],
+  lateAttempts = 600,
+) {
+  const waiting = path.join(f.root, "late-wait-started");
+  const script = [
+    doctorFunction(source, f.configDir, f.ready).replace(
+      '[ "$late_attempt" -lt 600 ]',
+      `[ "$late_attempt" -lt ${lateAttempts} ]`,
+    ),
+    `sleep() { : >${JSON.stringify(waiting)}; /bin/sleep 0.01; }`,
+    `(${[waitFor(waiting), ...hostSteps].join("; ")}) >/dev/null 2>&1 &`,
+    "run_requested_openclaw_post_upgrade_doctor",
+  ];
+  return spawnSync("bash", ["-c", script.join("\n")], {
+    encoding: "utf8",
+    env: fixtureEnv(f),
+    timeout: 30_000,
+  });
+}
+
 describe("nemoclaw-start post-upgrade doctor", () => {
   it("holds backup state before startup mutation without invoking doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
@@ -263,6 +305,88 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       );
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits without reporting ready when a backup request arrives after setup began", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = runLateBackupRequest(source, f, [
+        assertNoReadyReceipt(f),
+        writeMarker(f, "nemoclaw-openclaw-post-upgrade-doctor-abort-v1"),
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("hold arrived after startup began; waiting for restart");
+      expect(result.stderr).not.toContain("Refusing invalid post-upgrade doctor marker");
+      expect(fs.existsSync(f.leaseViolation)).toBe(false);
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs doctor when the host replaces a late backup request with a doctor request", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = runLateBackupRequest(source, f, [
+        assertNoReadyReceipt(f),
+        writeMarker(f, "nemoclaw-openclaw-post-upgrade-doctor-v2"),
+        waitFor(f.calls),
+        waitFor(f.ready),
+        writeMarker(f, "nemoclaw-openclaw-post-upgrade-doctor-release-v1"),
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.leaseViolation)).toBe(false);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("continues startup when the host withdraws a late backup request", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = runLateBackupRequest(source, f, [
+        assertNoReadyReceipt(f),
+        `rm -f -- ${JSON.stringify(f.marker)}`,
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.leaseViolation)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when no restart follows a late backup request", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = runLateBackupRequest(source, f, [], 2);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "Timed out waiting for restart after a late maintenance hold",
+      );
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

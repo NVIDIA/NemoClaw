@@ -4665,11 +4665,12 @@ run_requested_openclaw_post_upgrade_doctor() {
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
   local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
   local abort_expected="nemoclaw-openclaw-post-upgrade-doctor-abort-v1"
+  local backup_expected="nemoclaw-openclaw-backup-quiesce-v1"
   local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
   local ready_expected="nemoclaw-openclaw-post-upgrade-doctor-ready-v1"
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
   local ready_owner=""
-  local gate_attempt
+  local gate_attempt late_attempt
 
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
@@ -4697,6 +4698,23 @@ EOF
   if [ "$marker_value" = "$abort_expected" ]; then
     rm -f -- "$marker" "$ready" || return 1
     echo "[setup] OpenClaw post-upgrade maintenance abort consumed; sandbox remains stopped" >&2
+    return 1
+  fi
+  # The host can request a gateway-down hold after this start began setup. This
+  # start cannot report the hold as ready, so wait for the host to restart the
+  # sandbox or change the request, then apply the normal checks to the change.
+  if [ "$marker_value" = "$backup_expected" ]; then
+    echo "[setup] OpenClaw maintenance hold arrived after startup began; waiting for restart" >&2
+    late_attempt=0
+    while [ "$late_attempt" -lt 600 ]; do
+      late_attempt=$((late_attempt + 1))
+      sleep 1
+      if [ -L "$marker" ] || [ "$(head -n 1 "$marker" 2>/dev/null)" != "$backup_expected" ]; then
+        run_requested_openclaw_post_upgrade_doctor
+        return
+      fi
+    done
+    echo "[SECURITY] Timed out waiting for restart after a late maintenance hold" >&2
     return 1
   fi
   [ "$marker_value" = "$expected" ] || {
