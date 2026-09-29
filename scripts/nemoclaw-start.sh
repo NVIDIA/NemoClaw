@@ -4592,6 +4592,7 @@ import sys
 MARKER = b'{"nemoclawSanitizedDeviceIdentity":1}'
 UPGRADE_MARKER = '.nemoclaw-post-upgrade-doctor'
 UPGRADE_REQUEST = (sys.argv[2] + '\n').encode('ascii')
+CONSUME_UPGRADE_MARKER = sys.argv[2] == 'nemoclaw-openclaw-post-upgrade-doctor-release-v1'
 
 def identity(value):
     return value.st_dev, value.st_ino, value.st_mode
@@ -4610,18 +4611,21 @@ try:
     root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
     fds.append(root_fd)
     root_before = os.fstat(root_fd)
+    identity_fd = None
     try:
         identity_fd = os.open('identity', directory_flags, dir_fd=root_fd)
     except FileNotFoundError:
-        sys.exit(0)
-    fds.append(identity_fd)
+        if not CONSUME_UPGRADE_MARKER:
+            sys.exit(0)
+    if identity_fd is not None:
+        fds.append(identity_fd)
     target_names = (
         'device.json',
         'device.json.doctor-importing',
         'device.json.native-importing',
     )
     targets = []
-    for name in target_names:
+    for name in (target_names if identity_fd is not None else ()):
         try:
             before = os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -4658,15 +4662,17 @@ try:
             and bytes(payload).rstrip(b' ') == MARKER
         )
         targets.append((name, before, target_fd, sanitized_placeholder))
-    if not targets:
+    if not targets and not CONSUME_UPGRADE_MARKER:
         sys.exit(0)
 
     upgrade_before = None
     upgrade_fd = None
-    if any(not target[3] for target in targets):
+    if CONSUME_UPGRADE_MARKER or any(not target[3] for target in targets):
         try:
             upgrade_before = os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
         except FileNotFoundError:
+            if CONSUME_UPGRADE_MARKER:
+                raise ValueError('missing post-upgrade marker')
             # Ordinary startup may retire only the archive sanitizer's exact
             # direct-file placeholder. Leave every other legacy/claim path to
             # OpenClaw's native diagnostics.
@@ -4698,7 +4704,8 @@ try:
                 raise ValueError('invalid post-upgrade marker')
     if (identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
             or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
-            or identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd))
+            or (identity_fd is not None
+                and identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd)))
             or (upgrade_before is not None
                 and (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
                      or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)))):
@@ -4709,7 +4716,8 @@ try:
             raise ValueError('device identity file changed')
     for name, _before, _target_fd, _sanitized_placeholder in targets:
         os.unlink(name, dir_fd=identity_fd)
-    os.fsync(identity_fd)
+    if identity_fd is not None:
+        os.fsync(identity_fd)
     for name, _before, _target_fd, sanitized_placeholder in targets:
         try:
             os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
@@ -4722,6 +4730,18 @@ try:
         else:
             message = f'[migration] Removed restored legacy device identity for post-upgrade rotation: {name}'
         print(message, file=sys.stderr)
+    if CONSUME_UPGRADE_MARKER:
+        if (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
+                or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)):
+            raise ValueError('post-upgrade marker changed')
+        os.unlink(UPGRADE_MARKER, dir_fd=root_fd)
+        os.fsync(root_fd)
+        try:
+            os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('post-upgrade marker reappeared')
 except (OSError, ValueError):
     print('[SECURITY] Refusing unsafe restored device identity migration', file=sys.stderr)
     sys.exit(1)
@@ -5197,7 +5217,7 @@ consume_openclaw_post_upgrade_release_before_gateway() {
   # the release marker in place while the descriptor-based cleanup validates
   # and removes any identity that a completed migration materialized late.
   remove_restored_legacy_device_identity "$release_expected" || return 1
-  rm -f -- "$marker" "$ready" || return 1
+  rm -f -- "$ready" || return 1
   if [ -e "$marker" ] || [ -L "$marker" ] || [ -e "$ready" ] || [ -L "$ready" ]; then
     echo "[SECURITY] OpenClaw post-upgrade release receipts reappeared before gateway launch" >&2
     return 1

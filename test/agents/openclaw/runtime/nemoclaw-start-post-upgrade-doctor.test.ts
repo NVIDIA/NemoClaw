@@ -603,6 +603,37 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
+  it("refuses a replaced release marker at the gateway launch edge", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            doctorFunction(source, f.configDir, f.ready),
+            releaseAfterReady(f),
+            "run_requested_openclaw_post_upgrade_doctor || exit $?",
+            `printf '%s\n' unexpected >${JSON.stringify(f.marker)}`,
+            "consume_openclaw_post_upgrade_release_before_gateway",
+          ].join("\n"),
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Refusing unsafe restored device identity migration");
+      expect(fs.readFileSync(f.marker, "utf8")).toBe("unexpected\n");
+      expect(fs.existsSync(f.ready)).toBe(true);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { doctorExitCode: "0", expectedStatus: 0, markerRetained: false },
     { doctorExitCode: "7", expectedStatus: 1, markerRetained: true },
