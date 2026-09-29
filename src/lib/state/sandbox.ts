@@ -1193,10 +1193,11 @@ function nativeStructuredAuthorityKind(
   }
   if (
     isSensitiveFile(fileName) ||
-    /^\.openclaw\/(?:devices|identity)\/(?:device(?:-auth)?|paired|pending)\.json$/u.test(
+    /^\.(?:openclaw|openclaw-data)\/(?:devices|identity)\/(?:device(?:-auth)?|paired|pending)\.json$/u.test(
       normalized,
     ) ||
-    (!fileName.startsWith("._") && /^\.openclaw\/credentials\/.+\.json$/u.test(normalized))
+    (!fileName.startsWith("._") &&
+      /^\.(?:openclaw|openclaw-data)\/credentials\/.+\.json$/u.test(normalized))
   ) {
     return "credential-json";
   }
@@ -1259,7 +1260,10 @@ function sanitizedStructuredAuthority(
       const sanitizedGateway = (sanitized as Record<string, unknown>).gateway;
       if (isObjectRecord(sanitizedGateway)) delete sanitizedGateway.auth;
     }
-  } else if (kind === "credential-json" && normalized === ".openclaw/identity/device.json") {
+  } else if (
+    kind === "credential-json" &&
+    /^(?:\.openclaw|\.openclaw-data)\/identity\/device\.json$/u.test(normalized)
+  ) {
     // The complete native-home archive keeps the path but cannot retain the
     // machine-local private key. Leave an explicit, narrowly recognized
     // startup placeholder instead of a partial identity that OpenClaw would

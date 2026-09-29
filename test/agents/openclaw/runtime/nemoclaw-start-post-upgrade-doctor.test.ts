@@ -120,13 +120,13 @@ describe("sanitized legacy device identity migration", () => {
   function runMigration(configPath = config) {
     const fn = extractShellFunctionFromSource(
       fs.readFileSync(START_SCRIPT, "utf8"),
-      "remove_sanitized_legacy_device_identity",
+      "remove_restored_legacy_device_identity",
     ).replaceAll("/sandbox/.openclaw", configPath);
     return spawnSync(
       "bash",
       [
         "-c",
-        `run_openclaw_config_as_owner() { "$@"; }\n${fn}\nremove_sanitized_legacy_device_identity`,
+        `run_openclaw_config_as_owner() { "$@"; }\n${fn}\nremove_restored_legacy_device_identity`,
       ],
       { encoding: "utf8" },
     );
@@ -138,6 +138,42 @@ describe("sanitized legacy device identity migration", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(target)).toBe(false);
     expect(result.stderr).toContain("Removed sanitized legacy device identity placeholder");
+  });
+
+  it("rotates a restored identity during trusted post-upgrade maintenance", () => {
+    fs.writeFileSync(
+      path.join(config, ".nemoclaw-post-upgrade-doctor"),
+      "nemoclaw-openclaw-post-upgrade-doctor-v2\n",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      target,
+      JSON.stringify({
+        version: 1,
+        deviceId: "device",
+        publicKeyPem: "public",
+        privateKeyPem: "private",
+      }),
+    );
+
+    const result = runMigration();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(result.stderr).toContain(
+      "Removed restored legacy device identity for post-upgrade rotation",
+    );
+  });
+
+  it("rejects an untrusted post-upgrade marker without removing the identity", () => {
+    const marker = path.join(config, ".nemoclaw-post-upgrade-doctor");
+    fs.writeFileSync(marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o644 });
+    fs.writeFileSync(target, JSON.stringify({ version: 1, deviceId: "device" }));
+
+    const result = runMigration();
+
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(target)).toBe(true);
   });
 
   it.each([

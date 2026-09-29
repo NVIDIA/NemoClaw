@@ -43,45 +43,48 @@ function writeOpenClawRegistry(sandboxName: string): void {
 }
 
 describe("complete native-home machine authority", () => {
-  it("replaces the OpenClaw device identity with an explicit startup placeholder", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-identity-state-"));
-    try {
-      const nativeRoot = path.join(fixture, "native-home");
-      const identityPath = path.join(nativeRoot, ".openclaw", "identity", "device.json");
-      const identity = {
-        version: 1,
-        deviceId: "a".repeat(64),
-        publicKeyPem: "public-key-material",
-        privateKeyPem: "private-key-material",
-        createdAtMs: 1,
-      };
-      fs.mkdirSync(path.dirname(identityPath), { recursive: true });
-      fs.writeFileSync(identityPath, JSON.stringify(identity));
-      writeOpenClawRegistry("alpha");
+  it.each([".openclaw", ".openclaw-data"])(
+    "replaces the %s device identity with an explicit startup placeholder",
+    (stateDirectory) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-identity-state-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const identityPath = path.join(nativeRoot, stateDirectory, "identity", "device.json");
+        const identity = {
+          version: 1,
+          deviceId: "a".repeat(64),
+          publicKeyPem: "public-key-material",
+          privateKeyPem: "private-key-material",
+          createdAtMs: 1,
+        };
+        fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+        fs.writeFileSync(identityPath, JSON.stringify(identity));
+        writeOpenClawRegistry("alpha");
 
-      const backup = sandboxState.backupSandboxState("alpha", {
-        nativeStateSource: {
-          root: "/sandbox",
-          directory: nativeRoot,
-          assertCurrent: vi.fn(),
-        },
-      });
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: vi.fn(),
+          },
+        });
 
-      expect(backup.success, backup.error).toBe(true);
-      sandboxState.inspectNativeSandboxState(
-        backup.manifest!.backupPath,
-        (root: string) => {
-          expect(
-            JSON.parse(
-              fs.readFileSync(path.join(root, ".openclaw", "identity", "device.json"), "utf8"),
-            ),
-          ).toEqual({ nemoclawSanitizedDeviceIdentity: 1 });
-        },
-        ".openclaw/identity/device.json",
-      );
-      expect(JSON.parse(fs.readFileSync(identityPath, "utf8"))).toEqual(identity);
-    } finally {
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          (root: string) => {
+            expect(
+              JSON.parse(
+                fs.readFileSync(path.join(root, stateDirectory, "identity", "device.json"), "utf8"),
+              ),
+            ).toEqual({ nemoclawSanitizedDeviceIdentity: 1 });
+          },
+          `${stateDirectory}/identity/device.json`,
+        );
+        expect(JSON.parse(fs.readFileSync(identityPath, "utf8"))).toEqual(identity);
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 });

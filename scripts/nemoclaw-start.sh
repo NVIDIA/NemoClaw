@@ -4570,17 +4570,20 @@ finally:
 PY
 }
 
-# Whole-home backups retain the identity path but replace its machine-local
-# private key with this exact marker. Remove only that marker so OpenClaw can
-# create fresh local authority; real identities and malformed user data remain
-# available to OpenClaw's native migration and diagnostics.
-remove_sanitized_legacy_device_identity() {
+# Whole-home backups cannot carry machine-local private keys into a replacement
+# sandbox. Remove either the archive sanitizer's exact placeholder or, while a
+# trusted post-upgrade maintenance marker is active, the restored legacy
+# identity itself so OpenClaw creates fresh local authority. Ordinary starts
+# preserve real identities and malformed user data for native diagnostics.
+remove_restored_legacy_device_identity() {
   run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
 import os
 import stat
 import sys
 
 MARKER = b'{"nemoclawSanitizedDeviceIdentity":1}'
+UPGRADE_MARKER = '.nemoclaw-post-upgrade-doctor'
+UPGRADE_REQUEST = b'nemoclaw-openclaw-post-upgrade-doctor-v2\n'
 
 def identity(value):
     return value.st_dev, value.st_ino, value.st_mode
@@ -4598,6 +4601,7 @@ try:
     fds.append(parent_fd)
     root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
     fds.append(root_fd)
+    root_before = os.fstat(root_fd)
     try:
         identity_fd = os.open('identity', directory_flags, dir_fd=root_fd)
     except FileNotFoundError:
@@ -4625,15 +4629,46 @@ try:
     if os.read(target_fd, 1):
         raise ValueError('device identity file changed')
     # The archive sanitizer preserves member length with ASCII space padding.
-    # Byte equality keeps this cleanup narrower than ordinary JSON equality
+    # Byte equality keeps ordinary startup cleanup narrower than JSON equality
     # (which would accept duplicate keys or alternate encodings).
-    if bytes(payload).rstrip(b' ') != MARKER:
-        sys.exit(0)
+    sanitized_placeholder = bytes(payload).rstrip(b' ') == MARKER
+    upgrade_before = None
+    upgrade_fd = None
+    if not sanitized_placeholder:
+        try:
+            upgrade_before = os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            sys.exit(0)
+        if (not stat.S_ISREG(upgrade_before.st_mode)
+                or stat.S_IMODE(upgrade_before.st_mode) != 0o600
+                or upgrade_before.st_nlink != 1
+                or upgrade_before.st_uid != root_before.st_uid
+                or upgrade_before.st_size != len(UPGRADE_REQUEST)):
+            raise ValueError('unsafe post-upgrade marker')
+        upgrade_fd = os.open(
+            UPGRADE_MARKER,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=root_fd,
+        )
+        fds.append(upgrade_fd)
+        if stable(os.fstat(upgrade_fd)) != stable(upgrade_before):
+            raise ValueError('post-upgrade marker changed')
+        request = bytearray()
+        while len(request) < upgrade_before.st_size:
+            chunk = os.read(upgrade_fd, upgrade_before.st_size - len(request))
+            if not chunk:
+                raise ValueError('post-upgrade marker changed')
+            request.extend(chunk)
+        if os.read(upgrade_fd, 1) or bytes(request) != UPGRADE_REQUEST:
+            raise ValueError('invalid post-upgrade marker')
     if (identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
             or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
             or identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd))
             or stable(os.stat(name, dir_fd=identity_fd, follow_symlinks=False)) != stable(before)
-            or stable(os.fstat(target_fd)) != stable(before)):
+            or stable(os.fstat(target_fd)) != stable(before)
+            or (upgrade_before is not None
+                and (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
+                     or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)))):
         raise ValueError('device identity file changed')
     os.unlink(name, dir_fd=identity_fd)
     os.fsync(identity_fd)
@@ -4643,9 +4678,13 @@ try:
         pass
     else:
         raise ValueError('device identity file reappeared')
-    print('[migration] Removed sanitized legacy device identity placeholder', file=sys.stderr)
+    if sanitized_placeholder:
+        message = '[migration] Removed sanitized legacy device identity placeholder'
+    else:
+        message = '[migration] Removed restored legacy device identity for post-upgrade rotation'
+    print(message, file=sys.stderr)
 except (OSError, ValueError):
-    print('[SECURITY] Refusing unsafe sanitized device identity migration', file=sys.stderr)
+    print('[SECURITY] Refusing unsafe restored device identity migration', file=sys.stderr)
     sys.exit(1)
 finally:
     for fd in reversed(fds):
@@ -5107,7 +5146,7 @@ prepare_openshell_sqlite_tmpdir || exit 1
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
 remove_empty_legacy_exec_approvals || exit 1
-remove_sanitized_legacy_device_identity || exit 1
+remove_restored_legacy_device_identity || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
