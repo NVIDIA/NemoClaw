@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::fingerprint::sha256;
 use nemoclaw_sdk::config::HarnessKind;
 
 /// Canonical adapter identities and schemas for presenting authoring questions.
@@ -8,6 +9,8 @@ use nemoclaw_sdk::config::HarnessKind;
 #[derive(Clone, Debug)]
 pub struct Capabilities {
     harnesses: Vec<HarnessKind>,
+    pub(crate) fabric_revision: Option<String>,
+    pub(crate) catalog_sha256: Option<String>,
     pub(crate) config_schemas: std::collections::BTreeMap<String, serde_json::Value>,
     pub(crate) model_schemas: std::collections::BTreeMap<String, serde_json::Value>,
     pub(crate) targets: Vec<serde_json::Value>,
@@ -26,6 +29,9 @@ impl Capabilities {
                 .iter()
                 .filter_map(|adapter| adapter.descriptor["adapter_id"].as_str()?.parse().ok()),
         );
+        capabilities.fabric_revision = Some(catalog.fabric_revision.clone());
+        let snapshot = serde_json::to_vec(catalog).expect("Fabric catalog serializes");
+        capabilities.catalog_sha256 = Some(sha256(&snapshot));
         capabilities.targets = catalog.targets.clone();
         for adapter in &catalog.adapters {
             let Some(id) = adapter.descriptor["adapter_id"].as_str() else {
@@ -64,6 +70,8 @@ impl Capabilities {
         harnesses.dedup();
         Self {
             harnesses,
+            fabric_revision: None,
+            catalog_sha256: None,
             schemas: Default::default(),
             config_schemas: Default::default(),
             targets: Vec::new(),

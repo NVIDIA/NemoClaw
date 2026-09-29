@@ -2,6 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{Capabilities, JourneyDefinition, JourneyScope, PartialDocument};
+use nemoclaw_sdk::fabric_catalog::FabricCatalog;
+
+#[test]
+fn printed_tree_identifies_its_sdk_schema_and_exact_fabric_catalog() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let definition = JourneyDefinition::new("provenance", base);
+    let mut catalog = FabricCatalog::bundled();
+    let tree = definition
+        .print_tree(&Capabilities::from_catalog(&catalog))
+        .unwrap();
+    let sdk_line = tree
+        .lines()
+        .find(|line| line.contains("SDK schema:"))
+        .unwrap();
+    let sdk_digest = sdk_line.split("sha256:").nth(1).unwrap();
+    assert_eq!(sdk_digest.len(), 64);
+    assert!(sdk_digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert!(tree.contains(&format!("Fabric revision: {}", catalog.fabric_revision)));
+    let catalog_line = tree
+        .lines()
+        .find(|line| line.contains("Fabric catalog sha256:"))
+        .unwrap()
+        .to_owned();
+
+    catalog.adapters.pop();
+    let changed = definition
+        .print_tree(&Capabilities::from_catalog(&catalog))
+        .unwrap();
+    let changed_line = changed
+        .lines()
+        .find(|line| line.contains("Fabric catalog sha256:"))
+        .unwrap();
+    assert_ne!(catalog_line, changed_line);
+    let synthetic = definition
+        .print_tree(&Capabilities::from_harnesses([]))
+        .unwrap();
+    assert!(synthetic.contains("Fabric catalog: unverified"));
+}
 
 #[test]
 fn configured_native_questions_appear_in_the_same_definition_tree() {

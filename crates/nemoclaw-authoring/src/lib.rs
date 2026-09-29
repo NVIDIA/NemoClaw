@@ -41,5 +41,6 @@ pub use journey_state::{
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;
 
+mod fingerprint;
 mod sdk_schema;
 mod settings;

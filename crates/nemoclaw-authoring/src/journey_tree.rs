@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     Capabilities, Diagnostics, JourneyDefinition, JourneyQuestionReason, JourneyState,
-    PartialIssueKind, journey_definition::adapter_field,
+    PartialIssueKind, journey_definition::adapter_field, sdk_schema::sdk_schema_identity,
 };
 
 const MAX_CHOICES: usize = 32;
@@ -23,9 +23,22 @@ pub(crate) fn print_tree(
     capabilities: &Capabilities,
 ) -> Result<String, Diagnostics> {
     let state = definition.start(capabilities)?;
+    let mut lines = vec![
+        format!("Journey {}", definition.id),
+        format!("  SDK schema: {}", sdk_schema_identity()),
+    ];
+    if let (Some(revision), Some(digest)) = (
+        capabilities.fabric_revision.as_deref(),
+        capabilities.catalog_sha256.as_deref(),
+    ) {
+        lines.push(format!("  Fabric revision: {revision}"));
+        lines.push(format!("  Fabric catalog sha256:{digest}"));
+    } else {
+        lines.push("  Fabric catalog: unverified".into());
+    }
     let mut printer = TreePrinter {
         capabilities,
-        lines: vec![format!("Journey {}", definition.id)],
+        lines,
         branches: 0,
     };
     printer.render(&state, "  ", 0, &BTreeSet::new(), &BTreeSet::new())?;
