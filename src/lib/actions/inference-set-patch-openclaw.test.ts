@@ -13,6 +13,35 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it.each([undefined, null, 16384])(
+    "updates only the selected model's context when the resolved window is %s",
+    (contextWindow) => {
+      const otherModel = { id: "other", contextWindow: 65536, maxTokens: 4096 };
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/selected" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [otherModel, { id: "selected", contextWindow: 131072 }],
+            },
+          },
+        },
+      };
+
+      patchOpenClawInferenceConfig(config, "compatible-endpoint", "selected", null, contextWindow);
+
+      const models = providerModels(config, "inference");
+      expect(models).toHaveLength(2);
+      expect(models[0]).toEqual({ id: "other", contextWindow: 65536, maxTokens: 4096 });
+      expect(models[1].id).toBe("selected");
+      expect(Object.hasOwn(models[1], "contextWindow")).toBe(contextWindow !== null);
+      expect(models[1].contextWindow).toBe(
+        contextWindow === null ? undefined : (contextWindow ?? 131072),
+      );
+    },
+  );
+
   it("writes provider-qualified model refs without inheriting another model's limits (#12033)", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
