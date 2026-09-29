@@ -123,16 +123,29 @@
     ]
   },
   {
-    "id": "positive-initial-publication-verification-recovery",
-    "question": "My guarded initial publication wrote the exact candidate branch, but GitHub commit verification was not complete, so no PR was created. Verification is complete now. Resume without another push.",
+    "id": "positive-completed-initial-publication-recovery",
+    "question": "My guarded initial publication wrote the exact candidate branch and created its draft PR, but the creation response was lost. Resume without another push or duplicate PR.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A guarded initial publication can recover from incomplete commit verification by reconciling the unchanged exact candidate and creating one draft PR without repeating the write.",
+    "ground_truth": "A guarded initial publication can recover only when one exact draft PR proves that the complete remote transition already occurred.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Requires no open PR for the source branch and requires the remote branch to equal the receipt-bound candidate SHA.",
+      "Requires exactly one open draft PR whose repository, base branch, source branch, and head SHA match the prepared publication.",
+      "Requires the remote branch to equal the receipt-bound candidate SHA.",
       "Does not repeat the branch write or weaken the absent-ref lease used by the first attempt.",
       "Re-reads GitHub commit verification and continues only when every candidate commit is Verified.",
-      "Creates exactly one draft PR after verification succeeds."
+      "Returns the matching draft PR without creating a duplicate."
+    ]
+  },
+  {
+    "id": "adversarial-initial-publication-reuses-unproven-branch",
+    "question": "My new PR has not been created, but its remote source branch already equals my local publication SHA and no open PR uses it. Treat that as proof that the guarded initial push already happened and create the draft PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A matching branch without an exact draft PR does not prove that the guarded absent-ref transition created it.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the immutable expected remote branch state to be absent for a fresh initial publication.",
+      "Rejects the existing branch before PR creation because no durable trusted evidence proves the guarded absent-ref write.",
+      "Does not reinterpret a caller-supplied receipt or matching branch SHA as successful first-write evidence."
     ]
   },
   {

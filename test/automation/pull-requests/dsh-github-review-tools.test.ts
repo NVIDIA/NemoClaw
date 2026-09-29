@@ -14,6 +14,7 @@ let approveNemoclawForkWorkflowRuns: (input: any) => Promise<any>;
 let runGitHubCli: (input: any) => Promise<any>;
 let publishNemoclawPrBranch: (input: any) => Promise<any>;
 let createNemoclawPr: (input: any) => Promise<any>;
+let commitPushRefreshPr: (input: any) => Promise<any>;
 let prepareIsolatedPrWorktree: (input: any) => Promise<any>;
 let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
 let runIndependentDocumentationWriterReview: (input: any) => Promise<any>;
@@ -31,6 +32,7 @@ beforeAll(async () => {
   runGitHubCli = (await load("run_github_cli")).default;
   publishNemoclawPrBranch = (await load("publish_nemoclaw_pr_branch")).default;
   createNemoclawPr = (await load("create_nemoclaw_pr")).default;
+  commitPushRefreshPr = (await load("commit_push_refresh_pr")).default;
   prepareIsolatedPrWorktree = (await load("prepare_isolated_pr_worktree")).default;
   removeIsolatedPrWorktrees = (await load("remove_isolated_pr_worktrees")).default;
   runIndependentDocumentationWriterReview = (
@@ -282,7 +284,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
 
   function publicationTools(
     pushOutcome: "success" | "race",
-    branchState: "existing" | "absent" | "candidate" = "existing",
+    branchState: "existing" | "absent" | "candidate" | "candidate-draft" = "existing",
   ) {
     const bash = vi.fn(
       async ({ command: _command, description }: { command: string; description: string }) => {
@@ -294,7 +296,9 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
           "Read publication branch before push":
             branchState === "absent"
               ? ""
-              : (branchState === "candidate" ? HEAD_SHA : previousSha) +
+              : (branchState === "candidate" || branchState === "candidate-draft"
+                  ? HEAD_SHA
+                  : previousSha) +
                 "\trefs/heads/" +
                 branch +
                 "\n",
@@ -316,7 +320,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       isDraft: true,
       state: "OPEN",
       headRefName: branch,
-      headRefOid: previousSha,
+      headRefOid: branchState === "candidate-draft" ? HEAD_SHA : previousSha,
       headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
       headRepositoryOwner: { login: "NVIDIA" },
     };
@@ -330,7 +334,11 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
           : command;
       const responses: Record<string, { stdout: string }> = {
         "repo view": { stdout: "main\n" },
-        "pr list": { stdout: JSON.stringify(branchState === "existing" ? [pull] : []) },
+        "pr list": {
+          stdout: JSON.stringify(
+            branchState === "existing" || branchState === "candidate-draft" ? [pull] : [],
+          ),
+        },
         "pr view": { stdout: JSON.stringify(pull) },
         "api base": { stdout: baseSha + "\n" },
         "api commit": { stdout: "true\tverified\n" },
@@ -387,8 +395,24 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     expect(push).toContain("--force-with-lease=refs/heads/" + branch + ":");
   });
 
-  it("resumes verified initial publication without repeating the branch write", async () => {
+  it("rejects an existing candidate branch without proof of the guarded initial write", async () => {
     const { bash } = publicationTools("success", "candidate");
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: { ...receipt, expectedRemoteSha: null },
+        apply: true,
+      }),
+    ).rejects.toThrow("Publication branch changed before guarded publication");
+    expect(
+      bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
+    ).toHaveLength(0);
+  });
+
+  it("reconciles a completed exact draft publication without repeating the branch write", async () => {
+    const { bash } = publicationTools("success", "candidate-draft");
 
     await expect(
       publishNemoclawPrBranch({
@@ -401,6 +425,30 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     expect(
       bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
     ).toHaveLength(0);
+  });
+
+  it("enumerates guarded commits from the receipt-bound canonical base", async () => {
+    const { bash } = publicationTools("success");
+
+    await publishNemoclawPrBranch({
+      workdir: "/workspace",
+      expectedHeadSha: HEAD_SHA,
+      expectedPullHeadSha: previousSha,
+      pullNumber: 1,
+      hookBypassReceipt: receipt,
+      apply: true,
+    });
+
+    const count = bash.mock.calls.find(
+      ([call]) => call.description === "Count publication commits",
+    )?.[0].command;
+    const list = bash.mock.calls.find(
+      ([call]) => call.description === "List publication commits",
+    )?.[0].command;
+    expect(count).toContain(baseSha + ".." + HEAD_SHA);
+    expect(list).toContain(baseSha + ".." + HEAD_SHA);
+    expect(count).not.toContain("origin/main");
+    expect(list).not.toContain("origin/main");
   });
 
   it("creates one draft PR after guarded initial publication reconciliation", async () => {
@@ -448,6 +496,178 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       ),
     ).toHaveLength(1);
     expect(runGithubCli.mock.calls[0][0].args).toContain("--draft");
+  });
+
+  it("rejects a non-draft PR observed after an inconclusive draft creation", async () => {
+    const publish = vi.fn().mockResolvedValue({
+      mutated: true,
+      pushed: true,
+      remoteState: "expected-commit",
+      allVerified: true,
+      blocker: null,
+      commits: [{ sha: HEAD_SHA, verified: true, reason: "valid" }],
+    });
+    const runGithubCli = vi.fn(async ({ args }: { args: string[] }) => {
+      const responses: Record<string, { code?: number; stdout: string; stderr?: string }> = {
+        create: { code: 1, stdout: "", stderr: "creation response lost" },
+        list: {
+          stdout: JSON.stringify([
+            {
+              url: "https://github.com/NVIDIA/NemoClaw/pull/1",
+              isDraft: false,
+              headRefName: branch,
+              headRefOid: HEAD_SHA,
+              baseRefName: "main",
+              headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
+              headRepositoryOwner: { login: "NVIDIA" },
+            },
+          ]),
+        },
+      };
+      return responses[args[1]] ?? Promise.reject(new Error("unexpected GitHub CLI call"));
+    });
+    vi.stubGlobal("tools", {
+      bash: vi.fn().mockResolvedValue({
+        kind: "foreground",
+        exitCode: 0,
+        stdout: { text: HEAD_SHA + "\tContributor <contributor@example.com>\n", truncated: false },
+        stderr: { text: "", truncated: false },
+      }),
+      publish_nemoclaw_pr_branch: publish,
+      read_git_checkout: vi.fn().mockResolvedValue({ head: HEAD_SHA, branch, clean: true }),
+      run_github_cli: runGithubCli,
+    });
+
+    await expect(
+      createNemoclawPr({
+        title: "fix(skills): guard publication",
+        body: "Signed-off-by: Contributor <contributor@example.com>",
+        workdir: "/workspace",
+        apply: true,
+        draft: true,
+        assignee: false,
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: { ...receipt, expectedRemoteSha: null },
+      }),
+    ).rejects.toThrow("does not match the prepared draft publication");
+  });
+
+  it("forwards a newly bound fallback receipt for an open draft PR update", async () => {
+    const nextSha = "f".repeat(40);
+    let stagedReads = 0;
+    const publish = vi.fn().mockResolvedValue({
+      pushed: true,
+      remoteState: "expected-commit",
+      allVerified: true,
+      headSha: nextSha,
+      commits: [{ sha: nextSha, verified: true, reason: "valid" }],
+      blocker: null,
+    });
+    const bash = vi.fn(async ({ description }: { command: string; description: string }) => ({
+      kind: "foreground",
+      exitCode: 0,
+      stdout: {
+        text:
+          description === "Read staged paths"
+            ? stagedReads++ === 0
+              ? ""
+              : "AGENTS.md\0"
+            : description === "Record index state"
+              ? "tree\n"
+              : "",
+        truncated: false,
+      },
+      stderr: { text: "", truncated: false },
+    }));
+    const pull = {
+      headRefName: branch,
+      headRefOid: previousSha,
+      baseRefName: "main",
+      url: "https://github.com/NVIDIA/NemoClaw/pull/1",
+      title: "fix(skills): guard publication",
+      state: "OPEN",
+      isDraft: true,
+    };
+    vi.stubGlobal("tools", {
+      bash,
+      project_diagnostic_text: vi.fn(async ({ lines }: { lines: string[] }) => ({
+        text: lines.join("\n"),
+      })),
+      read_git_checkout: vi
+        .fn()
+        .mockResolvedValueOnce({ head: previousSha })
+        .mockResolvedValueOnce({ head: nextSha })
+        .mockResolvedValueOnce({ head: nextSha, clean: true }),
+      run_github_cli: vi.fn().mockResolvedValue({ stdout: JSON.stringify(pull) }),
+      publish_nemoclaw_pr_branch: publish,
+      read_nemoclaw_pr: vi.fn().mockResolvedValue({ state: "OPEN", headRefOid: nextSha }),
+      summarize_pr_readiness: vi.fn().mockResolvedValue({ ready: false }),
+    });
+
+    await commitPushRefreshPr({
+      workdir: "/workspace",
+      pullNumber: 1,
+      message: "fix(skills): repair guarded publication",
+      files: ["AGENTS.md"],
+      hookBypassReceipt: {
+        schemaVersion: 1,
+        canonicalBaseSha: baseSha,
+        workflowPath: receipt.workflowPath,
+        workflowBlobSha,
+        workflowJob: receipt.workflowJob,
+        draftOnly: true,
+      },
+      refreshBody: false,
+      apply: true,
+    });
+
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedHeadSha: nextSha,
+        expectedPullHeadSha: previousSha,
+        hookBypassReceipt: expect.objectContaining({
+          candidateSha: nextSha,
+          canonicalBaseSha: baseSha,
+          expectedRemoteSha: previousSha,
+          draftOnly: true,
+        }),
+      }),
+    );
+  });
+
+  it("rejects a non-draft PR before forwarding an open-PR fallback receipt", async () => {
+    const publish = vi.fn();
+    vi.stubGlobal("tools", {
+      run_github_cli: vi.fn().mockResolvedValue({
+        stdout: JSON.stringify({
+          headRefName: branch,
+          headRefOid: previousSha,
+          baseRefName: "main",
+          state: "OPEN",
+          isDraft: false,
+        }),
+      }),
+    });
+
+    await expect(
+      commitPushRefreshPr({
+        workdir: "/workspace",
+        pullNumber: 1,
+        message: "fix(skills): repair guarded publication",
+        files: ["AGENTS.md"],
+        hookBypassReceipt: {
+          schemaVersion: 1,
+          canonicalBaseSha: baseSha,
+          workflowPath: receipt.workflowPath,
+          workflowBlobSha,
+          workflowJob: receipt.workflowJob,
+          draftOnly: true,
+        },
+        refreshBody: false,
+        apply: true,
+      }),
+    ).rejects.toThrow("Hook-free updates require a draft pull request");
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it("rejects a concurrent remote update at the atomic write boundary", async () => {

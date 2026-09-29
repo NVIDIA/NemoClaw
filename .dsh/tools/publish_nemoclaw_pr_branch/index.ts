@@ -179,6 +179,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   });
   const prs = JSON.parse(existing.stdout || "[]");
   if (prs.length > 1) throw new Error("Multiple open pull requests exist for this branch");
+  let reconcileCompletedInitialPublication = false;
   if (prs.length === 1) {
     const pull = prs[0];
     const pullRepo =
@@ -190,21 +191,27 @@ export default async function publish_nemoclaw_pr_branch(input: {
       throw new Error("The open pull request source does not match this branch and repository");
     if (input.pullNumber !== undefined && pull?.number !== input.pullNumber)
       throw new Error("The requested open pull request does not match this branch");
-    if (
-      bypass !== undefined &&
-      (pull?.isDraft !== true || pull?.headRefOid !== bypass.expectedRemoteSha)
-    )
-      throw new Error("Guarded hook-free updates require the expected draft pull request");
+    if (bypass !== undefined) {
+      reconcileCompletedInitialPublication =
+        bypass.expectedRemoteSha === null &&
+        pull?.isDraft === true &&
+        pull?.headRefOid === input.expectedHeadSha;
+      if (
+        pull?.isDraft !== true ||
+        (!reconcileCompletedInitialPublication && pull?.headRefOid !== bypass.expectedRemoteSha)
+      )
+        throw new Error("Guarded hook-free publication requires the expected draft pull request");
+    }
   }
   if (prs.length === 0 && input.pullNumber !== undefined)
     throw new Error("The requested open pull request does not match this branch");
   if (bypass !== undefined && prs.length === 0 && bypass.expectedRemoteSha !== null)
-    throw new Error("Initial guarded publication requires an absent remote branch");
+    throw new Error("Guarded hook-free updates require the expected draft pull request");
+  const trustedBase = bypass?.canonicalBaseSha ?? remote + "/" + baseBranch;
   const commitCount = Number(
     (
       await run(
-        "git rev-list --count --max-count=101 " +
-          q(remote + "/" + baseBranch + ".." + input.expectedHeadSha),
+        "git rev-list --count --max-count=101 " + q(trustedBase + ".." + input.expectedHeadSha),
         "Count publication commits",
       )
     ).stdout.text.trim(),
@@ -214,7 +221,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (commitCount > 100) throw new Error("Publication exceeds the 100-commit verification bound");
   const commits = (
     await run(
-      "git rev-list --reverse " + q(remote + "/" + baseBranch + ".." + input.expectedHeadSha),
+      "git rev-list --reverse " + q(trustedBase + ".." + input.expectedHeadSha),
       "List publication commits",
     )
   ).stdout.text
@@ -295,7 +302,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       throw new Error("Could not verify the publication branch before guarded publication");
     const expectedRemote = bypass.expectedRemoteSha ?? "";
     reconcileExistingInitialPublication =
-      bypass.expectedRemoteSha === null && remoteBefore === input.expectedHeadSha;
+      reconcileCompletedInitialPublication && remoteBefore === input.expectedHeadSha;
     if (remoteBefore !== expectedRemote && !reconcileExistingInitialPublication)
       throw new Error("Publication branch changed before guarded publication");
     if (bypass.expectedRemoteSha !== null) {

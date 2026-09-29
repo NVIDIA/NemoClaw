@@ -83,6 +83,12 @@ Record the declared repository and branch, expected and observed SHAs, PR identi
 the write ran, the result classification, and each commit's verification result. Treat a missing
 field as an unknown state.
 
+A later invocation may reconcile a completed initial publication only when exactly one open draft PR
+already matches the prepared repository, base branch, source branch, and candidate SHA. Treat that
+draft PR as evidence that the remote transition completed, do not repeat the branch write, and verify
+every candidate commit before continuing. An existing branch without that exact draft PR is not
+evidence of the guarded absent-ref write and must stop publication.
+
 ## Prepare the PR
 
 ### Metadata

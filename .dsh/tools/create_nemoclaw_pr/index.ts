@@ -234,30 +234,49 @@ export default async function create_nemoclaw_pr(input: {
         "--state",
         "open",
         "--json",
-        "url",
+        "url,isDraft,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner",
         "--limit",
-        "1",
-        "--jq",
-        ".[0].url // empty",
+        "2",
       ],
     });
-    if (lookup.stdout.trim())
-      return {
-        ok: true,
-        apply: true,
-        mutated: true,
-        repo,
-        remote,
-        baseBranch,
-        headBranch: branch,
-        title: input.title,
-        draft: input.draft === true,
-        assignee,
-        commitCount,
-        verificationPending: false,
-        url: lookup.stdout.trim(),
-        unverified: [],
-      };
+    const pulls = JSON.parse(lookup.stdout || "[]");
+    if (pulls.length === 1) {
+      const pull = pulls[0];
+      const pullRepo =
+        pull?.headRepository?.nameWithOwner ??
+        (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
+          ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
+          : "");
+      if (
+        pull?.isDraft === (input.draft === true) &&
+        pull?.headRefName === branch &&
+        pull?.headRefOid === input.expectedHeadSha &&
+        pull?.baseRefName === baseBranch &&
+        pullRepo.toLowerCase() === repo.toLowerCase() &&
+        typeof pull?.url === "string" &&
+        pull.url
+      )
+        return {
+          ok: true,
+          apply: true,
+          mutated: true,
+          repo,
+          remote,
+          baseBranch,
+          headBranch: branch,
+          title: input.title,
+          draft: input.draft === true,
+          assignee,
+          commitCount,
+          verificationPending: false,
+          url: pull.url,
+          unverified: [],
+        };
+    }
+    if (pulls.length > 0)
+      throw new Error(
+        "Pull request creation failed; the observed pull request does not match the prepared draft publication",
+      );
     const diagnostic = await tools.project_diagnostic_text({
       lines: created.stderr.split(/\r?\n/),
       maxLines: 20,
