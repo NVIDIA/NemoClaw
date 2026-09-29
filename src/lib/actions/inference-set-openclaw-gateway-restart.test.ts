@@ -136,7 +136,11 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         },
       },
     });
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -251,7 +255,11 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -309,7 +317,11 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledOnce();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",

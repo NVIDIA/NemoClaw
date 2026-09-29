@@ -920,6 +920,8 @@ export function createSetupInference(
                 credentialEnv,
                 reuseGatewayCredentialWithoutLocalKey:
                   options.reuseGatewayCredentialWithoutLocalKey === true,
+                allowLegacyRecordedNoAuthEndpoint:
+                  options.allowLegacyRecordedNoAuthEndpoint === true,
                 skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
                 preferredInferenceApi: options.preferredInferenceApi ?? null,
                 pinnedAddresses: endpointPinnedAddresses,
