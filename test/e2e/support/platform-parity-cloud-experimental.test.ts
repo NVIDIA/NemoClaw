@@ -606,6 +606,9 @@ exit 37
           { mode: 0o755 },
         );
 
+        // The shell program is a fixed literal; repository and temporary-file paths are
+        // positional arguments and are expanded only inside double quotes.
+        // lgtm[js/shell-command-injection-from-environment]
         const result = spawnSync(
           "/bin/bash",
           [

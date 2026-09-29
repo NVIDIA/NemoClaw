@@ -334,7 +334,7 @@ function fixture() {
   const stepDownCalls = path.join(root, "step-down-calls");
   const leaseActive = path.join(root, "lease-active");
   const leaseViolation = path.join(root, "lease-violation");
-  const schemaRepairCalls = path.join(root, "schema-repair-calls");
+  const schemaRepairCalls = path.join(packageRoot, "schema-repair-calls");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(path.dirname(openclaw), { recursive: true });
@@ -351,7 +351,7 @@ function fixture() {
     path.join(packageRoot, "dist", "openclaw-state-db-test.js"),
     [
       `import fs from "node:fs";`,
-      `export function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(${JSON.stringify(schemaRepairCalls)}, "repair\\n"); return { changes: ["migrated"], warnings: [] }; }`,
+      `export function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(new URL("../schema-repair-calls", import.meta.url), "repair\\n"); return { changes: ["migrated"], warnings: [] }; }`,
       `export function repairOpenClawStateDatabaseSchema() { throw new Error("unexpected explicit repair"); }`,
       `export function detectOpenClawStateDatabaseSchemaMigrations() { return []; }`,
       `export function withOpenClawStateStartupMigrationCheckpointDatabase() { throw new Error("unexpected checkpoint"); }`,

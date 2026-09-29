@@ -980,9 +980,6 @@ function readExtractedNativeCredentialCandidate(
   if (!isWithinRoot(candidatePath, scanRoot)) return null;
   let descriptor: number | null = null;
   try {
-    const entryStat = lstatSync(candidatePath);
-    if (!entryStat.isFile() || entryStat.isSymbolicLink()) return null;
-    if (entryStat.size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return { kind: "oversize" };
     descriptor = openSync(
       candidatePath,
       constants.O_RDONLY |
@@ -990,7 +987,8 @@ function readExtractedNativeCredentialCandidate(
         (typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0),
     );
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.size !== entryStat.size) return null;
+    if (!opened.isFile()) return null;
+    if (opened.size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return { kind: "oversize" };
     return { kind: "content", content: readFileSync(descriptor) };
   } catch {
     return null;
@@ -1351,7 +1349,7 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
           }
           const payload = readArchiveRange(descriptor, dataOffset, size);
           if (!payload) return `could not read the machine-local configuration at '${normalized}'`;
-          let replacement = payload;
+          let replacement: Buffer;
           if (normalized === hermesTarget) {
             replacement = withoutHermesMachineLocalApiKey(payload);
           } else {
