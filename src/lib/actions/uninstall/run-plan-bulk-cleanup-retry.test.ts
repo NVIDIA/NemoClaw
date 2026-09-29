@@ -45,6 +45,7 @@ async function failDockerCleanupOnce(
   let inventory = "";
   let rejectDeletion = false;
   let unknownGatewayInventory = false;
+  let selectedGatewayInventoryFailure: RunResult | null = null;
   const failure = { status: 1, stdout: "", stderr: "Unknown gateway 'nemoclaw'" };
   const execute = () =>
     runUninstallPlanProduction(
@@ -75,13 +76,21 @@ async function failDockerCleanupOnce(
         isTty: false,
         kill: () => true,
         rmSync: fs.rmSync,
-        run: (command, args) => {
+        run: (command, args, options) => {
           switch (`${command} ${args.join(" ")}`) {
             case "openshell gateway list":
-            case "openshell gateway list -o json":
-              return unknownGatewayInventory
-                ? { status: 1, stdout: "", stderr: "gateway inventory unavailable" }
-                : ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw" }] : []));
+            case "openshell gateway list -o json": {
+              const selectedFailure =
+                options?.env?.OPENSHELL_WORKSPACE === "default"
+                  ? selectedGatewayInventoryFailure
+                  : null;
+              return (
+                selectedFailure ??
+                (unknownGatewayInventory
+                  ? { status: 1, stdout: "", stderr: "gateway inventory unavailable" }
+                  : ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw" }] : [])))
+              );
+            }
             case "openshell gateway remove nemoclaw":
               switch (legacyGateway) {
                 case true:
@@ -146,6 +155,13 @@ async function failDockerCleanupOnce(
     },
     makeGatewayInventoryUnknown: () => {
       unknownGatewayInventory = true;
+    },
+    failSelectedGatewayInventory: (result: RunResult) => {
+      selectedGatewayInventoryFailure = result;
+    },
+    restoreGatewayInventory: () => {
+      unknownGatewayInventory = false;
+      selectedGatewayInventoryFailure = null;
     },
     addUnverifiedContainer: () => {
       inventory = "unverified supervisor:test openshell-default--assistant-id\n";
@@ -247,6 +263,68 @@ describe("bulk cleanup recovery after gateway removal", () => {
       expect(state.volumeRemovalAttempts()).toBe(1);
       expect(state.gatewayVolumePresent()).toBe(true);
       expect(fs.readFileSync(state.registryFile, "utf8")).toBe(state.originalRegistry);
+      expect(fs.existsSync(state.progressFile)).toBe(true);
+      state.restoreGatewayInventory();
+      expect((await state.retry()).exitCode).toBe(0);
+      expect(state.gatewayVolumePresent()).toBe(false);
+    } finally {
+      state.cleanup();
+    }
+  });
+
+  it.each([
+    { keepOpenShell: false, legacyGateway: false },
+    { keepOpenShell: true, legacyGateway: false },
+    { keepOpenShell: false, legacyGateway: true },
+    { keepOpenShell: true, legacyGateway: true },
+  ])(
+    "preserves retry progress after selected gateway inventory fails with keepOpenShell=$keepOpenShell and legacyGateway=$legacyGateway (#11831)",
+    async ({ keepOpenShell, legacyGateway }) => {
+      const state = await failDockerCleanupOnce(keepOpenShell, legacyGateway);
+      try {
+        expect(state.initial.exitCode).toBe(1);
+        expect(state.gatewayRegistered()).toBe(false);
+        const progress = fs.readFileSync(state.progressFile, "utf8");
+        // Earlier discovery succeeds; only the later recovery query fails.
+        state.failSelectedGatewayInventory({
+          status: 1,
+          stdout: "",
+          stderr: "gateway inventory unavailable",
+        });
+        expect((await state.retry()).exitCode).toBe(1);
+        expect(fs.readFileSync(state.progressFile, "utf8")).toBe(progress);
+        expect(fs.readFileSync(state.registryFile, "utf8")).toBe(state.originalRegistry);
+        expect(state.deleteSubmissions()).toBe(1);
+        expect(state.volumeRemovalAttempts()).toBe(1);
+        expect(state.gatewayVolumePresent()).toBe(true);
+
+        state.restoreGatewayInventory();
+        expect((await state.retry()).exitCode).toBe(0);
+        expect(state.gatewayVolumePresent()).toBe(false);
+        expect(state.volumeRemovalAttempts()).toBe(2);
+        expect(state.deleteSubmissions()).toBe(1);
+        expect(fs.existsSync(state.registryFile)).toBe(false);
+        expect(fs.existsSync(state.progressFile)).toBe(false);
+      } finally {
+        state.cleanup();
+      }
+    },
+  );
+
+  it("preserves retry progress when selected gateway inventory is malformed (#11831)", async () => {
+    const state = await failDockerCleanupOnce();
+    try {
+      const progress = fs.readFileSync(state.progressFile, "utf8");
+      state.failSelectedGatewayInventory(ok("invalid inventory"));
+      expect((await state.retry()).exitCode).toBe(1);
+      expect(fs.readFileSync(state.progressFile, "utf8")).toBe(progress);
+      expect(state.deleteSubmissions()).toBe(1);
+      expect(state.volumeRemovalAttempts()).toBe(1);
+
+      state.restoreGatewayInventory();
+      expect((await state.retry()).exitCode).toBe(0);
+      expect(state.gatewayVolumePresent()).toBe(false);
+      expect(fs.existsSync(state.progressFile)).toBe(false);
     } finally {
       state.cleanup();
     }

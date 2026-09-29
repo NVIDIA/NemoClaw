@@ -1672,18 +1672,27 @@ async function removeOpenShellResources(
     );
     if (
       runtimeSelection &&
-      bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read") &&
-      (await selectedGatewayRegistrationIsAbsent(options, {
-        ...runtime,
-        gatewayLifecycle: createUninstallGatewayLifecycle(
-          runtime.run,
-          runtime.env,
-          runtimeSelection,
-        ),
-      }))
+      bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read")
     ) {
-      runtime.log("Resuming verified sandbox cleanup for the removed gateway.");
-      return verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations);
+      const gatewayNames = await collectLiveOpenShellGatewayNames(
+        {
+          ...runtime,
+          gatewayLifecycle: createUninstallGatewayLifecycle(
+            runtime.run,
+            runtime.env,
+            runtimeSelection,
+          ),
+        },
+        gatewayLabel,
+      );
+      if (gatewayNames === null) {
+        runtime.warn("Could not verify gateway inventory; preserving cleanup progress for retry.");
+        return false;
+      }
+      if (!gatewayNames.has(gatewayLabel)) {
+        runtime.log("Resuming verified sandbox cleanup for the removed gateway.");
+        return verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations);
+      }
     }
     if (!bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "clear")) return false;
     if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) return false;
