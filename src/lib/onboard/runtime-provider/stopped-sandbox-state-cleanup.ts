@@ -15,6 +15,7 @@ const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
 const CLEANUP_IMAGE =
   "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+const CLEANUP_IMAGE_PULL_TIMEOUT_MS = 120_000;
 const CLEANUP_LABEL = "com.nvidia.nemoclaw.channel-cleanup";
 const CLEANUP_OWNER_LABEL = `${CLEANUP_LABEL}.owner`;
 const CLEANUP_VOLUME_LABEL = `${CLEANUP_LABEL}.volume`;
@@ -334,6 +335,26 @@ function classifyStartFailure(result: ContainerEngineCommandResult | null) {
   return "cleanup-helper-failed" as const;
 }
 
+function cleanupImageAvailable(engine: StoppedSandboxStateCleanupEngine): boolean {
+  const inspect = () => engine.capture(["image", "inspect", "--format", "{{.Id}}", CLEANUP_IMAGE]);
+  let image = inspect();
+  if (
+    image.status !== 0 ||
+    image.error ||
+    !/^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
+  ) {
+    const pulled = engine.capture(
+      ["pull", "--quiet", CLEANUP_IMAGE],
+      CLEANUP_IMAGE_PULL_TIMEOUT_MS,
+    );
+    if (pulled.status !== 0 || pulled.error) return false;
+    image = inspect();
+  }
+  return (
+    image.status === 0 && !image.error && /^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
+  );
+}
+
 function clearStoppedSandboxResourceWithEngine(
   sandboxName: string,
   engine: StoppedSandboxStateCleanupEngine,
@@ -343,12 +364,7 @@ function clearStoppedSandboxResourceWithEngine(
   if ("failure" in observed) return failure(observed.failure);
   const target = observed.target;
   if (target.running) return failure("runtime-not-stopped");
-  const image = engine.capture(["image", "inspect", "--format", "{{.Id}}", CLEANUP_IMAGE]);
-  if (
-    image.status !== 0 ||
-    image.error ||
-    !/^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
-  ) {
+  if (!cleanupImageAvailable(engine)) {
     return failure("cleanup-helper-image-unavailable");
   }
   const name = helperName(sandboxName);

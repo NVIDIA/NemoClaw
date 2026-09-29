@@ -240,6 +240,13 @@ describe("textContainsHighConfidenceCredential", () => {
     expect(textContainsHighConfidenceCredential(["sk-", "x".repeat(20)].join(""))).toBe(false);
     expect(textContainsHighConfidenceCredential(["ghp_", "0123456789abcdef"].join(""))).toBe(true);
   });
+
+  it("does not treat sk- inside an ordinary hyphenated word as a token prefix", () => {
+    expect(textContainsHighConfidenceCredential("task-concurrency-diagnosis")).toBe(false);
+    expect(textContainsHighConfidenceCredential(["sk-", "0123456789abcdefghij"].join(""))).toBe(
+      true,
+    );
+  });
 });
 
 describe("textContainsCredential", () => {

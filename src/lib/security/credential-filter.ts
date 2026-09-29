@@ -70,6 +70,10 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // prefix from malformed placeholder-shaped credential values.
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-\[A-Za-z0-9_\]\+/gu, "unused")
       .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
+      // The shared provider signature intentionally has no leading boundary.
+      // Exclude embedded English fragments such as `task-concurrency-diagnosis`
+      // while continuing to reject standalone sk-* credential values.
+      .replace(/(?<=[A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{20,})/gu, "sk_")
       // Upstream skill documentation uses visibly synthetic repeated-x tokens.
       // Preserve those examples without accepting placeholder-shaped values
       // that contain any other token material.

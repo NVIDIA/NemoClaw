@@ -95,6 +95,48 @@ describe("stopped native-home cleanup", () => {
     ).toEqual({ cleared: false, failure: "runtime-revalidation-failed" });
   });
 
+  it("pulls the pinned cleanup image when a mounted stopped home needs it", () => {
+    const stateResource = {
+      type: "volume" as const,
+      source: "openclaw-state",
+      target: "/sandbox",
+    };
+    const observe = vi.fn(() => ({
+      target: { resourceHandle: CONTAINER_ID, running: false, stateResource },
+    }));
+    let imageInspections = 0;
+    const capture = vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "image":
+          imageInspections += 1;
+          return imageInspections === 1
+            ? { status: 1, stdout: "", stderr: "No such image" }
+            : { status: 0, stdout: `sha256:${"c".repeat(64)}\n`, stderr: "" };
+        case "pull":
+        case "start":
+        case "rm":
+          return { status: 0, stdout: "", stderr: "" };
+        case "inspect":
+          return { status: 1, stdout: "", stderr: "No such container" };
+        case "create":
+          return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+        default:
+          return { status: 125, stdout: "", stderr: `unexpected command: ${args.join(" ")}` };
+      }
+    });
+
+    expect(
+      clearStoppedNativeHomeWithEngine("stopped-sandbox", "/sandbox", [], {
+        capture,
+        observe,
+      }),
+    ).toEqual({ cleared: true });
+    expect(capture).toHaveBeenCalledWith(
+      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      120_000,
+    );
+  });
+
   it("removes complete native state while preserving exact user-managed paths", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-native-cleanup-"));
     try {
