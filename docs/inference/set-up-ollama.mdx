@@ -41,7 +41,13 @@ A missing or changed value causes a configuration drift error instead of runner 
 It then creates the runner, sends one validation request for the selected model, and confirms that Ollama loaded the selected model.
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 Port `11434` must be free on `127.0.0.1` and on the Portable host-gateway listener IP before inference create.
-Stop a host Ollama service or leftover Portable Ollama container on those published addresses first.
+When no sandbox has lifecycle authority for the same name, a `--fresh` retry first retires an exact abandoned receipt-owned gateway provider, Portable Ollama runner, and private inference state, including when the replacement selects another model.
+An active sandbox with that name keeps its gateway provider, Portable Ollama runner, and private inference state.
+If the recorded provider, runtime, socket, network, or private state authority changed, onboarding exits nonzero and preserves that state.
+There is no automated recovery for that authority-drift result.
+`--fresh` has already discarded the previous onboarding session.
+Preserve the private inference state and exact redacted error; do not edit or delete them; and [file a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) for maintainer review before retrying.
+Stop an unrelated host Ollama service or unowned listener on those published addresses first.
 
 If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoclaw <name> connect --probe-only` to resume only the exact receipt-owned runner.
 Ordinary `connect` also resumes it when the recorded inference route is unavailable.
@@ -362,7 +368,7 @@ After a model fails validation, NemoClaw excludes it from the next installed-mod
 On Windows on Arm N1X systems with a Snapdragon X processor, automatic selection omits the 30B and 35B starter models and selects `qwen3.5:9b`.
 On a WSL RTX Spark N1x, NemoClaw can select an installed `qwen3.6:35b` only when the selected Docker or Podman provider's CUDA proof reports at least 30,000 MiB available.
 When `nvidia-smi` reports multiple plausible NVIDIA GPU rows on WSL ARM64, NemoClaw runs the pinned CUDA workload once for every provider-visible GPU UUID and accepts the proof only when every reported device name and capacity matches.
-The host qualifies for this selection when the GPU's normalized identity is `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, or when the Windows chassis model reports `RTX Spark N1X`.
+The host qualifies for this selection when the GPU's normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, or when the Windows chassis model reports `RTX Spark N1X`.
 The chassis model qualifies only this Ollama model selection; it does not establish N1x WSL identity for system readiness or managed llama.cpp selection.
 The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
 Missing, malformed, mismatched, or insufficient proof capacity retains the `qwen3.5:9b` fallback.

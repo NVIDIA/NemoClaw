@@ -2327,8 +2327,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             const confirmed = await confirmRecreateForSelectionDrift(
               sandboxName,
               selectionDrift,
-              provider,
-              model,
+              selectionDrift.requestedProvider ?? provider,
+              selectionDrift.requestedModel ?? model,
             );
             if (!confirmed) {
               console.error("  Aborted. Existing sandbox left unchanged.");
