@@ -406,7 +406,11 @@ export async function setupRemoteProviderInference(
         if (applyResult.status === 0) {
           // Publish the pending owner before releasing the proxy lifecycle lock.
           // Otherwise concurrent teardown can stop the newly configured proxy.
-          if (proxy && sandboxName && registry.updateSandbox(sandboxName) === false) {
+          if (
+            proxy &&
+            sandboxName &&
+            registry.updateSandbox(sandboxName, { model, provider }) === false
+          ) {
             throw new Error(`Could not reserve the inference route for sandbox '${sandboxName}'.`);
           }
           proxy?.persist();
