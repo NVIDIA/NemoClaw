@@ -1590,6 +1590,63 @@ fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
 }
 
 #[test]
+fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("api-dependency", base)
+        .ask(["/metadata/name", "/spec/inferenceProviders/0/endpoint"])
+        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let name = "/metadata/name";
+    let api = "/spec/inferenceProviders/0/api";
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    state
+        .answer(&capabilities, name, Some(json!("my-project")))
+        .unwrap();
+    state
+        .answer(&capabilities, model, Some(json!("nvidia/selected-model")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(model)
+            .is_none()
+    );
+    state
+        .answer(&capabilities, api, Some(json!("openai-responses")))
+        .unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(resolved.question(model).is_some());
+    assert!(resolved.question(name).is_none());
+    assert_eq!(
+        state.values().pointer(model),
+        Some(&json!("nvidia/selected-model"))
+    );
+    state
+        .answer(&capabilities, model, Some(json!("nvidia/selected-model")))
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            endpoint,
+            Some(json!("https://new.example.com/v1")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(model)
+            .is_some()
+    );
+}
+
+#[test]
 fn optional_sdk_question_can_be_deliberately_omitted() {
     let capabilities = Capabilities::available();
     let base =

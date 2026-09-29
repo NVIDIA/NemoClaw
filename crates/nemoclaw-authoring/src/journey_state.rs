@@ -1054,7 +1054,20 @@ impl JourneyState {
                 .contains(&JourneyScope::DeploymentFields)
                 && id.starts_with('/')
         {
+            let previous = candidate.values.pointer(id).cloned();
+            let provider_for_dependency = candidate.provider_path().and_then(|path| {
+                (id == format!("{path}/api") || id == format!("{path}/endpoint"))
+                    .then(|| candidate.values.pointer(&format!("{path}/name")))
+                    .flatten()
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
             candidate.put_sdk_field(id, value.clone())?;
+            if previous != candidate.values.pointer(id).cloned()
+                && let Some(provider) = provider_for_dependency
+            {
+                candidate.reopen_models_for_provider(&provider);
+            }
             if id == "/spec/gateway/engine" {
                 candidate.generated_gateway_engine = false;
             }
@@ -1302,6 +1315,33 @@ impl JourneyState {
                 .or_insert_with(|| Value::Object(Map::new()))
         };
         crate::settings::put(settings, path, value)
+    }
+
+    fn reopen_models_for_provider(&mut self, provider: &str) {
+        let Some(routes_path) = routes_path(&self.values) else {
+            return;
+        };
+        let route_indexes = self
+            .values
+            .pointer(&routes_path)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(index, route)| {
+                (route.get("providerRef").and_then(Value::as_str) == Some(provider))
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in route_indexes {
+            self.accepted
+                .remove(&format!("{routes_path}/{index}/overrides/model"));
+            self.completed_routes.remove(&index);
+            self.accepted_model_settings
+                .retain(|(route, _)| *route != index);
+            self.omitted_model_settings
+                .retain(|(route, _)| *route != index);
+        }
     }
 
     fn put_inference_preset(&mut self, preset: ProviderPreset) -> Result<(), Diagnostics> {
