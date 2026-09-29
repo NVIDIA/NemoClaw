@@ -369,7 +369,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+    });
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
       "alpha",
       { gatewayName: "nemoclaw", workspace: "default" },
