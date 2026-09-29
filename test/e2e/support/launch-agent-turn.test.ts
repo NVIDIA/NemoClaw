@@ -437,6 +437,15 @@ fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "$NEMOCLAW_FIXTURE_RUN_ID" ]]; then
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "monitor-ready" ]]; then
+  # Model a final deadline probe returning without a new diagnostic.
+  probe_marker="$NEMOCLAW_FIXTURE_BIN_ROOT/pty-monitor-probed"
+  if [[ -e "$probe_marker" ]]; then
+    : > "$NEMOCLAW_FIXTURE_BIN_ROOT/empty-pty-probe"
+    exit 1
+  fi
+  : > "$probe_marker"
+fi
 if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MODE" == "provider-exit-after-recording" ) && "$4" == "qualify" && "$7" == "1" ]]; then
   set +e
   "$@"
@@ -532,6 +541,7 @@ exec "$@"
       baselineRemoved: !existsSync(baselinePath),
       canonicalRestored: existsSync(canonicalRestoredMarker),
       earlyInputObserved: existsSync(earlyInputMarker),
+      emptyPtyProbeObserved: existsSync(join(fixtureRoot, "empty-pty-probe")),
       hostSessionResidue: readdirSync(fixtureRoot).filter((name) =>
         name.startsWith("nemoclaw-launch-host."),
       ),
@@ -1036,11 +1046,12 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "fails when the PTY monitor socket remains missing until the session deadline (#9160)",
+  "retains the missing PTY socket diagnostic when a later deadline probe returns no stderr (#9160)",
   async ({ expect }) => {
-    const { baselineRemoved, ptyMonitorRemoved, result, ttyObserved } =
+    const { baselineRemoved, emptyPtyProbeObserved, ptyMonitorRemoved, result, ttyObserved } =
       await runLaunchSessionFixture("pty-socket-timeout", "absent");
     expect(ttyObserved).toBe(false);
+    expect(emptyPtyProbeObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
     expect(result.signal).toBeNull();

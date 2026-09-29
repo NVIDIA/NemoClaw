@@ -1513,11 +1513,14 @@ wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
   local session_active
+  # Retain this phase's diagnostics if the final deadline probe has no stderr.
+  # fail_launch_session prints only their bounded tail.
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
     # Sample liveness first so an exited child receives one final evidence qualification.
     session_active=1
     kill -0 "$session_pid" 2>/dev/null || session_active=0
-    if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
+    if session_evidence qualify "$expected_turns" >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
@@ -1539,8 +1542,9 @@ wait_for_turn_count() {
 
 wait_for_pty_input_mode() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
+    if session_evidence input-mode >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
@@ -1558,8 +1562,9 @@ wait_for_pty_input_mode() {
 
 wait_for_pty_monitor_ready() {
   local evidence_status
+  : > "$evidence_error"
   while (( SECONDS < session_deadline )); do
-    if session_evidence monitor-ready >/dev/null 2>"$evidence_error"; then
+    if session_evidence monitor-ready >/dev/null 2>>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
