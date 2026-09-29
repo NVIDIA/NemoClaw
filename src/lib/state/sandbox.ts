@@ -83,12 +83,12 @@ const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
-// target image regenerates config.json and its root-owned blueprint cache;
-// warm-up sessions use a reserved internal prefix that is already hidden from
-// ordinary session list/export.
+// target image regenerates config.json and its root-owned blueprint cache. The
+// OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
 const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
+  "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
   "--exclude='./.pi/agent/trust.json'",
 ].join(" ");
@@ -1024,7 +1024,11 @@ function dependencyStringContainsCredential(value: string): boolean {
   for (const candidate of candidates) {
     try {
       const url = new URL(candidate);
-      if (url.username || url.password) return true;
+      if (
+        url.password ||
+        (url.username && textContainsHighConfidenceCredential(decodeURIComponent(url.username)))
+      )
+        return true;
       for (const [key, queryValue] of url.searchParams) {
         if (queryValue && isDependencyCredentialField(key)) return true;
       }
@@ -1369,7 +1373,7 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
 function isNativeNonAuthoritySourceEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   const sourceOrAsset =
-    /\.(?:[cm]?[jt]sx?|css|scss|map|py|rb|go|rs|java|kt|swift|php|sh|rst)$/iu.test(
+    /\.(?:[cm]?[jt]sx?|css|scss|json|map|py|rb|go|rs|java|kt|swift|php|sh|rst)$/iu.test(
       path.posix.basename(normalized),
     );
   return (
@@ -1895,6 +1899,7 @@ function capturePreparedNativeState(
         '  cp -RpP "$source/." "$stage/"',
         '  rm -f -- "$stage/.nemoclaw/config.json"',
         '  rm -rf -- "$stage/.nemoclaw/blueprints"',
+        '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
         '  rm -f -- "$stage/.pi/agent/trust.json"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
         '  tar -C "$stage" -cf - -- .',

@@ -232,6 +232,7 @@ if (command.includes("tar -C")) {
     }
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "config.json"), { force: true });
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "blueprints"), { recursive: true, force: true });
+    fs.rmSync(path.join(copyRoot, ".openclaw", ".nemoclaw-post-upgrade-doctor"), { force: true });
     fs.rmSync(path.join(copyRoot, ".pi", "agent", "trust.json"), { force: true });
     const sessionDirectory = path.join(copyRoot, ".openclaw", "agents", "main", "sessions");
     if (fs.existsSync(sessionDirectory)) {
@@ -351,6 +352,10 @@ describe("complete native home persistence", () => {
         recursive: true,
       });
       fs.writeFileSync(path.join(nativeRoot, ".nemoclaw", "config.json"), "managed-config");
+      fs.writeFileSync(
+        path.join(nativeRoot, ".openclaw", ".nemoclaw-post-upgrade-doctor"),
+        "nemoclaw-openclaw-backup-quiesce-v1\n",
+      );
       fs.writeFileSync(
         path.join(
           nativeRoot,
@@ -477,6 +482,7 @@ describe("complete native home persistence", () => {
         path.join(backup.manifest!.backupPath, "native-home.tar"),
       ]).stdout.toString();
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
+      expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
       expect(archivedPaths).not.toContain(".pi/agent/trust.json");
       expect(archivedPaths).not.toContain(".nemoclaw/blueprints/");
@@ -1002,12 +1008,17 @@ describe("complete native home persistence", () => {
     [
       "dependency metadata",
       "node_modules/jsonwebtoken/package.json",
-      '{"description":"JSON Web Token implementation"}',
+      '{"description":"JSON Web Token implementation","repository":"https://jimmywarting@github.com/example/repo.git"}',
     ],
     [
       "Hermes lazy docs",
       ".hermes/lazy-packages/boto3/examples/cloudfront.rst",
       TOKEN_SHAPED_GENERATED_BYTES,
+    ],
+    [
+      "Hermes lazy dependency data",
+      ".hermes/lazy-packages/botocore/data/sts/2011-06-15/examples-1.json",
+      JSON.stringify({ accessKeyId: TOKEN_SHAPED_GENERATED_BYTES }),
     ],
     ["OpenClaw database", OPENCLAW_SQLITE_WAL, `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
     ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
