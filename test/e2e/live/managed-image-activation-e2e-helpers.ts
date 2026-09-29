@@ -1007,6 +1007,11 @@ async function qualifyExternalImage(
   let rebuilt = false;
   let identityDriftRejected = false;
 
+  if (agent === "openclaw" && !receipt) {
+    return Promise.reject(
+      new Error("external-image OpenClaw receipt missing before identity drift validation"),
+    );
+  }
   if (agent === "openclaw" && receipt) {
     const sourceContainer = await inspectDockerSandboxContainerId(
       host,
