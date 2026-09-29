@@ -515,7 +515,7 @@ jobs:
         run: |
           set -euo pipefail
           uid="$(/usr/bin/id -u)"
-          unit="user-runtime-dir@${uid}.service"
+          unit="user@${uid}.service"
           prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"
           if [[ "$prior_state" != "active" ]]; then
             [[ "$prior_state" == "inactive" ]]
@@ -660,7 +660,7 @@ jobs:
         run: |
           set -euo pipefail
           uid="$(/usr/bin/id -u)"
-          /usr/bin/sudo -n /usr/bin/systemctl stop "user-runtime-dir@${uid}.service"
+          /usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"
 
       - name: Clean up Docker auth
         if: always()

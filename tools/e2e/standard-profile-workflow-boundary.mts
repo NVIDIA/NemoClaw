@@ -616,7 +616,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const gpuRuntimeScript = [
     "set -euo pipefail",
     'uid="$(/usr/bin/id -u)"',
-    'unit="user-runtime-dir@${uid}.service"',
+    'unit="user@${uid}.service"',
     'prior_state="$(/usr/bin/systemctl show "$unit" --property=ActiveState --value)"',
     'if [[ "$prior_state" != "active" ]]; then',
     '  [[ "$prior_state" == "inactive" ]]',
@@ -636,7 +636,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const restoreGpuRuntimeScript = [
     "set -euo pipefail",
     'uid="$(/usr/bin/id -u)"',
-    '/usr/bin/sudo -n /usr/bin/systemctl stop "user-runtime-dir@${uid}.service"',
+    '/usr/bin/sudo -n /usr/bin/systemctl stop "user@${uid}.service"',
   ].join("\n");
   if (
     gpuRuntime?.id !== "gpu_runtime_directory" ||
