@@ -114,8 +114,6 @@ on:
         required: false
       NVIDIA_INFERENCE_API_KEY:
         required: false
-      BRAVE_API_KEY:
-        required: false
 
 permissions:
   contents: read
@@ -518,7 +516,6 @@ jobs:
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
-          BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
         run: |
           set -euo pipefail
