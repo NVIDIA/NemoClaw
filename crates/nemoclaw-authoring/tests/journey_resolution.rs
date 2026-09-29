@@ -38,13 +38,14 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
     .unwrap();
     let mode = "adapter:fixture-schema-agent:/mode";
     let region = "adapter:fixture-schema-agent:/region";
-    assert!(
-        state
-            .resolve(&capabilities)
-            .unwrap()
-            .question(mode)
-            .is_some()
-    );
+    let mode_question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(mode)
+        .cloned()
+        .unwrap();
+    assert_eq!(mode_question.suggestion(), Some(&json!("basic")));
+    assert_eq!(mode_question.choices(), &[json!("basic"), json!("remote")]);
     assert!(
         state
             .resolve(&capabilities)
@@ -62,6 +63,11 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
             .question(region)
             .is_some()
     );
+    assert!(
+        state
+            .answer(&capabilities, region, Some(json!("invalid")))
+            .is_err()
+    );
     state
         .answer(&capabilities, region, Some(json!("west")))
         .unwrap();
@@ -72,6 +78,184 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
             .materialized_document()
             .is_some()
     );
+}
+
+#[test]
+fn changed_adapter_schema_reopens_an_invalid_answer_without_rewriting_it() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture-schema-agent");
+    adapter.descriptor["settings_schema"] = json!({
+        "type":"object", "properties":{"mode":{"type":"string","enum":["basic"]}}, "required":["mode"]
+    });
+    catalog.adapters = vec![adapter.clone()];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut value: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("changed-descriptor", base)
+        .start(&capabilities)
+        .unwrap();
+    let field = "adapter:fixture-schema-agent:/mode";
+    state
+        .answer(&capabilities, field, Some(json!("basic")))
+        .unwrap();
+    let before = state.values().clone();
+    adapter.descriptor["settings_schema"] = json!({
+        "type":"object", "properties":{"mode":{"type":"string","enum":["revised"],"default":"revised"}}, "required":["mode"]
+    });
+    catalog.adapters = vec![adapter];
+    let changed = Capabilities::from_catalog(&catalog);
+    let question = state
+        .resolve(&changed)
+        .unwrap()
+        .question(field)
+        .cloned()
+        .unwrap();
+    assert_eq!(question.reason(), JourneyQuestionReason::InvalidSupplied);
+    assert_eq!(question.choices(), &[json!("revised")]);
+    assert_eq!(state.values(), &before);
+    state
+        .answer(&changed, field, Some(json!("revised")))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness/settings/mode"),
+        Some(&json!("revised"))
+    );
+}
+
+#[test]
+fn conflicting_adapter_descriptors_do_not_select_a_schema_by_catalog_order() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut first = catalog.adapters[0].clone();
+    first.descriptor["adapter_id"] = json!("fixture-schema-agent");
+    first.descriptor["settings_schema"] =
+        json!({"type":"object","properties":{"a":{"type":"string"}}});
+    let mut second = first.clone();
+    second.descriptor["settings_schema"] =
+        json!({"type":"object","properties":{"b":{"type":"boolean"}}});
+    catalog.adapters = vec![first, second];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut value: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
+    let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
+    let state = JourneyDefinition::new("conflicting-descriptors", base)
+        .start(&capabilities)
+        .unwrap();
+    let error = state.resolve(&capabilities).unwrap_err();
+    assert!(
+        error.to_string().contains("ambiguous setting schemas"),
+        "{error}"
+    );
+}
+
+#[test]
+fn omitting_a_nested_optional_setting_does_not_create_its_parent_object() {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.adapters.truncate(1);
+    catalog.adapters[0].descriptor["adapter_id"] = json!("test.optional-settings");
+    catalog.adapters[0].descriptor["settings_schema"] = json!({
+        "type":"object", "properties":{"native":{"type":"object", "properties":{"enabled":{"type":"boolean"}}}}
+    });
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut value: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("test.optional-settings");
+    let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("nested-optional", base)
+        .start(&capabilities)
+        .unwrap();
+    let field = "adapter:test.optional-settings:/native";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(field)
+            .is_some()
+    );
+    state.answer(&capabilities, field, None).unwrap();
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/harness/settings/native")
+            .is_none()
+    );
+}
+
+#[test]
+fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture.model-owner");
+    adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
+    adapter.descriptor["model_schema"] = json!({
+        "type":"object","properties":{"settings":{"type":"object",
+            "properties":{"variant":{"type":"string","enum":["quick","thorough"],"default":"quick"}},
+            "required":["variant"],
+            "if":{"properties":{"variant":{"const":"thorough"}},"required":["variant"]},
+            "then":{"properties":{"budget":{"type":"integer","minimum":1}},"required":["budget"]}
+        }}
+    });
+    catalog.adapters = vec![adapter];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut value: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.model-owner");
+    let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("conditional-native", base)
+        .ask([JourneyScope::NativeSettings])
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let variant = "model:/variant";
+    let budget = "model:/budget";
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(variant)
+            .is_some()
+    );
+    state
+        .answer(&capabilities, variant, Some(json!("thorough")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(budget)
+            .is_some()
+    );
+    assert!(state.answer(&capabilities, budget, Some(json!(0))).is_err());
+    state.answer(&capabilities, budget, Some(json!(3))).unwrap();
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    state
+        .answer(&capabilities, model, Some(json!("different-model")))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/settings"),
+        Some(&json!({"variant":"thorough","budget":3}))
+    );
+    let document = state
+        .resolve(&capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let reopened =
+        nemoclaw_sdk::config::Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+    assert_eq!(reopened, document);
 }
 
 #[test]
