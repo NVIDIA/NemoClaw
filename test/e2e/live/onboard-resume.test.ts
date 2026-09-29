@@ -46,6 +46,7 @@ import {
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 
 // Disruption-recovery contract — regression for #446.
 //
@@ -494,6 +495,13 @@ test(
       captureGatewayLog: true,
     });
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
+    await captureOpenClawOnboardFailure(resumeRun, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-3-onboard-resume",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE, EXTRA_PROVIDER_TOKEN],
+      runtime: runtimeProvider,
+    });
 
     // Assertion: resume-exit-0.
     expect(resumeRun.exitCode, resumeText).toBe(0);

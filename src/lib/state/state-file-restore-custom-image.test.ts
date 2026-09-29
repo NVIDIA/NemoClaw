@@ -48,6 +48,36 @@ afterEach(() => {
   }
 });
 
+describe("native state-file restore (#11763)", () => {
+  it("restores complete native settings when no NemoClaw merge policy is declared (#11763)", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-state-"));
+    fixtures.push(backupPath);
+    const backupContents = Buffer.from(
+      `${JSON.stringify({ futurePiSetting: { enabled: true }, theme: "nvidia-dark" })}\n`,
+    );
+    fs.writeFileSync(path.join(backupPath, "settings.json"), backupContents);
+
+    const restored = restoreStateFile(
+      ["-F", "/tmp/ssh-config", "openshell-alpha"],
+      "/sandbox/.pi/agent",
+      { path: "settings.json", strategy: "copy" },
+      backupPath,
+      undefined,
+      false,
+      vi.fn(),
+    );
+
+    expect(restored).toBe(true);
+    const [binary, args, options] = spawnSyncMock.mock.calls[0] ?? [];
+    expect(binary).toBe("ssh");
+    const command = String(args?.at(-1));
+    expect(command).toContain(".nemoclaw-restore.XXXXXX");
+    expect(command).not.toContain("python3");
+    expect(command).not.toContain("futurePiSetting");
+    expect(options?.input).toEqual(backupContents);
+  });
+});
+
 describe("custom-image state-file restore capability (#6334)", () => {
   it("restores the complete backup without invoking the managed key allowlist", () => {
     const { backupPath, backupContents } = createBackupFixture();

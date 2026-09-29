@@ -270,7 +270,6 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       "managed-image-openclaw-security": "${{ inputs.hermes_only != true }}",
       "messaging-plan-image-boundary": "${{ inputs.hermes_only != true }}",
       "port-override-image-contract": "${{ inputs.hermes_only != true }}",
-      "runtime-overrides": "${{ inputs.hermes_only != true }}",
     });
   });
 
