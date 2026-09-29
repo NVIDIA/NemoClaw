@@ -172,6 +172,37 @@ describe("sanitized legacy device identity migration", () => {
     },
   );
 
+  it.each(["device.json.doctor-importing", "device.json.native-importing"])(
+    "rotates a restored interrupted-import claim at %s during trusted maintenance",
+    (name) => {
+      fs.writeFileSync(
+        path.join(config, ".nemoclaw-post-upgrade-doctor"),
+        "nemoclaw-openclaw-post-upgrade-doctor-v2\n",
+        { mode: 0o600 },
+      );
+      const claim = path.join(identity, name);
+      fs.writeFileSync(claim, "{");
+
+      const result = runMigration();
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(claim)).toBe(false);
+      expect(result.stderr).toContain(
+        `Removed restored legacy device identity for post-upgrade rotation: ${name}`,
+      );
+    },
+  );
+
+  it("preserves an interrupted-import claim outside trusted maintenance", () => {
+    const claim = path.join(identity, "device.json.native-importing");
+    fs.writeFileSync(claim, "{");
+
+    const result = runMigration();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(claim, "utf8")).toBe("{");
+  });
+
   it("rejects an untrusted post-upgrade marker without removing the identity", () => {
     const marker = path.join(config, ".nemoclaw-post-upgrade-doctor");
     fs.writeFileSync(marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o644 });
@@ -318,7 +349,7 @@ function fixture() {
   );
   fs.writeFileSync(
     openclaw,
-    `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nif [ -n "\${DOCTOR_IDENTITY_CLAIM:-}" ]; then mkdir -p "$(dirname "$DOCTOR_IDENTITY_CLAIM")"; printf '{' >"$DOCTOR_IDENTITY_CLAIM"; fi\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -440,6 +471,34 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       );
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates an invalid interrupted-import claim left by doctor before gateway release", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      const claim = path.join(f.configDir, "identity", "device.json.native-importing");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        {
+          encoding: "utf8",
+          env: fixtureEnv(f, { DOCTOR_IDENTITY_CLAIM: claim }),
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(claim)).toBe(false);
+      expect(result.stderr).toContain(
+        "Removed restored legacy device identity for post-upgrade rotation: device.json.native-importing",
+      );
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

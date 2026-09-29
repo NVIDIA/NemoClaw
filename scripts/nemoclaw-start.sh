@@ -4607,82 +4607,113 @@ try:
     except FileNotFoundError:
         sys.exit(0)
     fds.append(identity_fd)
-    name = 'device.json'
-    try:
-        before = os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        sys.exit(0)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-        raise ValueError('unsafe device identity file')
-    target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=identity_fd)
-    fds.append(target_fd)
-    if before.st_dev != os.fstat(identity_fd).st_dev or stable(os.fstat(target_fd)) != stable(before):
-        raise ValueError('device identity file changed')
-    payload = None
-    if before.st_size <= 131072:
-        payload = bytearray()
-        while len(payload) < before.st_size:
-            chunk = os.read(target_fd, before.st_size - len(payload))
-            if not chunk:
-                raise ValueError('device identity file changed')
-            payload.extend(chunk)
-        if os.read(target_fd, 1):
+    target_names = (
+        'device.json',
+        'device.json.doctor-importing',
+        'device.json.native-importing',
+    )
+    targets = []
+    for name in target_names:
+        try:
+            before = os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError('unsafe device identity file')
+        target_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=identity_fd,
+        )
+        fds.append(target_fd)
+        if (before.st_dev != os.fstat(identity_fd).st_dev
+                or stable(os.fstat(target_fd)) != stable(before)):
             raise ValueError('device identity file changed')
-    # The archive sanitizer preserves member length with ASCII space padding.
-    # Byte equality keeps ordinary startup cleanup narrower than JSON equality
-    # (which would accept duplicate keys or alternate encodings).
-    sanitized_placeholder = payload is not None and bytes(payload).rstrip(b' ') == MARKER
+        payload = None
+        if before.st_size <= 131072:
+            payload = bytearray()
+            while len(payload) < before.st_size:
+                chunk = os.read(target_fd, before.st_size - len(payload))
+                if not chunk:
+                    raise ValueError('device identity file changed')
+                payload.extend(chunk)
+            if os.read(target_fd, 1):
+                raise ValueError('device identity file changed')
+        # The archive sanitizer preserves member length with ASCII space
+        # padding. Byte equality keeps ordinary startup cleanup narrower than
+        # JSON equality (which would accept duplicate keys or alternate
+        # encodings). OpenClaw's interrupted-import claims are never accepted
+        # as sanitizer placeholders.
+        sanitized_placeholder = (
+            name == 'device.json'
+            and payload is not None
+            and bytes(payload).rstrip(b' ') == MARKER
+        )
+        targets.append((name, before, target_fd, sanitized_placeholder))
+    if not targets:
+        sys.exit(0)
+
     upgrade_before = None
     upgrade_fd = None
-    if not sanitized_placeholder:
+    if any(not target[3] for target in targets):
         try:
             upgrade_before = os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
         except FileNotFoundError:
-            sys.exit(0)
-        if (not stat.S_ISREG(upgrade_before.st_mode)
-                or stat.S_IMODE(upgrade_before.st_mode) != 0o600
-                or upgrade_before.st_nlink != 1
-                or upgrade_before.st_uid != root_before.st_uid
-                or upgrade_before.st_size != len(UPGRADE_REQUEST)):
-            raise ValueError('unsafe post-upgrade marker')
-        upgrade_fd = os.open(
-            UPGRADE_MARKER,
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-            dir_fd=root_fd,
-        )
-        fds.append(upgrade_fd)
-        if stable(os.fstat(upgrade_fd)) != stable(upgrade_before):
-            raise ValueError('post-upgrade marker changed')
-        request = bytearray()
-        while len(request) < upgrade_before.st_size:
-            chunk = os.read(upgrade_fd, upgrade_before.st_size - len(request))
-            if not chunk:
+            # Ordinary startup may retire only the archive sanitizer's exact
+            # direct-file placeholder. Leave every other legacy/claim path to
+            # OpenClaw's native diagnostics.
+            targets = [target for target in targets if target[3]]
+            if not targets:
+                sys.exit(0)
+        else:
+            if (not stat.S_ISREG(upgrade_before.st_mode)
+                    or stat.S_IMODE(upgrade_before.st_mode) != 0o600
+                    or upgrade_before.st_nlink != 1
+                    or upgrade_before.st_uid != root_before.st_uid
+                    or upgrade_before.st_size != len(UPGRADE_REQUEST)):
+                raise ValueError('unsafe post-upgrade marker')
+            upgrade_fd = os.open(
+                UPGRADE_MARKER,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=root_fd,
+            )
+            fds.append(upgrade_fd)
+            if stable(os.fstat(upgrade_fd)) != stable(upgrade_before):
                 raise ValueError('post-upgrade marker changed')
-            request.extend(chunk)
-        if os.read(upgrade_fd, 1) or bytes(request) != UPGRADE_REQUEST:
-            raise ValueError('invalid post-upgrade marker')
+            request = bytearray()
+            while len(request) < upgrade_before.st_size:
+                chunk = os.read(upgrade_fd, upgrade_before.st_size - len(request))
+                if not chunk:
+                    raise ValueError('post-upgrade marker changed')
+                request.extend(chunk)
+            if os.read(upgrade_fd, 1) or bytes(request) != UPGRADE_REQUEST:
+                raise ValueError('invalid post-upgrade marker')
     if (identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
             or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
             or identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd))
-            or stable(os.stat(name, dir_fd=identity_fd, follow_symlinks=False)) != stable(before)
-            or stable(os.fstat(target_fd)) != stable(before)
             or (upgrade_before is not None
                 and (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
                      or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)))):
         raise ValueError('device identity file changed')
-    os.unlink(name, dir_fd=identity_fd)
+    for name, before, target_fd, _sanitized_placeholder in targets:
+        if (stable(os.stat(name, dir_fd=identity_fd, follow_symlinks=False)) != stable(before)
+                or stable(os.fstat(target_fd)) != stable(before)):
+            raise ValueError('device identity file changed')
+    for name, _before, _target_fd, _sanitized_placeholder in targets:
+        os.unlink(name, dir_fd=identity_fd)
     os.fsync(identity_fd)
-    try:
-        os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        pass
-    else:
-        raise ValueError('device identity file reappeared')
-    if sanitized_placeholder:
-        message = '[migration] Removed sanitized legacy device identity placeholder'
-    else:
-        message = '[migration] Removed restored legacy device identity for post-upgrade rotation'
-    print(message, file=sys.stderr)
+    for name, _before, _target_fd, sanitized_placeholder in targets:
+        try:
+            os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('device identity file reappeared')
+        if sanitized_placeholder:
+            message = '[migration] Removed sanitized legacy device identity placeholder'
+        else:
+            message = f'[migration] Removed restored legacy device identity for post-upgrade rotation: {name}'
+        print(message, file=sys.stderr)
 except (OSError, ValueError):
     print('[SECURITY] Refusing unsafe restored device identity migration', file=sys.stderr)
     sys.exit(1)
@@ -5079,6 +5110,11 @@ EOF
   repair_openclaw_shared_state_schema || return 1
   "${doctor_command[@]}" || return 1
   wait_for_openclaw_startup_migration_lease || return 1
+  # Doctor deliberately retains invalid interrupted-import claims so an
+  # operator can recover them. This maintenance window is the narrower case:
+  # the restored machine-local identity belongs to the retired sandbox, so
+  # rotate any claim Doctor could not import before allowing gateway startup.
+  remove_restored_legacy_device_identity || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"
   fi
