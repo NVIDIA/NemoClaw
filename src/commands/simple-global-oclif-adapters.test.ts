@@ -44,13 +44,6 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
-    resolveDefaultSandboxServiceOptions: vi.fn(
-      (deps: { listSandboxes: () => unknown; getSandbox: (name: string) => unknown }) => {
-        deps.listSandboxes();
-        deps.getSandbox("resolved-sandbox");
-        return { sandboxName: "resolved-sandbox", dashboardPort: 18_791 };
-      },
-    ),
     assertHermesPortableCommandUnavailable: vi.fn(),
     withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
       operation(),
@@ -96,8 +89,8 @@ vi.mock("../lib/tunnel/services", () => ({
   startAll: mocks.startAll,
   stopAll: mocks.stopAll,
 }));
-vi.mock("../lib/tunnel/service-command", () => ({
-  resolveDefaultSandboxServiceOptions: mocks.resolveDefaultSandboxServiceOptions,
+vi.mock("../lib/tunnel/service-command", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/tunnel/service-command")>()),
   runStartCommand: mocks.runStartCommand,
   runStopCommand: mocks.runStopCommand,
 }));
@@ -438,6 +431,12 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   });
 
   it("maps tunnel and deprecated service commands to service actions", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "resolved-sandbox", dashboardPort: 18_791 }],
+      defaultSandbox: "resolved-sandbox",
+    } as never);
+    mocks.getSandbox.mockReturnValue({ name: "resolved-sandbox", dashboardPort: 18_791 } as never);
+
     await TunnelStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
@@ -450,7 +449,6 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
-    expect(mocks.resolveDefaultSandboxServiceOptions).toHaveBeenCalledTimes(1);
     expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
     expect(mocks.getSandbox).toHaveBeenCalledWith("resolved-sandbox");
     expect(mocks.showStatus).toHaveBeenCalledWith({
