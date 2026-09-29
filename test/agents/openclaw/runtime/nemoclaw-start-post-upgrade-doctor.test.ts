@@ -96,6 +96,104 @@ describe("legacy empty approvals migration", () => {
   });
 });
 
+describe("sanitized legacy device identity migration", () => {
+  let root: string;
+  let config: string;
+  let identity: string;
+  let target: string;
+  let outside: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sanitized-identity-"));
+    config = path.join(root, "config");
+    identity = path.join(config, "identity");
+    target = path.join(identity, "device.json");
+    outside = path.join(root, "outside");
+    fs.mkdirSync(identity, { recursive: true });
+    fs.writeFileSync(outside, JSON.stringify({ nemoclawSanitizedDeviceIdentity: 1 }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  function runMigration(configPath = config) {
+    const fn = extractShellFunctionFromSource(
+      fs.readFileSync(START_SCRIPT, "utf8"),
+      "remove_sanitized_legacy_device_identity",
+    ).replaceAll("/sandbox/.openclaw", configPath);
+    return spawnSync(
+      "bash",
+      [
+        "-c",
+        `run_openclaw_config_as_owner() { "$@"; }\n${fn}\nremove_sanitized_legacy_device_identity`,
+      ],
+      { encoding: "utf8" },
+    );
+  }
+
+  it("removes only the explicit sanitized identity placeholder", () => {
+    fs.writeFileSync(target, `${JSON.stringify({ nemoclawSanitizedDeviceIdentity: 1 })}   `);
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(result.stderr).toContain("Removed sanitized legacy device identity placeholder");
+  });
+
+  it.each([
+    {
+      kind: "valid identity",
+      content: { version: 1, deviceId: "device", privateKeyPem: "private" },
+    },
+    { kind: "other object", content: {} },
+    { kind: "lookalike marker", content: { nemoclawSanitizedDeviceIdentity: 2 } },
+  ])("preserves a $kind", ({ content }) => {
+    const serialized = JSON.stringify(content);
+    fs.writeFileSync(target, serialized);
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe(serialized);
+  });
+
+  it("preserves malformed identity data", () => {
+    fs.writeFileSync(target, "{not valid");
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe("{not valid");
+  });
+
+  it.each([
+    '{ "nemoclawSanitizedDeviceIdentity": 1 }',
+    '{"nemoclawSanitizedDeviceIdentity":2,"nemoclawSanitizedDeviceIdentity":1}',
+    '{"nemoclawSanitizedDeviceIdentity":1}\n',
+  ])("preserves a JSON-equivalent marker not emitted by the sanitizer", (content) => {
+    fs.writeFileSync(target, content);
+    const result = runMigration();
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe(content);
+  });
+
+  it.each([
+    { kind: "symlink", create: fs.symlinkSync },
+    { kind: "hardlink", create: fs.linkSync },
+  ])("rejects a $kind without deleting the target", ({ create }) => {
+    create(outside, target);
+    expect(runMigration().status).toBe(1);
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+
+  it("rejects a linked identity directory", () => {
+    fs.rmSync(identity, { recursive: true });
+    const outsideDirectory = path.join(root, "outside-identity");
+    fs.mkdirSync(outsideDirectory);
+    const outsideTarget = path.join(outsideDirectory, "device.json");
+    fs.writeFileSync(outsideTarget, JSON.stringify({ nemoclawSanitizedDeviceIdentity: 1 }));
+    fs.symlinkSync(outsideDirectory, identity);
+    expect(runMigration().status).toBe(1);
+    expect(fs.existsSync(outsideTarget)).toBe(true);
+  });
+});
+
 function doctorFunction(
   source: string,
   configDir: string,

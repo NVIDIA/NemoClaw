@@ -1259,6 +1259,12 @@ function sanitizedStructuredAuthority(
       const sanitizedGateway = (sanitized as Record<string, unknown>).gateway;
       if (isObjectRecord(sanitizedGateway)) delete sanitizedGateway.auth;
     }
+  } else if (kind === "credential-json" && normalized === ".openclaw/identity/device.json") {
+    // The complete native-home archive keeps the path but cannot retain the
+    // machine-local private key. Leave an explicit, narrowly recognized
+    // startup placeholder instead of a partial identity that OpenClaw would
+    // correctly reject as corrupt legacy state.
+    sanitized = { nemoclawSanitizedDeviceIdentity: 1 };
   } else {
     sanitized = stripCredentials(config);
   }

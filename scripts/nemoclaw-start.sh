@@ -4570,6 +4570,89 @@ finally:
 PY
 }
 
+# Whole-home backups retain the identity path but replace its machine-local
+# private key with this exact marker. Remove only that marker so OpenClaw can
+# create fresh local authority; real identities and malformed user data remain
+# available to OpenClaw's native migration and diagnostics.
+remove_sanitized_legacy_device_identity() {
+  run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
+import os
+import stat
+import sys
+
+MARKER = b'{"nemoclawSanitizedDeviceIdentity":1}'
+
+def identity(value):
+    return value.st_dev, value.st_ino, value.st_mode
+
+def stable(value):
+    return (identity(value), value.st_nlink, value.st_uid, value.st_gid,
+            value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+fds = []
+try:
+    config = os.path.normpath(sys.argv[1])
+    parent = os.path.dirname(config)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(parent, directory_flags)
+    fds.append(parent_fd)
+    root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
+    fds.append(root_fd)
+    try:
+        identity_fd = os.open('identity', directory_flags, dir_fd=root_fd)
+    except FileNotFoundError:
+        sys.exit(0)
+    fds.append(identity_fd)
+    name = 'device.json'
+    try:
+        before = os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        sys.exit(0)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError('unsafe device identity file')
+    if before.st_size < 2 or before.st_size > 131072:
+        sys.exit(0)
+    target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=identity_fd)
+    fds.append(target_fd)
+    if before.st_dev != os.fstat(identity_fd).st_dev or stable(os.fstat(target_fd)) != stable(before):
+        raise ValueError('device identity file changed')
+    payload = bytearray()
+    while len(payload) < before.st_size:
+        chunk = os.read(target_fd, before.st_size - len(payload))
+        if not chunk:
+            raise ValueError('device identity file changed')
+        payload.extend(chunk)
+    if os.read(target_fd, 1):
+        raise ValueError('device identity file changed')
+    # The archive sanitizer preserves member length with ASCII space padding.
+    # Byte equality keeps this cleanup narrower than ordinary JSON equality
+    # (which would accept duplicate keys or alternate encodings).
+    if bytes(payload).rstrip(b' ') != MARKER:
+        sys.exit(0)
+    if (identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
+            or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
+            or identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd))
+            or stable(os.stat(name, dir_fd=identity_fd, follow_symlinks=False)) != stable(before)
+            or stable(os.fstat(target_fd)) != stable(before)):
+        raise ValueError('device identity file changed')
+    os.unlink(name, dir_fd=identity_fd)
+    os.fsync(identity_fd)
+    try:
+        os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        raise ValueError('device identity file reappeared')
+    print('[migration] Removed sanitized legacy device identity placeholder', file=sys.stderr)
+except (OSError, ValueError):
+    print('[SECURITY] Refusing unsafe sanitized device identity migration', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for fd in reversed(fds):
+        os.close(fd)
+PY
+}
+
 repair_openclaw_shared_state_schema() {
   local database="/sandbox/.openclaw/state/openclaw.sqlite"
   local database_metadata database_owner database_links node_bin repair_rc=0
@@ -4917,6 +5000,7 @@ prepare_openshell_sqlite_tmpdir || exit 1
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
 remove_empty_legacy_exec_approvals || exit 1
+remove_sanitized_legacy_device_identity || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
