@@ -322,7 +322,9 @@ function removePid(pidDir: string, name: string): void {
 type ServiceName = "cloudflared";
 const SERVICE_NAMES: readonly ServiceName[] = ["cloudflared"];
 
-type StopServiceOutcome = { kind: "complete" } | { kind: "unverified-pid-process"; pid: number };
+export type CloudflaredStopOutcome =
+  | { kind: "complete" }
+  | { kind: "unverified-pid-process"; pid: number };
 
 function startService(
   pidDir: string,
@@ -377,7 +379,7 @@ function stopService(
   pidDir: string,
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): StopServiceOutcome {
+): CloudflaredStopOutcome {
   const state = readCloudflaredState(pidDir, pc);
   if (state.kind === "stopped") {
     info(`${name} was not running`);
@@ -590,7 +592,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
-  let cloudflaredStopOutcome: StopServiceOutcome = { kind: "complete" };
+  let cloudflaredStopOutcome: CloudflaredStopOutcome = { kind: "complete" };
   if (pidDir) {
     cloudflaredStopOutcome = stopService(
       pidDir,
@@ -668,10 +670,10 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
  * and unloads Ollama); enrollment that auto-started a tunnel needs a tunnel-only
  * stop to clean up without tearing down other services.
  */
-export function stopCloudflared(opts: ServiceOptions = {}): void {
+export function stopCloudflared(opts: ServiceOptions = {}): CloudflaredStopOutcome {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared");
+  return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
 }
 
 /**

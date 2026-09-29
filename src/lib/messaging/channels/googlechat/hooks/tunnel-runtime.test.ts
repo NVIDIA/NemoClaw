@@ -8,7 +8,7 @@ describe("Google Chat tunnel runtime", () => {
   it("targets a dedicated route-restricted proxy instead of the dashboard", async () => {
     const pidDir = "/tmp/nemoclaw-services-test-googlechat";
     const startAll = vi.fn(async () => undefined);
-    const stopCloudflared = vi.fn();
+    const stopCloudflared = vi.fn(() => ({ kind: "complete" }) as const);
     const stopGooglechatWebhookProxy = vi.fn();
     const startGooglechatWebhookProxy = vi.fn(async () => 24680);
     const services = {
@@ -57,7 +57,7 @@ describe("Google Chat tunnel runtime", () => {
         readCloudflaredState: () => ({ kind: "running", pid: 123 }),
         resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
         startAll: async () => undefined,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => ({ kind: "complete" }),
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -85,7 +85,7 @@ describe("Google Chat tunnel runtime", () => {
         startAll: async () => {
           throw new Error("cloudflared failed");
         },
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => ({ kind: "complete" }),
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -100,6 +100,68 @@ describe("Google Chat tunnel runtime", () => {
     });
 
     await expect(options.startTunnel?.()).rejects.toThrow("cloudflared failed");
+    expect(stopGooglechatWebhookProxy).toHaveBeenCalledWith(
+      "/tmp/nemoclaw-services-test-googlechat",
+    );
+  });
+
+  it("does not replace a tunnel when the previous PID identity is unavailable", async () => {
+    const startAll = vi.fn(async () => undefined);
+    const startGooglechatWebhookProxy = vi.fn(async () => 24680);
+    const stopGooglechatWebhookProxy = vi.fn();
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "",
+        readCloudflaredState: () => ({ kind: "stopped" }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll,
+        stopCloudflared: () => ({ kind: "unverified-pid-process", pid: 321 }),
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: false,
+          port: null,
+          upstreamPort: null,
+        }),
+        startGooglechatWebhookProxy,
+        stopGooglechatWebhookProxy,
+      }),
+      sandboxName: "test",
+    });
+
+    await expect(options.startTunnel?.()).rejects.toThrow(
+      "Cannot replace cloudflared PID 321 while its process identity is unavailable",
+    );
+    expect(startGooglechatWebhookProxy).not.toHaveBeenCalled();
+    expect(startAll).not.toHaveBeenCalled();
+    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the route proxy when a new tunnel cannot be verified", async () => {
+    const stopGooglechatWebhookProxy = vi.fn();
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "",
+        readCloudflaredState: () => ({ kind: "unverified-pid-process", pid: 654 }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll: async () => undefined,
+        stopCloudflared: () => ({ kind: "complete" }),
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: false,
+          port: null,
+          upstreamPort: null,
+        }),
+        startGooglechatWebhookProxy: async () => 24680,
+        stopGooglechatWebhookProxy,
+      }),
+      sandboxName: "test",
+    });
+
+    await expect(options.startTunnel?.()).rejects.toThrow(
+      "Cloudflared PID 654 started, but its process identity cannot be verified",
+    );
     expect(stopGooglechatWebhookProxy).toHaveBeenCalledWith(
       "/tmp/nemoclaw-services-test-googlechat",
     );

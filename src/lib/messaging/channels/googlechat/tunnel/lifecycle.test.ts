@@ -8,7 +8,7 @@ import { googlechatWebhookTunnelPidDir, stopGooglechatWebhookTunnel } from "./li
 
 describe("Google Chat webhook tunnel lifecycle", () => {
   it("stops the sandbox-scoped cloudflared process and route proxy", () => {
-    const stopCloudflared = vi.fn();
+    const stopCloudflared = vi.fn(() => ({ kind: "complete" }) as const);
     const stopGooglechatWebhookProxy = vi.fn();
     const pidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
@@ -41,7 +41,7 @@ describe("Google Chat webhook tunnel lifecycle", () => {
         readCloudflaredState,
         resolveServicePidDir,
         startAll: async () => undefined,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => ({ kind: "complete" }),
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState,
@@ -55,7 +55,7 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     const teardownPidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
         resolveServicePidDir,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => ({ kind: "complete" }),
       },
       webhookProxy: { stopGooglechatWebhookProxy: () => undefined },
     });
