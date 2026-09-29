@@ -57,6 +57,8 @@ import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
   startStoppedSandboxContainerForBackup,
+  startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline,
 } from "./stopped-sandbox-backup";
 
 export { removeStaleRebuildDockerOrphan };
@@ -115,6 +117,8 @@ export type RebuildAgentBaseImagePreflight = {
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
+
+const INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS = 30_000;
 
 const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
 
@@ -530,9 +534,13 @@ export async function backupSandboxStateForRebuild(
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+  const initialTransactionDeadlineMs = startedSandboxBackupTransactionDeadline();
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    capturedAgentState ? { capturedAgentState } : {},
+    {
+      deadlineMs: startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs),
+      ...(capturedAgentState ? { capturedAgentState } : {}),
+    },
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },
@@ -546,23 +554,50 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!capturedAgentState && !backup.success && backup.unreachable) {
-    const started = await startStoppedSandboxContainerForBackup(sandboxName);
+    // Recovery, retry, and stopped-state restoration remain part of the
+    // original backup transaction. Do not start a stopped container after the
+    // work budget is exhausted: there would be no bounded time left to prove
+    // readiness and preserve state before the cleanup reserve begins.
+    const workDeadlineMs = startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs);
+    const started =
+      Date.now() < workDeadlineMs
+        ? await startStoppedSandboxContainerForBackup(sandboxName, {
+            deadlineMs: initialTransactionDeadlineMs,
+          })
+        : null;
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
       let returnedToStopped = false;
       try {
-        backup = await backupStartedSandboxState(sandboxName);
+        backup = await backupStartedSandboxState(sandboxName, {
+          deadlineMs: initialTransactionDeadlineMs,
+          deferSanitizationDeadlineCleanup: true,
+        });
         log(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = await returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started, {
+          deadlineMs: initialTransactionDeadlineMs,
+        });
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,
           );
         }
+      }
+      // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
+      // until after the attempt to return the container to Stopped, even when
+      // that attempt fails, so an unpublished partial snapshot is not retained.
+      if (!backup.success) {
+        const cleanupDeadlineMs = Date.now() + INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS;
+        backup = snapshotBackup.discardIncompleteBackup(
+          sandboxName,
+          backup,
+          cleanupDeadlineMs,
+          "rebuild",
+        );
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.
@@ -577,6 +612,9 @@ export async function backupSandboxStateForRebuild(
         console.error("  but could not return it to its stopped state.");
         if (!backup.success) {
           console.error("  The retried backup also failed, so no sandbox state was preserved.");
+          if (backup.error) {
+            console.error(`  Backup failure: ${backup.error}`);
+          }
         }
         console.error(
           `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
@@ -625,7 +663,7 @@ export async function backupSandboxStateForRebuild(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     if (backup.manifest?.backupPath) {
       console.error(
-        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+        `  Incomplete snapshot retained for manual inspection and cleanup only: ${backup.manifest.backupPath}`,
       );
       console.error("  It is excluded from snapshot restore selection.");
     }

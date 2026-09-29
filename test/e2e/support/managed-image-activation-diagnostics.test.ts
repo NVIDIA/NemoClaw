@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
+import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
@@ -246,7 +247,7 @@ describe("managed image activation failure diagnostics", () => {
       );
       const [command, args] = hostCommand.mock.calls[0]!;
       expect(command).toBe("bash");
-      expect(args.slice(0, 1)).toEqual(["-lc"]);
+      expect(args.slice(0, 1)).toEqual(["-c"]);
       expect(args[1]).toContain(`openclaw-admin-approval-${now}`);
       expect(args[1]).toContain(`expected_request_id='${requestId}'`);
       expect(args[1]).toContain('openclaw cron run "$cron_id"');
@@ -255,11 +256,12 @@ describe("managed image activation failure diagnostics", () => {
     }
   });
 
-  it("prepares feature approval without creating a cron job or an extra agent session", () => {
+  it("preserves feature approval success without running host logout hooks or creating a cron job", async () => {
     const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const commandLog = fixture.path("commands.log");
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fs.writeFileSync(join(fixture.homeDir, ".bash_logout"), "echo HOST_LOGOUT_RAN; false\n");
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -272,26 +274,36 @@ esac
 `,
     );
     try {
-      const result = fixture.run(
-        "/bin/bash",
-        [
-          "-lc",
-          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
-export PATH
-${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "feature-cron", requestId, false)}`,
-        ],
+      const env = fixture.environment({
+        ...prepareManagedAdminState(fixture.root, requestId),
+        ADMIN_COMMAND_LOG: commandLog,
+        OPENCLAW_GATEWAY_PORT: "18789",
+        OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+      });
+      const hostCommand = vi.fn(async (command: string, args: string[]) => {
+        // Keep the synthetic HOME and PATH while retaining the caller's login mode.
+        const result = fixture.run(command, ["--noprofile", ...args], { env, timeout: 10_000 });
+        return { ...result, exitCode: result.status, timedOut: false };
+      });
+      await approveOpenClawAdminScope(
+        { command: hostCommand, commandPath: cliPath } as never,
         {
-          env: fixture.environment({
-            ...prepareManagedAdminState(fixture.root, requestId),
-            ADMIN_COMMAND_LOG: commandLog,
-            OPENCLAW_GATEWAY_PORT: "18789",
-            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          exec: async () => ({
+            exitCode: 1,
+            stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+            stdout: "",
+            timedOut: false,
           }),
-          timeout: 10_000,
-        },
+        } as never,
+        "fixture-sandbox",
+        env,
+        [],
+        false,
       );
-      expect(result.status, result.stderr).toBe(0);
+      const result = await hostCommand.mock.results[0]!.value;
+      expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+      expect(result.stdout).not.toContain("HOST_LOGOUT_RAN");
       expect(fs.readFileSync(commandLog, "utf8")).toBe(
         `devices list --json\ndevices approve ${requestId}\n`,
       );
@@ -304,7 +316,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "feature-cron", requ
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const secret = "approval-diagnostic-secret-value";
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -349,7 +361,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requ
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-selection-");
     const outputRequestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const canonicalRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
-    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh

@@ -90,6 +90,10 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`, which owns access failu
 
 Follow `.agents/skills/_shared/pr-follow-up.md`.
 
+An authorized PR workflow includes synchronizing the working branch with its target branch under the
+shared contract. Use a merge or GitHub's Update branch operation. Resolve mechanical, in-scope
+conflicts without separate approval. These actions are not destructive Git operations.
+
 ### Common Patterns
 
 **Adding a CLI command:**
