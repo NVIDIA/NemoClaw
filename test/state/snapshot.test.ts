@@ -997,7 +997,7 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/main/sessions/sessions.json",
       '{"sessions":{"main":{"sessionToken":"opaqueSessionIdentifierZ1234567890"}}}',
     ],
-    ["dependency source", "node_modules/example.js", TOKEN_SHAPED_GENERATED_BYTES],
+    ["dependency source map", "node_modules/example.mjs.map", TOKEN_SHAPED_GENERATED_BYTES],
     ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
   ])(
     "preserves %s without treating it as credential configuration",

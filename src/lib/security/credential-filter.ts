@@ -70,6 +70,10 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // prefix from malformed placeholder-shaped credential values.
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-\[A-Za-z0-9_\]\+/gu, "unused")
       .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
+      // Upstream skill documentation uses visibly synthetic repeated-x tokens.
+      // Preserve those examples without accepting placeholder-shaped values
+      // that contain any other token material.
+      .replace(/(?<![A-Za-z0-9_-])(?:gh[pousr]_|sk-)[xX]{10,}(?![A-Za-z0-9_-])/gu, "unused")
       .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
       .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
   );

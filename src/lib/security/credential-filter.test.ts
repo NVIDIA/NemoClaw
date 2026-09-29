@@ -234,6 +234,12 @@ describe("textContainsHighConfidenceCredential", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
   });
+
+  it("preserves visibly synthetic token examples in upstream documentation", () => {
+    expect(textContainsHighConfidenceCredential(["ghp_", "x".repeat(20)].join(""))).toBe(false);
+    expect(textContainsHighConfidenceCredential(["sk-", "x".repeat(20)].join(""))).toBe(false);
+    expect(textContainsHighConfidenceCredential(["ghp_", "0123456789abcdef"].join(""))).toBe(true);
+  });
 });
 
 describe("textContainsCredential", () => {

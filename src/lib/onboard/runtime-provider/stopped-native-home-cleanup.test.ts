@@ -6,11 +6,95 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { buildStoppedSandboxNativeHomeCleanupScript } from "./stopped-sandbox-state-cleanup";
+import {
+  buildStoppedSandboxNativeHomeCleanupScript,
+  clearStoppedNativeHomeWithEngine,
+  sandboxNativeHomeResourceFromMounts,
+} from "./stopped-sandbox-state-cleanup";
+
+const CONTAINER_ID = "a".repeat(64);
 
 describe("stopped native-home cleanup", () => {
+  it("uses the stopped container when the native home is in its writable layer", () => {
+    expect(
+      sandboxNativeHomeResourceFromMounts(
+        [
+          {
+            Type: "bind",
+            Source: "/home/user/project",
+            Destination: "/sandbox/project",
+            RW: true,
+          },
+        ],
+        "/sandbox",
+        CONTAINER_ID,
+      ),
+    ).toEqual({ type: "container", source: CONTAINER_ID, target: "/sandbox" });
+  });
+
+  it("does not treat an unresolved containing mount as a writable-layer home", () => {
+    expect(
+      sandboxNativeHomeResourceFromMounts(
+        [
+          {
+            Type: "bind",
+            Source: "/",
+            Destination: "/sandbox",
+            RW: true,
+          },
+        ],
+        "/sandbox",
+        CONTAINER_ID,
+      ),
+    ).toBeNull();
+  });
+
+  it("authorizes exact stopped-container deletion without starting a cleanup helper", () => {
+    const stateResource = {
+      type: "container" as const,
+      source: CONTAINER_ID,
+      target: "/sandbox",
+    };
+    const observe = vi.fn(() => ({
+      target: { resourceHandle: CONTAINER_ID, running: false, stateResource },
+    }));
+    const capture = vi.fn();
+
+    expect(
+      clearStoppedNativeHomeWithEngine("stopped-sandbox", "/sandbox", [], {
+        capture,
+        observe,
+      }),
+    ).toEqual({ cleared: true });
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("refuses stopped-container deletion when its identity changes during revalidation", () => {
+    const stateResource = {
+      type: "container" as const,
+      source: CONTAINER_ID,
+      target: "/sandbox",
+    };
+    const observe = vi
+      .fn()
+      .mockReturnValueOnce({
+        target: { resourceHandle: CONTAINER_ID, running: false, stateResource },
+      })
+      .mockReturnValueOnce({
+        target: { resourceHandle: "b".repeat(64), running: false, stateResource },
+      });
+
+    expect(
+      clearStoppedNativeHomeWithEngine("stopped-sandbox", "/sandbox", [], {
+        capture: vi.fn(),
+        observe,
+      }),
+    ).toEqual({ cleared: false, failure: "runtime-revalidation-failed" });
+  });
+
   it("removes complete native state while preserving exact user-managed paths", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-native-cleanup-"));
     try {

@@ -35,7 +35,7 @@ export interface StoppedSandboxStateTarget {
   readonly resourceHandle: string;
   readonly running: boolean;
   readonly stateResource: {
-    readonly type: "bind" | "volume";
+    readonly type: "bind" | "container" | "volume";
     readonly source: string;
     readonly target: string;
   };
@@ -185,12 +185,23 @@ export function validateStoppedNativeHomeCleanup(
 export function sandboxNativeHomeResourceFromMounts(
   value: unknown,
   root: string,
+  containerResourceHandle?: string,
 ): StoppedSandboxStateTarget["stateResource"] | null {
   if (!Array.isArray(value) || !validateStoppedNativeHomeCleanup(root, [])) return null;
-  return stateResourceFromMounts(
+  const mountedResource = stateResourceFromMounts(
     value,
     (target) => root === target || root.startsWith(`${target}/`),
   );
+  if (mountedResource) return mountedResource;
+  const hasUnresolvedContainingMount = value.some((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const target = (entry as Record<string, unknown>).Destination;
+    return typeof target === "string" && (root === target || root.startsWith(`${target}/`));
+  });
+  if (hasUnresolvedContainingMount) return null;
+  return containerResourceHandle && FULL_CONTAINER_ID_RE.test(containerResourceHandle)
+    ? { type: "container", source: containerResourceHandle, target: root }
+    : null;
 }
 
 function stateResourceFromMounts(
@@ -243,6 +254,9 @@ function sameStateResource(
 }
 
 function stateResourceMount(resource: StoppedSandboxStateTarget["stateResource"]): string {
+  if (resource.type === "container") {
+    throw new Error("Container writable layers cannot be mounted as cleanup resources.");
+  }
   return resource.type === "volume"
     ? `type=volume,src=${resource.source},dst=${resource.target},volume-nocopy`
     : `type=bind,src=${resource.source},dst=${resource.target}`;
@@ -430,6 +444,24 @@ export function clearStoppedNativeHomeWithEngine(
 ): RuntimeProviderStoppedSandboxStateCleanupResult {
   if (!validateStoppedNativeHomeCleanup(root, protectedPaths)) {
     return failure("state-paths-invalid");
+  }
+  const observed = engine.observe();
+  if ("failure" in observed) return failure(observed.failure);
+  const target = observed.target;
+  if (target.running) return failure("runtime-not-stopped");
+  if (target.stateResource.type === "container") {
+    const revalidated = engine.observe();
+    if (
+      "failure" in revalidated ||
+      revalidated.target.resourceHandle !== target.resourceHandle ||
+      revalidated.target.running ||
+      !sameStateResource(revalidated.target.stateResource, target.stateResource)
+    ) {
+      return failure("runtime-revalidation-failed");
+    }
+    // A writable layer has no independently durable native-home resource to scrub.
+    // The caller's exact provider deletion is authoritative; mounted child paths remain external.
+    return { cleared: true };
   }
   return clearStoppedSandboxResourceWithEngine(sandboxName, engine, () => [
     "-e",

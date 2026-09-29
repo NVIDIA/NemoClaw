@@ -92,7 +92,10 @@ function observeStoppedTarget(
   input:
     | RuntimeProviderStoppedSandboxStateCleanupInput
     | RuntimeProviderStoppedNativeHomeCleanupInput,
-  stateResourceFromMounts: (mounts: unknown) => StoppedSandboxStateTarget["stateResource"] | null,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let container: ReturnType<typeof observePodmanManagedContainer>;
   try {
@@ -108,7 +111,7 @@ function observeStoppedTarget(
   ) {
     return { failure: "runtime-ownership-invalid" };
   }
-  const stateResource = stateResourceFromMounts(container.inspect.Mounts);
+  const stateResource = stateResourceFromMounts(container.inspect.Mounts, container.containerId);
   return stateResource
     ? {
         target: {
@@ -159,8 +162,8 @@ export function createPodmanPrivilegedSandboxControl(
             clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
               capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
               observe: () =>
-                observeStoppedTarget(engine, input, (mounts) =>
-                  sandboxNativeHomeResourceFromMounts(mounts, input.root),
+                observeStoppedTarget(engine, input, (mounts, resourceHandle) =>
+                  sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
                 ),
             }),
         }

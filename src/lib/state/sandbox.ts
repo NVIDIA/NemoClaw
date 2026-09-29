@@ -1358,7 +1358,7 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
 
 function isNativeNonAuthoritySourceEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const sourceOrAsset = /\.(?:[cm]?[jt]sx?|css|scss|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(
+  const sourceOrAsset = /\.(?:[cm]?[jt]sx?|css|scss|map|py|rb|go|rs|java|kt|swift|php|sh)$/iu.test(
     path.posix.basename(normalized),
   );
   return (

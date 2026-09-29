@@ -224,7 +224,10 @@ function observeStoppedDockerTarget(
   input:
     | RuntimeProviderStoppedSandboxStateCleanupInput
     | RuntimeProviderStoppedNativeHomeCleanupInput,
-  stateResourceFromMounts: (mounts: unknown) => StoppedSandboxStateTarget["stateResource"] | null,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let lookup;
   try {
@@ -286,7 +289,7 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "state-resource-unavailable" };
   }
-  const stateResource = stateResourceFromMounts(mounts);
+  const stateResource = stateResourceFromMounts(mounts, resourceHandle);
   return stateResource
     ? { target: { resourceHandle, running: running === "true", stateResource } }
     : { failure: "state-resource-unavailable" };
@@ -312,8 +315,8 @@ function clearStoppedNativeHome(input: RuntimeProviderStoppedNativeHomeCleanupIn
   return clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
     capture: (args, timeoutMs = 30_000) => engine.capture(args, timeoutMs),
     observe: () =>
-      observeStoppedDockerTarget(engine, input, (mounts) =>
-        sandboxNativeHomeResourceFromMounts(mounts, input.root),
+      observeStoppedDockerTarget(engine, input, (mounts, resourceHandle) =>
+        sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
       ),
   });
 }
