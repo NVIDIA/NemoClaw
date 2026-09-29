@@ -13,6 +13,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     schemaVersion: 1;
     candidateSha: string;
     canonicalBaseSha: string;
+    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
@@ -50,12 +51,24 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (input.expectedPullHeadSha !== undefined && !/^[0-9a-f]{40}$/.test(input.expectedPullHeadSha))
     throw new Error("expectedPullHeadSha must be a full commit SHA");
   const bypass = input.hookBypassReceipt;
-  const trustedFallbackJobs = new Set([
+  const trustedFallbackJobs = new Map<string, readonly (readonly [string, string])[]>([
     // The canonical Advisor specialist job checks out the candidate as inert data inside
     // OpenShell. It has actions:read only, uses no candidate-local action, and exposes no
     // GitHub credential to candidate-controlled commands. A workflow edit changes this blob
     // key and fails closed until the reviewed allowlist is updated.
-    ".github/workflows/pr-review-advisor.yaml\0d7bbfae8fd59660ab146ef1cc52ce69964720146\0review-specialists",
+    [
+      ".github/workflows/pr-review-advisor.yaml\0d7bbfae8fd59660ab146ef1cc52ce69964720146\0review-specialists",
+      [
+        [
+          ".github/actions/setup-reviewed-npm/action.yaml",
+          "5f2e26d63438e2f95c0fcbe948d10793f581c5b9",
+        ],
+        [
+          ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh",
+          "ced189656ff84d19bc5fdb047ce565d480720859",
+        ],
+      ],
+    ],
   ]);
   const validationSurfacePaths = [
     ".pre-commit-config.yaml",
@@ -73,6 +86,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     "nemoclaw/tsconfig.runner.json",
   ];
   let guardedFallbackValidationPaths = [];
+  let trustedFallbackActions: readonly (readonly [string, string])[] = [];
   if (bypass !== undefined) {
     if (
       typeof bypass !== "object" ||
@@ -80,6 +94,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       bypass.schemaVersion !== 1 ||
       bypass.candidateSha !== input.expectedHeadSha ||
       !/^[0-9a-f]{40}$/.test(bypass.canonicalBaseSha) ||
+      bypass.workflowRevisionSha !== bypass.canonicalBaseSha ||
       !/^\.github\/workflows\/[A-Za-z0-9._/-]+[.]ya?ml$/.test(bypass.workflowPath) ||
       bypass.workflowPath.includes("..") ||
       !/^[0-9a-f]{40}$/.test(bypass.workflowBlobSha) ||
@@ -92,8 +107,9 @@ export default async function publish_nemoclaw_pr_branch(input: {
       throw new Error("hookBypassReceipt is not a valid trusted fallback record");
     const fallbackKey =
       bypass.workflowPath + "\0" + bypass.workflowBlobSha + "\0" + bypass.workflowJob;
-    if (!trustedFallbackJobs.has(fallbackKey))
-      throw new Error("hookBypassReceipt does not name a trusted fallback job");
+    const fallbackActions = trustedFallbackJobs.get(fallbackKey);
+    if (!fallbackActions) throw new Error("hookBypassReceipt does not name a trusted fallback job");
+    trustedFallbackActions = fallbackActions;
     if (
       input.expectedPullHeadSha !== undefined &&
       bypass.expectedRemoteSha !== input.expectedPullHeadSha
@@ -161,6 +177,16 @@ export default async function publish_nemoclaw_pr_branch(input: {
     ).stdout.text.trim();
     if (workflowBlob !== bypass.workflowBlobSha)
       throw new Error("The guarded fallback workflow does not match its base-bound receipt");
+    for (const [actionPath, actionBlobSha] of trustedFallbackActions) {
+      const observedActionBlob = (
+        await run(
+          "git rev-parse " + q(bypass.workflowRevisionSha + ":" + actionPath),
+          "Verify guarded fallback action " + actionPath,
+        )
+      ).stdout.text.trim();
+      if (observedActionBlob !== actionBlobSha)
+        throw new Error("A guarded fallback action does not match the trusted workflow revision");
+    }
     guardedFallbackValidationPaths = (
       await run(
         "git diff --name-only --diff-filter=ACDMRTUXB -z " +

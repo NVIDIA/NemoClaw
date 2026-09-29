@@ -24,6 +24,7 @@ export default async function render_nemoclaw_pr_body(input: {
       schemaVersion: 1;
       candidateSha: string;
       canonicalBaseSha: string;
+      workflowRevisionSha: string;
       workflowPath: string;
       workflowBlobSha: string;
       workflowJob: string;
@@ -108,6 +109,7 @@ export default async function render_nemoclaw_pr_body(input: {
     fallbackReceipt?.schemaVersion === 1 &&
     /^[0-9a-f]{40}$/.test(fallbackReceipt?.candidateSha ?? "") &&
     /^[0-9a-f]{40}$/.test(fallbackReceipt?.canonicalBaseSha ?? "") &&
+    fallbackReceipt?.workflowRevisionSha === fallbackReceipt?.canonicalBaseSha &&
     /^\.github\/workflows\/[A-Za-z0-9._/-]+[.]ya?ml$/.test(fallbackReceipt?.workflowPath ?? "") &&
     !fallbackReceipt?.workflowPath?.includes("..") &&
     /^[0-9a-f]{40}$/.test(fallbackReceipt?.workflowBlobSha ?? "") &&
@@ -167,6 +169,8 @@ export default async function render_nemoclaw_pr_body(input: {
       fallbackReceipt.workflowPath +
       " job " +
       fallbackReceipt.workflowJob +
+      " at workflow revision " +
+      fallbackReceipt.workflowRevisionSha +
       " at workflow blob " +
       fallbackReceipt.workflowBlobSha
     : null;

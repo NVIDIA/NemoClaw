@@ -17,6 +17,7 @@ export default async function create_nemoclaw_pr(input: {
     schemaVersion: 1;
     candidateSha: string;
     canonicalBaseSha: string;
+    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;

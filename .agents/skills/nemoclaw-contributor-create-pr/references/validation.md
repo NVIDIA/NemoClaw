@@ -79,10 +79,13 @@ when the candidate changes that workflow or an action that it invokes.
 
 After these conditions pass, publish the commit as a draft through the publication operation's
 guarded hook-free mode. Record a structured fallback receipt bound to the candidate SHA, canonical
-base SHA, workflow path and blob, trusted job, draft state, and expected remote commit. The
-publication operation accepts only a checked-in fallback allowlist entry whose workflow blob and job
-were reviewed for the trigger, effective permissions, action sources, and credential flow above. A
-caller assertion cannot add an eligible job. The operation independently compares the candidate
+base SHA, exact trusted workflow revision, workflow path and blob, trusted job, draft state, and
+expected remote commit. The trusted workflow revision must equal the receipt's canonical base SHA.
+The publication operation accepts only a checked-in fallback allowlist entry whose workflow blob,
+job, and repository-local action implementation blobs were reviewed for the trigger, effective
+permissions, action sources, and credential flow above. It independently verifies those action
+blobs at the receipt-bound workflow revision. A caller assertion cannot add an eligible job. The
+operation independently compares the candidate
 with the canonical base across the checked-in pre-push configuration, validation helpers,
 dependency-resolution inputs, formatter and linter configuration, Vitest configuration, and
 TypeScript build configuration. Reject hook-free publication when none of those paths differs. The

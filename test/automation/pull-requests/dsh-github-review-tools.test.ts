@@ -269,6 +269,10 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
   const previousSha = "b".repeat(40);
   const baseSha = "c".repeat(40);
   const workflowBlobSha = "d7bbfae8fd59660ab146ef1cc52ce69964720146";
+  const trustedActions = {
+    actionBlobSha: "5f2e26d63438e2f95c0fcbe948d10793f581c5b9",
+    actionScriptBlobSha: "ced189656ff84d19bc5fdb047ce565d480720859",
+  };
   const competingSha = "e".repeat(40);
   const branch = "feature";
   const title = "fix(skills): guard publication";
@@ -277,6 +281,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     schemaVersion: 1,
     candidateSha: HEAD_SHA,
     canonicalBaseSha: baseSha,
+    workflowRevisionSha: baseSha,
     workflowPath: ".github/workflows/pr-review-advisor.yaml",
     workflowBlobSha,
     workflowJob: "review-specialists",
@@ -292,13 +297,18 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       | "candidate"
       | "candidate-draft"
       | "candidate-wrong-base" = "existing",
-    observed = { baseSha, workflowBlobSha },
+    observed = { baseSha, workflowBlobSha, ...trustedActions },
     validationSurfaceChanged = true,
+    ancestor = true,
   ) {
     const bash = vi.fn(
       async ({ command: _command, description }: { command: string; description: string }) => {
         const outputs: Record<string, string> = {
           "Verify guarded fallback workflow": observed.workflowBlobSha + "\n",
+          "Verify guarded fallback action .github/actions/setup-reviewed-npm/action.yaml":
+            observed.actionBlobSha + "\n",
+          "Verify guarded fallback action .github/actions/setup-reviewed-npm/verify-and-install-npm.sh":
+            observed.actionScriptBlobSha + "\n",
           "Read changed validation surface": validationSurfaceChanged
             ? ".pre-commit-config.yaml\0"
             : "",
@@ -318,9 +328,10 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         };
         const pushFailed =
           description === "Push pull request candidate branch" && pushOutcome !== "success";
+        const ancestryFailed = description === "Verify guarded publication ancestry" && !ancestor;
         return {
           kind: "foreground",
-          exitCode: pushFailed ? 1 : 0,
+          exitCode: pushFailed || ancestryFailed ? 1 : 0,
           stdout: { text: outputs[description] ?? "", truncated: false },
           stderr: { text: pushFailed ? "stale info\n" : "", truncated: false },
         };
@@ -428,8 +439,8 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       }),
     ).rejects.toThrow("Publication branch changed before guarded publication");
     expect(
-      bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
-    ).toHaveLength(0);
+      bash.mock.calls.find(([call]) => call.description === "Push pull request candidate branch"),
+    ).toBeUndefined();
   });
 
   it("reconciles a completed exact draft publication without repeating the branch write", async () => {
@@ -484,8 +495,21 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
   });
 
   it.each([
-    ["canonical base", { baseSha: competingSha, workflowBlobSha }, "no longer canonical"],
-    ["workflow blob", { baseSha, workflowBlobSha: competingSha }, "does not match"],
+    [
+      "canonical base",
+      { baseSha: competingSha, workflowBlobSha, ...trustedActions },
+      "no longer canonical",
+    ],
+    [
+      "workflow blob",
+      { baseSha, workflowBlobSha: competingSha, ...trustedActions },
+      "does not match",
+    ],
+    [
+      "action implementation",
+      { baseSha, workflowBlobSha, ...trustedActions, actionBlobSha: competingSha },
+      "action does not match",
+    ],
   ])("rejects a changed guarded fallback %s", async (_label, observed, error) => {
     const { bash } = publicationTools("success", "absent", observed);
 
@@ -542,6 +566,18 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     expect(list).not.toContain("origin/main");
   });
 
+  it("rejects a non-ancestor expected remote commit before pushing", async () => {
+    const { bash } = publicationTools("success", "existing", undefined, true, false);
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: receipt,
+        apply: true,
+      }),
+    ).rejects.toThrow("not an ancestor");
+    expect(bash.mock.calls.some(([call]) => call.description.includes("Push"))).toBe(false);
+  });
   it("creates one draft PR after guarded initial publication reconciliation", async () => {
     const publish = vi.fn().mockResolvedValue({
       mutated: false,
@@ -994,6 +1030,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       hookBypassReceipt: {
         schemaVersion: 1,
         canonicalBaseSha: baseSha,
+        workflowRevisionSha: baseSha,
         workflowPath: receipt.workflowPath,
         workflowBlobSha,
         workflowJob: receipt.workflowJob,
@@ -1010,6 +1047,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         hookBypassReceipt: expect.objectContaining({
           candidateSha: nextSha,
           canonicalBaseSha: baseSha,
+          workflowRevisionSha: baseSha,
           expectedRemoteSha: previousSha,
           draftOnly: true,
         }),
@@ -1040,6 +1078,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         hookBypassReceipt: {
           schemaVersion: 1,
           canonicalBaseSha: baseSha,
+          workflowRevisionSha: baseSha,
           workflowPath: receipt.workflowPath,
           workflowBlobSha,
           workflowJob: receipt.workflowJob,

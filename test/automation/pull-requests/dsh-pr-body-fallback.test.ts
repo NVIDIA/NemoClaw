@@ -49,6 +49,7 @@ const receipt = {
   schemaVersion: 1,
   candidateSha,
   canonicalBaseSha: baseSha,
+  workflowRevisionSha: baseSha,
   workflowPath: ".github/workflows/pr-review-advisor.yaml",
   workflowBlobSha,
   workflowJob: "review-specialists",

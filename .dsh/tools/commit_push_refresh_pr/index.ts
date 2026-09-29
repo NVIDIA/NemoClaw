@@ -14,6 +14,7 @@ export default async function commit_push_refresh_pr(input: {
   hookBypassReceipt?: {
     schemaVersion: 1;
     canonicalBaseSha: string;
+    workflowRevisionSha: string;
     workflowPath: string;
     workflowBlobSha: string;
     workflowJob: string;
