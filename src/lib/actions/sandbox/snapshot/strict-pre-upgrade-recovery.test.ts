@@ -153,7 +153,7 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
   });
 
-  it("does not publish either handoff when MCP observation fails", async () => {
+  it("removes the snapshot without publishing either handoff when MCP observation fails", async () => {
     mocks.observeMcpStateForRebuild.mockRejectedValue(new Error("MCP observation unavailable"));
     const result = {
       success: true,
@@ -169,5 +169,48 @@ describe("strict pre-upgrade recovery retention", () => {
     ).rejects.toThrow("MCP observation unavailable");
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
     expect(mocks.writeRebuildMcpHandoff).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("removes the snapshot when policy capture fails", async () => {
+    mocks.captureRecordedSandboxBasePolicy.mockRejectedValue(new Error("policy unavailable"));
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
+    ).rejects.toThrow("policy unavailable");
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("reports cleanup failure without hiding the recovery-state failure", async () => {
+    mocks.observeMcpStateForRebuild.mockRejectedValue(new Error("MCP observation unavailable"));
+    mocks.removeSandboxStateBackup.mockReturnValue(false);
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
+    ).rejects.toThrow(
+      "MCP observation unavailable. Failed strict pre-upgrade backup at '/backups/alpha/timestamp' could not be removed",
+    );
   });
 });
