@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
+import { getDockerDriverGatewayLocalTlsBundle } from "../../onboard/docker-driver-gateway-local-tls";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { type RunResult, runUninstallPlanProduction } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
@@ -19,6 +22,15 @@ async function failDockerCleanupOnce(
   failureStep: "docker" | "model" = "docker",
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bulk-cleanup-retry-"));
+  const gatewayStateDir = path.join(
+    home,
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(8080),
+  );
+  writeCompleteDockerDriverGatewayLocalTlsBundle(gatewayStateDir);
+  const clientKeyPath = getDockerDriverGatewayLocalTlsBundle(gatewayStateDir).clientKeyPath;
   const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
   fs.mkdirSync(path.dirname(registryFile), { recursive: true });
   fs.writeFileSync(
@@ -155,6 +167,7 @@ async function failDockerCleanupOnce(
     registryFile,
     originalRegistry,
     progressFile: path.join(path.dirname(registryFile), "uninstall-bulk-cleanup.json"),
+    clientKeyPath,
     cleanup: () => fs.rmSync(home, { recursive: true, force: true }),
     gatewayRegistered: () => gatewayRegistered,
     gatewayVolumePresent: () => gatewayVolumePresent,
@@ -358,6 +371,56 @@ describe("bulk cleanup recovery after gateway removal", () => {
       state.cleanup();
     }
   });
+
+  it.each([
+    {
+      name: "the TLS client key",
+      makeUnreadable: (state: Awaited<ReturnType<typeof failDockerCleanupOnce>>) =>
+        fs.chmodSync(state.clientKeyPath, 0o000),
+      restore: (state: Awaited<ReturnType<typeof failDockerCleanupOnce>>) =>
+        fs.chmodSync(state.clientKeyPath, 0o600),
+    },
+    {
+      name: "the cleanup checkpoint",
+      makeUnreadable: (state: Awaited<ReturnType<typeof failDockerCleanupOnce>>) =>
+        fs.chmodSync(state.progressFile, 0o000),
+      restore: (state: Awaited<ReturnType<typeof failDockerCleanupOnce>>) =>
+        fs.chmodSync(state.progressFile, 0o600),
+    },
+  ])(
+    "preserves retry progress while $name is unreadable (#11831)",
+    async ({ makeUnreadable, restore }) => {
+      const state = await failDockerCleanupOnce();
+      try {
+        expect(state.initial.exitCode).toBe(1);
+        expect(state.gatewayRegistered()).toBe(false);
+        makeUnreadable(state);
+
+        expect((await state.retry()).exitCode).toBe(1);
+        expect(state.volumeRemovalAttempts()).toBe(1);
+        expect(state.gatewayVolumePresent()).toBe(true);
+        expect(fs.existsSync(state.progressFile)).toBe(true);
+
+        restore(state);
+        expect((await state.retry()).exitCode).toBe(0);
+        expect(state.volumeRemovalAttempts()).toBe(2);
+        expect(state.gatewayVolumePresent()).toBe(false);
+        expect(fs.existsSync(state.progressFile)).toBe(false);
+      } finally {
+        try {
+          fs.chmodSync(state.clientKeyPath, 0o600);
+        } catch {
+          // A successful retry removes the TLS bundle.
+        }
+        try {
+          fs.chmodSync(state.progressFile, 0o600);
+        } catch {
+          // A successful retry removes the checkpoint.
+        }
+        state.cleanup();
+      }
+    },
+  );
 
   it("preserves state when Docker cannot prove sandbox absence on retry (#11831)", async () => {
     const state = await failDockerCleanupOnce();

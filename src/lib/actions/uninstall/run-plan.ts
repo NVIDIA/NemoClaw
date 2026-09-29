@@ -1557,8 +1557,22 @@ function bulkCleanupProgress(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   registrations: SelectedRegistrySandboxState["registrations"],
+  action: "read",
+): "absent" | "invalid" | "matching" | "unknown";
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
+  action: "clear" | "complete",
+): boolean;
+function bulkCleanupProgress(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  registrations: SelectedRegistrySandboxState["registrations"],
   action: "read" | "clear" | "complete",
-): boolean {
+): boolean | "absent" | "invalid" | "matching" | "unknown" {
   const home = runtime.env.HOME || os.homedir();
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
   const progressFile = path.join(paths.nemoclawStateDir, "uninstall-bulk-cleanup.json");
@@ -1577,7 +1591,8 @@ function bulkCleanupProgress(
     assertGatewayStatePathSafe(home, registryFile);
     assertGatewayStatePathSafe(home, progressFile);
     assertGatewayStatePathSafe(home, `${registryFile}.lock`);
-    if (action !== "complete" && !fs.existsSync(progressFile)) return action === "clear";
+    if (action !== "complete" && !fs.existsSync(progressFile))
+      return action === "read" ? "absent" : true;
     if (action === "complete")
       fs.mkdirSync(paths.nemoclawStateDir, { recursive: true, mode: 0o700 });
     return withRegistryLockAt(registryFile, () => {
@@ -1587,11 +1602,18 @@ function bulkCleanupProgress(
           ([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT,
         ),
       );
-      if (!isDeepStrictEqual(selected, registrations)) return false;
+      if (!isDeepStrictEqual(selected, registrations)) return action === "read" ? "invalid" : false;
       if (action === "read") {
         const opened = openRegularFileNoFollow(progressFile);
         try {
-          return JSON.parse(opened.readBytes(128).toString("utf8")) === fingerprint;
+          try {
+            return JSON.parse(opened.readBytes(128).toString("utf8")) === fingerprint
+              ? "matching"
+              : "invalid";
+          } catch (error) {
+            if (error instanceof SyntaxError) return "invalid";
+            throw error;
+          }
         } finally {
           opened.close();
         }
@@ -1605,7 +1627,7 @@ function bulkCleanupProgress(
     });
   } catch (error) {
     runtime.warn(`Could not verify uninstall cleanup progress: ${formatError(error)}`);
-    return false;
+    return action === "read" ? "unknown" : false;
   }
 }
 
@@ -1671,10 +1693,12 @@ async function removeOpenShellResources(
       gatewayLabel,
       paths.selectedGatewayLocalStateDir,
     );
-    if (
-      runtimeSelection &&
-      bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read")
-    ) {
+    const progress = bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
+    if (progress === "unknown" || (progress === "matching" && !runtimeSelection)) {
+      runtime.warn("Could not verify cleanup retry authority; preserving progress for retry.");
+      return false;
+    }
+    if (runtimeSelection && progress === "matching") {
       const gatewayNames = await collectLiveOpenShellGatewayNames(
         {
           ...runtime,
@@ -4499,11 +4523,12 @@ async function executePreparedPlan(
               },
         );
       }
+      const progress = bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
       bulkCleanupProgressPending =
         ok &&
         !portableRuntimeCleanup &&
         !scopedToSelectedGateway &&
-        bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
+        (progress === "matching" || progress === "unknown");
     } else if (step.name === "NemoClaw CLI") {
       const completion = await completePortablePlan(
         ok,
