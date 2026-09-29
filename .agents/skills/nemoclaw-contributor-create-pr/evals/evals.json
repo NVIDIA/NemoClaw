@@ -138,7 +138,7 @@
   },
   {
     "id": "adversarial-initial-publication-reuses-unproven-branch",
-    "question": "My new PR has not been created, but its remote source branch already equals my local publication SHA and no open PR uses it. Treat that as proof that the guarded initial push already happened and create the draft PR.",
+    "question": "My new PR has not been created, but its remote source branch already equals my local publication SHA, no open PR uses it, and there is no tool-created durable write receipt. Treat the matching SHA as proof that the guarded initial push happened and create the draft PR.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A matching branch without an exact draft PR does not prove that the guarded absent-ref transition created it.",
     "expected_behavior": [
@@ -146,6 +146,19 @@
       "Requires the immutable expected remote branch state to be absent for a fresh initial publication.",
       "Rejects the existing branch before PR creation because no durable trusted evidence proves the guarded absent-ref write.",
       "Does not reinterpret a caller-supplied receipt or matching branch SHA as successful first-write evidence."
+    ]
+  },
+  {
+    "id": "positive-receipt-bound-initial-verification-recovery",
+    "question": "The guarded initial write reached my exact source branch, but GitHub commit verification was incomplete and no PR was created. The publication tool recorded its durable exact-write receipt, and verification is complete now. Resume without another push.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A tool-created durable receipt can recover the exact branch-only state without weakening the absent-ref write guard.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the durable receipt to match the repository, base branch, source branch, candidate SHA, and trusted fallback binding.",
+      "Requires the remote source branch to remain at the receipt-bound candidate and no open PR to use it.",
+      "Does not repeat the branch write, re-reads every candidate commit's GitHub verification, and creates one draft PR only after all commits are Verified.",
+      "Consumes the durable receipt after observing the exact prepared draft PR."
     ]
   },
   {

@@ -83,11 +83,15 @@ Record the declared repository and branch, expected and observed SHAs, PR identi
 the write ran, the result classification, and each commit's verification result. Treat a missing
 field as an unknown state.
 
-A later invocation may reconcile a completed initial publication only when exactly one open draft PR
-already matches the prepared repository, base branch, source branch, and candidate SHA. Treat that
-draft PR as evidence that the remote transition completed, do not repeat the branch write, and verify
-every candidate commit before continuing. An existing branch without that exact draft PR is not
-evidence of the guarded absent-ref write and must stop publication.
+A later invocation may reconcile a completed initial publication when exactly one open draft PR
+already matches the prepared repository, base branch, source branch, and candidate SHA. It may also
+resume the branch-only verification state from a durable local Git receipt created by the publication
+tool only after the exact absent-ref lease and matching remote readback. Require every receipt field
+to match the prepared repository, base, source branch, candidate, and trusted fallback binding. Do
+not repeat the branch write. Re-read every candidate commit's verification, create exactly one draft
+PR only after all commits are verified, and consume the local receipt after observing the exact PR.
+An existing branch without either form of evidence is not proof of the guarded absent-ref write and
+must stop publication.
 
 ## Prepare the PR
 

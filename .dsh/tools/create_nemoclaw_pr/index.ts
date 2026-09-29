@@ -221,58 +221,43 @@ export default async function create_nemoclaw_pr(input: {
     timeoutMs: 120000,
     apply: true,
   });
-  if (created.code !== 0) {
-    const lookup = await tools.run_github_cli({
-      workdir: input.workdir,
-      args: [
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--head",
-        branch,
-        "--state",
-        "open",
-        "--json",
-        "url,isDraft,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner",
-        "--limit",
-        "2",
-      ],
-    });
-    const pulls = JSON.parse(lookup.stdout || "[]");
-    if (pulls.length === 1) {
-      const pull = pulls[0];
-      const pullRepo =
-        pull?.headRepository?.nameWithOwner ??
-        (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
-          ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
-          : "");
-      if (
-        pull?.isDraft === (input.draft === true) &&
-        pull?.headRefName === branch &&
-        pull?.headRefOid === input.expectedHeadSha &&
-        pull?.baseRefName === baseBranch &&
-        pullRepo.toLowerCase() === repo.toLowerCase() &&
-        typeof pull?.url === "string" &&
-        pull.url
-      )
-        return {
-          ok: true,
-          apply: true,
-          mutated: true,
-          repo,
-          remote,
-          baseBranch,
-          headBranch: branch,
-          title: input.title,
-          draft: input.draft === true,
-          assignee,
-          commitCount,
-          verificationPending: false,
-          url: pull.url,
-          unverified: [],
-        };
-    }
+  const lookup = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "pr",
+      "list",
+      "--repo",
+      repo,
+      "--head",
+      branch,
+      "--state",
+      "open",
+      "--json",
+      "url,isDraft,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner",
+      "--limit",
+      "2",
+    ],
+  });
+  const pulls = JSON.parse(lookup.stdout || "[]");
+  const pull = pulls.length === 1 ? pulls[0] : null;
+  const pullRepo =
+    pull?.headRepository?.nameWithOwner ??
+    (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
+      ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
+      : "");
+  const exactPull =
+    pull?.isDraft === (input.draft === true) &&
+    pull?.headRefName === branch &&
+    pull?.headRefOid === input.expectedHeadSha &&
+    pull?.baseRefName === baseBranch &&
+    pullRepo.toLowerCase() === repo.toLowerCase() &&
+    typeof pull?.url === "string" &&
+    pull.url;
+  if (!exactPull) {
+    if (created.code === 0)
+      throw new Error(
+        "Pull request creation reported success, but the observed pull request does not match the prepared publication",
+      );
     if (pulls.length > 0)
       throw new Error(
         "Pull request creation failed; the observed pull request does not match the prepared draft publication",
@@ -286,10 +271,22 @@ export default async function create_nemoclaw_pr(input: {
       "Pull request creation failed; no pull request exists for the branch.\n" + diagnostic.text,
     );
   }
+  if (created.code === 0 && created.stdout.trim() && created.stdout.trim() !== pull.url)
+    throw new Error("Pull request creation response does not match the observed pull request");
+  if (publication.initialPublicationReceiptKey) {
+    const consumed = await tools.bash({
+      command: "git config --local --unset-all " + q(publication.initialPublicationReceiptKey),
+      workdir: input.workdir,
+      description: "Consume guarded initial publication receipt",
+      timeoutMs: 30000,
+    });
+    if (consumed.kind !== "foreground" || (consumed.exitCode !== 0 && consumed.exitCode !== 5))
+      throw new Error("Could not consume the guarded initial publication receipt");
+  }
   return {
     ok: true,
     apply: true,
-    mutated: true,
+    mutated: created.code === 0 || publication.mutated,
     repo,
     remote,
     baseBranch,
@@ -299,7 +296,7 @@ export default async function create_nemoclaw_pr(input: {
     assignee,
     commitCount,
     verificationPending: false,
-    url: created.stdout.trim(),
+    url: pull.url,
     unverified: [],
   };
 }

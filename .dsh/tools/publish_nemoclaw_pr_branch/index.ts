@@ -34,6 +34,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   allVerified: boolean;
   blocker: string | null;
   remoteState: "not-checked" | "expected-commit" | "unchanged" | "unknown";
+  initialPublicationReceiptKey: string | null;
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
@@ -171,7 +172,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       "--state",
       "open",
       "--json",
-      "number,url,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner",
+      "number,url,isDraft,baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner",
       "--limit",
       "2",
     ],
@@ -187,8 +188,12 @@ export default async function publish_nemoclaw_pr_branch(input: {
       (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
         ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
         : "");
-    if (pull?.headRefName !== branch || pullRepo.toLowerCase() !== repo.toLowerCase())
-      throw new Error("The open pull request source does not match this branch and repository");
+    if (
+      pull?.baseRefName !== baseBranch ||
+      pull?.headRefName !== branch ||
+      pullRepo.toLowerCase() !== repo.toLowerCase()
+    )
+      throw new Error("The open pull request does not match this base, branch, and repository");
     if (input.pullNumber !== undefined && pull?.number !== input.pullNumber)
       throw new Error("The requested open pull request does not match this branch");
     if (bypass !== undefined) {
@@ -207,6 +212,42 @@ export default async function publish_nemoclaw_pr_branch(input: {
     throw new Error("The requested open pull request does not match this branch");
   if (bypass !== undefined && prs.length === 0 && bypass.expectedRemoteSha !== null)
     throw new Error("Guarded hook-free updates require the expected draft pull request");
+  let initialPublicationReceiptKey = null;
+  let initialPublicationReceipt = null;
+  let hasDurableInitialPublicationReceipt = false;
+  if (bypass?.expectedRemoteSha === null) {
+    const receiptRecord = {
+      schemaVersion: 1,
+      repository: repo,
+      remote,
+      baseBranch,
+      branch,
+      candidateSha: input.expectedHeadSha,
+      canonicalBaseSha: bypass.canonicalBaseSha,
+      workflowPath: bypass.workflowPath,
+      workflowBlobSha: bypass.workflowBlobSha,
+      workflowJob: bypass.workflowJob,
+      draftOnly: true,
+      expectedRemoteSha: null,
+    };
+    initialPublicationReceipt = JSON.stringify(receiptRecord);
+    const receiptHash = (
+      await run(
+        "printf %s " + q(initialPublicationReceipt) + " | git hash-object --stdin",
+        "Resolve guarded initial publication receipt",
+      )
+    ).stdout.text.trim();
+    if (!/^[0-9a-f]{40}$/.test(receiptHash))
+      throw new Error("Could not bind the guarded initial publication receipt");
+    initialPublicationReceiptKey = "nemoclaw.guarded-initial-" + receiptHash;
+    const receiptRead = await run(
+      "git config --local --get " + q(initialPublicationReceiptKey),
+      "Read guarded initial publication receipt",
+      true,
+    );
+    hasDurableInitialPublicationReceipt =
+      receiptRead.exitCode === 0 && receiptRead.stdout.text.trim() === initialPublicationReceipt;
+  }
   const trustedBase = bypass?.canonicalBaseSha ?? remote + "/" + baseBranch;
   const commitCount = Number(
     (
@@ -247,6 +288,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       allVerified: false,
       blocker: null,
       remoteState: "not-checked",
+      initialPublicationReceiptKey: null,
     };
   const beforePush = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -268,7 +310,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
         "--repo",
         repo,
         "--json",
-        "state,isDraft,headRefOid,headRefName,headRepository,headRepositoryOwner",
+        "state,isDraft,baseRefName,headRefOid,headRefName,headRepository,headRepositoryOwner",
       ],
       timeoutMs: 120000,
     });
@@ -281,6 +323,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     if (
       pull.state !== "OPEN" ||
       (bypass !== undefined && pull.isDraft !== true) ||
+      pull.baseRefName !== baseBranch ||
       pull.headRefName !== branch ||
       pullRepo.toLowerCase() !== repo.toLowerCase() ||
       (input.expectedPullHeadSha !== undefined && pull.headRefOid !== input.expectedPullHeadSha)
@@ -302,7 +345,9 @@ export default async function publish_nemoclaw_pr_branch(input: {
       throw new Error("Could not verify the publication branch before guarded publication");
     const expectedRemote = bypass.expectedRemoteSha ?? "";
     reconcileExistingInitialPublication =
-      reconcileCompletedInitialPublication && remoteBefore === input.expectedHeadSha;
+      (reconcileCompletedInitialPublication ||
+        (prs.length === 0 && hasDurableInitialPublicationReceipt)) &&
+      remoteBefore === input.expectedHeadSha;
     if (remoteBefore !== expectedRemote && !reconcileExistingInitialPublication)
       throw new Error("Publication branch changed before guarded publication");
     if (bypass.expectedRemoteSha !== null) {
@@ -347,8 +392,10 @@ export default async function publish_nemoclaw_pr_branch(input: {
   );
   const remoteReadOk = remoteRead.exitCode === 0;
   const remoteSha = remoteReadOk ? remoteRead.stdout.text.trim().split(/\s+/u)[0] : "";
+  const guardedInitialWriteSucceeded =
+    bypass?.expectedRemoteSha !== null || reconcileExistingInitialPublication || pushError === null;
   const remoteState =
-    remoteSha === input.expectedHeadSha
+    remoteSha === input.expectedHeadSha && guardedInitialWriteSucceeded
       ? "expected-commit"
       : remoteBeforeReadOk && remoteReadOk && remoteSha === remoteBefore
         ? "unchanged"
@@ -372,8 +419,23 @@ export default async function publish_nemoclaw_pr_branch(input: {
       allVerified: false,
       blocker: detail.text || "Publication result is uncertain",
       remoteState,
+      initialPublicationReceiptKey,
     };
   }
+  if (
+    bypass?.expectedRemoteSha === null &&
+    !reconcileExistingInitialPublication &&
+    pushError === null &&
+    initialPublicationReceiptKey !== null &&
+    initialPublicationReceipt !== null
+  )
+    await run(
+      "git config --local --replace-all " +
+        q(initialPublicationReceiptKey) +
+        " " +
+        q(initialPublicationReceipt),
+      "Record guarded initial publication receipt",
+    );
   const changedRemote = remoteBeforeReadOk && remoteBefore !== input.expectedHeadSha;
   const verified = [];
   let verificationError = null;
@@ -416,6 +478,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     commits: verified,
     allVerified,
     remoteState,
+    initialPublicationReceiptKey,
     blocker: allVerified
       ? null
       : verificationError
