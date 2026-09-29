@@ -3,6 +3,8 @@
 
 import assert from "node:assert/strict";
 
+// This prospective payload describes the dependent #12239 tree, which adds
+// scripts/lib/npm-diagnostics.sh before executing the embedded standalone copy.
 const ISSUE_12192_NPM_DIAGNOSTICS = [
   "# Keep this standalone trust-boundary copy aligned with scripts/lib/npm-diagnostics.sh.",
   "# BEGIN npm diagnostics helper",
