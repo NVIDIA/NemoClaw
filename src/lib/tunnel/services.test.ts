@@ -367,6 +367,70 @@ describe("startAll", () => {
     expect(output).not.toContain("secret-fragment");
   });
 
+  it("restarts a quick tunnel when the registered dashboard port changes", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://updated-port.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    const oldPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    expect(Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"))).toBe(oldPid);
+    let oldProcessAlive = true;
+    const processControl: ProcessControl = {
+      isAlive: (pid) => pid === oldPid && oldProcessAlive,
+      commandLine: () => "cloudflared tunnel --url http://localhost:12345",
+      signal: (pid, signal) => {
+        process.kill(pid, signal);
+        oldProcessAlive = false;
+      },
+    };
+
+    await startAll({ pidDir, dashboardPort: 18_791, processControl });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    expect(replacementPid).not.toBe(oldPid);
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "argv:tunnel --url http://localhost:18791",
+    );
+  });
+
+  it("falls back when a direct quick-tunnel port is invalid", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://fallback-port.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 65_536 });
+
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "argv:tunnel --url http://localhost:18789",
+    );
+  });
+
   it("starts a named tunnel from CLOUDFLARE_TUNNEL_TOKEN without putting the token in argv", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });

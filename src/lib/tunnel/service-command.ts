@@ -46,9 +46,16 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
 } {
   const sandboxName = resolveDefaultSandboxName(deps.listSandboxes);
   const dashboardPort = sandboxName ? deps.getSandbox(sandboxName)?.dashboardPort : undefined;
+  const validDashboardPort =
+    typeof dashboardPort === "number" &&
+    Number.isSafeInteger(dashboardPort) &&
+    dashboardPort >= 1 &&
+    dashboardPort <= 65535
+      ? dashboardPort
+      : undefined;
   return {
     sandboxName,
-    ...(dashboardPort === null || dashboardPort === undefined ? {} : { dashboardPort }),
+    ...(validDashboardPort === undefined ? {} : { dashboardPort: validDashboardPort }),
   };
 }
 

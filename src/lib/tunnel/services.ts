@@ -319,6 +319,33 @@ function removePid(pidDir: string, name: string): void {
   }
 }
 
+const CLOUDFLARED_DASHBOARD_PORT_FILE = "cloudflared.dashboard-port";
+
+function readCloudflaredDashboardPort(pidDir: string): number | null {
+  const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
+  if (!existsSync(targetFile)) return null;
+  const port = Number(readFileSync(targetFile, "utf-8").trim());
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+function writeCloudflaredDashboardPort(pidDir: string, dashboardPort: number): void {
+  const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
+  const flags =
+    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(targetFile, flags, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeFileSync(fd, String(dashboardPort));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function removeCloudflaredDashboardPort(pidDir: string): void {
+  const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
+  if (existsSync(targetFile)) unlinkSync(targetFile);
+}
+
 // ---------------------------------------------------------------------------
 // Service lifecycle
 // ---------------------------------------------------------------------------
@@ -396,6 +423,7 @@ function stopService(
   if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
     info(`${name} was not running`);
     removePid(pidDir, name);
+    removeCloudflaredDashboardPort(pidDir);
     return;
   }
 
@@ -405,6 +433,7 @@ function stopService(
   } catch {
     // Already dead between the check and the signal
     removePid(pidDir, name);
+    removeCloudflaredDashboardPort(pidDir);
     info(`${name} stopped (PID ${String(pid)})`);
     return;
   }
@@ -424,6 +453,7 @@ function stopService(
   if (pc.isAlive(pid)) {
     if (!pidIsOurs(pid, pc)) {
       removePid(pidDir, name);
+      removeCloudflaredDashboardPort(pidDir);
       info(`${name} was not running`);
       return;
     }
@@ -435,6 +465,7 @@ function stopService(
   }
 
   removePid(pidDir, name);
+  removeCloudflaredDashboardPort(pidDir);
   info(`${name} stopped (PID ${String(pid)})`);
 }
 
@@ -664,7 +695,12 @@ function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
-  const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+  const dashboardPort =
+    Number.isSafeInteger(opts.dashboardPort) &&
+    (opts.dashboardPort ?? 0) >= 1 &&
+    (opts.dashboardPort ?? 0) <= 65535
+      ? (opts.dashboardPort ?? DASHBOARD_PORT)
+      : DASHBOARD_PORT;
 
   ensurePidDir(pidDir);
 
@@ -683,15 +719,31 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       stdio: ["ignore", "ignore", "ignore"],
     });
     if (tunnelToken) {
+      const wasRunning = isRunning(pidDir, "cloudflared");
       startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
         TUNNEL_TOKEN: tunnelToken,
       });
+      if (!wasRunning && isRunning(pidDir, "cloudflared")) {
+        removeCloudflaredDashboardPort(pidDir);
+      }
     } else {
+      if (isRunning(pidDir, "cloudflared")) {
+        // Releases before this target-state file existed always used the
+        // default dashboard port. Treat an absent record as that legacy state
+        // so rerunning `tunnel start` after upgrade repairs a changed target.
+        const runningPort = readCloudflaredDashboardPort(pidDir) ?? DASHBOARD_PORT;
+        if (runningPort !== dashboardPort) {
+          stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+        }
+      }
       startService(pidDir, "cloudflared", "cloudflared", [
         "tunnel",
         "--url",
         `http://localhost:${String(dashboardPort)}`,
       ]);
+      if (isRunning(pidDir, "cloudflared")) {
+        writeCloudflaredDashboardPort(pidDir, dashboardPort);
+      }
     }
   } catch {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
