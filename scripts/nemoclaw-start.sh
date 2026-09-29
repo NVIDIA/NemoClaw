@@ -5163,12 +5163,12 @@ EOF
       fi
     } <"$marker" || return 1
     if [ "$marker_value" = "$release_expected" ]; then
-      # The host performs the final offline state writes after Doctor publishes
-      # its ready receipt. Rotate any machine-local identity restored during
-      # that window before consuming the authenticated release marker.
-      remove_restored_legacy_device_identity "$release_expected" || return 1
-      rm -f -- "$marker" "$ready" || return 1
-      echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
+      # Keep the authenticated release marker through the remaining entrypoint
+      # setup. OpenClaw can materialize a legacy identity after Doctor exits,
+      # so consuming the marker here leaves a race before gateway launch.
+      # The final launch edge rotates that authority and consumes both receipts.
+      _NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING=1
+      echo "[setup] OpenClaw post-upgrade offline restore release accepted; final identity rotation pending" >&2
       return 0
     fi
     if [ "$marker_value" = "$abort_expected" ]; then
@@ -5185,6 +5185,25 @@ EOF
   echo "[SECURITY] Timed out waiting for post-upgrade offline restore release" >&2
   rm -f -- "$marker" "$ready" || return 1
   return 1
+}
+
+consume_openclaw_post_upgrade_release_before_gateway() {
+  local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
+  local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
+  local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
+
+  [ "${_NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING:-0}" = "1" ] || return 0
+  # This is the last synchronous operation before spawning the gateway. Keep
+  # the release marker in place while the descriptor-based cleanup validates
+  # and removes any identity that a completed migration materialized late.
+  remove_restored_legacy_device_identity "$release_expected" || return 1
+  rm -f -- "$marker" "$ready" || return 1
+  if [ -e "$marker" ] || [ -L "$marker" ] || [ -e "$ready" ] || [ -L "$ready" ]; then
+    echo "[SECURITY] OpenClaw post-upgrade release receipts reappeared before gateway launch" >&2
+    return 1
+  fi
+  _NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING=0
+  echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -5289,6 +5308,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # to healthy — see the mark_in_container_gateway comment near the top of this
   # file for the #4710 rationale (why the marker is tied to the launch site
   # rather than an env-var conditional at startup).
+  consume_openclaw_post_upgrade_release_before_gateway || exit 1
   launch_openclaw_gateway_non_root
   # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
   # below for rationale (NVIDIA/NemoClaw#2484).
@@ -5455,6 +5475,7 @@ validate_nemoclaw_tmp_permissions
 # new process identity for health integration, and forwards sandbox shutdown
 # signals.
 # The launch primitive arms signal and EXIT cleanup before writing the marker.
+consume_openclaw_post_upgrade_release_before_gateway || exit 1
 launch_openclaw_gateway
 
 # Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in

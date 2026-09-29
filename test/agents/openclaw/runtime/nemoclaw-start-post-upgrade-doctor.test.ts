@@ -205,7 +205,9 @@ describe("sanitized legacy device identity migration", () => {
 
   it("rejects an untrusted post-upgrade marker without removing the identity", () => {
     const marker = path.join(config, ".nemoclaw-post-upgrade-doctor");
-    fs.writeFileSync(marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o644 });
+    fs.writeFileSync(marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+      mode: 0o644,
+    });
     fs.writeFileSync(target, JSON.stringify({ version: 1, deviceId: "device" }));
 
     const result = runMigration();
@@ -220,7 +222,10 @@ describe("sanitized legacy device identity migration", () => {
       content: { version: 1, deviceId: "device", privateKeyPem: "private" },
     },
     { kind: "other object", content: {} },
-    { kind: "lookalike marker", content: { nemoclawSanitizedDeviceIdentity: 2 } },
+    {
+      kind: "lookalike marker",
+      content: { nemoclawSanitizedDeviceIdentity: 2 },
+    },
   ])("preserves a $kind", ({ content }) => {
     const serialized = JSON.stringify(content);
     fs.writeFileSync(target, serialized);
@@ -297,8 +302,14 @@ function doctorFunction(
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
       .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
+    extractShellFunctionFromSource(source, "consume_openclaw_post_upgrade_release_before_gateway")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath),
   ].join("\n");
 }
+
+const finishDoctorBeforeGateway =
+  "run_requested_openclaw_post_upgrade_doctor && consume_openclaw_post_upgrade_release_before_gateway";
 
 function backupQuiesceFunction(source: string, configDir: string, readyPath: string): string {
   return [
@@ -432,7 +443,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", {
+        mode: 0o600,
+      });
       const result = spawnSync(
         "bash",
         [
@@ -455,7 +468,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", {
+        mode: 0o600,
+      });
       const restoredIdentity = path.join(f.configDir, "identity", "device.json");
       fs.mkdirSync(path.dirname(restoredIdentity));
       const result = spawnSync(
@@ -470,7 +485,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
             `printf '%s' '{"version":1,"deviceId":"retired-sandbox","privateKeyPem":"private"}' >${JSON.stringify(restoredIdentity)}`,
             `printf 'restored-before-doctor\\n' >${JSON.stringify(f.calls)}`,
             releaseAfterReady(f),
-            "run_requested_openclaw_post_upgrade_doctor",
+            finishDoctorBeforeGateway,
           ].join("\n"),
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
@@ -495,13 +510,15 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const claim = path.join(f.configDir, "identity", "device.json.native-importing");
       const result = spawnSync(
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\n${finishDoctorBeforeGateway}`,
         ],
         {
           encoding: "utf8",
@@ -523,13 +540,15 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const restoredIdentity = path.join(f.configDir, "identity", "device.json");
       const result = spawnSync(
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${restoreIdentityAndReleaseAfterReady(f, restoredIdentity)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${restoreIdentityAndReleaseAfterReady(f, restoredIdentity)}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -539,6 +558,44 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.stderr).toContain(
         "Removed restored legacy device identity for post-upgrade rotation: device.json",
       );
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates an identity materialized after release acceptance at the gateway launch edge", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
+      const lateIdentity = path.join(f.configDir, "identity", "device.json");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            doctorFunction(source, f.configDir, f.ready),
+            releaseAfterReady(f),
+            "run_requested_openclaw_post_upgrade_doctor || exit $?",
+            `mkdir -p ${JSON.stringify(path.dirname(lateIdentity))}`,
+            `printf '%s' '{"version":1,"deviceId":"late-retired-sandbox","privateKeyPem":"private"}' >${JSON.stringify(lateIdentity)}`,
+            "consume_openclaw_post_upgrade_release_before_gateway",
+          ].join("\n"),
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(lateIdentity)).toBe(false);
+      expect(result.stderr).toContain("release accepted; final identity rotation pending");
+      expect(result.stderr).toContain(
+        "Removed restored legacy device identity for post-upgrade rotation: device.json",
+      );
+      expect(result.stderr).toContain("released gateway launch");
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
     } finally {
@@ -563,7 +620,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
           "bash",
           [
             "-c",
-            `${doctorFunction(source, f.configDir, f.ready, true)}\n${release}run_requested_openclaw_post_upgrade_doctor`,
+            `${doctorFunction(source, f.configDir, f.ready, true)}\n${release}run_requested_openclaw_post_upgrade_doctor${doctorExitCode === "0" ? " && consume_openclaw_post_upgrade_release_before_gateway" : ""}`,
           ],
           {
             encoding: "utf8",
@@ -590,12 +647,14 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const result = spawnSync(
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -615,14 +674,16 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       fs.mkdirSync(path.join(f.configDir, "state"));
       fs.writeFileSync(path.join(f.configDir, "state", "openclaw.sqlite"), "legacy");
       const result = spawnSync(
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -642,7 +703,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       fs.mkdirSync(path.join(f.configDir, "state"));
       const database = path.join(f.configDir, "state", "openclaw.sqlite");
       fs.writeFileSync(database, "legacy-v1");
@@ -686,7 +749,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -709,7 +772,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const f = fixture();
     const firstPass = path.join(f.root, "doctor-first-pass");
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       fs.writeFileSync(
         f.openclaw,
         [
@@ -728,7 +793,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -748,7 +813,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       fs.writeFileSync(f.leaseActive, "active\n");
       const staged = `${f.marker}.release`;
       const releaseAfterLease = [
@@ -765,7 +832,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         "bash",
         [
           "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\nsleep() { /bin/sleep 0.01; }\n${releaseAfterLease}\nrun_requested_openclaw_post_upgrade_doctor`,
+          `${doctorFunction(source, f.configDir, f.ready)}\nsleep() { /bin/sleep 0.01; }\n${releaseAfterLease}\n${finishDoctorBeforeGateway}`,
         ],
         { encoding: "utf8", env: fixtureEnv(f) },
       );
@@ -814,7 +881,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const staged = `${f.marker}.abort`;
       const abortAfterReady = [
         `(while [ ! -f ${JSON.stringify(f.ready)} ]; do sleep 0.01; done`,
@@ -846,7 +915,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const boundedFunction = doctorFunction(source, f.configDir, f.ready).replace(
         '[ "$gate_attempt" -lt 600 ]',
         '[ "$gate_attempt" -lt 2 ]',
@@ -873,7 +944,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
     try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+        mode: 0o600,
+      });
       const result = spawnSync(
         "bash",
         [
