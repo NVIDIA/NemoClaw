@@ -272,18 +272,23 @@ export function printHardwareResources(json: boolean): HardwareResources {
   return hw;
 }
 
+export function validateResourceValue(value: string): void {
+  const trimmed = value.trim();
+  // Strict validation: only accept integers 1-100 followed by %
+  if (trimmed.endsWith("%") && !/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
+    throw new Error(`Invalid percentage '${trimmed}': must be an integer between 1% and 100%`);
+  }
+}
+
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
  * Throws on invalid percentages so callers can surface clear errors.
  */
 export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
+  validateResourceValue(value);
   const trimmed = value.trim();
   if (trimmed.endsWith("%")) {
-    // Strict validation: only accept integers 1-100 followed by %
-    if (!/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
-      throw new Error(`Invalid percentage '${trimmed}': must be an integer between 1% and 100%`);
-    }
     const pct = parseInt(trimmed.slice(0, -1), 10);
     if (unit === "cpu") {
       const milliCores = Math.max(1, Math.floor((total * 1000 * pct) / 100));
@@ -357,15 +362,11 @@ export function appendResourceFlags(
   } catch {
     return false;
   }
-  try {
-    const hw = getHardwareResources();
-    const resolved = resolveProfile(profile, hw);
-    if (resolved.cpu) args.push("--cpu", resolved.cpu);
-    if (resolved.memory) args.push("--memory", resolved.memory);
-    return true;
-  } catch {
-    return false;
-  }
+  const hw = getHardwareResources();
+  const resolved = resolveProfile(profile, hw);
+  if (resolved.cpu) args.push("--cpu", resolved.cpu);
+  if (resolved.memory) args.push("--memory", resolved.memory);
+  return true;
 }
 
 function normalizeResourceProfile(prof: Record<string, unknown>): ResourceProfile | null {

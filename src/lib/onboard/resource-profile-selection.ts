@@ -7,6 +7,7 @@ import {
   loadResourceProfiles,
   resolveResourceValue,
   type ResourceProfile,
+  validateResourceValue,
 } from "../resources-cmd";
 
 export type ResourceProfileSelectionDeps = {
@@ -35,6 +36,12 @@ function applyResourceEnvOverrides(
   if (env.NEMOCLAW_CPU) nextProfile.cpu = env.NEMOCLAW_CPU;
   if (env.NEMOCLAW_RAM) nextProfile.memory = env.NEMOCLAW_RAM;
   deps.note(`  Resource overrides (env): cpu=${nextProfile.cpu}, ram=${nextProfile.memory}`);
+  try {
+    validateResourceValue(nextProfile.cpu);
+    validateResourceValue(nextProfile.memory);
+  } catch (e: unknown) {
+    exitWithResourceProfileError((e as Error).message);
+  }
   return nextProfile;
 }
 

@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResourceProfileSelectionDeps } from "./resource-profile-selection";
-import { selectResourceProfileForSandbox } from "./resource-profile-selection.js";
+import {
+  appendResourceFlagsForProfile,
+  selectResourceProfileForSandbox,
+} from "./resource-profile-selection.js";
 
 function makeDeps(
   overrides: Partial<ResourceProfileSelectionDeps> = {},
@@ -84,6 +91,44 @@ describe("selectResourceProfileForSandbox", () => {
     expect(deps.promptOrDefault).not.toHaveBeenCalled();
   });
 
+  it("accepts whole-number percentage overrides from 1% to 100%", async () => {
+    const deps = makeDeps({
+      env: { NEMOCLAW_CPU: "100%", NEMOCLAW_RAM: "1%" } as NodeJS.ProcessEnv,
+      isNonInteractive: vi.fn(() => true),
+    });
+
+    await expect(selectResourceProfileForSandbox(deps)).resolves.toEqual({
+      cpu: "100%",
+      memory: "1%",
+    });
+  });
+
+  it.each([
+    ["NEMOCLAW_CPU is above the maximum", { NEMOCLAW_CPU: "150%" }, "150%"],
+    [
+      "NEMOCLAW_RAM is zero beside a valid NEMOCLAW_CPU",
+      { NEMOCLAW_CPU: "2", NEMOCLAW_RAM: "0%" },
+      "0%",
+    ],
+    ["NEMOCLAW_RAM has a fractional part", { NEMOCLAW_RAM: "12.5%" }, "12.5%"],
+    [
+      "NEMOCLAW_CPU is above the maximum and overrides a named profile",
+      { NEMOCLAW_RESOURCE_PROFILE: "developer", NEMOCLAW_CPU: "200%" },
+      "200%",
+    ],
+  ])("exits with the percentage error when %s", async (_case, env, value) => {
+    const deps = makeDeps({
+      env: env as NodeJS.ProcessEnv,
+      isNonInteractive: vi.fn(() => true),
+    });
+
+    await expect(selectResourceProfileForSandbox(deps)).rejects.toThrow("process.exit(1)");
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `  Invalid percentage '${value}': must be an integer between 1% and 100%`,
+    );
+  });
+
   it("returns a menu-selected profile", async () => {
     const deps = makeDeps({ promptOrDefault: vi.fn().mockResolvedValue("2") });
 
@@ -130,5 +175,57 @@ describe("selectResourceProfileForSandbox", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "  Invalid percentage '101%': must be an integer between 1% and 100%",
     );
+  });
+});
+
+describe("appendResourceFlagsForProfile", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resource-flags-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function writeOpenShell(help: string): string {
+    const openshell = path.join(tempDir, "openshell");
+    fs.writeFileSync(openshell, `#!/usr/bin/env sh\necho '${help}'\n`, { mode: 0o755 });
+    return openshell;
+  }
+
+  it("prints the unsupported-flags note when OpenShell lacks resource flags", () => {
+    const deps = makeDeps();
+    const args = ["sandbox", "create"];
+
+    appendResourceFlagsForProfile(
+      args,
+      { cpu: "25%", memory: "25%" },
+      writeOpenShell("usage: openshell sandbox create"),
+      deps,
+    );
+
+    expect(args).toEqual(["sandbox", "create"]);
+    expect(deps.note).toHaveBeenCalledWith(
+      "  OpenShell does not support resource flags — sandbox will use default limits.",
+    );
+  });
+
+  it("throws the percentage error without the unsupported-flags note when a value is invalid", () => {
+    const deps = makeDeps();
+    const args = ["sandbox", "create"];
+
+    expect(() =>
+      appendResourceFlagsForProfile(
+        args,
+        { cpu: "150%", memory: "25%" },
+        writeOpenShell("--cpu --memory"),
+        deps,
+      ),
+    ).toThrow("Invalid percentage '150%': must be an integer between 1% and 100%");
+
+    expect(args).toEqual(["sandbox", "create"]);
+    expect(deps.note).not.toHaveBeenCalled();
   });
 });
