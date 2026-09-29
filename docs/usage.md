@@ -231,6 +231,16 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 | Remove a sandbox, retained storage, or a protected gateway binding | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
+For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
+Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image requires a separate deployment with a fresh UID and state.
+The packaged adapter tracks its native configuration sections, updates them during an explicit runtime restart, and preserves unrelated native bookkeeping and files.
+Conflicting direct edits to an owned section cause startup to fail without overwriting that section.
+See the [OpenClaw modification notice](../image/fabric/OPENCLAW-NOTICE.md) for ownership and interrupted-write behavior.
+
+A request to remove or replace a bound sandbox is rejected before managed-runtime reconciliation, including when the same request changes a managed service.
+The refusal names the sandbox and preserves retained intent and resource state.
+Export and destroy can still use the retained configuration without reapplying the original YAML; their usual observation and ownership checks still apply.
+
 The [provider lifecycle contract](provider.md#openshell-resource-lifecycles) distinguishes reconstructible registrations and configuration from protected sandbox data and durable identity.
 OpenShell refuses deletion of a registration still attached to a sandbox or a profile still referenced by a registration.
 Ordinary apply can recreate a missing registration after confirmed absence, while preserving the sandbox's identity and files.
@@ -269,6 +279,9 @@ For records with per-resource recovery evidence, plan, apply, and destroy compar
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
 Correct the model or agent settings and explicitly apply the revised YAML when the sandbox remains available and its launch specification is unchanged.
+With the current bundle and bridge image, configuration failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
+A failed restart can leave the agent `unavailable` while retaining the sandbox and its files; correcting the configuration and explicitly applying it starts the runtime again.
+An `unknown` runtime state does not establish that the old process stopped.
 A sandbox in `Error` can still block ordinary apply, but its saved identity permits [explicit teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
 

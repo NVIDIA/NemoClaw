@@ -477,6 +477,7 @@ pub(crate) fn render_error(
     let preflight_error = error_in_chain::<nemoclaw_sdk::config::ConfigError>(error).is_some()
         || error_in_chain::<crate::credentials::FulfillmentError>(error).is_some();
     let remaining = match sdk {
+        Some(Error::SandboxChangeRefused { .. }) => "No runtime resources changed.",
         _ if preflight_error => "No runtime resources changed.",
         Some(Error::SandboxStartup { .. }) => "Resources retained; sandbox startup failed.",
         _ if matches!(context.operation, "Apply" | "Destroy") => {
@@ -488,6 +489,9 @@ pub(crate) fn render_error(
         details["remainingState"] = serde_json::json!(remaining);
     }
     let help = match sdk {
+        Some(Error::SandboxChangeRefused { .. }) => Some(
+            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.",
+        ),
         Some(Error::SandboxStartup { .. }) => Some(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         ),
@@ -797,6 +801,31 @@ mod tests {
         assert_eq!(
             json["remainingState"],
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
+        );
+    }
+
+    #[test]
+    fn sandbox_refusal_reports_unchanged_resources_and_retained_configuration() {
+        let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
+        let context = RenderContext::new(&cli);
+        let error = Error::SandboxChangeRefused {
+            sandbox: "reviewer".into(),
+            action: "remove",
+        };
+        let text = render_error(&error, OutputFormat::Text, &context);
+        assert!(text.contains("ordinary apply cannot remove sandbox 'reviewer'"));
+        assert!(text.contains("No runtime resources changed."));
+        assert!(text.contains("fresh UID and state directory"));
+        assert!(!text.contains("Changes may already have been made"));
+        let json: Value =
+            serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
+        assert_eq!(json["outcome"], "failed");
+        assert_eq!(json["remainingState"], "No runtime resources changed.");
+        assert!(
+            json["help"]
+                .as_str()
+                .unwrap()
+                .contains("docs/usage.md#choose-the-change-path")
         );
     }
 

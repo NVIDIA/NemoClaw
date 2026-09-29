@@ -94,6 +94,11 @@ pub enum ObservationError {
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic),
+    FabricConfiguration {
+        stage: &'static str,
+        code: &'static str,
+        runtime_state: &'static str,
+    },
     SandboxStartup {
         phase: &'static str,
         reason: &'static str,
@@ -112,6 +117,14 @@ impl fmt::Display for ObservationError {
                 f,
                 "sandbox unavailable: {phase}, reason {reason}, exit code {}; resources retained",
                 exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+            ),
+            Self::FabricConfiguration {
+                stage,
+                code,
+                runtime_state,
+            } => write!(
+                f,
+                "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}; resources retained"
             ),
             Self::Hardware(diagnostic) => diagnostic.fmt(f),
             Self::Backend(message) => f.write_str(message),

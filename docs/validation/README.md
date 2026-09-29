@@ -28,6 +28,8 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 
 | Behavior | Tests and Results |
 |---|---|
+| OpenClaw model/settings updates, retained files, safe failure reporting, and explicit retry | [Linux ARM64 OpenClaw qualification](openclaw-reconfiguration-linux-arm64.md) |
+| Refused sandbox removal, image and policy changes preserve intent, export, and direct destroy | [Linux ARM64 refusal qualification](refused-apply-linux-arm64.md) |
 | Real gateway startup, capability readiness dependency, workspace creation, and bound-state recovery limit | [Linux ARM64 manual readiness test](gateway-readiness-linux-arm64.md) |
 | Deferred provider configuration and the bound-gateway recovery boundary | [Linux ARM64 bootstrap qualification](openshell-deferred-configuration-linux-arm64.md) |
 | Independent OpenShell HCL composition, lifecycle guards, recovery, and bootstrap limits | [Linux ARM64 provider qualification](openshell-provider-composition-linux-arm64.md) |

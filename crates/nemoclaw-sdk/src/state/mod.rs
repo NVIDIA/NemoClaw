@@ -123,6 +123,40 @@ impl Record {
         }
         Ok(())
     }
+    pub fn validate_bound_sandboxes(
+        &self,
+        document: &Document,
+        bindings: &BTreeMap<String, StateBinding>,
+    ) -> Result<(), Error> {
+        if !bindings
+            .keys()
+            .any(|address| address.starts_with("nemoclaw_sandbox."))
+        {
+            return Ok(());
+        }
+        let before = crate::compile::targets(&self.document, &self.generations)?;
+        let after = crate::compile::targets(document, &self.generations)?;
+        for prior in before
+            .iter()
+            .filter(|target| target.kind == "sandbox" && bindings.contains_key(&target.address))
+        {
+            let next = after.iter().find(|target| target.address == prior.address);
+            // Every compiled sandbox attribute is immutable. Model and adapter
+            // settings live in the separate agent-configuration target.
+            let action = match next {
+                None => "remove",
+                Some(next) if next.values != prior.values => "replace",
+                _ => continue,
+            };
+            return Err(Error::SandboxChangeRefused {
+                sandbox: prior.values["name"].clone(),
+                action,
+            });
+        }
+        // This only rejects authored changes before runtime reconciliation.
+        // Provider refresh and plan still own live identity and drift checks.
+        Ok(())
+    }
     pub fn begin_apply(
         &mut self,
         document: &Document,

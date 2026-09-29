@@ -525,3 +525,67 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
     assert!(!record.pending());
     assert!(record.pending_creations.is_none());
 }
+
+#[test]
+fn bound_sandbox_guard_allows_configuration_updates_additions_and_explicit_recreation() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let record = Record::new(document.clone()).unwrap();
+    let bound = BTreeMap::from([(
+        "nemoclaw_sandbox.assistant".into(),
+        StateBinding {
+            id: "saved-sandbox".into(),
+            ..Default::default()
+        },
+    )]);
+    let mut revised = document.clone();
+    revised.metadata.name = "new-display-name".into();
+    revised.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "corrected-model".into();
+    let mut added = revised.spec.sandboxes[0].clone();
+    added.name = "reviewer".into();
+    revised.spec.sandboxes.push(added);
+    revised.spec.sandboxes.reverse();
+    record.validate_bound_sandboxes(&revised, &bound).unwrap();
+    for change in ["remove", "image", "agent", "policy", "endpoint"] {
+        let mut value = serde_json::to_value(&document).unwrap();
+        match change {
+            "remove" => value["spec"]["sandboxes"][0]["name"] = serde_json::json!("different"),
+            "image" => {
+                value["spec"]["sandboxes"][0]["image"]["ref"] =
+                    serde_json::json!(format!("sandbox@sha256:{}", "f".repeat(64)))
+            }
+            "agent" => {
+                value["spec"]["sandboxes"][0]["agent"]["name"] = serde_json::json!("different")
+            }
+            "policy" => {
+                value["spec"]["sandboxes"][0]["network"] =
+                    serde_json::json!({"policy":{"explicit":{"version":1,"network_policies":{}}}})
+            }
+            "endpoint" => {
+                value["spec"]["inferenceProviders"][0]["endpoint"] =
+                    serde_json::json!("http://127.0.0.1:19999/v1")
+            }
+            _ => unreachable!(),
+        }
+        let changed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        let error = record
+            .validate_bound_sandboxes(&changed, &bound)
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::SandboxChangeRefused { ref sandbox, .. } if sandbox == "assistant")
+        );
+        // No bound sandbox remains after explicit teardown, so a new workload
+        // may use the retained workspace with a revised launch specification.
+        record
+            .validate_bound_sandboxes(&changed, &BTreeMap::new())
+            .unwrap();
+    }
+}

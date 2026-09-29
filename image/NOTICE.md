@@ -5,7 +5,8 @@
 
 [The shared Dockerfile](fabric/Dockerfile) pins Fabric source and base images.
 Fabric owns the adapter implementations, native schemas, and configuration mapping installed by these recipes.
-NemoClaw does not patch those descriptors or adapter implementations.
+NemoClaw preserves the upstream descriptors.
+The pinned OpenClaw adapter has a [documented configuration-reconciliation patch](fabric/OPENCLAW-NOTICE.md); other adapter implementations are unchanged.
 Upstream notices remain in installed wheels and the retained source archive under `/opt/nemoclaw/source/`.
 See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter sources.
 

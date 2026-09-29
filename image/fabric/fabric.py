@@ -10,11 +10,32 @@ import signal
 import sys
 from pathlib import Path
 
-from nemo_fabric import Fabric, FabricConfig
+from nemo_fabric import Fabric, FabricConfig, FabricConfigError, FabricError
 
 SOCKET = "/sandbox/fabric.sock"
 REQUEST_LIMIT = 512 * 1024
 RESULT_LIMIT = 4 * 1024 * 1024
+
+
+def failure_fields(stage=None, code=None, runtime_state=None):
+    # Exception messages, details, and arbitrary codes can contain settings or
+    # credentials. Only this fixed diagnostic vocabulary crosses the bridge.
+    if stage not in ("validate", "start", "stop", "invoke"):
+        stage = "unknown"
+    if code not in (
+        "lifecycle_adapter_start_failed",
+        "lifecycle_adapter_stop_failed",
+        "lifecycle_adapter_invoke_failed",
+        "fabric_validate_failed",
+        "fabric_start_failed",
+        "fabric_stop_failed",
+        "fabric_invoke_failed",
+        "fabric_configuration_failed",
+    ):
+        code = "fabric_configuration_failed" if stage == "unknown" else f"fabric_{stage}_failed"
+    if runtime_state not in ("running", "unavailable", "unknown"):
+        runtime_state = "unknown"
+    return {"stage": stage, "code": code, "runtime_state": runtime_state}
 
 
 class RuntimeHost:
@@ -35,6 +56,15 @@ class RuntimeHost:
             and not self.stopping
             and self.runtime.status == "active",
         }
+
+    def failure(self, error):
+        stage = error.stage if isinstance(error, FabricError) else None
+        if isinstance(error, FabricConfigError) and stage is None:
+            stage = "validate"
+        state = (
+            "unknown" if self.stopping else "running" if self.status()["ready"] else "unavailable"
+        )
+        return {"error": failure_fields(stage, getattr(error, "code", None), state)}
 
     def validate(self, config):
         typed = FabricConfig.model_validate(config)
@@ -106,9 +136,8 @@ async def serve():
             encoded = json.dumps(response).encode() + b"\n"
             if len(encoded) > RESULT_LIMIT:
                 raise ValueError("result exceeds transport limit")
-        except Exception:
-            # Fabric errors may contain authored settings or endpoint details.
-            encoded = b'{"error":"Fabric runtime operation failed"}\n'
+        except Exception as error:
+            encoded = json.dumps(host.failure(error)).encode() + b"\n"
         try:
             writer.write(encoded)
             await writer.drain()
@@ -155,6 +184,18 @@ async def client(operation, name, config=None, input=None):
         writer.write(json.dumps(request).encode() + b"\n")
         await writer.drain()
         result = json.loads(await asyncio.wait_for(reader.readline(), 320))
+        if operation in ("prepare", "configure", "check") and result.get("error"):
+            error = result["error"] if isinstance(result["error"], dict) else {}
+            print(
+                json.dumps(
+                    {
+                        "error": failure_fields(
+                            error.get("stage"), error.get("code"), error.get("runtime_state")
+                        )
+                    }
+                )
+            )
+            return 2
         if operation == "prepare":
             return 0 if result == {"prepared": True} else 2
         if operation in ("check", "configure"):

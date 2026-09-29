@@ -7,6 +7,39 @@ use std::time::Duration;
 
 const AGENT_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 
+fn configuration_failure(output: &[u8]) -> ObservationError {
+    let report: serde_json::Value = serde_json::from_slice(output).unwrap_or_default();
+    let error = &report["error"];
+    // Keep the bridge's vocabulary bounded again at the provider boundary.
+    // Older images and malformed reports retain an explicit unknown state.
+    let stage = match error["stage"].as_str() {
+        Some("validate") => "validate",
+        Some("start") => "start",
+        Some("stop") => "stop",
+        Some("invoke") => "invoke",
+        _ => "unknown",
+    };
+    let code = match error["code"].as_str() {
+        Some("lifecycle_adapter_start_failed") => "lifecycle_adapter_start_failed",
+        Some("lifecycle_adapter_stop_failed") => "lifecycle_adapter_stop_failed",
+        Some("lifecycle_adapter_invoke_failed") => "lifecycle_adapter_invoke_failed",
+        Some("fabric_validate_failed") => "fabric_validate_failed",
+        Some("fabric_start_failed") => "fabric_start_failed",
+        Some("fabric_stop_failed") => "fabric_stop_failed",
+        Some("fabric_invoke_failed") => "fabric_invoke_failed",
+        _ => "fabric_configuration_failed",
+    };
+    let runtime_state = match error["runtime_state"].as_str() {
+        Some("running") => "running",
+        Some("unavailable") => "unavailable",
+        _ => "unknown",
+    };
+    ObservationError::FabricConfiguration {
+        stage,
+        code,
+        runtime_state,
+    }
+}
 async fn readiness_deadline(
     wait: impl std::future::Future<Output = Result<(), Error>>,
     cancel: &CancellationToken,
@@ -66,11 +99,9 @@ impl OpenShell {
         .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
         let (mut command, environment) = self.configuration_command(binding)?;
         command[2] = if prepare { "prepare" } else { "configure" }.into();
-        let (exit, _) = self.exec_bound(binding, command, environment, 120).await?;
+        let (exit, output) = self.exec_bound(binding, command, environment, 120).await?;
         if exit != 0 {
-            return Err(Error::Conflict(
-                "Fabric configuration failed; resources retained",
-            ));
+            return Err(configuration_failure(&output).into());
         }
         Ok(())
     }
@@ -135,6 +166,20 @@ impl OpenShell {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn configuration_diagnostics_preserve_only_known_fields() {
+        let failure = super::configuration_failure(br#"{"error":{"stage":"start","code":"lifecycle_adapter_start_failed","runtime_state":"unavailable","message":"private-value"}}"#);
+        let text = failure.to_string();
+        assert!(text.contains("lifecycle_adapter_start_failed"));
+        assert!(text.contains("agent runtime is unavailable"));
+        assert!(!text.contains("private-value"));
+        for output in [b"".as_slice(), b"private-value", br#"{"error":{"stage":"private-value","code":"private-value","runtime_state":"private-value"}}"#] {
+            assert_eq!(super::configuration_failure(output), nemoclaw_sdk::ObservationError::FabricConfiguration {
+                stage: "unknown", code: "fabric_configuration_failed", runtime_state: "unknown",
+            });
+        }
+    }
+
     use super::*;
     #[tokio::test(start_paused = true)]
     async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {

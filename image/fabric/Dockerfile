@@ -49,6 +49,12 @@ ARG HARNESS
 ARG ADAPTER
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
+RUN if [ "$ADAPTER" = openclaw ]; then \
+        apt-get update && apt-get install -y --no-install-recommends patch \
+        && rm -rf /var/lib/apt/lists/* \
+        && patch --batch --fuzz=0 -d /src/fabric -p1 < /build/openclaw-reconfigure.patch \
+        && cp /build/openclaw_configuration.py /src/fabric/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/configuration.py; \
+    fi
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \

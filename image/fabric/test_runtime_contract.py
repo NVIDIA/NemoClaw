@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fabric import RuntimeHost, client
-from nemo_fabric import FabricConfigError
+from nemo_fabric import FabricConfigError, FabricRuntimeError
 
 
 class HealthCommand(unittest.TestCase):
@@ -81,6 +81,74 @@ class RuntimeLifecycle(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(host.config, before)
             self.assertTrue(host.status()["ready"])
             runtime.stop.assert_not_awaited()
+
+    async def test_configuration_failure_reaches_the_provider_with_runtime_state(self):
+        failure = {
+            "error": {
+                "stage": "start",
+                "code": "lifecycle_adapter_start_failed",
+                "runtime_state": "unavailable",
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            socket = str(Path(directory) / "fabric.sock")
+
+            async def respond(reader, writer):
+                await reader.readline()
+                writer.write(json.dumps(failure).encode() + b"\n")
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+
+            output = io.StringIO()
+            async with await asyncio.start_unix_server(respond, socket):
+                with patch("fabric.SOCKET", socket), redirect_stdout(output):
+                    status = await client("configure", "main", {"metadata": {"name": "main"}})
+            self.assertEqual(status, 2)
+            self.assertEqual(json.loads(output.getvalue()), failure)
+
+    async def test_failed_restart_reports_unavailable_without_exposing_exception_details(self):
+        config = {"metadata": {"name": "main"}, "harness": {"adapter_id": "vendor.new"}}
+        runtime = SimpleNamespace(runtime_id="owned", status="active", stop=AsyncMock())
+        fabric = SimpleNamespace(plan=Mock(), start_runtime=AsyncMock(return_value=runtime))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("fabric.Fabric", return_value=fabric),
+        ):
+            host = RuntimeHost("main", Path(directory))
+            await host.configure(config)
+            fabric.start_runtime.side_effect = FabricRuntimeError(
+                "secret-native-message",
+                stage="start",
+                code="secret-native-code",
+                details={"token": "secret-value"},
+            )
+            revised = {**config, "models": {"default": {"provider": "openai", "model": "changed"}}}
+            with self.assertRaises(FabricRuntimeError) as failed:
+                await host.configure(revised)
+            self.assertEqual(
+                host.failure(failed.exception),
+                {
+                    "error": {
+                        "stage": "start",
+                        "code": "fabric_start_failed",
+                        "runtime_state": "unavailable",
+                    }
+                },
+            )
+            self.assertFalse(host.status()["ready"])
+            self.assertEqual(host.status()["config"], revised)
+            runtime.stop.assert_awaited_once()
+            self.assertEqual(fabric.start_runtime.await_count, 2)
+            fabric.start_runtime.side_effect = None
+            await host.configure(revised)
+            self.assertTrue(host.status()["ready"])
+            runtime.stop.side_effect = FabricRuntimeError(
+                "secret", stage="stop", code="lifecycle_adapter_stop_failed"
+            )
+            with self.assertRaises(FabricRuntimeError) as failed:
+                await host.stop()
+            self.assertEqual(host.failure(failed.exception)["error"]["runtime_state"], "unknown")
 
     async def test_wrong_agent_identity_cannot_invoke_the_bound_runtime(self):
         result = {"status": "succeeded", "output": "native"}

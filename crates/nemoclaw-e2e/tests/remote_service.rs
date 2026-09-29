@@ -442,6 +442,9 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
                 || arg == "probe"
                 || arg == "--message")
     );
+    if harness == "nvidia.fabric.pi" {
+        refused_sandbox_changes_preserve_retained_intent(root, &bundle, &gateway).await;
+    }
     if check_pulls {
         let mut changed = read(root, "config.yaml");
         changed["spec"]["services"]["qwen"]
@@ -555,4 +558,96 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
     // Teardown must also accept both current and pending-delete identities.
     interrupt_cleanup(root, true);
+}
+
+async fn refused_sandbox_changes_preserve_retained_intent(
+    root: &Path,
+    bundle: &Path,
+    gateway: &Fixture,
+) {
+    let mut original = read(root, "config.yaml");
+    let mut reviewer = original["spec"]["sandboxes"][0].clone();
+    reviewer["name"] = json!("reviewer");
+    original["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(reviewer);
+    save(root, "config.yaml", &original);
+    run(root, bundle, "apply", "config.yaml", true).await;
+    let before = [
+        "intent.json",
+        "terraform.tfstate",
+        "runtime/terraform.tfstate",
+    ]
+    .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
+    let engine = read(root, "engine.json");
+    let effects = gateway.state.lock().unwrap().effects;
+    for change in ["remove", "image", "policy", "image-with-runtime-change"] {
+        let mut rejected = original.clone();
+        match change {
+            "remove" => {
+                rejected["spec"]["sandboxes"].as_array_mut().unwrap().pop();
+            }
+            "policy" => {
+                rejected["spec"]["sandboxes"][1]["network"] =
+                    json!({"policy":{"explicit":{"version":1,"network_policies":{}}}});
+            }
+            _ => {
+                rejected["spec"]["sandboxes"][1]["image"]["ref"] =
+                    json!(format!("sandbox@sha256:{}", "c".repeat(64)));
+                if change == "image-with-runtime-change" {
+                    rejected["spec"]["services"]["qwen"]["image"] =
+                        json!(format!("runtime@sha256:{}", "f".repeat(64)));
+                }
+            }
+        }
+        save(root, "rejected.yaml", &rejected);
+        for operation in ["apply", "plan"] {
+            let result: Value =
+                serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
+                    .unwrap();
+            for (path, saved) in [
+                "intent.json",
+                "terraform.tfstate",
+                "runtime/terraform.tfstate",
+            ]
+            .iter()
+            .zip(&before)
+            {
+                assert_eq!(
+                    fs::read(root.join("deployment").join(path)).unwrap(),
+                    *saved,
+                    "{change}: {operation} changed {path}"
+                );
+            }
+            assert_eq!(read(root, "engine.json"), engine, "{change}: {operation}");
+            assert_eq!(gateway.state.lock().unwrap().effects, effects);
+            let message = result["error"]["message"].as_str().unwrap();
+            assert!(message.contains("reviewer"), "{result}");
+            assert!(message.contains("ordinary apply"), "{result}");
+            assert_eq!(result["remainingState"], "No runtime resources changed.");
+            assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
+            let exported = run(root, bundle, "export", "", true).await;
+            assert_eq!(
+                Document::parse(exported.as_slice()).unwrap(),
+                Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
+            );
+        }
+    }
+    // A root observation failure after runtime planning must not save a new
+    // document either, even when its sandbox changes would otherwise be valid.
+    let mut revised = original.clone();
+    revised["metadata"]["name"] = json!("unaccepted-display-name");
+    save(root, "unaccepted.yaml", &revised);
+    gateway.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::PermissionDenied));
+    run(root, bundle, "apply", "unaccepted.yaml", false).await;
+    assert_eq!(
+        fs::read(root.join("deployment/intent.json")).unwrap(),
+        before[0]
+    );
+    assert_eq!(read(root, "engine.json"), engine);
+    assert_eq!(gateway.state.lock().unwrap().effects, effects);
+    gateway.state.lock().unwrap().fail_read = None;
+    run(root, bundle, "export", "", true).await;
+    // The caller destroys directly, without applying the original YAML again.
 }

@@ -187,8 +187,12 @@ impl Deployment {
                 discovery,
             ));
         }
-        record.begin_runtime_apply(document);
-        store.save(record)?;
+        // Apply-time observations still run for an unchanged runtime, but they
+        // must not commit proposed OpenShell intent before its plan is accepted.
+        if !changes.is_empty() {
+            record.begin_runtime_apply(document);
+            store.save(record)?;
+        }
         self.tofu(
             bundle,
             &stage,
@@ -197,8 +201,10 @@ impl Deployment {
             cancel,
         )
         .await?;
-        record.finish_runtime_apply();
-        store.save(record)?;
+        if !changes.is_empty() {
+            record.finish_runtime_apply();
+            store.save(record)?;
+        }
         Ok((changes, false, Vec::new(), DiscoveryReport::default()))
     }
     pub(super) async fn export_runtime(

@@ -148,6 +148,46 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .iter()
                 .any(|arg| arg == "invoke" || arg == "--message"))
     );
+    if harness != "pi" {
+        let mut changed_model = document.clone();
+        changed_model.spec.sandboxes[0]
+            .agent
+            .inference
+            .as_mut()
+            .unwrap()
+            .routes[0]
+            .overrides
+            .model = "another-model".into();
+        let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+        let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
+        assert_eq!(planned.changes.len(), 1, "{harness}");
+        assert_eq!(
+            planned.changes[0].resource,
+            "nemoclaw_agent_configuration.assistant"
+        );
+        assert_eq!(
+            writes(),
+            initial_writes,
+            "plan must not configure {harness}"
+        );
+        let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
+        assert_eq!(applied.changes, planned.changes);
+        assert_eq!(writes(), initial_writes + 1);
+        assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        assert_eq!(deployment.export(&cancel).await.unwrap(), changed_model);
+        assert!(
+            deployment
+                .apply(&changed_model, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert_eq!(writes(), initial_writes + 1);
+        deployment.apply(&document, &cancel).await.unwrap();
+    }
+    let initial_writes = writes();
     if harness == "pi" {
         let mut changed_model = document.clone();
         changed_model.spec.sandboxes[0]
@@ -362,4 +402,51 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     assert!(deployment.export(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, 4);
     assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn failed_configuration_reports_safe_runtime_state_and_recovers_without_recreation() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    let original = fixture.state.lock().unwrap().sandboxes.clone();
+    let effects = fixture.state.lock().unwrap().effects;
+    document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "changed-model".into();
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+    }));
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("lifecycle_adapter_start_failed"), "{error}");
+    assert!(error.contains("agent runtime is unavailable"), "{error}");
+    assert!(!error.contains("native-secret"), "{error}");
+    assert!(fixture.state.lock().unwrap().fabric_stopped);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().configuration_error = None;
+    deployment.apply(&document, &cancel).await.unwrap();
+    assert!(!fixture.state.lock().unwrap().fabric_stopped);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    deployment.destroy(&cancel).await.unwrap();
 }

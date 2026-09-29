@@ -67,6 +67,7 @@ jobs:
             shift 2
             docker run --rm --runtime=runc --network none               -v "$PWD/image/$script:/$script:ro"               --entrypoint /opt/fabric/bin/python "$image" -B "/$script" "$@"
           }
+          native nc-fabric:openclaw test_openclaw_reconfiguration.py
           native nc-fabric:openclaw qualify_native.py nvidia.fabric.openclaw --settings '{"cli":"/app/openclaw.mjs"}'
           if [ "$AGENT_PLATFORM" = linux/arm64 ]; then
             native nc-fabric:hermes qualify_native.py nvidia.fabric.hermes --settings '{"mode":"service"}'

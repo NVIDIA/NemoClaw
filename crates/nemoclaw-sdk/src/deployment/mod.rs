@@ -204,20 +204,24 @@ impl Deployment {
                 );
             }
         }
-        if record.pending() && !record.runtime_pending() {
-            let bindings = self
-                .state_bindings(
-                    &bundle,
-                    &store,
-                    &record.document,
-                    &record.generations,
-                    false,
-                    cancel,
-                )
-                .await?;
-            record.reconcile_pending_creations(&bindings);
-        }
+        let bindings = if (record.pending() && !record.runtime_pending())
+            || record.digest != document.digest()
+        {
+            self.state_bindings(
+                &bundle,
+                &store,
+                &record.document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?
+        } else {
+            BTreeMap::new()
+        };
+        record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
+        record.validate_bound_sandboxes(&document, &bindings)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),

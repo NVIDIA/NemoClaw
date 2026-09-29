@@ -31,6 +31,7 @@ pub struct State {
     pub exec_calls: Vec<Vec<String>>,
     pub fabric_configurations: HashMap<String, serde_json::Value>,
     pub fabric_stopped: bool,
+    pub configuration_error: Option<serde_json::Value>,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -663,7 +664,16 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 sandbox_id.clone(),
                 serde_json::from_str(&request.command[4]).unwrap(),
             );
-            state.fabric_stopped = false;
+            state.fabric_stopped = state.configuration_error.is_some();
+            if let Some(error) = &state.configuration_error {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                        p::ExecSandboxStdout {
+                            data: serde_json::to_vec(error).unwrap(),
+                        },
+                    )),
+                }));
+            }
         }
         if request
             .command
@@ -682,6 +692,13 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             }));
         }
         let exit = if request
+            .command
+            .get(2)
+            .is_some_and(|command| command == "configure")
+            && state.configuration_error.is_some()
+        {
+            2
+        } else if request
             .command
             .iter()
             .any(|arg| arg.ends_with("/inference-probe.mts") || arg.ends_with("/pi-probe.js"))

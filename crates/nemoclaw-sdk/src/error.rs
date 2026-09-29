@@ -13,6 +13,13 @@ pub enum Error {
     Bundle(&'static str),
     #[error("{0}")]
     Conflict(&'static str),
+    #[error(
+        "ordinary apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
+    )]
+    SandboxChangeRefused {
+        sandbox: String,
+        action: &'static str,
+    },
     #[error("gateway is incompatible with this configuration: {0}")]
     GatewayIncompatible(String),
     #[error(
