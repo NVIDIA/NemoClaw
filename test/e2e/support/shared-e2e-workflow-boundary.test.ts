@@ -306,7 +306,19 @@ describe("shared E2E workflow boundary", () => {
     expect(errors.some((error) => error.includes("native Podman staging"))).toBe(true);
   });
 
+  // source-shape-contract: security -- Explicit Portable Hermes selection must stage the reviewed native helper artifact before candidate execution
   it("requires Portable Hermes selection to stage its native helper artifact", () => {
+    const workflow = readWorkflow() as Workflow;
+    const generate = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    expect((workflow.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
+      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+    );
+    expect((generate.env as Record<string, unknown>).NEMOCLAW_GATEWAY_RUNTIMES).toBe(
+      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+    );
+
     const errors = validateMutatedWorkflow((workflow) => {
       const staging = workflow.jobs["generate-matrix"].steps!.find(
         (step) => step.name === "Stage immutable native Podman E2E toolchains",

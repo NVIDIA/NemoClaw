@@ -182,6 +182,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+      "test": "requires Portable Hermes selection to stage its native helper artifact",
+      "category": "security"
+    },
+    {
       "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
