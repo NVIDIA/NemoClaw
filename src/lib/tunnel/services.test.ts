@@ -696,6 +696,35 @@ describe("stopAll", () => {
     expect(output).not.toContain("All services stopped");
   });
 
+  it.skipIf(process.platform !== "linux")(
+    "signals a verified cloudflared process through a Linux pidfd",
+    () => {
+      const executable = join(pidDir, "cloudflared");
+      writeFileSync(executable, "#!/bin/sh\nsleep 20\n", { mode: 0o700 });
+      const subprocess = childProcess.spawn(executable, [], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+      } finally {
+        logSpy.mockRestore();
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The pidfd stop path already reaped the process.
+        }
+      }
+
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
+
   it("does not send SIGTERM when the PID is recycled after initial validation", () => {
     const { control, signals } = scriptedControl({
       alive: [true, true],
