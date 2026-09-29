@@ -675,10 +675,13 @@ export function patchOpenClawInferenceConfig(
   contextWindow?: number,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
+  inheritPrimaryReplyBudget = true,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
+  const inheritedMaxTokens = inheritPrimaryReplyBudget
+    ? readOpenClawPrimaryReplyBudget(config)
+    : undefined;
 
   updateAgentPrimary(config, route.primaryModelRef);
 

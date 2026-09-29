@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxInferenceConfig } from "../../inference/config";
+import type { ReasoningEffortRequest } from "../../inference/selection";
 import type { ConfigObject } from "../../security/credential-filter";
 
 const initialOpenclawInferenceRouteRuntime = {
@@ -21,6 +22,8 @@ export interface InitialOpenclawInferenceRouteDeps {
     preferredInferenceApi: string | null,
     contextWindow: undefined,
     upstreamProviderMarker: string,
+    reasoningEffort: ReasoningEffortRequest,
+    inheritPrimaryReplyBudget: false,
   ): { route: SandboxInferenceConfig };
   writeOpenclawInferenceConfigNatively(
     sandboxName: string,
@@ -70,6 +73,8 @@ export function createInitialOpenclawInferenceRoute(
       preferredInferenceApi,
       undefined,
       provider,
+      { effort: null, explicit: false },
+      false,
     );
 
     revalidateSandboxIdentity?.(

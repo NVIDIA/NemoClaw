@@ -310,6 +310,44 @@ describe("patchOpenClawInferenceConfig", () => {
     ]);
   });
 
+  it("does not inherit a custom image's baked reply budget during initial routing (#12033)", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/baked-model" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [
+              {
+                id: "baked-model",
+                name: "inference/baked-model",
+                maxTokens: 128,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(
+      config,
+      "anthropic-prod",
+      "claude-sonnet-4-6",
+      null,
+      undefined,
+      "anthropic-prod",
+      { effort: null, explicit: false },
+      false,
+    );
+
+    expect(providerModels(config, "anthropic")).toEqual([
+      {
+        id: "claude-sonnet-4-6",
+        name: "anthropic/claude-sonnet-4-6",
+        maxTokens: 4096,
+      },
+    ]);
+  });
+
   it("does not inherit another Anthropic model's reply budget", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/model-a" } } },

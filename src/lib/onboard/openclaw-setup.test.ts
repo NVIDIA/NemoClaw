@@ -265,12 +265,13 @@ describe("initial OpenClaw inference route", () => {
       inferenceApi: "openai-completions",
       inferenceCompat: null,
     };
+    const patchOpenclawInferenceConfig = vi.fn(() => ({ route }));
     const initialize = createInitialOpenclawInferenceRoute({
       readOpenclawConfig: vi.fn((_sandbox, gatewayName) => {
         expect(gatewayName).toBe("nemoclaw-19090");
         return config;
       }),
-      patchOpenclawInferenceConfig: vi.fn(() => ({ route })),
+      patchOpenclawInferenceConfig,
       writeOpenclawInferenceConfigNatively: vi.fn((_sandbox, _config, _route, gatewayName) => {
         expect(gatewayName).toBe("nemoclaw-19090");
         order.push("write");
@@ -285,6 +286,16 @@ describe("initial OpenClaw inference route", () => {
     await initialize("spark-box", "selected/model", "compatible-endpoint", null, "nemoclaw-19090");
 
     expect(order).toEqual(["write", "restart"]);
+    expect(patchOpenclawInferenceConfig).toHaveBeenCalledExactlyOnceWith(
+      config,
+      "compatible-endpoint",
+      "selected/model",
+      null,
+      undefined,
+      "compatible-endpoint",
+      { effort: null, explicit: false },
+      false,
+    );
   });
 
   it("fails initialization when the gateway restart is not confirmed (#12033)", async () => {
