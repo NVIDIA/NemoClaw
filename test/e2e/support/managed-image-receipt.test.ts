@@ -36,6 +36,7 @@ const SANDBOX_NAME = "managed-only-stock";
 const REVISION = "d".repeat(40);
 const COHORT = "ghrun-32707920950-1";
 const REFERENCE = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`;
+const ARM64_REFERENCE = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"b".repeat(64)}`;
 const CATALOG_REFERENCES = {
   openclaw: REFERENCE,
   hermes: `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`,
@@ -83,7 +84,7 @@ function selectedEnvironment(home: string): NodeJS.ProcessEnv {
       images: {
         openclaw: {
           "linux/amd64": REFERENCE,
-          "linux/arm64": `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"b".repeat(64)}`,
+          "linux/arm64": ARM64_REFERENCE,
         },
         hermes: {
           "linux/amd64": `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:${"c".repeat(64)}`,
@@ -199,6 +200,16 @@ describe("selected E2E managed-image reference", () => {
         nodeArchitecture: "x64",
       }),
     ).toBe(REFERENCE);
+  });
+
+  it("selects the arm64 image from the main-run cohort receipt (#12421)", () => {
+    expect(
+      selectedE2eManagedImageReference({
+        environment: selectedEnvironment("/tmp/unused"),
+        expectedAgent: "openclaw",
+        nodeArchitecture: "arm64",
+      }),
+    ).toBe(ARM64_REFERENCE);
   });
 
   it("rejects a main-run revision without its cohort receipt (#12421)", () => {
