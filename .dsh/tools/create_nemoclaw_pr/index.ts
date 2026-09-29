@@ -13,8 +13,20 @@ export default async function create_nemoclaw_pr(input: {
   workdir: string;
   apply: boolean;
   expectedHeadSha: string;
-  expectedRemoteSha?: string | null;
-  bypassPrePushHook?: boolean;
+  hookBypassReceipt?: {
+    schemaVersion: 1;
+    candidateSha: string;
+    canonicalBaseSha: string;
+    workflowPath: string;
+    workflowBlobSha: string;
+    workflowJob: string;
+    workflowSource: "canonical-base";
+    effectivePermissions: "read-only";
+    candidateLocalActions: false;
+    candidateCredentialInputs: false;
+    draftOnly: true;
+    expectedRemoteSha: null;
+  };
 }): Promise<{
   ok: boolean;
   apply: boolean;
@@ -55,6 +67,8 @@ export default async function create_nemoclaw_pr(input: {
     throw new Error("title must use the allowed Conventional Commits format");
   if (typeof input.body !== "string" || !input.body.trim() || input.body.length > 100000)
     throw new Error("body is invalid");
+  if (input.hookBypassReceipt !== undefined && input.draft !== true)
+    throw new Error("Hook-free initial publication must create a draft pull request");
   if (
     !/^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/im.test(input.body) ||
     input.body.includes("Your Name <your-email@example.com>")
@@ -121,10 +135,9 @@ export default async function create_nemoclaw_pr(input: {
     remote,
     baseBranch,
     expectedHeadSha: input.expectedHeadSha,
-    ...(input.expectedRemoteSha !== undefined
-      ? { expectedRemoteSha: input.expectedRemoteSha }
+    ...(input.hookBypassReceipt !== undefined
+      ? { hookBypassReceipt: input.hookBypassReceipt }
       : {}),
-    ...(input.bypassPrePushHook === true ? { bypassPrePushHook: true } : {}),
     ...(input.apply === true ? { apply: true } : {}),
   });
   const commitCount = publication.commits.length;

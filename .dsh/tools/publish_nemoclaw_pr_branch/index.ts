@@ -1,5 +1,5 @@
 /**
- * Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence. A guarded bypass requires the expected remote commit, or null for an absent branch.
+ * Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence. Hook-free publication requires a candidate- and base-bound fallback receipt.
  */
 export default async function publish_nemoclaw_pr_branch(input: {
   workdir: string;
@@ -9,8 +9,20 @@ export default async function publish_nemoclaw_pr_branch(input: {
   expectedHeadSha: string;
   pullNumber?: Integer;
   expectedPullHeadSha?: string;
-  expectedRemoteSha?: string | null;
-  bypassPrePushHook?: boolean;
+  hookBypassReceipt?: {
+    schemaVersion: 1;
+    candidateSha: string;
+    canonicalBaseSha: string;
+    workflowPath: string;
+    workflowBlobSha: string;
+    workflowJob: string;
+    workflowSource: "canonical-base";
+    effectivePermissions: "read-only";
+    candidateLocalActions: false;
+    candidateCredentialInputs: false;
+    draftOnly: true;
+    expectedRemoteSha: string | null;
+  };
   requireClean?: boolean;
   apply?: true;
 }): Promise<{
@@ -39,24 +51,34 @@ export default async function publish_nemoclaw_pr_branch(input: {
     throw new Error("workdir and expectedHeadSha are required");
   if (input.expectedPullHeadSha !== undefined && !/^[0-9a-f]{40}$/.test(input.expectedPullHeadSha))
     throw new Error("expectedPullHeadSha must be a full commit SHA");
-  if (
-    input.expectedRemoteSha !== undefined &&
-    input.expectedRemoteSha !== null &&
-    !/^[0-9a-f]{40}$/.test(input.expectedRemoteSha)
-  )
-    throw new Error("expectedRemoteSha must be a full commit SHA or null");
-  if (input.bypassPrePushHook !== undefined && typeof input.bypassPrePushHook !== "boolean")
-    throw new Error("bypassPrePushHook must be boolean");
-  if (input.bypassPrePushHook === true && input.expectedRemoteSha === undefined)
-    throw new Error("A guarded pre-push hook bypass requires expectedRemoteSha");
-  if (input.bypassPrePushHook !== true && input.expectedRemoteSha !== undefined)
-    throw new Error("expectedRemoteSha applies only to a guarded pre-push hook bypass");
-  if (
-    input.bypassPrePushHook === true &&
-    input.expectedPullHeadSha !== undefined &&
-    input.expectedRemoteSha !== input.expectedPullHeadSha
-  )
-    throw new Error("The guarded remote expectation must match the pull request commit");
+  const bypass = input.hookBypassReceipt;
+  if (bypass !== undefined) {
+    if (
+      typeof bypass !== "object" ||
+      bypass === null ||
+      bypass.schemaVersion !== 1 ||
+      bypass.candidateSha !== input.expectedHeadSha ||
+      !/^[0-9a-f]{40}$/.test(bypass.canonicalBaseSha) ||
+      !/^\.github\/workflows\/[A-Za-z0-9._/-]+[.]ya?ml$/.test(bypass.workflowPath) ||
+      bypass.workflowPath.includes("..") ||
+      !/^[0-9a-f]{40}$/.test(bypass.workflowBlobSha) ||
+      typeof bypass.workflowJob !== "string" ||
+      !bypass.workflowJob.trim() ||
+      bypass.workflowJob.length > 200 ||
+      bypass.workflowSource !== "canonical-base" ||
+      bypass.effectivePermissions !== "read-only" ||
+      bypass.candidateLocalActions !== false ||
+      bypass.candidateCredentialInputs !== false ||
+      bypass.draftOnly !== true ||
+      (bypass.expectedRemoteSha !== null && !/^[0-9a-f]{40}$/.test(bypass.expectedRemoteSha))
+    )
+      throw new Error("hookBypassReceipt is not a valid trusted fallback record");
+    if (
+      input.expectedPullHeadSha !== undefined &&
+      bypass.expectedRemoteSha !== input.expectedPullHeadSha
+    )
+      throw new Error("The guarded remote expectation must match the pull request commit");
+  }
   if (
     input.pullNumber !== undefined &&
     (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
@@ -102,6 +124,23 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const defaultBranch = repositoryDetails.stdout.trim();
   if (!defaultBranch || branch === defaultBranch)
     throw new Error("Publication requires a branch other than the repository default branch");
+  if (bypass !== undefined) {
+    const canonicalBase = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: ["api", "repos/" + repo + "/git/ref/heads/" + baseBranch, "--jq", ".object.sha"],
+      timeoutMs: 120000,
+    });
+    if (canonicalBase.stdout.trim() !== bypass.canonicalBaseSha)
+      throw new Error("The guarded fallback base is no longer canonical");
+    const workflowBlob = (
+      await run(
+        "git rev-parse " + q(bypass.canonicalBaseSha + ":" + bypass.workflowPath),
+        "Verify guarded fallback workflow",
+      )
+    ).stdout.text.trim();
+    if (workflowBlob !== bypass.workflowBlobSha)
+      throw new Error("The guarded fallback workflow does not match its base-bound receipt");
+  }
   const pushUrls = (
     await run("git remote get-url --push --all " + q(remote), "Read publication push URLs")
   ).stdout.text
@@ -129,7 +168,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       "--state",
       "open",
       "--json",
-      "number,url,headRefName,headRepository,headRepositoryOwner",
+      "number,url,isDraft,headRefName,headRefOid,headRepository,headRepositoryOwner",
       "--limit",
       "2",
     ],
@@ -148,9 +187,16 @@ export default async function publish_nemoclaw_pr_branch(input: {
       throw new Error("The open pull request source does not match this branch and repository");
     if (input.pullNumber !== undefined && pull?.number !== input.pullNumber)
       throw new Error("The requested open pull request does not match this branch");
+    if (
+      bypass !== undefined &&
+      (pull?.isDraft !== true || pull?.headRefOid !== bypass.expectedRemoteSha)
+    )
+      throw new Error("Guarded hook-free updates require the expected draft pull request");
   }
   if (prs.length === 0 && input.pullNumber !== undefined)
     throw new Error("The requested open pull request does not match this branch");
+  if (bypass !== undefined && prs.length === 0 && bypass.expectedRemoteSha !== null)
+    throw new Error("Initial guarded publication requires an absent remote branch");
   const commitCount = Number(
     (
       await run(
@@ -212,7 +258,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
         "--repo",
         repo,
         "--json",
-        "state,headRefOid,headRefName,headRepository,headRepositoryOwner",
+        "state,isDraft,headRefOid,headRefName,headRepository,headRepositoryOwner",
       ],
       timeoutMs: 120000,
     });
@@ -224,6 +270,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
         : "");
     if (
       pull.state !== "OPEN" ||
+      (bypass !== undefined && pull.isDraft !== true) ||
       pull.headRefName !== branch ||
       pullRepo.toLowerCase() !== repo.toLowerCase() ||
       (input.expectedPullHeadSha !== undefined && pull.headRefOid !== input.expectedPullHeadSha)
@@ -239,18 +286,34 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const remoteBefore = remoteBeforeReadOk
     ? remoteBeforeRead.stdout.text.trim().split(/\s+/u)[0]
     : "";
-  if (input.bypassPrePushHook === true) {
+  if (bypass !== undefined) {
     if (!remoteBeforeReadOk)
       throw new Error("Could not verify the publication branch before guarded publication");
-    const expectedRemote = input.expectedRemoteSha ?? "";
+    const expectedRemote = bypass.expectedRemoteSha ?? "";
     if (remoteBefore !== expectedRemote)
       throw new Error("Publication branch changed before guarded publication");
+    if (bypass.expectedRemoteSha !== null) {
+      const ancestor = await run(
+        "git merge-base --is-ancestor " +
+          q(bypass.expectedRemoteSha) +
+          " " +
+          q(input.expectedHeadSha),
+        "Verify guarded publication ancestry",
+        true,
+      );
+      if (ancestor.exitCode !== 0)
+        throw new Error("The expected remote commit is not an ancestor of the candidate");
+    }
   }
   let pushError = null;
   try {
     await run(
       "git push " +
-        (input.bypassPrePushHook === true ? "--no-verify " : "") +
+        (bypass !== undefined
+          ? "--no-verify " +
+            q("--force-with-lease=refs/heads/" + branch + ":" + (bypass.expectedRemoteSha ?? "")) +
+            " "
+          : "") +
         "--set-upstream " +
         q(remote) +
         " " +

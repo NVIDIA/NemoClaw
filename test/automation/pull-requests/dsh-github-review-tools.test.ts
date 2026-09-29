@@ -12,6 +12,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 let replyAndResolveReviewThread: (input: any) => Promise<any>;
 let approveNemoclawForkWorkflowRuns: (input: any) => Promise<any>;
 let runGitHubCli: (input: any) => Promise<any>;
+let publishNemoclawPrBranch: (input: any) => Promise<any>;
 let prepareIsolatedPrWorktree: (input: any) => Promise<any>;
 let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
 let runIndependentDocumentationWriterReview: (input: any) => Promise<any>;
@@ -27,6 +28,7 @@ beforeAll(async () => {
   replyAndResolveReviewThread = (await load("reply_and_resolve_pr_review_thread")).default;
   approveNemoclawForkWorkflowRuns = (await load("approve_nemoclaw_fork_workflow_runs")).default;
   runGitHubCli = (await load("run_github_cli")).default;
+  publishNemoclawPrBranch = (await load("publish_nemoclaw_pr_branch")).default;
   prepareIsolatedPrWorktree = (await load("prepare_isolated_pr_worktree")).default;
   removeIsolatedPrWorktrees = (await load("remove_isolated_pr_worktrees")).default;
   runIndependentDocumentationWriterReview = (
@@ -256,6 +258,163 @@ describe("remaining shared tool guards", () => {
       }),
     ).rejects.toThrow("read-only documentation review changed the worktree");
     expect(subagent).toHaveBeenCalledOnce();
+  });
+});
+
+describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
+  const previousSha = "b".repeat(40);
+  const baseSha = "c".repeat(40);
+  const workflowBlobSha = "d".repeat(40);
+  const competingSha = "e".repeat(40);
+  const branch = "feature";
+  const receipt = {
+    schemaVersion: 1,
+    candidateSha: HEAD_SHA,
+    canonicalBaseSha: baseSha,
+    workflowPath: ".github/workflows/advisor.yml",
+    workflowBlobSha,
+    workflowJob: "Advisor",
+    workflowSource: "canonical-base",
+    effectivePermissions: "read-only",
+    candidateLocalActions: false,
+    candidateCredentialInputs: false,
+    draftOnly: true,
+    expectedRemoteSha: previousSha,
+  };
+
+  function publicationTools(pushOutcome: "success" | "race", initial = false) {
+    const bash = vi.fn(
+      async ({ command: _command, description }: { command: string; description: string }) => {
+        const outputs: Record<string, string> = {
+          "Verify guarded fallback workflow": workflowBlobSha + "\n",
+          "Read publication push URLs": "git@github.com:NVIDIA/NemoClaw.git\n",
+          "Count publication commits": "1\n",
+          "List publication commits": HEAD_SHA + "\n",
+          "Read publication branch before push": initial
+            ? ""
+            : previousSha + "\trefs/heads/" + branch + "\n",
+          "Reconcile publication branch":
+            (pushOutcome === "success" ? HEAD_SHA : competingSha) + "\trefs/heads/" + branch + "\n",
+        };
+        const pushFailed =
+          description === "Push pull request candidate branch" && pushOutcome === "race";
+        return {
+          kind: "foreground",
+          exitCode: pushFailed ? 1 : 0,
+          stdout: { text: outputs[description] ?? "", truncated: false },
+          stderr: { text: pushFailed ? "stale info\n" : "", truncated: false },
+        };
+      },
+    );
+    const pull = {
+      number: 1,
+      isDraft: true,
+      state: "OPEN",
+      headRefName: branch,
+      headRefOid: previousSha,
+      headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
+      headRepositoryOwner: { login: "NVIDIA" },
+    };
+    const runGithubCli = vi.fn(async ({ args }: { args: string[] }) => {
+      const command = args[0] + " " + args[1];
+      const key =
+        args[0] === "api"
+          ? args[1].includes("/git/ref/heads/")
+            ? "api base"
+            : "api commit"
+          : command;
+      const responses: Record<string, { stdout: string }> = {
+        "repo view": { stdout: "main\n" },
+        "pr list": { stdout: JSON.stringify(initial ? [] : [pull]) },
+        "pr view": { stdout: JSON.stringify(pull) },
+        "api base": { stdout: baseSha + "\n" },
+        "api commit": { stdout: "true\tverified\n" },
+      };
+      return responses[key] ?? Promise.reject(new Error("unexpected GitHub CLI call: " + command));
+    });
+    vi.stubGlobal("tools", {
+      bash,
+      project_diagnostic_text: vi.fn(async ({ lines }: { lines: string[] }) => ({
+        text: lines.join("\n"),
+      })),
+      read_git_checkout: vi.fn().mockResolvedValue({ head: HEAD_SHA, clean: true, branch }),
+      run_github_cli: runGithubCli,
+    });
+    return { bash, runGithubCli };
+  }
+
+  it("uses an exact ref lease for an authorized hook-free update", async () => {
+    const { bash } = publicationTools("success");
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        expectedPullHeadSha: previousSha,
+        pullNumber: 1,
+        hookBypassReceipt: receipt,
+        apply: true,
+      }),
+    ).resolves.toMatchObject({ pushed: true, remoteState: "expected-commit", allVerified: true });
+
+    const push = bash.mock.calls.find(
+      ([call]) => call.description === "Push pull request candidate branch",
+    )?.[0].command;
+    expect(push).toContain("--no-verify");
+    expect(push).toContain("--force-with-lease=refs/heads/" + branch + ":" + previousSha);
+  });
+
+  it("uses an absent-ref lease for authorized initial draft publication", async () => {
+    const { bash } = publicationTools("success", true);
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: { ...receipt, expectedRemoteSha: null },
+        apply: true,
+      }),
+    ).resolves.toMatchObject({ pushed: true, remoteState: "expected-commit", allVerified: true });
+
+    const push = bash.mock.calls.find(
+      ([call]) => call.description === "Push pull request candidate branch",
+    )?.[0].command;
+    expect(push).toContain("--force-with-lease=refs/heads/" + branch + ":");
+  });
+
+  it("rejects a concurrent remote update at the atomic write boundary", async () => {
+    const { bash } = publicationTools("race");
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        expectedPullHeadSha: previousSha,
+        pullNumber: 1,
+        hookBypassReceipt: receipt,
+        apply: true,
+      }),
+    ).resolves.toMatchObject({ pushed: false, mutated: false, remoteState: "unknown" });
+    expect(
+      bash.mock.calls.filter(([call]) => call.description === "Push pull request candidate branch"),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ["candidate binding", { ...receipt, candidateSha: competingSha }],
+    ["candidate-local actions", { ...receipt, candidateLocalActions: true }],
+  ])("rejects an invalid %s receipt before any operation", async (_label, invalidReceipt) => {
+    const readGitCheckout = vi.fn();
+    vi.stubGlobal("tools", { read_git_checkout: readGitCheckout });
+
+    await expect(
+      publishNemoclawPrBranch({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        hookBypassReceipt: invalidReceipt,
+      }),
+    ).rejects.toThrow("not a valid trusted fallback record");
+    expect(readGitCheckout).not.toHaveBeenCalled();
   });
 });
 

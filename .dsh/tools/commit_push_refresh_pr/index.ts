@@ -11,7 +11,18 @@ export default async function commit_push_refresh_pr(input: {
   remote?: string;
   branch?: string;
   push?: boolean;
-  bypassPrePushHook?: boolean;
+  hookBypassReceipt?: {
+    schemaVersion: 1;
+    canonicalBaseSha: string;
+    workflowPath: string;
+    workflowBlobSha: string;
+    workflowJob: string;
+    workflowSource: "canonical-base";
+    effectivePermissions: "read-only";
+    candidateLocalActions: false;
+    candidateCredentialInputs: false;
+    draftOnly: true;
+  };
   refreshBody?: boolean;
   docsResult?: "blocked" | "docs-updated" | "no-docs-needed";
   docsEvidence?: string;
@@ -64,8 +75,6 @@ export default async function commit_push_refresh_pr(input: {
   const willRefresh = input.refreshBody !== false;
   if (willRefresh && !willPush)
     throw new Error("Evidence cannot be updated for an unpushed commit; pass refreshBody:false");
-  if (input.bypassPrePushHook !== undefined && typeof input.bypassPrePushHook !== "boolean")
-    throw new Error("bypassPrePushHook must be boolean");
   if (willRefresh && (!input.docsResult || !input.docsEvidence?.trim() || !input.docsAgent?.trim()))
     throw new Error("Updating PR evidence requires a documentation writer receipt");
   if ((input.broadGatePassed === undefined) !== (input.broadGateEvidence === undefined))
@@ -110,11 +119,13 @@ export default async function commit_push_refresh_pr(input: {
       "--repo",
       repo,
       "--json",
-      "headRefName,headRefOid,baseRefName,url,title,state",
+      "headRefName,headRefOid,baseRefName,url,title,state,isDraft",
     ],
   });
   const pr = JSON.parse(prRead.stdout);
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
+  if (input.hookBypassReceipt !== undefined && pr.isDraft !== true)
+    throw new Error("Hook-free updates require a draft pull request");
   const branch = input.branch ?? pr.headRefName;
   if (typeof branch !== "string" || !branch || branch.startsWith("-"))
     throw new Error("Could not resolve a valid PR source branch");
@@ -252,8 +263,14 @@ export default async function commit_push_refresh_pr(input: {
         expectedHeadSha: localHead,
         pullNumber: input.pullNumber,
         expectedPullHeadSha: localHeadBefore,
-        ...(input.bypassPrePushHook === true
-          ? { bypassPrePushHook: true, expectedRemoteSha: localHeadBefore }
+        ...(input.hookBypassReceipt !== undefined
+          ? {
+              hookBypassReceipt: {
+                ...input.hookBypassReceipt,
+                candidateSha: localHead,
+                expectedRemoteSha: localHeadBefore,
+              },
+            }
           : {}),
         requireClean: false,
         apply: true,

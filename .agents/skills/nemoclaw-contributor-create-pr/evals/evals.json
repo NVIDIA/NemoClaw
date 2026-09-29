@@ -417,7 +417,7 @@
       "Routes an accepted code-changing finding to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
       "Uses the shared contract only for candidate stabilization, evidence collection, classification, and permitted base integration, not as a second repair or publication owner.",
       "Inspects the returned repair, creates one local repair commit, and records its SHA as the expected publication commit before trusted validation, while retaining the reviewed remote `headRefOid` as the competing-update guard.",
-      "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
+      "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and lets the matching trusted pre-push hook run `npm run validate:pr` once during the push without a separate invocation.",
       "If direct validation changes a tracked file, commits and inspects the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate, then rechecks `headRefOid`, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
     ]
   },
@@ -617,7 +617,8 @@
     "expected_behavior": [
       "Does not execute or modify the changed pre-push hook.",
       "Verifies the base-controlled job's trigger, checkout refs, effective permissions, action implementations, and credential inputs at the canonical base SHA.",
-      "Uses the publication operation's guarded hook-free mode and binds the write to the expected prior remote commit or an absent branch.",
+      "Supplies the publication operation a structured fallback receipt bound to the candidate, canonical base, base-controlled workflow and job, read-only credential boundary, draft state, and expected remote commit.",
+      "Uses an atomic exact-ref lease for the expected prior remote commit or an absent-ref lease for a new branch, and proves an existing expected commit is an ancestor of the candidate.",
       "Reconciles the remote branch and GitHub commit verification after publication.",
       "Keeps the PR in draft until the base-controlled job validates the published commit.",
       "Does not ask for separate publication approval solely because the hook changed."

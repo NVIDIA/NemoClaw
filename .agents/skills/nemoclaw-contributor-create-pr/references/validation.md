@@ -78,12 +78,17 @@ candidate-defined `pull_request` workflow is not a base-controlled path. Do not 
 when the candidate changes that workflow or an action that it invokes.
 
 After these conditions pass, publish the commit as a draft through the publication operation's
-guarded hook-free mode. Bind the write to the expected prior remote commit, or to an absent remote
-branch for its first publication. Reconcile the remote branch and commit verification after the
-write. Keep the PR in draft until the base-controlled job validates the published commit. Disclose
-the skipped local validation, the differing machinery, and the canonical base SHA in `Verification`.
-This fallback needs no additional publication approval. Stop when no base-controlled job meets these
-conditions or when another publication gate independently fails.
+guarded hook-free mode. Record a structured fallback receipt bound to the candidate SHA, canonical
+base SHA, workflow path and blob, job, effective read-only permissions, absence of candidate-local
+actions and credential inputs to candidate-controlled commands, draft state, and expected remote
+commit. The publication operation verifies these bindings and updates the exact source ref with an
+atomic lease for the expected prior commit, or an absent-ref lease for its first publication. It also
+proves that an existing expected commit is an ancestor of the candidate. Reconcile the remote branch
+and commit verification after the write. Keep the PR in draft until the base-controlled job validates
+the published commit. Disclose the skipped local validation, the differing machinery, and the
+canonical base SHA in `Verification`. This fallback needs no additional publication approval. Stop
+when no base-controlled job meets these conditions or when another publication gate independently
+fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal
 `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication
