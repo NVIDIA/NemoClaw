@@ -4670,6 +4670,7 @@ run_requested_openclaw_post_upgrade_doctor() {
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
   local ready_owner=""
   local gate_attempt
+  local -a doctor_command
 
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
@@ -4710,10 +4711,27 @@ EOF
 
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
   if [ "$(id -u)" -eq 0 ]; then
-    "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" \
-      "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+    doctor_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}"
+      /usr/bin/env
+      HOME=/sandbox
+      PATH="$PATH:/sandbox/.local/bin"
+      "$OPENCLAW"
+      doctor
+      --fix
+      --yes
+      --non-interactive
+    )
   else
-    "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+    doctor_command=("$OPENCLAW" doctor --fix --yes --non-interactive)
+  fi
+  if ! "${doctor_command[@]}"; then
+    # OpenClaw intentionally repairs the shared SQLite schema before it
+    # discovers dependent plugin and agent migrations. Older native homes can
+    # therefore require one bounded second pass after the first pass commits
+    # its shared-schema repair.
+    echo "[setup] OpenClaw doctor requested a follow-up migration pass; retrying once" >&2
+    "${doctor_command[@]}" || return 1
   fi
   wait_for_openclaw_startup_migration_lease || return 1
   if [ "$(id -u)" -eq 0 ]; then

@@ -330,6 +330,46 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
+  it("retries once after shared-schema repair reveals dependent migrations", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    const firstPass = path.join(f.root, "doctor-first-pass");
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(
+        f.openclaw,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$*" >>${JSON.stringify(f.calls)}`,
+          `if [ ! -e ${JSON.stringify(firstPass)} ]; then`,
+          `  : >${JSON.stringify(firstPass)}`,
+          "  exit 7",
+          "fi",
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
+      expect(result.stderr).toContain("doctor requested a follow-up migration pass");
+      expect(fs.existsSync(f.marker)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes doctor readiness only after OpenClaw releases its startup lease", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
@@ -471,6 +511,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       );
 
       expect(result.status).toBe(1);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
+      );
       expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
