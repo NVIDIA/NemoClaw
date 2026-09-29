@@ -201,7 +201,13 @@ Use these details when your first-run path needs more control.
 
     This path does not inspect, start, or use a host Ollama process.
     Leave port `11434` free on `127.0.0.1` and on the Portable host-gateway listener IP.
-    A host Ollama service or leftover Portable container on those published addresses fails inference create before the Portable Ollama runner starts.
+    When no sandbox has lifecycle authority for the same name, a `--fresh` retry first retires an exact abandoned receipt-owned provider, Portable runner, and private inference state before it starts the replacement transaction.
+    An active sandbox with that name keeps its provider, Portable runner, and private inference state.
+    If the recorded provider, runtime, socket, network, or private state authority changed, onboarding stops and preserves that state.
+    There is no automated recovery for that authority-drift result.
+    `--fresh` has already discarded the previous onboarding session.
+    Preserve the private inference state and exact redacted error; do not edit or delete them; and [file a NemoClaw issue](https://github.com/NVIDIA/NemoClaw/issues/new) for maintainer review before retrying.
+    An unrelated host Ollama service or unowned listener on those published addresses still fails inference create before the Portable Ollama runner starts.
     It does not use the default Docker runtime.
     Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.
