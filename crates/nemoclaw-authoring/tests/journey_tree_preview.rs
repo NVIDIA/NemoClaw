@@ -303,6 +303,30 @@ fn tree_exposes_schema_derived_gateway_branches_without_supplied_values() {
 }
 
 #[test]
+fn tree_branches_on_sdk_exclusive_forms() {
+    let capabilities = Capabilities::available();
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inference");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let tree = JourneyDefinition::new("agent-form", base)
+        .print_tree(&capabilities)
+        .unwrap();
+    assert!(
+        tree.contains("Choices for form:/spec/sandboxes/0/agent"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("/spec/sandboxes/0/agent/inferenceRef: <string>"),
+        "{tree}"
+    );
+}
+
+#[test]
 fn minimum_inline_fixture_prints_the_questions_it_can_materialize() {
     let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
     let tree = JourneyDefinition::new("minimum-inline", base)

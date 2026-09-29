@@ -259,7 +259,7 @@ impl JourneyWizard {
             lines.push(Line::from("Press Enter to begin."));
         } else if let Some(question) = self.question() {
             lines.push(Line::from(Span::styled(
-                label(question.id()),
+                label(&question),
                 Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(format!(
@@ -402,7 +402,14 @@ fn display_value(value: &Value) -> String {
         .map_or_else(|| value.to_string(), str::to_owned)
 }
 
-fn label(id: &str) -> String {
+fn label(question: &JourneyQuestion) -> String {
+    let id = question.id();
+    if question.kind() == JourneyQuestionKind::StructuralForm {
+        return format!(
+            "Choose {} form",
+            id.rsplit('/').next().unwrap_or("configuration")
+        );
+    }
     match id {
         "/metadata/name" => "Deployment name".into(),
         "/spec/sandboxes/0/harness/kind" => "Agent harness".into(),
@@ -798,6 +805,32 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .contains("Target compatibility")
+        );
+    }
+
+    #[test]
+    fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
+        let capabilities = Capabilities::available();
+        let mut values: serde_json::Value =
+            serde_saphyr::from_slice(include_bytes!("../../onboarding/openclaw.yaml")).unwrap();
+        values["spec"]["sandboxes"][0]["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("inference");
+        let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+        let state = JourneyDefinition::new("agent-form", base)
+            .start(&capabilities)
+            .unwrap();
+        let mut wizard = JourneyWizard::new(capabilities, state);
+        let question = wizard.question().unwrap();
+        assert_eq!(question.id(), "form:/spec/sandboxes/0/agent");
+        assert_eq!(label(&question), "Choose agent form");
+        wizard
+            .submit(Some(serde_json::json!("inferenceRef")))
+            .unwrap();
+        assert_eq!(
+            wizard.question().unwrap().id(),
+            "/spec/sandboxes/0/agent/inferenceRef"
         );
     }
 

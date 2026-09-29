@@ -103,6 +103,34 @@ pub(crate) fn sdk_discriminator(schema: &Value) -> Option<(String, Vec<Value>)> 
     None
 }
 
+/// Recognize the SDK's two-form exclusive choice where each branch requires
+/// one property and forbids the other. The properties remain SDK-owned.
+pub(crate) fn sdk_exclusive_required_fields(schema: &Value) -> Option<Vec<String>> {
+    let branches = schema.get("oneOf")?.as_array()?;
+    if branches.len() != 2 {
+        return None;
+    }
+    let mut fields = Vec::new();
+    for branch in branches {
+        let required = branch.get("required")?.as_array()?;
+        if required.len() != 1 {
+            return None;
+        }
+        fields.push(required[0].as_str()?.to_owned());
+    }
+    if fields[0] == fields[1] {
+        return None;
+    }
+    for (index, branch) in branches.iter().enumerate() {
+        let forbidden = branch.get("not")?.get("required")?.as_array()?;
+        if forbidden.len() != 1 || forbidden[0].as_str()? != fields[1 - index] {
+            return None;
+        }
+    }
+    fields.sort();
+    Some(fields)
+}
+
 pub(crate) fn sdk_selected_branch<'a>(schema: &'a Value, supplied: &Value) -> Option<&'a Value> {
     let (discriminator, _) = sdk_discriminator(schema)?;
     let selected = supplied.get(&discriminator)?;

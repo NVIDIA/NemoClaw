@@ -19,7 +19,10 @@ use crate::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
         adapter_schema,
     },
-    sdk_schema::{sdk_discriminator, sdk_field_schema, sdk_field_schema_for, sdk_selected_branch},
+    sdk_schema::{
+        sdk_discriminator, sdk_exclusive_required_fields, sdk_field_schema, sdk_field_schema_for,
+        sdk_selected_branch,
+    },
     settings::SettingQuestion,
 };
 
@@ -41,6 +44,7 @@ pub enum JourneyQuestionReason {
 pub enum JourneyQuestionKind {
     Field,
     InferenceModel,
+    StructuralForm,
 }
 
 /// One currently applicable decision in the bounded journey surface.
@@ -154,6 +158,7 @@ pub struct JourneyState {
     definition: JourneyDefinition,
     values: Value,
     accepted: BTreeSet<String>,
+    selected_forms: BTreeMap<String, String>,
     omitted: BTreeSet<String>,
     inactive_settings: BTreeMap<String, Value>,
     selected_presets: BTreeMap<usize, ProviderPreset>,
@@ -178,6 +183,7 @@ impl JourneyState {
             definition,
             values,
             accepted: BTreeSet::new(),
+            selected_forms: BTreeMap::new(),
             omitted: BTreeSet::new(),
             inactive_settings: BTreeMap::new(),
             selected_presets: BTreeMap::new(),
@@ -539,7 +545,10 @@ impl JourneyState {
             let Some((schema, required)) = sdk_field_schema_for(&self.values, issue.path()) else {
                 continue;
             };
-            if issue.kind() == PartialIssueKind::Deferred && sdk_discriminator(&schema).is_none() {
+            if issue.kind() == PartialIssueKind::Deferred
+                && sdk_discriminator(&schema).is_none()
+                && sdk_exclusive_required_fields(&schema).is_none()
+            {
                 continue;
             }
             if self.values.pointer(parent).is_none() {
@@ -551,6 +560,7 @@ impl JourneyState {
                     &self.values,
                     issue.path(),
                     &schema,
+                    &self.selected_forms,
                     &mut questions,
                     0,
                 );
@@ -1051,6 +1061,23 @@ impl JourneyState {
             }
         } else if id == HARNESS {
             candidate.put_harness(value.expect("required"))?;
+        } else if let Some(path) = id.strip_prefix("form:") {
+            let selected = value
+                .as_ref()
+                .and_then(Value::as_str)
+                .expect("advertised form")
+                .to_owned();
+            for other in question
+                .choices()
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|other| *other != selected)
+            {
+                let field = format!("{path}/{}", escape_pointer(other));
+                candidate.put_sdk_field(&field, None)?;
+                candidate.accepted.remove(&field);
+            }
+            candidate.selected_forms.insert(path.into(), selected);
         } else if id == ROUTE_SELECTION {
             let name = value
                 .as_ref()
@@ -1231,6 +1258,12 @@ impl JourneyState {
         } else if id == INFERENCE_PRESET {
             self.current_preset()
                 .map(|preset| Value::String(preset.id().into()))
+        } else if let Some(path) = id.strip_prefix("form:") {
+            let selected = previous.selected_forms.remove(path).ok_or_else(|| {
+                diagnostic("journey", "This structural choice is no longer applicable.")
+            })?;
+            previous.put_sdk_field(&format!("{path}/{}", escape_pointer(&selected)), None)?;
+            Some(Value::String(selected))
         } else if sdk_field_schema_for(&self.values, id).is_some()
             || (self
                 .definition
@@ -1634,6 +1667,10 @@ fn settings_path(values: &Value) -> Option<String> {
     harness_path(values).map(|path| format!("{path}/settings"))
 }
 
+fn escape_pointer(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
 fn scalar_question(schema: &Value, choices: &[Value]) -> bool {
     matches!(
         schema["type"].as_str(),
@@ -1641,12 +1678,13 @@ fn scalar_question(schema: &Value, choices: &[Value]) -> bool {
     ) || !choices.is_empty()
 }
 
-/// Walk unconditional required leaves and one-of branches selected by a
-/// required constant discriminator. Structural alternatives remain deferred.
+/// Walk unconditional required leaves and the schema's recognized finite
+/// alternatives. Other structural alternatives remain deferred.
 fn collect_required_leaf_questions(
     values: &Value,
     path: &str,
     schema: &Value,
+    selected_forms: &BTreeMap<String, String>,
     questions: &mut Vec<JourneyQuestion>,
     depth: usize,
 ) {
@@ -1681,9 +1719,84 @@ fn collect_required_leaf_questions(
             .pointer(path)
             .and_then(|supplied| sdk_selected_branch(schema, supplied))
         {
-            collect_required_leaf_questions(values, path, branch, questions, depth + 1);
+            collect_required_leaf_questions(
+                values,
+                path,
+                branch,
+                selected_forms,
+                questions,
+                depth + 1,
+            );
         }
         return;
+    }
+    if let Some(fields) = sdk_exclusive_required_fields(schema) {
+        let present = fields
+            .iter()
+            .filter(|name| {
+                values
+                    .pointer(&format!("{path}/{}", escape_pointer(name)))
+                    .is_some()
+            })
+            .collect::<Vec<_>>();
+        if present.len() > 1 {
+            return;
+        }
+        let selected = present
+            .first()
+            .map(|name| name.as_str())
+            .or_else(|| selected_forms.get(path).map(String::as_str));
+        if let Some(selected) = selected {
+            let child_path = format!("{path}/{}", escape_pointer(selected));
+            if let Some((child_schema, _)) = sdk_field_schema_for(values, &child_path) {
+                let supplied = values.pointer(&child_path);
+                if !supplied.is_some_and(|value| schema_accepts(&child_schema, value) == Some(true))
+                    && !questions.iter().any(|question| question.id == child_path)
+                {
+                    let choices = finite_choices(&child_schema);
+                    if scalar_question(&child_schema, &choices) {
+                        questions.push(JourneyQuestion {
+                            kind: JourneyQuestionKind::Field,
+                            id: child_path,
+                            reason: if supplied.is_some() {
+                                JourneyQuestionReason::InvalidSupplied
+                            } else {
+                                JourneyQuestionReason::Missing
+                            },
+                            required: true,
+                            choices,
+                            suggestion: supplied.cloned(),
+                            schema: child_schema,
+                        });
+                    } else {
+                        collect_required_leaf_questions(
+                            values,
+                            &child_path,
+                            &child_schema,
+                            selected_forms,
+                            questions,
+                            depth + 1,
+                        );
+                    }
+                }
+            }
+        } else {
+            let id = format!("form:{path}");
+            if !questions.iter().any(|question| question.id == id) {
+                questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::StructuralForm,
+                    id,
+                    reason: JourneyQuestionReason::Missing,
+                    required: true,
+                    choices: fields
+                        .iter()
+                        .map(|field| Value::String(field.clone()))
+                        .collect(),
+                    suggestion: None,
+                    schema: serde_json::json!({"type": "string", "enum": fields}),
+                });
+            }
+        }
     }
     let Some(required) = schema["required"].as_array() else {
         return;
@@ -1723,6 +1836,7 @@ fn collect_required_leaf_questions(
                 values,
                 &child_path,
                 &child_schema,
+                selected_forms,
                 questions,
                 depth + 1,
             );

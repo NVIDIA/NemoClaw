@@ -72,6 +72,101 @@ fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
 }
 
 #[test]
+fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
+    let capabilities = Capabilities::available();
+    let mut agent_values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    agent_values["spec"]["sandboxes"][0]["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inference");
+    let agent_base = PartialDocument::from_yaml(agent_values.to_string().as_bytes()).unwrap();
+    let mut agent = JourneyDefinition::new("agent-form", agent_base)
+        .start(&capabilities)
+        .unwrap();
+    let agent_form = "form:/spec/sandboxes/0/agent";
+    let question = agent
+        .resolve(&capabilities)
+        .unwrap()
+        .question(agent_form)
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        question.choices(),
+        &[json!("inference"), json!("inferenceRef")]
+    );
+    assert!(question.required());
+    assert_eq!(question.kind(), JourneyQuestionKind::StructuralForm);
+    agent
+        .answer(&capabilities, agent_form, Some(json!("inferenceRef")))
+        .unwrap();
+    let selected = agent.resolve(&capabilities).unwrap();
+    assert!(selected.question(agent_form).is_none());
+    assert!(
+        selected
+            .question("/spec/sandboxes/0/agent/inferenceRef")
+            .is_some()
+    );
+    assert!(
+        agent
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inferenceRef")
+            .is_none()
+    );
+    agent
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/agent/inferenceRef",
+            Some(json!("shared")),
+        )
+        .unwrap();
+    agent
+        .answer(&capabilities, agent_form, Some(json!("inference")))
+        .unwrap();
+    assert!(
+        agent
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inferenceRef")
+            .is_none(),
+        "switching forms must remove the incompatible supplied branch"
+    );
+
+    let mut route_values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    route_values["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("providerRef");
+    let route_base = PartialDocument::from_yaml(route_values.to_string().as_bytes()).unwrap();
+    let mut route = JourneyDefinition::new("route-form", route_base)
+        .start(&capabilities)
+        .unwrap();
+    let route_form = "form:/spec/sandboxes/0/agent/inference/routes/0";
+    let question = route
+        .resolve(&capabilities)
+        .unwrap()
+        .question(route_form)
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        question.choices(),
+        &[json!("provider"), json!("providerRef")]
+    );
+    route
+        .answer(&capabilities, route_form, Some(json!("providerRef")))
+        .unwrap();
+    assert!(
+        route
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/sandboxes/0/agent/inference/routes/0/providerRef")
+            .is_some()
+    );
+}
+
+#[test]
 fn missing_object_parent_exposes_its_unconditional_required_fields() {
     let capabilities = Capabilities::available();
     let mut values: serde_json::Value =
