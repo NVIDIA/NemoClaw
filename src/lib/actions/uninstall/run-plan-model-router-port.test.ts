@@ -17,6 +17,7 @@ import {
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { runUninstallPlan, type RunResult } from "./run-plan";
 import { createRouterMigrationHarness } from "../../../../test/support/uninstall-model-router-migration";
 import { readOnboardSessionModelRouter } from "./runtime-commands";
@@ -44,6 +45,7 @@ it.each([
     fs.writeFileSync(routerRuntime, "shared router runtime\n");
     const gatewayState = path.join(root, ".local/state/nemoclaw", resolveGatewayStateDirName(8080));
     const jwtBundle = ensureDockerDriverGatewayJwtBundle(gatewayState);
+    writeCompleteDockerDriverGatewayLocalTlsBundle(gatewayState);
     fs.writeFileSync(
       path.join(gatewayState, "openshell-gateway.toml"),
       buildDockerDriverGatewayConfigToml(
