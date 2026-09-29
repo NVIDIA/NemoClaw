@@ -70,6 +70,30 @@ fn guided_sdk_questions_are_visible_in_the_tree_without_printing_suggestions() {
 }
 
 #[test]
+fn inference_preset_preview_shows_custom_endpoint_branch() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let journey = JourneyDefinition::new("preset", base).ask([
+        "inference:preset",
+        "/spec/inferenceProviders/0/api",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+    ]);
+    let tree = journey.print_tree(&Capabilities::available()).unwrap();
+    assert!(tree.contains("inference:preset"), "{tree}");
+    assert!(tree.contains("openai-compatible"), "{tree}");
+    assert!(
+        tree.contains("/spec/inferenceProviders/0/endpoint"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("/spec/sandboxes/0/agent/inference/routes/0/overrides/model"),
+        "{tree}"
+    );
+    assert!(!tree.contains("https://inference.example.com/v1"), "{tree}");
+}
+
+#[test]
 fn preview_does_not_print_supplied_native_setting_values() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))

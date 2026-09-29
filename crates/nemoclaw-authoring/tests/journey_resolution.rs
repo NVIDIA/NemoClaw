@@ -200,6 +200,254 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
 }
 
 #[test]
+fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let preset = "inference:preset";
+    let api = "/spec/inferenceProviders/0/api";
+    let provider_name = "/spec/inferenceProviders/0/name";
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let name = "/metadata/name";
+    let mut state = JourneyDefinition::new("preset", base)
+        .ask([name, preset, api, model, provider_name])
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(preset)
+            .unwrap()
+            .suggestion(),
+        Some(&json!("nvidia-endpoints"))
+    );
+    state
+        .answer(&capabilities, name, Some(json!("my-deployment")))
+        .unwrap();
+    state
+        .answer(&capabilities, preset, Some(json!("nvidia-endpoints")))
+        .unwrap();
+    state
+        .answer(&capabilities, api, Some(json!("openai-completions")))
+        .unwrap();
+    state
+        .answer(&capabilities, model, Some(json!("nvidia/my-model")))
+        .unwrap();
+    state
+        .answer(&capabilities, provider_name, Some(json!("nvidia-prod")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+
+    let before = state.values().clone();
+    assert!(
+        state
+            .answer(&capabilities, preset, Some(json!("unknown")))
+            .is_err()
+    );
+    assert_eq!(state.values(), &before);
+    state
+        .answer(&capabilities, preset, Some(json!("anthropic")))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/0/provider"),
+        Some(&json!("anthropic"))
+    );
+    assert_eq!(
+        state.values().pointer("/spec/inferenceProviders/0/name"),
+        Some(&json!("anthropic-prod"))
+    );
+    assert_eq!(
+        state.values().pointer("/spec/inferenceProviders/0/api"),
+        Some(&json!("anthropic-messages"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/0/endpoint"),
+        Some(&json!("https://api.anthropic.com"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/0/credential/env"),
+        Some(&json!("ANTHROPIC_API_KEY"))
+    );
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/0/providerRef"),
+        Some(&json!("anthropic-prod"))
+    );
+    assert_eq!(
+        state.values().pointer(model),
+        Some(&json!("claude-sonnet-4-6"))
+    );
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(resolved.question(name).is_none());
+    assert!(resolved.question(api).is_some());
+    assert!(resolved.question(provider_name).is_some());
+    assert!(resolved.question(model).is_some());
+    assert!(resolved.materialized_document().is_none());
+    assert!(
+        state
+            .answer(&capabilities, api, Some(json!("openai-completions")))
+            .is_err()
+    );
+    state
+        .answer(&capabilities, api, Some(json!("anthropic-messages")))
+        .unwrap();
+    state
+        .answer(&capabilities, model, Some(json!("claude-sonnet-4-6")))
+        .unwrap();
+    state
+        .answer(&capabilities, provider_name, Some(json!("anthropic-prod")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+}
+
+#[test]
+fn compatible_inference_preset_requires_an_endpoint_answer() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("custom", base)
+        .ask([
+            "inference:preset",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "inference:preset",
+            Some(json!("openai-compatible")),
+        )
+        .unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(
+        resolved
+            .question("/spec/inferenceProviders/0/endpoint")
+            .is_some()
+    );
+    assert!(
+        resolved
+            .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .is_none()
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .is_none()
+    );
+    assert!(resolved.materialized_document().is_none());
+    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let before = state.values().clone();
+    assert!(
+        state
+            .answer(&capabilities, endpoint, Some(json!("file:///tmp/model")))
+            .is_err()
+    );
+    assert_eq!(state.values(), &before);
+    state
+        .answer(
+            &capabilities,
+            endpoint,
+            Some(json!("https://inference.internal.example/v1")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/spec/sandboxes/0/agent/inference/routes/0/overrides/model")
+            .is_some()
+    );
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            Some(json!("org/model")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(endpoint)
+            .is_none()
+    );
+}
+
+#[test]
+fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let api = "/spec/inferenceProviders/0/api";
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let endpoint = "/spec/inferenceProviders/0/endpoint";
+    let preset = "inference:preset";
+    let mut state = JourneyDefinition::new("order", base)
+        .ask([api, model, preset])
+        .start(&capabilities)
+        .unwrap();
+    let before = state.resolve(&capabilities).unwrap();
+    assert_eq!(before.next_question().unwrap().id(), preset);
+    assert!(before.question(api).is_none());
+    assert!(before.question(model).is_none());
+
+    state
+        .answer(&capabilities, preset, Some(json!("openai-compatible")))
+        .unwrap();
+    let after = state.resolve(&capabilities).unwrap();
+    assert!(after.question(api).is_some());
+    assert!(after.question(endpoint).is_some());
+    assert!(after.question(model).is_none());
+    state
+        .answer(
+            &capabilities,
+            endpoint,
+            Some(json!("https://inference.internal.example/v1")),
+        )
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(model)
+            .is_some()
+    );
+}
+
+#[test]
 fn optional_sdk_question_can_be_deliberately_omitted() {
     let capabilities = Capabilities::available();
     let base =

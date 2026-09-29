@@ -17,6 +17,7 @@ use crate::{
 pub(crate) const NAME: &str = "/metadata/name";
 pub(crate) const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
 pub(crate) const SETTINGS: &str = "/spec/sandboxes/0/harness/settings";
+pub(crate) const INFERENCE_PRESET: &str = "inference:preset";
 const MAX_BRANCHES: usize = 32;
 const MAX_SETTINGS: usize = 32;
 
@@ -84,7 +85,7 @@ impl JourneyDefinition {
             ));
         }
         for field in &self.ask {
-            if field == NAME || field == HARNESS {
+            if field == NAME || field == HARNESS || field == INFERENCE_PRESET {
                 continue;
             }
             if sdk_field_schema(field).is_some() {
@@ -259,6 +260,66 @@ impl JourneyDefinition {
             ));
         }
 
+        if let Some(preset) = initial.question(INFERENCE_PRESET) {
+            questions += 1;
+            lines.push(format!(
+                "  {INFERENCE_PRESET}: choose endpoint preset{}",
+                suggestion(preset.suggestion())
+            ));
+            for choice in preset.choices().iter().take(MAX_BRANCHES) {
+                let Some(id) = choice.as_str() else { continue };
+                lines.push(format!("    ├─ {id}"));
+                let mut branch = state.clone();
+                match branch.answer(capabilities, INFERENCE_PRESET, Some(choice.clone())) {
+                    Ok(()) => {
+                        let resolved = branch.resolve(capabilities)?;
+                        for question in resolved.questions().iter().filter(|question| {
+                            question.id() == "/spec/inferenceProviders/0/api"
+                                || question.id()
+                                    == "/spec/sandboxes/0/agent/inference/routes/0/overrides/model"
+                        }) {
+                            questions += 1;
+                            lines.push(format!(
+                                "    │  {}: <valid value>{}",
+                                question.id(),
+                                suggestion(question.suggestion())
+                            ));
+                        }
+                        if let Some(endpoint) =
+                            resolved.question("/spec/inferenceProviders/0/endpoint")
+                        {
+                            questions += 1;
+                            lines.push(format!(
+                                "    │  {}: <URL>{}",
+                                endpoint.id(),
+                                suggestion(endpoint.suggestion())
+                            ));
+                            if let Some(sample) = endpoint.suggestion() {
+                                let mut after_endpoint = branch.clone();
+                                if after_endpoint
+                                    .answer(capabilities, endpoint.id(), Some(sample.clone()))
+                                    .is_ok()
+                                    && let Some(model) = after_endpoint.resolve(capabilities)?.question(
+                                        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+                                    )
+                                {
+                                    questions += 1;
+                                    lines.push(format!(
+                                        "    │    then {}: <valid model>{}",
+                                        model.id(),
+                                        suggestion(model.suggestion())
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => lines.push(
+                        "    │  cannot project this choice from the current sparse base".into(),
+                    ),
+                }
+            }
+        }
+
         for question in initial.questions().iter().filter(|question| {
             question.id().starts_with('/') && question.id() != NAME && question.id() != HARNESS
         }) {
@@ -298,7 +359,7 @@ impl JourneyDefinition {
         for warning in initial.warnings() {
             lines.push(format!("  Warning: {warning}"));
         }
-        lines.push("  Preview scope: asked SDK fields, harness choice, top-level adapter settings; conditional SDK and Fabric branches are not expanded.".into());
+        lines.push("  Preview scope: asked SDK fields, inference preset, harness choice, top-level adapter settings; other conditional SDK and Fabric branches are not expanded.".into());
         Ok(lines.join("\n"))
     }
 }

@@ -23,6 +23,23 @@ pub enum ProviderPreset {
 }
 
 impl ProviderPreset {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::NvidiaEndpoints => "nvidia-endpoints",
+            Self::OpenRouter => "openrouter",
+            Self::OpenAi => "openai",
+            Self::OpenAiCompatible => "openai-compatible",
+            Self::Anthropic => "anthropic",
+            Self::AnthropicCompatible => "anthropic-compatible",
+            Self::Gemini => "gemini",
+            Self::Nous => "nous",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|preset| preset.id() == id)
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::NvidiaEndpoints => "NVIDIA Endpoints",

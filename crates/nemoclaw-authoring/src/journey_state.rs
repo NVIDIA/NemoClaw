@@ -5,17 +5,25 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use serde_json::{Map, Value};
 
 use crate::{
     Capabilities, Diagnostics, PartialAssessment, PartialDocument, PartialIssueKind,
+    ProviderPreset,
     diagnostics::diagnostic,
     journey_definition::{
-        HARNESS, JourneyDefinition, NAME, SETTINGS, adapter_field, adapter_schema, sdk_field_schema,
+        HARNESS, INFERENCE_PRESET, JourneyDefinition, NAME, SETTINGS, adapter_field,
+        adapter_schema, sdk_field_schema,
     },
 };
+
+const PROVIDER: &str = "/spec/inferenceProviders/0";
+const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";
+const PROVIDER_ENDPOINT: &str = "/spec/inferenceProviders/0/endpoint";
+const ROUTE: &str = "/spec/sandboxes/0/agent/inference/routes/0";
+const MODEL: &str = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +118,7 @@ pub struct JourneyState {
     accepted: BTreeSet<String>,
     omitted: BTreeSet<String>,
     inactive_settings: BTreeMap<String, Value>,
+    selected_preset: Option<ProviderPreset>,
 }
 
 impl JourneyState {
@@ -121,11 +130,30 @@ impl JourneyState {
             accepted: BTreeSet::new(),
             omitted: BTreeSet::new(),
             inactive_settings: BTreeMap::new(),
+            selected_preset: None,
         }
     }
 
     pub fn values(&self) -> &Value {
         &self.values
+    }
+
+    fn current_preset(&self) -> Option<ProviderPreset> {
+        if let Some(preset) = self.selected_preset {
+            return Some(preset);
+        }
+        let provider = self.values.pointer(PROVIDER)?;
+        let kind: InferenceProviderKind =
+            serde_json::from_value(provider.get("provider")?.clone()).ok()?;
+        let endpoint = provider.get("endpoint")?.as_str()?;
+        ProviderPreset::ALL
+            .into_iter()
+            .find(|preset| preset.profile().kind == kind && preset.profile().endpoint == endpoint)
+            .or_else(|| {
+                ProviderPreset::ALL.into_iter().find(|preset| {
+                    preset.profile().kind == kind && preset.profile().custom_endpoint
+                })
+            })
     }
 
     /// Resolve identity, harness, guided SDK field guidance, and top-level adapter
@@ -163,16 +191,32 @@ impl JourneyState {
         }
 
         for field in &self.definition.ask {
-            if field == NAME || field == HARNESS || adapter_field(field).is_some() {
+            if field == NAME
+                || field == HARNESS
+                || field == INFERENCE_PRESET
+                || adapter_field(field).is_some()
+            {
                 continue;
             }
             if self.omitted.contains(field) {
                 omitted.push(field.clone());
                 continue;
             }
-            let Some((schema, required)) = sdk_field_schema(field) else {
+            let Some((mut schema, required)) = sdk_field_schema(field) else {
                 continue;
             };
+            if field == PROVIDER_API
+                && self.definition.ask.contains(INFERENCE_PRESET)
+                && let Some(preset) = self.current_preset()
+            {
+                schema["enum"] = Value::Array(
+                    preset
+                        .apis()
+                        .iter()
+                        .map(|api| serde_json::to_value(api).expect("SDK API serializes"))
+                        .collect(),
+                );
+            }
             let value = self.values.pointer(field);
             let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
             if value.is_none() || !valid || !self.accepted.contains(field) {
@@ -191,6 +235,50 @@ impl JourneyState {
                     schema,
                 });
             }
+        }
+
+        if self.definition.ask.contains(INFERENCE_PRESET)
+            && !self.accepted.contains(INFERENCE_PRESET)
+        {
+            let suggestion = self
+                .current_preset()
+                .map(|preset| Value::String(preset.id().into()));
+            questions.push(JourneyQuestion {
+                id: INFERENCE_PRESET.into(),
+                reason: if suggestion.is_some() {
+                    JourneyQuestionReason::ExplicitAsk
+                } else {
+                    JourneyQuestionReason::Missing
+                },
+                required: true,
+                choices: ProviderPreset::ALL
+                    .into_iter()
+                    .map(|preset| Value::String(preset.id().into()))
+                    .collect(),
+                suggestion,
+                schema: serde_json::json!({"type":"string"}),
+            });
+        }
+        if self.definition.ask.contains(INFERENCE_PRESET)
+            && self
+                .selected_preset
+                .is_some_and(|preset| preset.profile().custom_endpoint)
+            && !self.accepted.contains(PROVIDER_ENDPOINT)
+            && !questions
+                .iter()
+                .any(|question| question.id == PROVIDER_ENDPOINT)
+        {
+            let schema = sdk_field_schema(PROVIDER_ENDPOINT)
+                .expect("external provider endpoint is in the SDK schema")
+                .0;
+            questions.push(JourneyQuestion {
+                id: PROVIDER_ENDPOINT.into(),
+                reason: JourneyQuestionReason::ExplicitAsk,
+                required: true,
+                choices: Vec::new(),
+                suggestion: self.values.pointer(PROVIDER_ENDPOINT).cloned(),
+                schema,
+            });
         }
 
         let chosen = self.values.pointer(HARNESS).and_then(Value::as_str);
@@ -318,6 +406,19 @@ impl JourneyState {
         unverified: Vec<String>,
         assessment: PartialAssessment,
     ) -> JourneyResolution {
+        if self.definition.ask.contains(INFERENCE_PRESET)
+            && !self.accepted.contains(INFERENCE_PRESET)
+        {
+            questions.retain(|question| {
+                !question.id.starts_with("/spec/inferenceProviders/0/") && question.id != MODEL
+            });
+        } else if self
+            .selected_preset
+            .is_some_and(|preset| preset.profile().custom_endpoint)
+            && !self.accepted.contains(PROVIDER_ENDPOINT)
+        {
+            questions.retain(|question| question.id != MODEL);
+        }
         questions.sort_by_key(|question| {
             self.definition
                 .ask_order
@@ -376,6 +477,12 @@ impl JourneyState {
                 "The answer does not satisfy its field schema.",
             ));
         }
+        if id == PROVIDER_ENDPOINT
+            && let Some(endpoint) = value.as_ref().and_then(Value::as_str)
+        {
+            nemoclaw_sdk::config::validate_endpoint(endpoint, false)
+                .map_err(|error| diagnostic("journey", &error.to_string()))?;
+        }
         let mut candidate = self.clone();
         if id == NAME {
             candidate.put_name(value.expect("required"))?;
@@ -392,6 +499,15 @@ impl JourneyState {
             }
         } else if id == HARNESS {
             candidate.put_harness(value.expect("required"))?;
+        } else if id == INFERENCE_PRESET {
+            let preset = ProviderPreset::from_id(
+                value
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .expect("advertised preset"),
+            )
+            .expect("advertised preset");
+            candidate.put_inference_preset(preset)?;
         } else if let Some((adapter, pointer)) = adapter_field(id) {
             if candidate.values.pointer(HARNESS).and_then(Value::as_str) != Some(adapter) {
                 return Err(diagnostic("journey", "This adapter setting is not active."));
@@ -402,7 +518,9 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if self.definition.ask.contains(id) && sdk_field_schema(id).is_some() {
+        } else if (self.definition.ask.contains(id) || id == PROVIDER_ENDPOINT)
+            && sdk_field_schema(id).is_some()
+        {
             candidate.put_sdk_field(id, value.clone())?;
             if value.is_none() {
                 candidate.omitted.insert(id.into());
@@ -456,6 +574,9 @@ impl JourneyState {
                 .cloned();
             previous.put_setting(pointer, None)?;
             value
+        } else if id == INFERENCE_PRESET {
+            self.current_preset()
+                .map(|preset| Value::String(preset.id().into()))
         } else if sdk_field_schema(id).is_some() {
             previous.values.pointer(id).cloned()
         } else {
@@ -548,6 +669,116 @@ impl JourneyState {
             settings.insert(property, value);
         } else {
             settings.remove(&property);
+        }
+        Ok(())
+    }
+
+    fn put_inference_preset(&mut self, preset: ProviderPreset) -> Result<(), Diagnostics> {
+        let providers = self
+            .values
+            .pointer("/spec/inferenceProviders")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                diagnostic("journey", "Inference presets require one shared provider.")
+            })?;
+        if providers.len() != 1 || providers[0].get("serviceRef").is_some() {
+            return Err(diagnostic(
+                "journey",
+                "Inference presets require one external shared provider.",
+            ));
+        }
+        let routes = self
+            .values
+            .pointer("/spec/sandboxes/0/agent/inference/routes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| diagnostic("journey", "Inference presets require one route."))?;
+        if routes.len() != 1 || routes[0].get("provider").is_some() {
+            return Err(diagnostic(
+                "journey",
+                "Inference presets require one route using the shared provider.",
+            ));
+        }
+        let previous_name = self
+            .values
+            .pointer(&format!("{PROVIDER}/name"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| diagnostic("journey", "The shared provider needs a name."))?
+            .to_owned();
+        if self
+            .values
+            .pointer(&format!("{ROUTE}/providerRef"))
+            .and_then(Value::as_str)
+            != Some(&previous_name)
+        {
+            return Err(diagnostic(
+                "journey",
+                "The route must reference the shared provider.",
+            ));
+        }
+        let previous = self.current_preset();
+        let before_values = self.values.clone();
+        let profile = preset.profile();
+        let old_api = self
+            .values
+            .pointer(PROVIDER_API)
+            .cloned()
+            .and_then(|value| serde_json::from_value::<InferenceApi>(value).ok());
+        let api = old_api
+            .filter(|api| preset.apis().contains(api))
+            .unwrap_or(preset.apis()[0]);
+        let provider = self
+            .values
+            .pointer_mut(PROVIDER)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| diagnostic("journey", "The shared provider must be an object."))?;
+        provider.insert("name".into(), Value::String(profile.name.into()));
+        provider.insert(
+            "provider".into(),
+            Value::String(profile.kind.as_str().into()),
+        );
+        provider.insert(
+            "api".into(),
+            serde_json::to_value(api).expect("SDK API serializes"),
+        );
+        provider.insert("endpoint".into(), Value::String(profile.endpoint.into()));
+        provider.insert(
+            "credential".into(),
+            serde_json::json!({"env": profile.credential}),
+        );
+        let route = self
+            .values
+            .pointer_mut(ROUTE)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| diagnostic("journey", "The route must be an object."))?;
+        route.insert("providerRef".into(), Value::String(profile.name.into()));
+        let overrides = route
+            .get_mut("overrides")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| diagnostic("journey", "The route needs model overrides."))?;
+        if let Some(model) = profile.default_model {
+            overrides.insert("model".into(), Value::String(model.into()));
+        } else {
+            overrides.remove("model");
+        }
+        self.selected_preset = Some(preset);
+        if previous != Some(preset) {
+            for field in [
+                PROVIDER_API,
+                MODEL,
+                PROVIDER_ENDPOINT,
+                "/spec/inferenceProviders/0/credential/env",
+            ] {
+                self.accepted.remove(field);
+                self.omitted.remove(field);
+            }
+            for field in self.accepted.clone() {
+                if field.starts_with('/')
+                    && before_values.pointer(&field) != self.values.pointer(&field)
+                {
+                    self.accepted.remove(&field);
+                    self.omitted.remove(&field);
+                }
+            }
         }
         Ok(())
     }
