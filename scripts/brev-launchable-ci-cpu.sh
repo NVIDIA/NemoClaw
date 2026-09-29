@@ -2,17 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Brev CPU bootstrap: Docker, reviewed Node/npm, OpenShell, and NemoClaw.
-#
-# Usage (Brev launchable startup script — one-liner that curls this):
-#   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
-#   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
-#
-# Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (must resolve to v0.0.116)
-#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/auto)
-#   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
-#   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
+# Standalone Brev CPU bootstrap for Docker, reviewed Node/npm, OpenShell, and NemoClaw.
 #
 
 set -euo pipefail
@@ -37,6 +27,58 @@ fail() {
   printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
   exit 1
 }
+
+# Keep this standalone trust-boundary copy aligned with scripts/lib/npm-diagnostics.sh.
+# BEGIN npm diagnostics helper
+sanitize_npm_diagnostics() {
+  awk '
+    BEGIN { private_key = 0 }
+    {
+      line = $0
+      lower = tolower(line)
+      if (line ~ /-----BEGIN ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) {
+        print "<REDACTED>"
+        private_key = 1
+        next
+      }
+      if (private_key) {
+        if (line ~ /-----END ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) private_key = 0
+        next
+      }
+      if (lower ~ /(authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=]/ ||
+          lower ~ /(bearer|basic)[ \t]+[^ \t]/ ||
+          lower ~ /(^|[^a-z0-9])[a-z0-9_.-]*(auth|credential|key|pass|passwd|password|secret|token)[a-z0-9_.-]*[ \t]*[:=]/) {
+        print "<REDACTED CREDENTIAL LINE>"
+        next
+      }
+      print line
+    }
+  ' \
+    | sed -E \
+      -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
+      -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
+      -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g' \
+    | LC_ALL=C tr -cd '\11\12\15\40-\176'
+}
+
+bounded_npm_diagnostic_excerpt() {
+  local limit="${1:-3900}"
+  LC_ALL=C awk -v limit="$limit" '
+    {
+      tail = tail $0 ORS
+      if (length(tail) > limit) tail = substr(tail, length(tail) - limit + 1)
+      if ($0 ~ /^npm (error|ERR!|verbose stack)( |$)/ && length(errors) < 2000)
+        errors = substr(errors $0 ORS, 1, 2000)
+    }
+    END {
+      remaining = limit - length(errors)
+      if (length(tail) > remaining) tail = substr(tail, length(tail) - remaining + 1)
+      printf "%s%s", errors, tail
+    }
+  '
+}
+# END npm diagnostics helper
 
 run_npm_install_with_diagnostics() (
   readonly stage="$1"
@@ -345,9 +387,6 @@ else
   git clone --branch "$NEMOCLAW_REF" --depth 1 \
     "https://github.com/NVIDIA/NemoClaw.git" "$NEMOCLAW_CLONE_DIR"
 fi
-
-# shellcheck source=scripts/lib/npm-diagnostics.sh
-source "$NEMOCLAW_CLONE_DIR/scripts/lib/npm-diagnostics.sh"
 
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"

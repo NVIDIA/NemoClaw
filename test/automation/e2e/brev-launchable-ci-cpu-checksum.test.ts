@@ -62,6 +62,7 @@ function linkSystemCommands(targetDir: string, commands: readonly string[]): voi
 
 function makeFakeSystem(options: FakeSystemOptions): {
   cleanup: () => void;
+  clonedHelperMarker: string;
   cloneDir: string;
   curlLog: string;
   dockerLog: string;
@@ -75,6 +76,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
   const fakeBin = path.join(root, "bin");
   const cloneDir = path.join(root, "NemoClaw");
+  const clonedHelperMarker = path.join(root, "cloned-helper-sourced");
   const launchLog = path.join(root, "launch.log");
   const curlLog = path.join(root, "curl.log");
   const dockerLog = path.join(root, "docker.log");
@@ -184,7 +186,11 @@ if [ "\${1:-}" = "clone" ]; then
   mkdir -p "$dest/.git" "$dest/nemoclaw" "$dest/bin" "$dest/scripts/lib"
   mkdir -p "$dest/.github/actions/setup-reviewed-npm"
   printf '#!/usr/bin/env bash\\nnpm pack --reviewed-npm-fixture\\n' > "$dest/.github/actions/setup-reviewed-npm/verify-and-install-npm.sh"
-  cp ${JSON.stringify(NPM_DIAGNOSTICS_HELPER)} "$dest/scripts/lib/npm-diagnostics.sh"
+  printf '%s\n' \
+    'printf sourced > ${clonedHelperMarker}' \
+    'sanitize_npm_diagnostics() { cat; }' \
+    'bounded_npm_diagnostic_excerpt() { cat; }' \
+    > "$dest/scripts/lib/npm-diagnostics.sh"
   printf '#!/usr/bin/env node\\n' > "$dest/bin/nemoclaw.js"
   exit 0
 fi
@@ -303,6 +309,7 @@ exec /usr/bin/sha256sum "$@"
 
   return {
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    clonedHelperMarker,
     cloneDir,
     curlLog,
     dockerLog,
@@ -367,6 +374,15 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
 
   it("pins both reviewed Node.js archives and installs the canonical reviewed npm", () => {
     const source = fs.readFileSync(SCRIPT, "utf8");
+    const sharedHelper = fs
+      .readFileSync(NPM_DIAGNOSTICS_HELPER, "utf8")
+      .replace(/^#!.*\n(?:#.*\n){2}\n/u, "")
+      .trim();
+    const embeddedHelper = source.match(
+      /# BEGIN npm diagnostics helper\n([\s\S]*?)# END npm diagnostics helper/u,
+    )?.[1];
+    expect(embeddedHelper?.trim()).toBe(sharedHelper);
+    expect(source).not.toContain('source "$NEMOCLAW_CLONE_DIR/scripts/lib/npm-diagnostics.sh"');
     expect(source).toContain(`NODE_VERSION="${REVIEWED_NODE_VERSION}"`);
     expect(source).toContain(
       'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
@@ -417,6 +433,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
         expect(out).not.toContain("eyJfixture1.payload.fixturepayload12345");
         expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789ABCD");
         expect(out).not.toContain(["BEGIN", "PRIVATE", "KEY"].join(" "));
+        expect(fs.existsSync(fake.clonedHelperMarker)).toBe(false);
         expect(Buffer.byteLength(out.slice(out.lastIndexOf(marker)), "utf8")).toBeLessThanOrEqual(
           8_192,
         );
