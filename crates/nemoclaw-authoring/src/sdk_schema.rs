@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use crate::fingerprint::sha256;
 use nemoclaw_sdk::config::schema::input_schema;
+use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use serde_json::{Value, json};
 
 /// Find a field in the SDK input schema without maintaining a parallel list of
@@ -58,6 +59,16 @@ pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value,
             }
             node = sdk_selected_branch(node, values.pointer(&current_path)?)?;
         }
+        if node
+            .get("properties")
+            .and_then(|properties| properties.get(&name))
+            .is_none()
+            && let Some(branch) = values
+                .pointer(&current_path)
+                .and_then(|value| selected_alternative(root, node, value))
+        {
+            node = branch;
+        }
         if part.parse::<usize>().is_ok() {
             node = node.get("items")?;
             required = true;
@@ -84,6 +95,28 @@ pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value,
         object.insert("$defs".into(), root.get("$defs")?.clone());
     }
     Some((field, required))
+}
+
+/// A complete supplied object can identify a single valid schema alternative.
+/// Missing or ambiguous values keep the branch unresolved during sparse authoring.
+fn selected_alternative<'a>(root: &'a Value, node: &'a Value, value: &Value) -> Option<&'a Value> {
+    for keyword in ["oneOf", "anyOf"] {
+        let Some(branches) = node.get(keyword).and_then(Value::as_array) else {
+            continue;
+        };
+        let mut valid = branches.iter().filter(|branch| {
+            let mut candidate = (*branch).clone();
+            if let Some(object) = candidate.as_object_mut() {
+                object.insert("$defs".into(), root["$defs"].clone());
+            }
+            schema_accepts(&candidate, value) == Some(true)
+        });
+        let branch = valid.next()?;
+        if valid.next().is_none() {
+            return follow_ref(root, branch);
+        }
+    }
+    None
 }
 
 /// A one-of discriminator exists only when every branch requires the same
@@ -170,6 +203,46 @@ pub(crate) fn sdk_selected_branch<'a>(schema: &'a Value, supplied: &Value) -> Op
             .and_then(|field| field.get("const"))
             == Some(selected)
     })
+}
+
+/// Finite values advertised by a field schema. Free input remains possible
+/// when this list is empty or the question kind explicitly allows it.
+pub(crate) fn finite_choices(schema: &Value) -> Vec<Value> {
+    finite_choice_set(schema).unwrap_or_default()
+}
+
+fn finite_choice_set(schema: &Value) -> Option<Vec<Value>> {
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        return Some(
+            values
+                .iter()
+                .filter(|value| value.as_str() != Some(""))
+                .cloned()
+                .collect(),
+        );
+    }
+    if let Some(value) = schema.get("const") {
+        return Some(if value.as_str() == Some("") {
+            Vec::new()
+        } else {
+            vec![value.clone()]
+        });
+    }
+    for keyword in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
+            let mut choices = Vec::new();
+            for branch in branches {
+                let branch_choices = finite_choice_set(branch)?;
+                for choice in branch_choices {
+                    if !choices.contains(&choice) {
+                        choices.push(choice);
+                    }
+                }
+            }
+            return Some(choices);
+        }
+    }
+    None
 }
 
 fn follow_ref<'a>(root: &'a Value, mut node: &'a Value) -> Option<&'a Value> {

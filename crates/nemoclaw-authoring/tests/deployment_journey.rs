@@ -90,6 +90,58 @@ fn managed_service_questions_use_sdk_types_and_keep_recipe_as_one_value() {
 }
 
 #[test]
+fn optional_supplied_deployment_field_can_be_omitted_through_the_shared_question() {
+    let capabilities = Capabilities::available();
+    let mut supplied = example("onboarding/openclaw.yaml").supplied().clone();
+    supplied["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
+    let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("optional-deployment", base)
+        .ask([JourneyScope::DeploymentFields])
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/gateway/imagePullPolicy";
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution.question(path).expect("deployment question");
+    assert!(!question.required());
+    assert_eq!(question.suggestion(), Some(&json!("Never")));
+
+    state.answer(&capabilities, path, None).unwrap();
+    assert!(state.values().pointer(path).is_none());
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+}
+
+#[test]
+fn deployment_questions_follow_the_selected_sdk_hardware_form() {
+    let capabilities = Capabilities::available();
+    let dedicated = journey("nemotron-amd64.yaml");
+    let question = dedicated
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/services/nemotron/hardware/architecture")
+        .cloned()
+        .expect("dedicated hardware architecture question");
+    assert!(question.required());
+    assert_eq!(question.choices(), &[json!("amd64")]);
+
+    let profiled = journey("spark/remote-vllm.yaml");
+    let question = profiled
+        .resolve(&capabilities)
+        .unwrap()
+        .question("/spec/services/qwen/hardware/profile")
+        .cloned()
+        .expect("profiled hardware question");
+    assert!(question.required());
+    assert_eq!(question.suggestion(), Some(&json!("dgx-spark")));
+}
+
+#[test]
 fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
     fn files(root: &std::path::Path, result: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(root).unwrap() {

@@ -3,11 +3,13 @@
 
 //! Deployment question discovery from the SDK input schema.
 
-use crate::{Diagnostics, diagnostics::diagnostic, settings::SettingQuestion};
-use nemoclaw_sdk::{
-    config::{Document, schema::input_schema},
-    fabric_capabilities::schema_accepts,
+use crate::{
+    Diagnostics,
+    diagnostics::diagnostic,
+    sdk_schema::{finite_choices, sdk_field_schema_for},
+    settings::SettingQuestion,
 };
+use nemoclaw_sdk::config::Document;
 use serde_json::Value;
 
 pub(crate) fn deployment_questions_for_document(
@@ -21,10 +23,8 @@ pub(crate) fn deployment_questions_for_document(
     }
     let values = serde_json::to_value(document)
         .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?;
-    static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-    let schema = SCHEMA.get_or_init(input_schema);
     let mut questions = Vec::new();
-    collect(schema, schema, &values, "", &mut questions, 0)?;
+    collect(&values, &values, "", &mut questions, 0)?;
     let sandbox = &document.spec.sandboxes[0];
     let harness = document
         .sandbox_harness(sandbox)
@@ -91,98 +91,8 @@ fn complex(path: &str) -> bool {
     (path.starts_with("/spec/services/") && path.ends_with("/recipe"))
         || path == "/spec/sandboxes/0/network/policy"
 }
-fn full_schema(root: &Value, mut schema: Value) -> Value {
-    fn has_reference(value: &Value) -> bool {
-        match value {
-            Value::Object(fields) => {
-                fields.contains_key("$ref") || fields.values().any(has_reference)
-            }
-            Value::Array(values) => values.iter().any(has_reference),
-            _ => false,
-        }
-    }
-    if has_reference(&schema)
-        && let Some(object) = schema.as_object_mut()
-    {
-        object.insert("$defs".into(), root["$defs"].clone());
-    }
-    schema
-}
-fn effective(
-    root: &Value,
-    schema: &Value,
-    value: &Value,
-    depth: usize,
-) -> Result<Value, Diagnostics> {
-    if depth > 32 {
-        return Err(diagnostic(
-            "deployment",
-            "SDK schema reference depth exceeded.",
-        ));
-    }
-    let mut resolved = if let Some(reference) = schema["$ref"].as_str() {
-        let target = reference
-            .strip_prefix('#')
-            .and_then(|pointer| root.pointer(pointer))
-            .ok_or_else(|| diagnostic("deployment", "Cannot resolve SDK schema reference."))?;
-        effective(root, target, value, depth + 1)?
-    } else {
-        schema.clone()
-    };
-    for keyword in ["oneOf", "anyOf", "allOf"] {
-        if let Some(branches) = resolved[keyword].as_array().cloned() {
-            for branch in branches {
-                // Scalar alternatives do not add child fields. Preserve their schema
-                // for answer validation without compiling a validator during traversal.
-                if !value.is_object() {
-                    continue;
-                }
-                let branch = effective(root, &branch, value, depth + 1)?;
-                if branch.get("properties").is_none() {
-                    continue;
-                }
-                if keyword != "allOf" {
-                    let discriminators: Vec<_> = branch["properties"]
-                        .as_object()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|(key, constraint)| {
-                            constraint.get("const").map(|constant| (key, constant))
-                        })
-                        .collect();
-                    let active = if discriminators.is_empty() {
-                        schema_accepts(&full_schema(root, branch.clone()), value) == Some(true)
-                    } else {
-                        discriminators
-                            .iter()
-                            .all(|(key, constant)| value.get(*key) == Some(*constant))
-                    };
-                    if !active {
-                        continue;
-                    }
-                }
-                if let Some(properties) = branch["properties"].as_object() {
-                    if !resolved["properties"].is_object() {
-                        resolved["properties"] = serde_json::json!({});
-                    }
-                    resolved["properties"]
-                        .as_object_mut()
-                        .unwrap()
-                        .extend(properties.clone());
-                }
-                if resolved.get("type").is_none()
-                    && let Some(kind) = branch.get("type")
-                {
-                    resolved["type"] = kind.clone();
-                }
-            }
-        }
-    }
-    Ok(resolved)
-}
 fn collect(
     root: &Value,
-    schema: &Value,
     value: &Value,
     path: &str,
     out: &mut Vec<SettingQuestion>,
@@ -197,39 +107,31 @@ fn collect(
     if value.is_null() || !interested(path) {
         return Ok(());
     }
-    let resolved = effective(root, schema, value, 0)?;
     if region(path)
         && !excluded(path)
         && (!value.is_object() && !value.is_array() || complex(path) || value.is_array())
     {
-        let mut choices = resolved["enum"].as_array().cloned().unwrap_or_default();
-        if choices.is_empty() && resolved["type"] == "boolean" {
+        let (schema, required) = sdk_field_schema_for(root, path).ok_or_else(|| {
+            diagnostic(
+                "deployment",
+                &format!("SDK schema has no field for '{path}'."),
+            )
+        })?;
+        let mut choices = finite_choices(&schema);
+        if choices.is_empty() && schema["type"] == "boolean" {
             choices = vec![Value::Bool(false), Value::Bool(true)];
-        }
-        for keyword in ["oneOf", "anyOf"] {
-            if let Some(branches) = resolved[keyword].as_array()
-                && branches.iter().all(|branch| branch.get("const").is_some())
-            {
-                for branch in branches {
-                    let choice = &branch["const"];
-                    if !choices.contains(choice) {
-                        choices.push(choice.clone());
-                    }
-                }
-            }
         }
         out.push(SettingQuestion {
             path: path.into(),
             title: title(path),
             description: schema["description"]
                 .as_str()
-                .or_else(|| resolved["description"].as_str())
                 .unwrap_or(
                     "Edit this deployment value; the SDK validates the complete configuration.",
                 )
                 .into(),
-            required: true,
-            schema: full_schema(root, resolved),
+            required,
+            schema,
             choices,
             suggestion: Some(value.clone()),
         });
@@ -237,34 +139,17 @@ fn collect(
     }
     if let Some(object) = value.as_object() {
         for (key, child) in object {
-            let child_schema = resolved["properties"].get(key).or_else(|| {
-                resolved
-                    .get("additionalProperties")
-                    .filter(|schema| schema.is_object())
-            });
-            if let Some(child_schema) = child_schema {
-                collect(
-                    root,
-                    child_schema,
-                    child,
-                    &format!("{path}/{}", escaped(key)),
-                    out,
-                    depth + 1,
-                )?;
-            }
-        }
-    } else if let Some(array) = value.as_array()
-        && let Some(items) = resolved.get("items")
-    {
-        for (index, child) in array.iter().enumerate() {
             collect(
                 root,
-                items,
                 child,
-                &format!("{path}/{index}"),
+                &format!("{path}/{}", escaped(key)),
                 out,
                 depth + 1,
             )?;
+        }
+    } else if let Some(array) = value.as_array() {
+        for (index, child) in array.iter().enumerate() {
+            collect(root, child, &format!("{path}/{index}"), out, depth + 1)?;
         }
     }
     Ok(())

@@ -20,8 +20,8 @@ use crate::{
         adapter_schema,
     },
     sdk_schema::{
-        sdk_discriminator, sdk_exclusive_required_fields, sdk_field_schema, sdk_field_schema_for,
-        sdk_selected_branch,
+        finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_schema,
+        sdk_field_schema_for, sdk_selected_branch,
     },
     settings::SettingQuestion,
 };
@@ -899,7 +899,7 @@ impl JourneyState {
                     kind: JourneyQuestionKind::Field,
                     id: field.path,
                     reason: JourneyQuestionReason::ExplicitAsk,
-                    required: true,
+                    required: field.required,
                     choices: field.choices,
                     suggestion: field.suggestion,
                     schema: field.schema,
@@ -1884,36 +1884,6 @@ fn collect_required_leaf_questions(
             );
         }
     }
-}
-
-fn finite_choices(schema: &Value) -> Vec<Value> {
-    let mut choices = Vec::new();
-    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
-        choices.extend(
-            values
-                .iter()
-                .filter(|value| value.as_str() != Some(""))
-                .cloned(),
-        );
-    }
-    if let Some(value) = schema.get("const")
-        && value.as_str() != Some("")
-        && !choices.contains(value)
-    {
-        choices.push(value.clone());
-    }
-    for keyword in ["anyOf", "oneOf"] {
-        if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
-            for branch in branches {
-                for choice in finite_choices(branch) {
-                    if !choices.contains(&choice) {
-                        choices.push(choice);
-                    }
-                }
-            }
-        }
-    }
-    choices
 }
 
 fn native_questions_for_document(
