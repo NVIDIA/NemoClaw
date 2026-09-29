@@ -11,6 +11,7 @@ import {
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   type SnapshotSanitizationAction,
+  SnapshotSanitizerHelperError,
   type SnapshotScannedFile,
   scanDescriptorSnapshot,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
@@ -102,9 +103,7 @@ export function sanitizeMigrationDirectory(rootPath: string): void {
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
     if (actions.length === 0) return;
-    if (!applyDescriptorSnapshotActions(root, scan, actions)) {
-      throw new Error(`Failed to sanitize migration artifacts safely: ${rootPath}`);
-    }
+    applyDescriptorSnapshotActions(root, scan, actions);
   }
   throw new Error(`Migration artifacts did not reach a stable sanitized state: ${rootPath}`);
 }
@@ -113,6 +112,15 @@ export function sanitizeMigrationDirectory(rootPath: string): void {
  * Sanitize a required OpenClaw configuration copy.
  */
 export function sanitizeOpenClawConfigFile(configPath: string): boolean {
+  try {
+    return sanitizeRequiredConfigFile(configPath);
+  } catch (error) {
+    if (error instanceof SnapshotSanitizerHelperError) return false;
+    throw error;
+  }
+}
+
+function sanitizeRequiredConfigFile(configPath: string): boolean {
   const parentPath = path.dirname(configPath);
   const targetName = path.basename(configPath);
   if (targetName === "" || targetName === "." || targetName === "..") return false;
@@ -133,18 +141,14 @@ export function sanitizeOpenClawConfigFile(configPath: string): boolean {
     const sanitized = sanitizedContents(targetName.toLowerCase(), raw);
     if (typeof sanitized !== "string") return false;
     if (sanitized === raw) return true;
-    if (
-      !applyDescriptorSnapshotActions(root, scan, [
-        {
-          kind: "replace",
-          path: file.path,
-          metadata: file.metadata,
-          content: Buffer.from(sanitized, "utf-8").toString("base64"),
-        },
-      ])
-    ) {
-      return false;
-    }
+    applyDescriptorSnapshotActions(root, scan, [
+      {
+        kind: "replace",
+        path: file.path,
+        metadata: file.metadata,
+        content: Buffer.from(sanitized, "utf-8").toString("base64"),
+      },
+    ]);
   }
   return false;
 }

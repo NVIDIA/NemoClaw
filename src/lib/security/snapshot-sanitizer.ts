@@ -23,8 +23,11 @@ import {
   valueLooksLikeSecret,
 } from "./credential-filter";
 
-/** Re-exported so CLI callers identify the prerequisite failure without importing the plugin boundary module. (#8202) */
-export { SnapshotSanitizerPrerequisiteError } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
+/** Re-exported so CLI callers identify sanitizer failures without importing the plugin boundary module. (#8202) */
+export {
+  SnapshotSanitizerHelperError,
+  SnapshotSanitizerPrerequisiteError,
+} from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 
 const MAX_SANITIZATION_PASSES = 3;
 
@@ -195,9 +198,7 @@ export function sanitizeSnapshotDirectory(rootPath: string): void {
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
     if (actions.length === 0) return;
-    if (!applyDescriptorSnapshotActions(root, scan, actions)) {
-      throw new Error(`Failed to sanitize snapshot artifacts safely: ${rootPath}`);
-    }
+    applyDescriptorSnapshotActions(root, scan, actions);
   }
   throw new Error(`Snapshot artifacts did not reach a stable sanitized state: ${rootPath}`);
 }

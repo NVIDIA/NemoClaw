@@ -21,6 +21,7 @@ import {
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
   resolveTrustedSnapshotSanitizerPythonPath,
+  SnapshotSanitizerHelperError,
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
@@ -95,7 +96,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       label: "escaping directory path",
       output: JSON.stringify({
         root: identity,
-        directories: { "nested\\escape": identity },
+        directories: { "nested/../escape": identity },
         files: [],
       }),
     },
@@ -340,6 +341,41 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
+  it.each([
+    {
+      label: "the reason and entry from a failure report",
+      report: { reason: "Permission denied", path: "nested/config.json" },
+      message: "Permission denied: nested/config.json",
+    },
+    {
+      label: "terminal controls in a reported entry as visible escapes",
+      report: { reason: "Permission denied", path: "evil\u001b[2Jname\u202e" },
+      message: "Permission denied: evil\\u{1b}[2Jname\\u{202e}",
+    },
+    {
+      label: "only a generic reason for output that is not a failure report",
+      report: "Traceback: sk-secret-value",
+      message: "sanitizer helper gave no reason",
+    },
+  ])("reports $label when the scan helper fails", ({ report, message }) => {
+    const root = { canonicalPath: makeRoot(), identity };
+    const stderr = typeof report === "string" ? report : JSON.stringify(report);
+    writePythonWrapper([`printf '%s\\n' ${shellQuote(stderr)} >&2`, "exit 1"]);
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({ name: "SnapshotSanitizerHelperError", message }),
+    );
+  });
+
+  it("reports the spawn error code when the scan helper cannot start", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    setSnapshotSanitizerPythonPathForTest(path.join(makeRoot(), "missing-python3"));
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({ message: "sanitizer helper did not complete: ENOENT" }),
+    );
+  });
+
   it("rejects unsafe roots and non-canonical helper payloads", () => {
     const root = makeRoot();
     const filePath = path.join(root, "not-a-directory");
@@ -349,13 +385,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(decodeDescriptorSnapshotContent(undefined)).toBeNull();
     expect(decodeDescriptorSnapshotContent("not-base64!")).toBeNull();
     expect(decodeDescriptorSnapshotContent("AB==")).toBeNull();
-    expect(
+    expect(() =>
       applyDescriptorSnapshotActions(
         { canonicalPath: root, identity },
         { root: identity, directories: {}, files: [] },
         [],
       ),
-    ).toBe(true);
+    ).not.toThrow();
   });
 
   it("decodes a maximum-size canonical helper payload without overflowing", () => {
@@ -400,11 +436,15 @@ describe("migration snapshot sanitizer fallbacks", () => {
       expect(scan).not.toBeNull();
       expect(config).toBeDefined();
 
-      expect(
+      expect(() =>
         applyDescriptorSnapshotActions(root, scan, [
           { kind: "replace", path: config.path, metadata: config.metadata, content },
         ]),
-      ).toBe(false);
+      ).toThrow(
+        expect.objectContaining({
+          message: "snapshot replacement content is not canonical base64: config.json",
+        }),
+      );
       expect(readFileSync(configPath, "utf-8")).toBe("original");
     },
   );
@@ -428,9 +468,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
     writePythonWrapper(["exit 1"]);
 
-    expect(() => sanitizeMigrationDirectory(root)).toThrow(
-      /Failed to inspect migration artifacts safely/u,
-    );
+    expect(() => sanitizeMigrationDirectory(root)).toThrow(SnapshotSanitizerHelperError);
   });
 
   it("removes optional artifacts that are not valid UTF-8", () => {
@@ -456,9 +494,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
         `exec ${shellQuote(python)} "$@"`,
       ]);
 
-      expect(() => sanitizeMigrationDirectory(root)).toThrow(
-        /Failed to inspect migration artifacts safely/u,
-      );
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(SnapshotSanitizerHelperError);
       expect(readFileSync(path.join(movedRoot, "config.json"), "utf-8")).toContain("raw");
     },
   );

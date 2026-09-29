@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -84,6 +84,32 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
   }
 }
 
+const MAX_HELPER_FAILURE_REASON_LENGTH = 200;
+const MAX_HELPER_FAILURE_PATH_LENGTH = 1024;
+const UNSAFE_DISPLAY_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+function displaySafe(value: string, maxLength: number): string {
+  return value
+    .slice(0, maxLength)
+    .replace(
+      UNSAFE_DISPLAY_CHARACTER,
+      (character) => `\\u{${(character.codePointAt(0) ?? 0).toString(16)}}`,
+    );
+}
+
+/** The descriptor-relative helper failed. The message gives the reason and, for a failure on one entry, its snapshot-relative path. */
+export class SnapshotSanitizerHelperError extends Error {
+  constructor(reason: string, entryPath: string | null) {
+    const safeReason = displaySafe(reason, MAX_HELPER_FAILURE_REASON_LENGTH);
+    super(
+      entryPath === null
+        ? safeReason
+        : `${safeReason}: ${displaySafe(entryPath, MAX_HELPER_FAILURE_PATH_LENGTH)}`,
+    );
+    this.name = "SnapshotSanitizerHelperError";
+  }
+}
+
 export interface SnapshotFileIdentity {
   readonly dev: string;
   readonly ino: string;
@@ -129,6 +155,7 @@ export interface DescriptorSnapshotRoot {
  */
 const SNAPSHOT_SANITIZER_PYTHON = String.raw`
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -140,14 +167,47 @@ MAX_FILE_BYTES = ${MAX_SNAPSHOT_FILE_BYTES}
 MAX_FILE_BASE64_LENGTH = ((MAX_FILE_BYTES + 2) // 3) * 4
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_ENTRIES = 100_000
+FILE_SIZE_LIMIT_REASON = "snapshot artifact exceeds the {} MiB sanitization size limit".format(
+    MAX_FILE_BYTES // (1024 * 1024)
+)
+TOTAL_SIZE_LIMIT_REASON = "snapshot artifacts exceed the {} MiB total sanitization size limit".format(
+    MAX_TOTAL_BYTES // (1024 * 1024)
+)
+ENTRY_LIMIT_REASON = "snapshot tree exceeds the {:,}-entry sanitization limit".format(MAX_ENTRIES)
 O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 
 
-def fail(message):
-    print(message, file=sys.stderr)
+class SnapshotFailure(Exception):
+    def __init__(self, reason, entry_specific):
+        super().__init__(reason)
+        self.reason = reason
+        self.entry_specific = entry_specific
+        self.path = None
+
+
+def fail(message, entry_specific=True):
+    raise SnapshotFailure(message, entry_specific)
+
+
+def report_failure(reason, path=None):
+    print(json.dumps({"reason": reason, "path": path}), file=sys.stderr)
     raise SystemExit(1)
+
+
+@contextlib.contextmanager
+def failure_path(path):
+    try:
+        yield
+    except SnapshotFailure as failure:
+        if failure.entry_specific and failure.path is None:
+            failure.path = path
+        raise
+    except OSError as error:
+        failure = SnapshotFailure(error.strerror or type(error).__name__, True)
+        failure.path = path
+        raise failure from None
 
 
 def require_descriptor_support():
@@ -200,7 +260,7 @@ def validate_name(name):
 
 
 def validate_relative_path(value):
-    if not isinstance(value, str) or not value or os.path.isabs(value) or "\\" in value:
+    if not isinstance(value, str) or not value or os.path.isabs(value):
         fail("snapshot relative path is unsafe")
     parts = value.split("/")
     if any(part in ("", ".", "..") for part in parts):
@@ -247,7 +307,7 @@ def read_regular_file_at(parent_fd, name, observed):
         if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
             fail("snapshot artifact is not a single regular file")
         if opened.st_size > MAX_FILE_BYTES:
-            fail("snapshot artifact exceeds the sanitization size limit")
+            fail(FILE_SIZE_LIMIT_REASON)
         chunks = []
         total = 0
         while True:
@@ -256,7 +316,7 @@ def read_regular_file_at(parent_fd, name, observed):
                 break
             total += len(chunk)
             if total > MAX_FILE_BYTES:
-                fail("snapshot artifact exceeds the sanitization size limit")
+                fail(FILE_SIZE_LIMIT_REASON)
             chunks.append(chunk)
         final = os.fstat(fd)
         current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -286,54 +346,55 @@ def scan_directory(dir_fd, relative_dir, directories, files, state, sensitive_na
             name = validate_name(entry.name)
             state["entries"] += 1
             if state["entries"] > MAX_ENTRIES:
-                fail("snapshot tree exceeds the sanitization entry limit")
-            try:
-                observed = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                fail("snapshot entry changed during sanitization")
+                fail(ENTRY_LIMIT_REASON, entry_specific=False)
             relative_path = name if not relative_dir else relative_dir + "/" + name
-            if stat.S_ISLNK(observed.st_mode):
-                continue
-            if stat.S_ISDIR(observed.st_mode):
-                child_fd = os.open(name, dir_flags(), dir_fd=dir_fd)
+            with failure_path(relative_path):
                 try:
-                    opened = verify_opened_at(dir_fd, name, child_fd, metadata(observed))
-                    opened_metadata = metadata(opened)
-                    directories[relative_path] = opened_metadata
-                    scan_directory(
-                        child_fd,
-                        relative_path,
-                        directories,
-                        files,
-                        state,
-                        sensitive_names,
-                    )
-                    final = os.fstat(child_fd)
-                    current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-                    if not same_version(opened_metadata, final) or not same_version(
-                        opened_metadata, current
-                    ):
-                        fail("snapshot directory changed while it was scanned")
-                finally:
-                    os.close(child_fd)
-                continue
-            if not stat.S_ISREG(observed.st_mode) or not should_read(name, sensitive_names):
-                continue
-            lower = name.lower()
-            if lower in sensitive_names:
-                files.append({"path": relative_path, "metadata": metadata(observed)})
-                continue
-            payload, file_metadata = read_regular_file_at(dir_fd, name, observed)
-            state["bytes"] += len(payload)
-            if state["bytes"] > MAX_TOTAL_BYTES:
-                fail("snapshot artifacts exceed the sanitization size limit")
-            files.append(
-                {
-                    "path": relative_path,
-                    "metadata": file_metadata,
-                    "content": base64.b64encode(payload).decode("ascii"),
-                }
-            )
+                    observed = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    fail("snapshot entry changed during sanitization")
+                if stat.S_ISLNK(observed.st_mode):
+                    continue
+                if stat.S_ISDIR(observed.st_mode):
+                    child_fd = os.open(name, dir_flags(), dir_fd=dir_fd)
+                    try:
+                        opened = verify_opened_at(dir_fd, name, child_fd, metadata(observed))
+                        opened_metadata = metadata(opened)
+                        directories[relative_path] = opened_metadata
+                        scan_directory(
+                            child_fd,
+                            relative_path,
+                            directories,
+                            files,
+                            state,
+                            sensitive_names,
+                        )
+                        final = os.fstat(child_fd)
+                        current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                        if not same_version(opened_metadata, final) or not same_version(
+                            opened_metadata, current
+                        ):
+                            fail("snapshot directory changed while it was scanned")
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if not stat.S_ISREG(observed.st_mode) or not should_read(name, sensitive_names):
+                    continue
+                lower = name.lower()
+                if lower in sensitive_names:
+                    files.append({"path": relative_path, "metadata": metadata(observed)})
+                    continue
+                payload, file_metadata = read_regular_file_at(dir_fd, name, observed)
+                state["bytes"] += len(payload)
+                if state["bytes"] > MAX_TOTAL_BYTES:
+                    fail(TOTAL_SIZE_LIMIT_REASON, entry_specific=False)
+                files.append(
+                    {
+                        "path": relative_path,
+                        "metadata": file_metadata,
+                        "content": base64.b64encode(payload).decode("ascii"),
+                    }
+                )
 
 
 def scan(root_path, expected_root, target_name, sensitive_names):
@@ -348,18 +409,19 @@ def scan(root_path, expected_root, target_name, sensitive_names):
         if target_name is None:
             scan_directory(root_fd, "", directories, files, state, sensitive_names)
         else:
-            name = validate_name(target_name)
-            observed = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-            if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
-                fail("required snapshot artifact is not a regular file")
-            payload, file_metadata = read_regular_file_at(root_fd, name, observed)
-            files.append(
-                {
-                    "path": name,
-                    "metadata": file_metadata,
-                    "content": base64.b64encode(payload).decode("ascii"),
-                }
-            )
+            with failure_path(target_name):
+                name = validate_name(target_name)
+                observed = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+                    fail("required snapshot artifact is not a regular file")
+                payload, file_metadata = read_regular_file_at(root_fd, name, observed)
+                files.append(
+                    {
+                        "path": name,
+                        "metadata": file_metadata,
+                        "content": base64.b64encode(payload).decode("ascii"),
+                    }
+                )
         if not same_version(root_metadata, os.fstat(root_fd)):
             fail("snapshot root changed while it was scanned")
         print(
@@ -581,33 +643,35 @@ def apply(root_path, plan):
         for action in actions:
             if not isinstance(action, dict):
                 fail("snapshot sanitization action is invalid")
-            expected = action.get("metadata")
-            if not isinstance(expected, dict):
-                fail("snapshot sanitization action omits a file identity")
-            parent_fd, name = open_parent(root_fd, action.get("path"), directories)
-            try:
-                kind = action.get("kind")
-                if kind == "remove":
-                    remove_file(parent_fd, name, expected)
-                elif kind == "replace":
-                    raw = action.get("content")
-                    if not isinstance(raw, str):
-                        fail("snapshot replacement content is invalid")
-                    if len(raw) > MAX_FILE_BASE64_LENGTH:
-                        fail("snapshot replacement content exceeds the encoded size limit")
-                    try:
-                        payload = base64.b64decode(raw, validate=True)
-                    except ValueError:
-                        fail("snapshot replacement content is invalid")
-                    if base64.b64encode(payload).decode("ascii") != raw:
-                        fail("snapshot replacement content is not canonical base64")
-                    if len(payload) > MAX_FILE_BYTES:
-                        fail("snapshot replacement content exceeds the size limit")
-                    replace_file(parent_fd, name, expected, payload)
-                else:
-                    fail("snapshot sanitization action is invalid")
-            finally:
-                os.close(parent_fd)
+            action_path = action.get("path")
+            with failure_path(action_path if isinstance(action_path, str) else None):
+                expected = action.get("metadata")
+                if not isinstance(expected, dict):
+                    fail("snapshot sanitization action omits a file identity")
+                parent_fd, name = open_parent(root_fd, action_path, directories)
+                try:
+                    kind = action.get("kind")
+                    if kind == "remove":
+                        remove_file(parent_fd, name, expected)
+                    elif kind == "replace":
+                        raw = action.get("content")
+                        if not isinstance(raw, str):
+                            fail("snapshot replacement content is invalid")
+                        if len(raw) > MAX_FILE_BASE64_LENGTH:
+                            fail("snapshot replacement content exceeds the encoded size limit")
+                        try:
+                            payload = base64.b64decode(raw, validate=True)
+                        except ValueError:
+                            fail("snapshot replacement content is invalid")
+                        if base64.b64encode(payload).decode("ascii") != raw:
+                            fail("snapshot replacement content is not canonical base64")
+                        if len(payload) > MAX_FILE_BYTES:
+                            fail("snapshot replacement content exceeds the size limit")
+                        replace_file(parent_fd, name, expected, payload)
+                    else:
+                        fail("snapshot sanitization action is invalid")
+                finally:
+                    os.close(parent_fd)
     finally:
         os.close(root_fd)
 
@@ -641,8 +705,12 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except SnapshotFailure as failure:
+        report_failure(failure.reason, failure.path)
+    except OSError as error:
+        report_failure(error.strerror or type(error).__name__)
     except Exception as error:
-        fail(str(error))
+        report_failure(str(error) or type(error).__name__)
 `.trim();
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -658,8 +726,34 @@ function isFileIdentity(value: unknown): value is SnapshotFileIdentity {
 
 function isSafeRelativePath(value: unknown): value is string {
   if (typeof value !== "string" || value === "" || path.isAbsolute(value)) return false;
-  if (value.includes("\\")) return false;
   return value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function parseHelperFailureReport(stderr: string): { reason: string; path: string | null } | null {
+  try {
+    const report: unknown = JSON.parse(stderr.trimEnd().split("\n").pop() ?? "");
+    if (!isObjectRecord(report) || typeof report.reason !== "string" || report.reason === "") {
+      return null;
+    }
+    return {
+      reason: report.reason,
+      path: typeof report.path === "string" && report.path !== "" ? report.path : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function helperFailure(result: SpawnSyncReturns<string>): SnapshotSanitizerHelperError {
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code ?? "unknown error";
+    return new SnapshotSanitizerHelperError(`sanitizer helper did not complete: ${code}`, null);
+  }
+  const report = parseHelperFailureReport(result.stderr);
+  return new SnapshotSanitizerHelperError(
+    report?.reason ?? "sanitizer helper gave no reason",
+    report?.path ?? null,
+  );
 }
 
 function parseScanResult(stdout: string): DescriptorSnapshotScan | null {
@@ -750,7 +844,7 @@ export function scanDescriptorSnapshot(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  if (result.status !== 0 || result.error) return null;
+  if (result.status !== 0 || result.error) throw helperFailure(result);
   return parseScanResult(result.stdout);
 }
 
@@ -759,8 +853,8 @@ export function applyDescriptorSnapshotActions(
   root: DescriptorSnapshotRoot,
   scan: DescriptorSnapshotScan,
   actions: readonly SnapshotSanitizationAction[],
-): boolean {
-  if (actions.length === 0) return true;
+): void {
+  if (actions.length === 0) return;
   const pythonPath = snapshotSanitizerPythonPath();
   if (pythonPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
   const result = spawnSync(
@@ -774,7 +868,7 @@ export function applyDescriptorSnapshotActions(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  return result.status === 0 && !result.error;
+  if (result.status !== 0 || result.error) throw helperFailure(result);
 }
 
 /** Create one direct child through a pinned directory descriptor without replacing an entry. */

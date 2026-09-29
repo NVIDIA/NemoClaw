@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,6 +53,38 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(readFileSync(envPath, "utf-8")).toBe("CUSTOM=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n");
     expect(statSync(envPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("sanitizes credentials in directories whose names contain a backslash", () => {
+    const backupPath = createBackup();
+    const directory = join(
+      backupPath,
+      "state",
+      "workspace",
+      "05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates",
+    );
+    const envPath = join(directory, ".env");
+    const notesPath = join(directory, "notes.md");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(envPath, "CUSTOM=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n");
+    writeFileSync(notesPath, "retained context\n");
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(envPath, "utf-8")).toBe("CUSTOM=[STRIPPED_BY_MIGRATION]\n");
+    expect(readFileSync(notesPath, "utf-8")).toBe("retained context\n");
+  });
+
+  it("names the oversized artifact when sanitization stops at the file size limit", () => {
+    const backupPath = createBackup();
+    const artifactPath = join(backupPath, "state", "export.json");
+    writeFileSync(artifactPath, "");
+    truncateSync(artifactPath, 16 * 1024 * 1024 + 1);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "Snapshot sanitization failed (snapshot artifact exceeds the 16 MiB sanitization size limit: state/export.json); removed the incomplete backup",
+    );
+    expect(existsSync(backupPath)).toBe(false);
   });
 
   it("restricts an already-safe config artifact without changing its content", () => {
@@ -325,7 +358,7 @@ describe("rebuild backup credential sanitization", () => {
           throw new Error("injected unlink failure");
         },
       }),
-    ).toThrow("Credential sanitization failed; removed the incomplete backup");
+    ).toThrow("Snapshot sanitization failed; removed the incomplete backup");
     expect(existsSync(backupPath)).toBe(false);
   });
 
@@ -335,7 +368,7 @@ describe("rebuild backup credential sanitization", () => {
     setSnapshotSanitizerPythonPathForTest(null);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
-      "python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed; removed the incomplete backup",
+      "python3 is required for snapshot sanitization; install python3 and rerun. Snapshot sanitization failed; removed the incomplete backup",
     );
     expect(existsSync(backupPath)).toBe(false);
   });
@@ -351,7 +384,7 @@ describe("rebuild backup credential sanitization", () => {
     setSnapshotSanitizerPythonPathForTest(pythonWrapper);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
-      "Credential sanitization failed; removed the incomplete backup",
+      "Snapshot sanitization failed (sanitizer helper gave no reason); removed the incomplete backup",
     );
     expect(existsSync(backupPath)).toBe(false);
   });
@@ -376,7 +409,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(received).toBeInstanceOf(Error);
     expect((received as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
+      `python3 is required for snapshot sanitization; install python3 and rerun. Snapshot sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
     );
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
     expect(((received as Error).cause as AggregateError).errors).toEqual([
@@ -407,7 +440,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(received).toBeInstanceOf(Error);
     expect((received as Error).message).toBe(
-      "Credential sanitization failed and backup cleanup failed",
+      "Snapshot sanitization failed and backup cleanup failed",
     );
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
     expect(((received as Error).cause as AggregateError).errors).toEqual([
@@ -437,7 +470,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and the incomplete backup remains at ${validatedPath}`,
+      `python3 is required for snapshot sanitization; install python3 and rerun. Snapshot sanitization failed and the incomplete backup remains at ${validatedPath}`,
     );
     expect((thrown as Error).message).not.toContain(unvalidatedPath);
     expect(removeBackup).toHaveBeenCalledWith(unvalidatedPath);
@@ -458,7 +491,7 @@ describe("rebuild backup credential sanitization", () => {
         removeBackup: () => undefined,
         backupExists: () => true,
       }),
-    ).toThrow("Credential sanitization failed and the incomplete backup remains");
+    ).toThrow("Snapshot sanitization failed and the incomplete backup remains");
     expect(existsSync(backupPath)).toBe(true);
   });
 
@@ -488,7 +521,7 @@ describe("rebuild backup credential sanitization", () => {
     setSnapshotSanitizerPythonPathForTest(pythonWrapper);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
-      "Credential sanitization failed; removed the incomplete backup",
+      /^Snapshot sanitization failed \(.+: state\/nested\/config\.json\); removed the incomplete backup$/u,
     );
     expect(existsSync(backupPath)).toBe(false);
     expect(readFileSync(outsideConfigPath, "utf-8")).toBe(outsideContents);
