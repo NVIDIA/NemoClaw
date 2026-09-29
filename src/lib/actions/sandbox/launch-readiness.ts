@@ -33,6 +33,7 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gatewa
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
   checkLaunchReadinessMutationAuthority,
+  classifyLaunchReadinessStoreFailure,
   fenceLaunchReadinessLease,
   type LaunchReadinessFence,
   LaunchReadinessFenceError,
@@ -163,7 +164,21 @@ export type LaunchReadinessPublicationResult =
       failedCheck?: LaunchReadinessFailedCheck;
     }
   | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
-  | { kind: "evidence-failed" };
+  | {
+      kind: "evidence-failed";
+      diagnostic?: {
+        stage:
+          | "publication-input"
+          | "publication-validation"
+          | "publication-store"
+          | "publication-lock";
+        reason:
+          | ReturnType<typeof classifyLaunchReadinessStoreFailure>
+          | "missing-authority"
+          | "pairing-observation-failed"
+          | "runtime-observation-failed";
+      };
+    };
 
 export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
@@ -1417,7 +1432,11 @@ export async function publishLaunchReadiness(
   deps: LaunchReadinessDeps = {},
 ): Promise<LaunchReadinessPublicationResult> {
   const { sandboxName, gatewayName, gatewayPort, epochId } = publication;
-  if (!gatewayName || !gatewayPort || !epochId) return { kind: "evidence-failed" };
+  if (!gatewayName || !gatewayPort || !epochId)
+    return {
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-input", reason: "missing-authority" },
+    };
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   try {
@@ -1453,12 +1472,23 @@ export async function publishLaunchReadiness(
           const validation = publicationValidationCategory(error);
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
-            : ({ kind: "evidence-failed" } as const);
+            : ({
+                kind: "evidence-failed",
+                diagnostic: {
+                  stage: "publication-validation",
+                  reason:
+                    error instanceof OpenClawPairingQualificationError
+                      ? "pairing-observation-failed"
+                      : error instanceof LaunchReadinessEvidenceError
+                        ? "runtime-observation-failed"
+                        : classifyLaunchReadinessStoreFailure(error),
+                },
+              } as const);
         } finally {
           recordPerformanceStage("publication-validation", validationStartedAt);
         }
         const publicationStartedAt = performance.now();
-        let publicationFailed = false;
+        let publicationFailure: ReturnType<typeof classifyLaunchReadinessStoreFailure> | undefined;
         try {
           deps.assertPublicationCurrent?.();
           (deps.publishLease ?? publishLaunchReadinessLease)(
@@ -1470,17 +1500,30 @@ export async function publishLaunchReadiness(
             deps.storeOptions,
             deps.assertPublicationCurrent,
           );
-        } catch {
-          publicationFailed = true;
+        } catch (error) {
+          publicationFailure = classifyLaunchReadinessStoreFailure(error);
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
         }
-        if (publicationFailed) return { kind: "evidence-failed" } as const;
+        if (publicationFailure)
+          return {
+            kind: "evidence-failed",
+            diagnostic: {
+              stage: "publication-store",
+              reason: publicationFailure,
+            },
+          } as const;
         return { kind: "published" } as const;
       });
     });
-  } catch {
-    return { kind: "evidence-failed" };
+  } catch (error) {
+    return {
+      kind: "evidence-failed",
+      diagnostic: {
+        stage: "publication-lock",
+        reason: classifyLaunchReadinessStoreFailure(error),
+      },
+    };
   }
 }
 
