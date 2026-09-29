@@ -205,6 +205,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
   "openshell-credential-generation-window",
+  "portable-hermes-finalization",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
 ]);
@@ -2839,14 +2840,28 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       );
     const preSetupRestores = restores.filter(({ index }) => index < setupIndex);
     const postSetupRestores = restores.filter(({ index }) => index > setupIndex);
-    const requiresStaleRecovery = jobName === "hermes-gpu-startup";
+    const requiresStaleRecovery = new Set([
+      "hermes-gpu-startup",
+      "portable-hermes-finalization",
+    ]).has(jobName);
+    const expectedPreRestoreName =
+      jobName === "portable-hermes-finalization"
+        ? "Recover stale Docker isolation before Portable Podman E2E"
+        : "Recover Docker CLI before native Podman E2E";
+    const expectedPreRestoreCondition =
+      jobName === "portable-hermes-finalization"
+        ? ""
+        : "${{ matrix.runtime_provider == 'podman' }}";
+    const expectedPostRestoreCondition =
+      jobName === "portable-hermes-finalization"
+        ? "always()"
+        : "${{ always() && matrix.runtime_provider == 'podman' }}";
     if (
       requiresStaleRecovery &&
       (preSetupRestores.length !== 1 ||
         preSetupRestores[0]!.index !== setupIndex - 1 ||
-        preSetupRestores[0]!.step.name !== "Recover Docker CLI before native Podman E2E" ||
-        stringValue(preSetupRestores[0]!.step.if) !==
-          "${{ matrix.runtime_provider == 'podman' }}" ||
+        preSetupRestores[0]!.step.name !== expectedPreRestoreName ||
+        stringValue(preSetupRestores[0]!.step.if) !== expectedPreRestoreCondition ||
         !isDeepStrictEqual(asRecord(preSetupRestores[0]!.step.with), { enabled: "true" }))
     ) {
       errors.push(
@@ -2865,8 +2880,7 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
     );
     if (
       postSetupRestores.length !== 1 ||
-      stringValue(postSetupRestores[0]!.step.if) !==
-        "${{ always() && matrix.runtime_provider == 'podman' }}" ||
+      stringValue(postSetupRestores[0]!.step.if) !== expectedPostRestoreCondition ||
       !isDeepStrictEqual(asRecord(postSetupRestores[0]!.step.with), { enabled: "true" })
     ) {
       errors.push(

@@ -25,6 +25,28 @@ const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-resto
 const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
 
+type WorkflowStep = {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+};
+
+type WorkflowJob = {
+  env?: Record<string, unknown>;
+  if?: string;
+  needs?: string | string[];
+  "runs-on"?: string;
+  steps?: WorkflowStep[];
+};
+
+function e2eWorkflowJobs(): Record<string, WorkflowJob> {
+  const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+    jobs: Record<string, WorkflowJob>;
+  };
+  return workflow.jobs;
+}
+
 vi.setConfig({ maxConcurrency: 5 });
 
 function shellQuote(value: string): string {
@@ -479,6 +501,84 @@ esac
 }
 
 describe("native Podman E2E setup boundary", () => {
+  // source-shape-contract: security -- Candidate code may consume only a trusted-main-built Podman 5.7 artifact on the reviewed GPU lane
+  it("builds the Portable Podman toolchain outside candidate execution", () => {
+    const toolchain = e2eWorkflowJobs()["portable-podman-toolchain"]!;
+    const checkout = toolchain.steps?.find(
+      (step) => step.name === "Check out the pinned Podman 5.7 source",
+    );
+    const replace = toolchain.steps?.find(
+      (step) => step.name === "Replace only Podman with the pinned portable runtime",
+    );
+    const upload = toolchain.steps?.find(
+      (step) => step.name === "Upload the pinned Portable Podman toolchain",
+    );
+
+    expect(toolchain.needs).toBe("generate-matrix");
+    expect(toolchain.if).toBe(
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'portable-hermes-finalization') }}",
+    );
+    expect(toolchain["runs-on"]).toBe("ubuntu-24.04");
+    expect(checkout?.with).toMatchObject({
+      repository: "podman-container-tools/podman",
+      ref: "0370128fc8dcae93533334324ef838db8f8da8cb",
+      path: ".podman-source",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(replace?.run).toContain("sha256sum --check --strict SHA256SUMS");
+    expect(replace?.run).toContain('"podman version 5.7.0"');
+    expect(replace?.run).toContain('.podmanVersion = "5.7.0"');
+    expect(upload?.with).toEqual({
+      name: "portable-podman-e2e-toolchain-amd64",
+      path: "${{ runner.temp }}/portable-podman-e2e-toolchain/",
+      "if-no-files-found": "error",
+      "retention-days": 3,
+      "compression-level": 0,
+    });
+  });
+
+  // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
+  it("runs Portable Hermes only on the explicit Podman 5.7 GPU lane", () => {
+    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
+    const gpu = job.steps?.find((step) => step.name === "Prove x86-64 NVIDIA GPU host authority");
+    const live = job.steps?.find(
+      (step) => step.name === "Run Portable Hermes finalization live Vitest test",
+    );
+    const setupIndex = job.steps?.indexOf(setup!) ?? -1;
+    const uploadIndex =
+      job.steps?.findIndex(
+        (step) => step.name === "Upload Portable Hermes finalization artifacts",
+      ) ?? -1;
+    const restoreIndex =
+      job.steps?.findIndex(
+        (step) => step.name === "Restore Docker and retire Portable Podman runtime",
+      ) ?? -1;
+
+    expect(job.needs).toEqual(["generate-matrix", "portable-podman-toolchain"]);
+    expect(job["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
+    expect(job.env).toMatchObject({
+      E2E_DEFAULT_ENABLED: "0",
+      E2E_GATEWAY_RUNTIMES: "podman",
+      E2E_TARGET_ID: "portable-hermes-finalization",
+      E2E_AGENT_RUNTIME: "hermes",
+    });
+    expect(setup?.with).toEqual({
+      enabled: "true",
+      toolchain: "portable-5.7",
+      "isolate-docker-cli": "false",
+    });
+    expect(gpu?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
+    expect(gpu?.run).toContain("nvidia-smi --query-gpu=name");
+    expect(live?.run).toContain("test/e2e/live/portable-profile-rootless-linux.test.ts");
+    expect(setupIndex).toBeGreaterThanOrEqual(0);
+    expect(uploadIndex).toBeGreaterThan(setupIndex);
+    expect(restoreIndex).toBeGreaterThan(uploadIndex);
+    expect(JSON.stringify(job)).not.toContain("NVIDIA_API_KEY");
+    expect(JSON.stringify(job)).not.toContain("NVIDIA_INFERENCE_API_KEY");
+  });
+
   it("provides Podman authority without impersonating Docker", () => {
     expect(validateNativePodmanSetupAction()).toEqual([]);
   });

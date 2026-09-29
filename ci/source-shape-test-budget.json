@@ -112,6 +112,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "builds the Portable Podman toolchain outside candidate execution",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "runs Portable Hermes only on the explicit Podman 5.7 GPU lane",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "routes rootless job dependency auditing by workflow trigger (#11028)",
       "category": "security"

@@ -1222,6 +1222,133 @@ jobs:
           name: native-runtime-podman-toolchain-${{ matrix.architecture }}
           path: ${{ runner.temp }}/native-runtime-podman-toolchain/
 
+  portable-podman-toolchain:
+    name: Build pinned Portable Podman 5.7 toolchain
+    needs: generate-matrix
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'portable-hermes-finalization') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pinned Podman 5.7 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: podman-container-tools/podman
+          ref: 0370128fc8dcae93533334324ef838db8f8da8cb # v5.7.0
+          path: .podman-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pinned Go for the Podman 5.7 build
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.25.9
+          cache: false
+
+      - name: Install Podman build dependencies from the signed runner OS repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+            --yes --no-install-recommends \
+            gcc git libapparmor-dev libbtrfs-dev libc6-dev libdevmapper-dev \
+            libglib2.0-dev libprotobuf-c-dev libprotobuf-dev libseccomp-dev \
+            libselinux1-dev libsqlite3-dev libsystemd-dev make pkg-config \
+            protobuf-compiler
+
+      - name: Download the reviewed native helper toolchain
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-podman-e2e-toolchain-amd64
+          path: ${{ runner.temp }}/portable-podman-e2e-toolchain
+
+      - name: Replace only Podman with the pinned portable runtime
+        env:
+          PODMAN_SOURCE_SHA: 0370128fc8dcae93533334324ef838db8f8da8cb
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/portable-podman-e2e-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(dpkg --print-architecture)" == amd64 ]]
+          [[ "$(git -C .podman-source rev-parse --verify 'HEAD^{commit}')" == "$PODMAN_SOURCE_SHA" ]]
+          [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
+          [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum --check --strict SHA256SUMS
+          )
+          jq -e '
+            .schemaVersion == 1 and
+            .kind == "nemoclaw-native-podman-toolchain-v1" and
+            .architecture == "amd64" and
+            .podmanVersion == "6.1.0" and
+            .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+            .netavarkVersion == "2.1.0" and
+            .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
+            .aardvarkDnsVersion == "2.1.0" and
+            .aardvarkDnsSourceSha == "cd7417681229219059939bdd9f0b3bd9ac9abb08" and
+            .pastaVersion == "2026_07_28.f8df3f1" and
+            .pastaSourceArchiveSha256 == "54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958" and
+            .pastaSourceSha == "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce" and
+            .goVersion == "1.25.9" and
+            .rustVersion == "1.88.0"
+          ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
+          [[ -z "$(git -C .podman-source status --porcelain --untracked-files=no)" ]]
+          [[ "$(go version)" == go\ version\ go1.25.9\ * ]]
+
+          SOURCE_DATE_EPOCH=1762886964 \
+            BUILD_ORIGIN="NVIDIA/NemoClaw Portable Podman qualification" \
+            EXTRA_BUILDTAGS=containers_image_openpgp \
+            make --directory=.podman-source --jobs=2 \
+              podman rootlessport PREFIX=/usr/local
+
+          podman_dependencies="$(ldd .podman-source/bin/podman)"
+          printf '%s\n' "$podman_dependencies"
+          if grep -F "not found" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Portable Podman build has an unresolved runtime dependency" >&2
+            exit 1
+          fi
+          if grep -E "libgpgme|libsubid" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Portable Podman build must not require an optional host ABI" >&2
+            exit 1
+          fi
+
+          install -m 0755 .podman-source/bin/podman "$TOOLCHAIN_DIRECTORY/bin/podman"
+          install -m 0755 .podman-source/bin/rootlessport \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/rootlessport"
+          install -m 0644 \
+            .podman-source/vendor/go.podman.io/common/pkg/config/containers.conf \
+            "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf"
+          [[ "$("$TOOLCHAIN_DIRECTORY/bin/podman" --version)" == "podman version 5.7.0" ]]
+          jq \
+            --arg podmanSourceSha "$PODMAN_SOURCE_SHA" \
+            '.podmanVersion = "5.7.0" | .podmanSourceSha = $podmanSourceSha' \
+            "$TOOLCHAIN_DIRECTORY/manifest.json" \
+            >"$TOOLCHAIN_DIRECTORY/manifest.next.json"
+          mv "$TOOLCHAIN_DIRECTORY/manifest.next.json" "$TOOLCHAIN_DIRECTORY/manifest.json"
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum \
+              bin/pasta \
+              bin/podman \
+              libexec/podman/aardvark-dns \
+              libexec/podman/netavark \
+              libexec/podman/rootlessport \
+              manifest.json \
+              share/containers/containers.conf >SHA256SUMS
+          )
+
+      - name: Upload the pinned Portable Podman toolchain
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-podman-e2e-toolchain-amd64
+          path: ${{ runner.temp }}/portable-podman-e2e-toolchain/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
   native-runtime-qualification-producer:
     name: ${{ matrix.jobName }}
     needs:
@@ -2847,7 +2974,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3055,7 +3182,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3688,7 +3815,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3839,7 +3966,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4122,7 +4249,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5136,7 +5263,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5162,6 +5289,133 @@ jobs:
 
       - name: Restore Docker CLI after native Podman E2E
         if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        with:
+          enabled: "true"
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  portable-hermes-finalization:
+    name: Portable Hermes finalization (Podman 5.7, NVIDIA GPU)
+    needs: [generate-matrix, portable-podman-toolchain]
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'portable-hermes-finalization') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_GATEWAY_RUNTIMES: podman
+      E2E_TARGET_ID: portable-hermes-finalization
+      E2E_AGENT_RUNTIME: hermes
+      E2E_OBSERVABLE_OUTCOME: "Portable Hermes lifecycle completes on the supported NVIDIA GPU and Podman 5.7 boundary"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "x86-64 NVIDIA GPU runner; rootless Podman 5.7; local Ollama"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/portable-hermes-finalization
+      E2E_HERMES_BASE_STORAGE_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
+      E2E_SOURCE_REVISION: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: podman
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+    steps:
+      - name: Install Portable Podman host dependencies
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        with:
+          packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
+
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Compile Portable Hermes authorities
+        run: |
+          set -euo pipefail
+          npm run catalog:compile
+          npm run build:policy-boundary
+
+      - name: Install pinned OpenShell
+        run: |
+          set -euo pipefail
+          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
+          for component in openshell openshell-gateway openshell-sandbox; do
+            resolved="$(command -v "$component")"
+            sudo install -o root -g root -m 0755 "$resolved" "/usr/bin/$component"
+          done
+          echo /usr/bin >>"$GITHUB_PATH"
+
+      - name: Recover stale Docker isolation before Portable Podman E2E
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        with:
+          enabled: "true"
+
+      - name: Prepare Portable Podman 5.7 runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
+        with:
+          enabled: "true"
+          toolchain: portable-5.7
+          isolate-docker-cli: "false"
+
+      - name: Prove x86-64 NVIDIA GPU host authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == x86_64 ]]
+          gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader | sed -n '1p')"
+          [[ -n "$gpu_name" ]]
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          jq -n \
+            --arg architecture x86_64 \
+            --arg gpuName "$gpu_name" \
+            --arg podmanVersion "$(podman --version)" \
+            '{schemaVersion: 1, architecture: $architecture, gpuName: $gpuName, podmanVersion: $podmanVersion}' \
+            >"$E2E_ARTIFACT_DIR/host-authority.json"
+
+      - name: Build the exact Hermes base for portable validation
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
+        run: >-
+          podman build
+          --file agents/hermes/Dockerfile.base
+          --tag localhost/nemoclaw-hermes-base:portable-e2e
+          .
+
+      - name: Run Portable Hermes finalization live Vitest test
+        env:
+          NEMOCLAW_HERMES_E2E_BASE_IMAGE: localhost/nemoclaw-hermes-base:portable-e2e
+        run: >-
+          npx tsx tools/e2e/live-vitest-invocation.mts run
+          --test-path test/e2e/live/portable-profile-rootless-linux.test.ts
+
+      - name: Upload Portable Hermes finalization artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-portable-hermes-finalization
+          path: e2e-artifacts/live/portable-hermes-finalization/
+
+      - name: Restore Docker and retire Portable Podman runtime
+        if: always()
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
         with:
           enabled: "true"
@@ -5328,7 +5582,7 @@ jobs:
           enabled: "true"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5597,7 +5851,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5740,7 +5994,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f83fa6d3c2529b192655155585b313a0a1ae5927
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5810,6 +6064,7 @@ jobs:
         managed-image-protected-runtime,
         hermes-e2e,
         hermes-gpu-startup,
+        portable-hermes-finalization,
         messaging-providers,
         jetson-nvmap-gpu,
         cloud-onboard,

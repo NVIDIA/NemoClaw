@@ -43,6 +43,11 @@ The install refuses package removals, preserving the runner's Docker and contain
   Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
+- The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
+  runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
+  rootless Podman 5.7. It builds Podman from the pinned v5.7.0 source commit while
+  reusing the reviewed native helper toolchain. Select it only with the `podman`
+  gateway runtime.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -1880,6 +1885,11 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
+To run Portable Hermes finalization evidence, set
+`jobs=portable-hermes-finalization`, leave `targets` empty, and set
+`gateway_runtimes=podman`. This explicit lane uses the exact candidate checkout
+but obtains its Podman 5.7 binary and helper artifact through trusted workflow
+jobs before candidate execution.
 A trusted `main` workflow step validates the open PR before candidate checkout.
 It requires `NVIDIA/NemoClaw` as the source repository before authorizing the full ordinary plan and credential profiles.
 A second validation after checkout rejects a changed selected commit, base commit, repository, or

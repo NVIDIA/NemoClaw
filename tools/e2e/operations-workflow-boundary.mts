@@ -26,6 +26,7 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml"
 const META_JOBS = new Set([
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
+  "portable-podman-toolchain",
   "native-runtime-qualification-producer-plan",
   "release-qualification",
   "relevant-e2e",
@@ -653,6 +654,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
       const nativeRuntimeQualificationCheckout =
+        (jobName === "portable-podman-toolchain" &&
+          step.name === "Check out the pinned Podman 5.7 source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "0370128fc8dcae93533334324ef838db8f8da8cb" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
         (jobName === "native-runtime-qualification-podman-toolchain" &&
           step.name === "Check out the pinned Podman source" &&
           step.with?.repository === "podman-container-tools/podman" &&
