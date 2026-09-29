@@ -4698,6 +4698,7 @@ const { pathToFileURL } = require("node:url");
 
 (async () => {
   const executable = fs.realpathSync(process.argv[2]);
+  const databasePath = "/sandbox/.openclaw/state/openclaw.sqlite";
   let current = fs.statSync(executable).isDirectory() ? executable : path.dirname(executable);
   let packageRoot;
   while (true) {
@@ -4728,24 +4729,130 @@ const { pathToFileURL } = require("node:url");
     .readdirSync(dist)
     .filter((name) => /^openclaw-state-db-.*\.js$/.test(name))
     .sort();
+  let stateApi;
   for (const candidate of stateModules) {
     const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
-    if (typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded !== "function") continue;
-    const result = await Promise.resolve(
-      loaded.repairOpenClawStateDatabaseSchemaIfNeeded({ env: process.env }),
-    );
+    if (
+      typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded === "function" &&
+      typeof loaded.repairOpenClawStateDatabaseSchema === "function" &&
+      typeof loaded.detectOpenClawStateDatabaseSchemaMigrations === "function" &&
+      typeof loaded.withOpenClawStateStartupMigrationCheckpointDatabase === "function"
+    ) {
+      stateApi = loaded;
+      break;
+    }
+  }
+  if (!stateApi) throw new Error("OpenClaw shared state schema repair not found");
+
+  const repairOptions = { env: process.env, path: databasePath };
+  const validateResult = (result) => {
     if (!result || !Array.isArray(result.changes) || !Array.isArray(result.warnings)) {
       throw new Error("OpenClaw shared state repair returned an invalid result");
     }
     if (result.warnings.length > 0) {
       throw new Error(`OpenClaw shared state repair warnings: ${result.warnings.join("; ")}`);
     }
-    if (result.changes.length > 0) {
-      console.error(`[setup] OpenClaw repaired ${result.changes.length} shared state schema change(s)`);
-    }
-    return;
+    return result;
+  };
+  const changes = [
+    ...validateResult(
+      await Promise.resolve(stateApi.repairOpenClawStateDatabaseSchemaIfNeeded(repairOptions)),
+    ).changes,
+  ];
+  let pending = stateApi.detectOpenClawStateDatabaseSchemaMigrations(repairOptions);
+  if (!Array.isArray(pending)) {
+    throw new Error("OpenClaw shared state migration detector returned an invalid result");
   }
-  throw new Error("OpenClaw shared state schema repair not found");
+
+  if (pending.length > 0) {
+    // OpenClaw 2026.6.10 created schema v1 before the audit ledger existed.
+    // OpenClaw 2026.9.1 retires three v1 surfaces but gates the migrations that
+    // advance the schema version on audit_events, so its successful repair can
+    // otherwise leave the database permanently at v1. Bootstrap only that
+    // missing canonical table from the installed package's own schema, through
+    // OpenClaw's write-ownership boundary, and let its repair own every migration.
+    const expectedKinds = new Set([
+      "state-consolidation-v13",
+      "creator-namespace-v14",
+      "conversation-binding-targets-v15",
+    ]);
+    const pendingKinds = pending.map((entry) => entry?.kind);
+    if (
+      pendingKinds.length !== expectedKinds.size ||
+      pendingKinds.some((kind) => !expectedKinds.has(kind))
+    ) {
+      throw new Error(
+        `OpenClaw shared state repair left unexpected migration(s): ${pendingKinds.join(", ")}`,
+      );
+    }
+
+    const schemaModules = fs
+      .readdirSync(dist)
+      .filter((name) => /^openclaw-state-db-cache-.*\.js$/.test(name))
+      .sort();
+    const auditStart = "CREATE TABLE IF NOT EXISTS audit_events (";
+    const auditIdentityStart = "CREATE TABLE IF NOT EXISTS audit_identity_keys (";
+    let canonicalSchema;
+    for (const candidate of schemaModules) {
+      const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+      const matches = Object.values(loaded).filter(
+        (value) =>
+          typeof value === "string" &&
+          value.includes(auditStart) &&
+          value.includes(auditIdentityStart) &&
+          value.includes("CREATE TABLE IF NOT EXISTS agent_databases ("),
+      );
+      if (matches.length > 1 || (canonicalSchema && matches.length > 0)) {
+        throw new Error("OpenClaw exported multiple canonical shared state schemas");
+      }
+      if (matches.length === 1) canonicalSchema = matches[0];
+    }
+    if (!canonicalSchema) throw new Error("OpenClaw canonical shared state schema not found");
+    const canonicalTableBlock = (startMarker) => {
+      const offset = canonicalSchema.indexOf(startMarker);
+      const end = canonicalSchema.indexOf("\n\nCREATE TABLE IF NOT EXISTS ", offset + 1);
+      if (offset < 0 || end < 0) {
+        throw new Error("OpenClaw canonical audit ledger schema is malformed");
+      }
+      return canonicalSchema.slice(offset, end);
+    };
+    const auditSchema = [
+      canonicalTableBlock(auditStart),
+      canonicalTableBlock(auditIdentityStart),
+    ].join("\n\n");
+
+    stateApi.withOpenClawStateStartupMigrationCheckpointDatabase((database) => {
+      const versionRow = database.prepare("PRAGMA user_version").get();
+      const auditRow = database
+        .prepare("SELECT type FROM sqlite_master WHERE name = 'audit_events'")
+        .get();
+      if (versionRow?.user_version !== 1 || auditRow !== undefined) {
+        throw new Error("OpenClaw legacy audit ledger bootstrap precondition changed");
+      }
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        database.exec(auditSchema);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
+    }, repairOptions);
+    console.error("[setup] OpenClaw bootstrapped the missing legacy audit ledger migration boundary");
+    changes.push(
+      ...validateResult(
+        await Promise.resolve(stateApi.repairOpenClawStateDatabaseSchema(repairOptions)),
+      ).changes,
+    );
+    pending = stateApi.detectOpenClawStateDatabaseSchemaMigrations(repairOptions);
+    if (!Array.isArray(pending) || pending.length > 0) {
+      const kinds = Array.isArray(pending) ? pending.map((entry) => entry?.kind).join(", ") : "invalid";
+      throw new Error(`OpenClaw shared state repair did not converge: ${kinds}`);
+    }
+  }
+  if (changes.length > 0) {
+    console.error(`[setup] OpenClaw repaired ${changes.length} shared state schema change(s)`);
+  }
 })().catch((error) => {
   console.error(`[SECURITY] Could not repair the OpenClaw shared state schema: ${error.message}`);
   process.exit(1);

@@ -252,7 +252,14 @@ function fixture() {
   );
   fs.writeFileSync(
     path.join(packageRoot, "dist", "openclaw-state-db-test.js"),
-    `import fs from "node:fs";\nexport function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(${JSON.stringify(schemaRepairCalls)}, "repair\\n"); return { changes: ["migrated"], warnings: [] }; }\n`,
+    [
+      `import fs from "node:fs";`,
+      `export function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(${JSON.stringify(schemaRepairCalls)}, "repair\\n"); return { changes: ["migrated"], warnings: [] }; }`,
+      `export function repairOpenClawStateDatabaseSchema() { throw new Error("unexpected explicit repair"); }`,
+      `export function detectOpenClawStateDatabaseSchemaMigrations() { return []; }`,
+      `export function withOpenClawStateStartupMigrationCheckpointDatabase() { throw new Error("unexpected checkpoint"); }`,
+      "",
+    ].join("\n"),
   );
   fs.writeFileSync(
     openclaw,
@@ -277,6 +284,7 @@ function fixture() {
     leaseViolation,
     marker,
     openclaw,
+    packageRoot,
     ready,
     root,
     schemaRepairCalls,
@@ -462,6 +470,72 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
       );
       expect(result.stderr).toContain("OpenClaw repaired 1 shared state schema change(s)");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("converges the OpenClaw 2026.6.10 database missing its audit ledger", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(f.configDir, "state"));
+      const database = path.join(f.configDir, "state", "openclaw.sqlite");
+      fs.writeFileSync(database, "legacy-v1");
+      fs.writeFileSync(
+        path.join(f.packageRoot, "dist", "openclaw-state-db-test.js"),
+        [
+          `import fs from "node:fs";`,
+          `const calls = ${JSON.stringify(f.schemaRepairCalls)};`,
+          `const bootstrapped = (options) => fs.readFileSync(options.path, "utf8") === "audit-ledger";`,
+          `export function repairOpenClawStateDatabaseSchemaIfNeeded(options) { fs.appendFileSync(calls, "conditional\\n"); return { changes: bootstrapped(options) ? [] : ["retired-v7", "retired-v10", "folded-v12"], warnings: [] }; }`,
+          `export function repairOpenClawStateDatabaseSchema(options) { fs.appendFileSync(calls, "explicit\\n"); if (!bootstrapped(options)) throw new Error("audit ledger missing"); return { changes: ["v13", "v14", "v15", "schema-version"], warnings: [] }; }`,
+          `export function detectOpenClawStateDatabaseSchemaMigrations(options) { return bootstrapped(options) ? [] : ["state-consolidation-v13", "creator-namespace-v14", "conversation-binding-targets-v15"].map((kind) => ({ kind, path: options.path })); }`,
+          `export function withOpenClawStateStartupMigrationCheckpointDatabase(callback, options) {`,
+          `  callback({`,
+          `    prepare(sql) { return { get() { return sql === "PRAGMA user_version" ? { user_version: 1 } : undefined; } }; },`,
+          `    exec(sql) { if (sql.includes("CREATE TABLE IF NOT EXISTS audit_identity_keys (")) fs.writeFileSync(options.path, "audit-ledger"); },`,
+          `  });`,
+          `}`,
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        path.join(f.packageRoot, "dist", "openclaw-state-db-cache-test.js"),
+        [
+          "export const schema = `",
+          "CREATE TABLE IF NOT EXISTS audit_events (sequence INTEGER PRIMARY KEY);",
+          "",
+          "CREATE TABLE IF NOT EXISTS outbound_message_execution_bindings (event_id TEXT);",
+          "",
+          "CREATE TABLE IF NOT EXISTS audit_identity_keys (id INTEGER PRIMARY KEY);",
+          "",
+          "CREATE TABLE IF NOT EXISTS config_revision_keys (id INTEGER PRIMARY KEY);",
+          "",
+          "CREATE TABLE IF NOT EXISTS agent_databases (agent_id TEXT);",
+          "`;",
+          "",
+        ].join("\n"),
+      );
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe(
+        "conditional\nexplicit\nconditional\n",
+      );
+      expect(result.stderr).toContain(
+        "OpenClaw bootstrapped the missing legacy audit ledger migration boundary",
+      );
+      expect(result.stderr).toContain("OpenClaw repaired 7 shared state schema change(s)");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
