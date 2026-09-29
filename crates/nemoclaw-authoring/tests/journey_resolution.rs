@@ -16,6 +16,49 @@ fn minimum() -> PartialDocument {
 }
 
 #[test]
+fn empty_sandbox_asks_for_harness_form_before_inline_harness_kind() {
+    let capabilities = Capabilities::available();
+    let mut inline = JourneyDefinition::new("inline-form", minimum())
+        .start(&capabilities)
+        .unwrap();
+    let form = "form:/spec/sandboxes/0";
+    let initial = inline.resolve(&capabilities).unwrap();
+    let question = initial.question(form).expect("sandbox form question");
+    assert_eq!(question.choices(), &[json!("harness"), json!("harnessRef")]);
+    assert!(initial.question("/spec/sandboxes/0/harness/kind").is_none());
+    inline
+        .answer(&capabilities, form, Some(json!("harness")))
+        .unwrap();
+    let inline_questions = inline.resolve(&capabilities).unwrap();
+    let harness = inline_questions
+        .question("/spec/sandboxes/0/harness/kind")
+        .expect("inline harness kind");
+    assert!(!harness.choices().is_empty());
+    assert_eq!(
+        inline_questions
+            .questions()
+            .iter()
+            .filter(|question| question.id() == "/spec/sandboxes/0/harness/kind")
+            .count(),
+        1
+    );
+
+    let mut referenced = JourneyDefinition::new("reference-form", minimum())
+        .start(&capabilities)
+        .unwrap();
+    referenced
+        .answer(&capabilities, form, Some(json!("harnessRef")))
+        .unwrap();
+    let reference = referenced.resolve(&capabilities).unwrap();
+    assert!(reference.question("/spec/sandboxes/0/harnessRef").is_some());
+    assert!(
+        reference
+            .question("/spec/sandboxes/0/harness/kind")
+            .is_none()
+    );
+}
+
+#[test]
 fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
     let capabilities = Capabilities::available();
     let mut values: serde_json::Value =
@@ -1425,10 +1468,11 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     let mut state = definition.start(&capabilities).unwrap();
     let questions = state.resolve(&capabilities).unwrap();
     assert!(questions.question("/metadata/name").is_some());
+    assert!(questions.question("form:/spec/sandboxes/0").is_some());
     assert!(
         questions
             .question("/spec/sandboxes/0/harness/kind")
-            .is_some()
+            .is_none()
     );
     assert!(
         questions
@@ -1441,6 +1485,13 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
             &capabilities,
             "/metadata/name",
             Some(json!("my-deployment")),
+        )
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "form:/spec/sandboxes/0",
+            Some(json!("harness")),
         )
         .unwrap();
     state
@@ -2027,6 +2078,13 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
     state
         .answer(
             &capabilities,
+            "form:/spec/sandboxes/0",
+            Some(json!("harness")),
+        )
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
             "/spec/sandboxes/0/harness/kind",
             Some(json!("nvidia.fabric.openclaw")),
         )
@@ -2205,6 +2263,15 @@ fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
     let capabilities = Capabilities::from_harnesses([]);
     let mut state = JourneyDefinition::new("empty-catalog", minimum())
         .start(&capabilities)
+        .unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    assert!(resolved.question("form:/spec/sandboxes/0").is_some());
+    state
+        .answer(
+            &capabilities,
+            "form:/spec/sandboxes/0",
+            Some(json!("harness")),
+        )
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(

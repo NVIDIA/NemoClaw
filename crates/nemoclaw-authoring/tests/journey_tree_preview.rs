@@ -75,6 +75,15 @@ fn minimum_values_preview_shows_harness_branches_and_optional_omission() {
     assert!(tree.contains("/metadata/name"));
     assert!(tree.contains("/spec/sandboxes/0/name"));
     assert!(tree.contains("/spec/sandboxes/0/agent/name"));
+    assert!(
+        tree.contains("Choices for form:/spec/sandboxes/0:"),
+        "{tree}"
+    );
+    assert!(tree.contains("├─ harnessRef"), "{tree}");
+    assert!(
+        tree.contains("Choices for /spec/sandboxes/0/harness/kind:"),
+        "{tree}"
+    );
     assert!(tree.contains("nvidia.fabric.openclaw"));
     assert!(tree.contains("/cli: omitted"));
     assert!(tree.contains("Other unresolved SDK constraints"));

@@ -739,10 +739,20 @@ impl JourneyState {
             });
         }
 
-        let active_harness = harness_path(&self.values);
-        let chosen = harness_kind(&self.values);
-        let harness_open = chosen.is_none()
-            || (self.definition.ask.contains(HARNESS) && !self.accepted.contains(HARNESS));
+        let active_harness = harness_path(&self.values).or_else(|| {
+            (self
+                .selected_forms
+                .get("/spec/sandboxes/0")
+                .is_some_and(|form| form == "harness"))
+            .then(|| "/spec/sandboxes/0/harness".into())
+        });
+        let chosen = active_harness
+            .as_ref()
+            .and_then(|path| self.values.pointer(&format!("{path}/kind")))
+            .and_then(Value::as_str);
+        let harness_open = active_harness.is_some()
+            && (chosen.is_none()
+                || (self.definition.ask.contains(HARNESS) && !self.accepted.contains(HARNESS)));
         let reachable: Vec<&str> = if harness_open {
             capabilities
                 .harnesses()
@@ -758,13 +768,18 @@ impl JourneyState {
             {
                 let reason = if harness_open {
                     "available harness choices".to_owned()
+                } else if let Some(harness) = chosen {
+                    format!("selected harness '{harness}'")
                 } else {
-                    format!("selected harness '{}'", chosen.expect("selected harness"))
+                    "the unresolved harness form".to_owned()
                 };
                 warnings.push(format!("{field} is not reachable from {reason}"));
             }
         }
         if harness_open {
+            // Fabric supplies the active harness choices; replace the generic
+            // SDK leaf question if sparse traversal found the same field.
+            questions.retain(|question| question.id != HARNESS);
             if let Some(harness) = chosen
                 && adapter_schema(capabilities, harness)?.is_none()
             {
@@ -1323,6 +1338,12 @@ impl JourneyState {
             self.inactive_settings.insert(old.clone(), settings.clone());
         }
         let owner_path = harness_path(&self.values)
+            .or_else(|| {
+                self.selected_forms
+                    .get("/spec/sandboxes/0")
+                    .filter(|form| *form == "harness")
+                    .map(|_| "/spec/sandboxes/0/harness".into())
+            })
             .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
         let harness = if owner_path == "/spec/sandboxes/0/harness" {
             self.values
@@ -1654,7 +1675,10 @@ fn harness_path(values: &Value) -> Option<String> {
         let path = format!("/spec/harnesses/{escaped}");
         return values.pointer(&path).is_some().then_some(path);
     }
-    Some("/spec/sandboxes/0/harness".into())
+    sandbox
+        .get("harness")
+        .is_some()
+        .then(|| "/spec/sandboxes/0/harness".into())
 }
 
 fn harness_kind(values: &Value) -> Option<&str> {
