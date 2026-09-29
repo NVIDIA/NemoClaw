@@ -73,6 +73,7 @@ The design decision defines current invariants; historical test results apply on
 | Topic | Owner |
 |---|---|
 | Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
+| Proposed partial-document onboarding journey and prototype slices | [Onboarding journey prototype](design/onboarding-journeys.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
