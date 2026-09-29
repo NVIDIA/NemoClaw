@@ -791,7 +791,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
-  if (!tunnelTargetReady) return;
+  if (!tunnelTargetReady) {
+    throw new Error(
+      "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually, then retry.",
+    );
+  }
 
   // Wait for cloudflared URL
   if (isRunning(pidDir, "cloudflared")) {

@@ -29,12 +29,17 @@ export interface StopCommandDeps {
 
 const SAFE_SANDBOX_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
+function resolveSandboxNameOverride(): string | undefined {
+  const envName =
+    process.env.NEMOCLAW_SANDBOX_NAME ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME;
+  return envName && SAFE_SANDBOX_RE.test(envName) ? envName : undefined;
+}
+
 export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): string | undefined {
   // Explicit env var overrides take highest priority so that
   // `NEMOCLAW_SANDBOX_NAME=foo nemoclaw stop` targets the right sandbox.
-  const envName =
-    process.env.NEMOCLAW_SANDBOX_NAME ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME;
-  if (envName && SAFE_SANDBOX_RE.test(envName)) return envName;
+  const envName = resolveSandboxNameOverride();
+  if (envName) return envName;
 
   const { defaultSandbox } = listSandboxes();
   return defaultSandbox && SAFE_SANDBOX_RE.test(defaultSandbox) ? defaultSandbox : undefined;
@@ -44,6 +49,9 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
   sandboxName?: string;
   dashboardPort?: number;
 } {
+  const envName = resolveSandboxNameOverride();
+  if (envName) return { sandboxName: envName };
+
   const registrySnapshot = deps.listSandboxes();
   const sandboxName = resolveDefaultSandboxName(() => registrySnapshot);
   const dashboardPort = sandboxName

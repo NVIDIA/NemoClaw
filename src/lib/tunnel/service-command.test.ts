@@ -52,6 +52,18 @@ describe("services command", () => {
     );
   });
 
+  it("keeps explicit sandbox overrides independent of registry availability", () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "env-sandbox";
+    const listSandboxes = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+
+    expect(resolveDefaultSandboxServiceOptions({ listSandboxes })).toEqual({
+      sandboxName: "env-sandbox",
+    });
+    expect(listSandboxes).not.toHaveBeenCalled();
+  });
+
   it("prefers NEMOCLAW_SANDBOX env var over registry default", () => {
     process.env.NEMOCLAW_SANDBOX = "env-sandbox-2";
     expect(resolveDefaultSandboxName(() => ({ defaultSandbox: "registry-sandbox" }))).toBe(

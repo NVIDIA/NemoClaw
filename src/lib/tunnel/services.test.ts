@@ -518,7 +518,9 @@ describe("startAll", () => {
     };
     const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
     try {
-      await startAll({ pidDir, dashboardPort: 18_791, processControl });
+      await expect(startAll({ pidDir, dashboardPort: 18_791, processControl })).rejects.toThrow(
+        "cloudflared could not be retargeted",
+      );
     } finally {
       nowSpy.mockRestore();
     }
