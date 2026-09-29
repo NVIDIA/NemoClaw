@@ -359,7 +359,7 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe("repair\n");
+      expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe("repair\nrepair\n");
       expect(fs.readFileSync(f.calls, "utf8")).toBe(
         "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
       );

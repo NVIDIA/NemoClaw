@@ -4837,9 +4837,11 @@ EOF
   fi
   # OpenClaw intentionally repairs the shared SQLite schema before it
   # discovers dependent plugin, agent, and device-identity migrations. Some
-  # older native homes report success for that first pass while still asking
-  # the next startup to run doctor again, so always perform exactly one
-  # bounded follow-up pass before releasing the gateway.
+  # older native homes also expose another shared-state migration only after
+  # the first doctor process initializes its lazy registry tables. Repair the
+  # schema again, then perform exactly one bounded follow-up doctor pass before
+  # releasing the gateway.
+  repair_openclaw_shared_state_schema || return 1
   "${doctor_command[@]}" || return 1
   wait_for_openclaw_startup_migration_lease || return 1
   if [ "$(id -u)" -eq 0 ]; then
