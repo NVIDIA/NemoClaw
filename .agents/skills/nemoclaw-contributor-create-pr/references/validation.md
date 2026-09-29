@@ -49,16 +49,39 @@ Select review evidence for the publication state before every agent-managed push
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
-Confirm that the complete validation execution surface is byte-for-byte identical with the canonical comparison ref:
+Separate candidate content under review from the local validation machinery that executes on the
+contributor host. Candidate source, tests, workflows, E2E definitions, package manifests, lockfiles,
+and package-manager configuration are review inputs. Their presence in the diff does not by itself
+require approval or block draft publication.
+
+Before local validation, confirm that the machinery which selects and orchestrates the checks is
+byte-for-byte identical with the canonical comparison ref:
 
 - validation command and hook configuration;
-- package manifests, lockfiles, and package-manager configuration;
-- transitively loaded repository-local helpers and configuration;
+- transitively executed repository-local validator helpers and configuration;
+- dependency-resolution inputs for the validator machinery;
 - resolved validator executables.
 
-Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
+Do not infer executable identity from a package name or version. Do not use a branch-defined validator
+as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute
+the candidate validator. Report the path or executable and canonical base SHA, then use the fallback
+below.
 
-Confirm that the installed pre-push hook is available. Then use a normal `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication checks once. Do not run a separate `npm run validate:pr` before the push. If the hook is missing or stale, stop and repair the contributor setup before publication.
+If the trusted local validation machinery cannot be established, do not execute the changed
+validator or install its dependency graph into a credentialed contributor environment. Preserve the
+implementation's focused test evidence, publish the exact commit as a draft through the guarded
+publication method without invoking changed local hooks, and rely on the canonical PR workflow's
+trusted-base action implementations in its read-only token context. Disclose the skipped local
+validation, the differing machinery, and the canonical base SHA in `Verification`. This fallback
+needs no additional publication approval. Stop only when canonical PR validation lacks a trusted,
+read-only path for the candidate or when another publication gate independently fails.
+
+When the installed pre-push hook and its execution surface match the trusted base, use a normal
+`git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication
+checks once. Do not run a separate `npm run validate:pr` before the push. If the hook is missing or
+stale, repair contributor setup when that can restore the trusted surface. If the candidate changes
+the hook's execution surface, use the guarded draft-publication fallback above. Do not alter or
+disable the installed hook to make an ordinary push succeed.
 
 Do not push when publication validation fails or is inconclusive. Complete formatting and generation before the final commit; publication validation checks tracked files without applying fixes. If validation reports a required change, repair it, commit it, inspect the new diff, refresh the trusted base, and push again. For an open PR, preserve the completed disposition record for the unchanged remote candidate and review the local repair without recollecting that remote candidate.
 
@@ -66,7 +89,10 @@ The shared compiler-check runner may reuse a successful local result only when t
 
 Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
-A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
+A maintainer may replace the draft-publication fallback with isolated trusted-base validation when
+the record identifies the base and candidate SHAs, isolated environment, trusted validator entry
+point and resolved executables, exact command, and result. The environment must not give candidate
+code contributor-host credentials.
 
 `nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior. Record its command and result in the PR body. Do not select a test in this workflow or rerun a reported test because hooks passed. If this evidence is missing, route the change set back to that skill. Do not open the PR with an unselected tests line. For documentation-only changes, require `npm run docs` to pass before publication.
 

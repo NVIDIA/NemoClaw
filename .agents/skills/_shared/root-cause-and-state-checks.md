@@ -21,10 +21,13 @@ A change that repairs one path and leaves a sibling path unchanged keeps the sam
 
 ## Sensitive-Workflow State Matrix
 
-Build a sensitive-workflow state matrix as working analysis for a flow that handles credentials,
-remote execution, billable resources, destructive cleanup, security policy, or public writes. Use
-only the rows and columns required to cover the changed contract. Classify these outcomes when they
-apply:
+Build a sensitive-workflow state matrix as working analysis for changed runtime behavior that handles
+credentials, remote execution, billable resources, destructive cleanup, security policy, or writes
+to an external product or service. This analysis does not create an approval requirement or revoke
+authority already provided by the task or its lifecycle workflow. Do not apply it solely because a
+change touches workflow or E2E files, or because an authorized PR workflow writes branch or PR state.
+Use only the rows and columns required to cover the changed contract. Classify these outcomes when
+they apply:
 
 | Phase | Success | Command Failure | Transport Ambiguity | Verification Failure |
 |---|---|---|---|---|
@@ -36,7 +39,8 @@ apply:
 For each credential, name its location, access, lifetime, and removal. For each failure cell, record
 the result and required action separately. Classify the result as an infrastructure failure or
 inconclusive verification when applicable. Classify the action as rollback, retry, or stop. Ask the
-user before choosing a behavior that changes security, data safety, cost, or a supported contract.
+user only when choosing between materially different behaviors that change security, data safety,
+cost, or a supported contract and the accepted scope does not already choose the behavior.
 
 The [Security Rubric](security-rubric.md) owns the authentication and authorization category and its
 evidence expectations. For a public or external write, record the positive and negative evidence that

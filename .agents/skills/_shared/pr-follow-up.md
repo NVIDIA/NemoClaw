@@ -22,7 +22,8 @@ reviews from maintainers.
 7. Read the latest PR commit SHA again. Restart if it changed.
 
 A partial Advisor result or one CodeRabbit finding does not complete collection. If a bounded wait
-expires, report the pending evidence and resume monitoring later. Do not replace the candidate to
+expires, preserve the candidate, continue the authorized heartbeat, and resume monitoring later.
+Do not ask the user merely because evidence remains pending, and do not replace the candidate to
 create another review event.
 
 ## Collect
@@ -47,15 +48,20 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 
 | Result | Action |
 |---|---|
-| Candidate-owned valid finding or failed check that is in scope and not ambiguous, risky, broad, or design-changing | Group by cause and repair the complete group. |
+| Candidate-owned valid finding or failed check that is within the accepted scope and has one mechanically supported repair | Group by cause and repair the complete group. |
 | Inherited finding or failed check | Leave the candidate unchanged. Preserve the base evidence and report the disposition. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
-| New scope or ambiguous, risky, broad, or design-changing feedback | Ask the user. Do not add the new surface as a repair. |
+| Feedback requires new product scope, a choice between materially different outcomes, unrelated work, destructive cleanup, or closing or replacing the PR | Ask the user. Do not add the new surface as a repair. |
 | Required review or check is still pending | Report it. Do not classify the collection as complete. |
 | Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Keep the candidate unchanged and ask a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for that commit or defer the PR. Do not rerun before that decision. |
 | No actionable finding after collection completes | Report the remaining checks. |
 
 Apply [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to valid code or CI findings, and record the operation and failure class.
+
+A workflow or E2E file change does not itself require another approval. Apply its checked-in policy,
+classify failures, and continue the authorized lifecycle. Ask only when the concrete repair crosses
+one of the decision boundaries above or when a manual E2E dispatch requires authorization that the
+original task did not provide.
 
 ## Integrate the base branch
 

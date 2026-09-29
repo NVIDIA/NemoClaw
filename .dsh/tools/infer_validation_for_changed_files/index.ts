@@ -45,7 +45,7 @@ export default async function infer_validation_for_changed_files(input: {
     }
     if (file.startsWith("test/e2e/live/") && /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file))
       notes.push(
-        "Live E2E tests changed; run npm run test:live-e2e only with explicit approval and a selected live target.",
+        "Live E2E tests changed. Run deterministic E2E-support validation locally. Dispatch live E2E only when the authorized task or maintainer E2E workflow selects a target; absent live-run authority does not block PR publication unless the accepted scope requires that evidence.",
       );
     if (/^(docs|fern)\//.test(file) || file === "docs/index.yml") commands.add("npm run docs");
     if (file.startsWith("nemoclaw/") && /\.[cm]?tsx?$/.test(file)) {
