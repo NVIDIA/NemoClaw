@@ -187,6 +187,7 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  resolveConfiguredModelRouterPort,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
@@ -2029,12 +2030,9 @@ async function handleRemoteProviderSelection(
     );
     const compatibleNoAuth =
       selected.key === "custom" &&
-      Boolean(
-        state.endpointUrl &&
-        compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(
-          state.provider,
-          state.endpointUrl,
-        ) !== state.endpointUrl,
+      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
+        state.provider,
+        state.endpointUrl,
       );
     const useNoAuth =
       compatibleNoAuth &&
@@ -2784,7 +2782,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         session,
         selectedAgentName: agent?.name,
-        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+        routerPort: resolveConfiguredModelRouterPort(),
         note,
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");

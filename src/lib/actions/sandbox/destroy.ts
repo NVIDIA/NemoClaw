@@ -89,6 +89,7 @@ import {
   resolveSandboxDestroyRuntimeSelection,
   retireManagedVllmForDestroyedSandbox,
   stopModelRouterForDestroyedSandbox,
+  stopDestroyedSandboxProxy,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
@@ -1064,6 +1065,9 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
+    abortPreparedCleanupOnError(() =>
+      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes),
+    );
     const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
       removeManagedAgentStateVolumes(
         {
@@ -1294,6 +1298,7 @@ async function destroySandboxUnlocked(
         current.sandboxName === destroySession.sandboxName &&
         current.endpointUrl === destroySession.endpointUrl &&
         current.routerPid === destroySession.routerPid &&
+        (current.routerPort ?? null) === (destroySession.routerPort ?? null) &&
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;

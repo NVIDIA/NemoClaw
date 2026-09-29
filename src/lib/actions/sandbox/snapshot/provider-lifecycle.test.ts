@@ -12,8 +12,8 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import {
   captureSandboxRuntimeSnapshot,
   confirmSandboxRuntimeRestore,
-  prepareSandboxRuntimeRestore,
   prepareSandboxStoppedStateCapture,
+  prepareSandboxRuntimeRestore,
 } from "./provider-lifecycle";
 
 function sandbox(name = "alpha"): SandboxEntry {
@@ -116,6 +116,24 @@ describe("snapshot provider lifecycle", () => {
     });
     expect(preflight).toHaveBeenCalledWith("backup", expect.objectContaining({ name: "alpha" }));
     expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("bounds both provider observations by the remaining snapshot deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const { bundle, preflight, capture } = provider();
+
+    try {
+      captureSandboxRuntimeSnapshot(bundle, sandbox(), 15_000);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(preflight).toHaveBeenCalledWith(
+      "backup",
+      expect.objectContaining({ name: "alpha" }),
+      5_000,
+    );
+    expect(capture).toHaveBeenCalledWith(expect.anything(), expect.anything(), 5_000);
   });
 
   it("keeps stopped capture optional and passes detached frozen authority to its owner", async () => {
@@ -280,7 +298,7 @@ describe("snapshot provider lifecycle", () => {
       lifecycleState: "stopped",
       lifecycleGeneration: "source-generation",
       runtime: runtime(),
-    };
+    } as const;
     expect(() =>
       prepareSandboxRuntimeRestore(bundle, sandbox("target"), source, managedProfile),
     ).toThrow("cannot represent the snapshot lifecycle state");
@@ -294,6 +312,7 @@ describe("snapshot provider lifecycle", () => {
       source,
       managedProfile,
     );
+
     expect(prepared.source.lifecycleState).toBe("stopped");
     expect(prepared.preflight.lifecycleState).toBe("running");
     expect(approvedSurface.canRestoreLifecycle).toHaveBeenCalledWith(

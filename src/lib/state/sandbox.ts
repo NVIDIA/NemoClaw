@@ -121,6 +121,8 @@ export interface RebuildManifest {
   };
   backupPath: string;
   blueprintDigest: string | null;
+  /** False while strict recovery metadata is still being retained. */
+  backupComplete?: boolean;
   /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
   rebuildPolicyHandoff?: {
     file: string;
@@ -179,6 +181,12 @@ export interface BackupOptions {
    * visible to restore and rebuild flows.
    */
   validateBeforePublish?: () => void;
+  /** Absolute wall-clock deadline shared with lifecycle cleanup. */
+  deadlineMs?: number;
+  /** Retain an incomplete private backup for bounded caller cleanup. */
+  deferSanitizationDeadlineCleanup?: boolean;
+  /** Publish the manifest as incomplete until strict recovery metadata is retained. */
+  deferCompletionPublication?: boolean;
   /**
    * Internal deterministic capture bound used by tests. Production capture
    * derives its bound from free space in the private backup filesystem.
@@ -376,6 +384,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
   const allowedKeys = new Set([
     "agentType",
     "agentVersion",
+    "backupComplete",
     "backupPath",
     "blueprintDigest",
     "expectedVersion",
@@ -424,6 +433,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
+    (value.backupComplete === undefined || typeof value.backupComplete === "boolean") &&
     typeof value.backupPath === "string" &&
     (value.nativeState === undefined ||
       (isObjectRecord(value.nativeState) &&
@@ -692,6 +702,7 @@ export function getSshConfig(
     env?: NodeJS.ProcessEnv;
     gatewayName?: string;
     replaceEnv?: boolean;
+    timeoutMs?: number;
   } = {},
 ): string | null {
   const openshellBinary = resolveOpenshell();
@@ -700,7 +711,7 @@ export function getSshConfig(
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ...runtimeOptions,
     ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    timeout: runtimeOptions.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -738,6 +749,27 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
     "LogLevel=ERROR",
     sshHost,
   ];
+}
+
+/** Probe only the SSH transport, bounded by one absolute deadline. */
+export function probeSandboxSshReachable(sandboxName: string, deadlineMs: number): boolean {
+  const configTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+  if (configTimeoutMs === null) return false;
+  const sshConfig = getSshConfig(sandboxName, { timeoutMs: configTimeoutMs });
+  if (!sshConfig) return false;
+
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-readiness-");
+  try {
+    const probeTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+    if (probeTimeoutMs === null) return false;
+    const result = spawnSync("ssh", [...sshArgs(tempSshConfig.file, sandboxName), ":"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: probeTimeoutMs,
+    });
+    return result.status === 0 && !result.error && !result.signal;
+  } finally {
+    tempSshConfig.cleanup();
+  }
 }
 
 function computeBlueprintDigest(): string | null {
@@ -864,6 +896,7 @@ function resolveNativeStateRoot(
   configFile: string,
   sandboxName: string,
   selectedEnv?: NodeJS.ProcessEnv,
+  timeoutMs = 30_000,
 ): { root: string } | { error: string; unreachable: boolean } {
   const probe = spawnSync(
     "ssh",
@@ -875,7 +908,7 @@ function resolveNativeStateRoot(
       ...(selectedEnv ? { env: selectedEnv } : {}),
       encoding: null,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
     },
   );
@@ -1906,6 +1939,7 @@ function capturePreparedNativeState(
   source: NonNullable<BackupOptions["nativeStateSource"]>,
   archiveDescriptor: number,
   maxBytes: number,
+  timeoutMs: number,
 ): ReturnType<typeof spawnSync> {
   source.assertCurrent();
   const sourceStat = lstatSync(source.directory);
@@ -1947,14 +1981,30 @@ function capturePreparedNativeState(
         NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
       },
       stdio: ["ignore", archiveDescriptor, "pipe"],
-      timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
     },
   );
 }
 
+function remainingBackupTimeoutMs(
+  deadlineMs: number | undefined,
+  maximumMs: number,
+): number | null {
+  if (deadlineMs === undefined) return maximumMs;
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
+}
+
+function backupDeadlineExpired(deadlineMs: number | undefined): boolean {
+  return deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now());
+}
+
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
 function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
+  if (backupDeadlineExpired(options.deadlineMs)) {
+    return nativeStateFailure("Sandbox backup deadline expired before backup started", true);
+  }
   const sandbox = registry.getSandbox(sandboxName);
   const agentName = sandbox?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -1982,13 +2032,26 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
               unreachable: false,
             };
     } else {
-      const sshConfig = getSshConfig(sandboxName);
+      const sshConfigTimeoutMs = remainingBackupTimeoutMs(
+        options.deadlineMs,
+        OPENSHELL_PROBE_TIMEOUT_MS,
+      );
+      if (sshConfigTimeoutMs === null) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure("Sandbox backup deadline expired before SSH discovery", true);
+      }
+      const sshConfig = getSshConfig(sandboxName, { timeoutMs: sshConfigTimeoutMs });
       if (!sshConfig) {
         rmSync(backupPath, { recursive: true, force: true });
         return nativeStateFailure("Could not get SSH configuration for native state capture", true);
       }
       temporary = createTempSshConfig(sshConfig, "nemoclaw-native-state-");
-      rootResult = resolveNativeStateRoot(temporary.file, sandboxName);
+      const rootTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 30_000);
+      if (rootTimeoutMs === null) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure("Sandbox backup deadline expired before native-root discovery");
+      }
+      rootResult = resolveNativeStateRoot(temporary.file, sandboxName, undefined, rootTimeoutMs);
     }
     if ("error" in rootResult) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2019,8 +2082,21 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     );
     let result: ReturnType<typeof spawnSync>;
     try {
+      const captureTimeoutMs = remainingBackupTimeoutMs(
+        options.deadlineMs,
+        NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      );
+      if (captureTimeoutMs === null) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure("Sandbox backup deadline expired before native-state capture");
+      }
       if (options.nativeStateSource) {
-        result = capturePreparedNativeState(options.nativeStateSource, archiveFd, maxBytes);
+        result = capturePreparedNativeState(
+          options.nativeStateSource,
+          archiveFd,
+          maxBytes,
+          captureTimeoutMs,
+        );
       } else {
         if (!temporary) throw new Error("Native state SSH configuration is unavailable");
         // The SSH command runs as the sandbox user. Freeze every other process
@@ -2068,7 +2144,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
               NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
             },
             stdio: ["ignore", archiveFd, "pipe"],
-            timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+            timeout: captureTimeoutMs,
             maxBuffer: 1024 * 1024,
           },
         );
@@ -2105,6 +2181,10 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           : `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
         !options.nativeStateSource && isSshTransportFailure(result),
       );
+    }
+    if (backupDeadlineExpired(options.deadlineMs)) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure("Native home/workspace capture exceeded the backup deadline");
     }
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
@@ -2150,6 +2230,34 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
     }
+    if (backupDeadlineExpired(options.deadlineMs)) {
+      if (!options.deferSanitizationDeadlineCleanup) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure("Native archive validation exceeded the backup deadline");
+      }
+      const incompleteManifest: RebuildManifest = {
+        version: MANIFEST_VERSION,
+        sandboxName,
+        timestamp,
+        agentType: agentName,
+        agentVersion: sandbox?.agentVersion || null,
+        expectedVersion: agent.expectedVersion,
+        nativeState: {
+          root: rootResult.root,
+          archive: NATIVE_STATE_ARCHIVE,
+          sha256: sha256File(archivePath),
+        },
+        backupPath,
+        blueprintDigest: computeBlueprintDigest(),
+        backupComplete: false,
+        ...authority,
+      };
+      writeManifest(backupPath, incompleteManifest);
+      return {
+        ...nativeStateFailure("Native archive validation exceeded the backup deadline"),
+        manifest: incompleteManifest,
+      };
+    }
 
     const manifest: RebuildManifest = {
       version: MANIFEST_VERSION,
@@ -2165,11 +2273,18 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       },
       backupPath,
       blueprintDigest: computeBlueprintDigest(),
+      backupComplete: options.deferCompletionPublication !== true,
       ...authority,
     };
     const publicationError = validateSnapshotPublication(backupPath, () => {
+      if (backupDeadlineExpired(options.deadlineMs)) {
+        throw new Error("sandbox backup deadline expired");
+      }
       options.nativeStateSource?.assertCurrent();
       options.validateBeforePublish?.();
+      if (backupDeadlineExpired(options.deadlineMs)) {
+        throw new Error("sandbox backup deadline expired");
+      }
     });
     if (publicationError) return nativeStateFailure(publicationError);
     try {
@@ -2299,7 +2414,12 @@ export function captureSnapshotRestoreAuthority(
     rejectSymlinksOnPath(candidate);
     if (!lstatSync(path.join(candidate, "rebuild-manifest.json")).isFile()) return null;
     const manifest = readManifest(candidate);
-    if (!manifest || path.resolve(manifest.backupPath) !== candidate) return null;
+    if (
+      !manifest ||
+      manifest.backupComplete === false ||
+      path.resolve(manifest.backupPath) !== candidate
+    )
+      return null;
     if (
       expectedManifest &&
       !isDeepStrictEqual(
@@ -2404,7 +2524,11 @@ async function restoreNativeSandboxState(
     error,
   });
   const manifest = readManifest(backupPath);
-  if (!manifest?.nativeState || manifest.version !== MANIFEST_VERSION) {
+  if (
+    !manifest?.nativeState ||
+    manifest.version !== MANIFEST_VERSION ||
+    manifest.backupComplete === false
+  ) {
     return failure(
       "Backup does not contain a supported complete native home/workspace archive. Legacy selective backups require manual file recovery.",
     );
@@ -2583,6 +2707,22 @@ function writeManifest(
 }
 
 export const __test = { writeManifest, readManifest };
+
+/** Persist a failed rebuild backup as nonselectable before bounded cleanup. */
+export function markRebuildBackupIncomplete(manifest: RebuildManifest): RebuildManifest {
+  const incomplete = { ...manifest, backupComplete: false };
+  writeManifest(manifest.backupPath, incomplete);
+  Object.assign(manifest, incomplete);
+  return incomplete;
+}
+
+/** Publish a fully retained strict-recovery backup for restore selection. */
+export function markRebuildBackupComplete(manifest: RebuildManifest): RebuildManifest {
+  const complete = { ...manifest, backupComplete: true };
+  writeManifest(manifest.backupPath, complete);
+  Object.assign(manifest, complete);
+  return complete;
+}
 
 function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;
@@ -2850,7 +2990,33 @@ export type RebuildRecoveryManifestValidation =
  * Remove one completed rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
  */
-export function removeSandboxStateBackup(sandboxName: string, backupPath: string): boolean {
+function removePathWithinDeadline(targetPath: string, deadlineMs?: number): boolean {
+  if (deadlineMs === undefined) {
+    rmSync(targetPath, { recursive: true, force: true });
+  } else {
+    const timeout = remainingBackupTimeoutMs(deadlineMs, 60_000);
+    if (timeout === null) return false;
+    const removal = spawnSync(
+      process.execPath,
+      ["-e", "require('node:fs').rmSync(process.argv[1],{recursive:true,force:true})", targetPath],
+      {
+        timeout,
+        killSignal: "SIGKILL",
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined },
+      },
+    );
+    if (removal.status !== 0 || removal.error) return false;
+  }
+  return !existsSync(targetPath);
+}
+
+export function removeSandboxStateBackup(
+  sandboxName: string,
+  backupPath: string,
+  deadlineMs?: number,
+): boolean {
   const rebuildBackupsRoot = path.resolve(REBUILD_BACKUPS_DIR);
   const sandboxBackupRoot = path.resolve(rebuildBackupsRoot, sandboxName);
   const candidateBackupPath = path.resolve(backupPath);
@@ -2865,8 +3031,7 @@ export function removeSandboxStateBackup(sandboxName: string, backupPath: string
 
   try {
     rejectSymlinksOnPath(candidateBackupPath);
-    rmSync(candidateBackupPath, { recursive: true, force: true });
-    return !existsSync(candidateBackupPath);
+    return removePathWithinDeadline(candidateBackupPath, deadlineMs);
   } catch {
     return false;
   }
@@ -2914,6 +3079,9 @@ export function validateRebuildRecoveryManifest(
       ok: false,
       reason: `manifest sandbox '${persisted.sandboxName}' does not match '${sandboxName}'`,
     };
+  }
+  if (persisted.backupComplete === false) {
+    return { ok: false, reason: "latest backup is incomplete" };
   }
   if (persisted.agentType !== expectedAgent) {
     return {
@@ -2979,7 +3147,12 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
   for (const entry of rawEntries) {
     const backupPath = path.join(dir, entry.name);
     const m = readManifest(backupPath);
-    if (m && m.version === MANIFEST_VERSION && m.nativeState !== undefined) {
+    if (
+      m &&
+      m.version === MANIFEST_VERSION &&
+      m.nativeState !== undefined &&
+      m.backupComplete !== false
+    ) {
       manifests.push(m);
     }
   }
