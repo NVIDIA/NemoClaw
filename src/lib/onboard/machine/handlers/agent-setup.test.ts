@@ -23,6 +23,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     }),
     openclawReady: vi.fn(async () => false),
     controlPlaneReady: vi.fn(async () => true),
+    openclawGatewayStarted: vi.fn(async () => true as boolean | null),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -46,6 +47,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
       waitForSandboxControlPlaneReady: calls.controlPlaneReady,
+      waitForStartedOpenclawGatewayProcess: calls.openclawGatewayStarted,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -404,6 +406,45 @@ describe("handleAgentSetupState", () => {
       "nemoclaw-19090",
     );
     expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("settles an external-image gateway before changing its startup config (#11932)", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => {
+        order.push("settled");
+        return true;
+      }),
+      setupOpenclaw: vi.fn(async () => {
+        order.push("configured");
+      }),
+    });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      initializeNativeInferenceRoute: true,
+      settleOpenclawStartupBeforeConfiguration: true,
+    });
+
+    expect(order).toEqual(["settled", "configured"]);
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
+  it("does not change external-image config when its gateway startup is unproven (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => false),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/startup did not settle before configuration/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("rejects an identity change before reading a fresh custom-image route (#12033)", async () => {

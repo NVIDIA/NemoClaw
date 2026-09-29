@@ -26,7 +26,7 @@ export type FinalOnboardFlowCompositionOptions<
   readonly portableRuntimeContext?: PortableOnboardRuntimeContext | null;
   agentSetupDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["agentSetupDeps"],
-    "waitForSandboxControlPlaneReady"
+    "waitForSandboxControlPlaneReady" | "waitForStartedOpenclawGatewayProcess"
   >;
   finalizationDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["finalizationDeps"],
@@ -47,6 +47,8 @@ export function createFinalOnboardFlowPhases<
     agentSetupDeps: {
       ...options.agentSetupDeps,
       waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+      waitForStartedOpenclawGatewayProcess:
+        finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
     },
     finalizationDeps: {
       ...options.finalizationDeps,

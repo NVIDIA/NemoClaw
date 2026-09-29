@@ -100,7 +100,11 @@ describe("final onboard flow phases", () => {
   it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
     const revalidateSandboxIdentity = vi.fn();
     const setupOpenclaw = vi.fn(async () => undefined);
-    const [branchPhase] = createPhases("openclaw", [], { setupOpenclaw });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+    });
     const session = createSession();
     session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
 
@@ -118,6 +122,10 @@ describe("final onboard flow phases", () => {
       revalidateSandboxIdentity,
       "chat",
       true,
+      "nemoclaw-19090",
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
       "nemoclaw-19090",
     );
   });

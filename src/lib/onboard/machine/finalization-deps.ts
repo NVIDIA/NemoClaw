@@ -386,6 +386,14 @@ export const finalizationHandlerDeps = {
           ),
       });
   },
+  async waitForStartedOpenclawGatewayProcess(
+    name: string,
+    gatewayName: string,
+  ): Promise<boolean | null> {
+    return await finalizationHandlerRuntime
+      .loadProcessRecovery()
+      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
+  },
   async checkAndRecoverSandboxProcesses(
     name: string,
     options: { quiet: boolean },

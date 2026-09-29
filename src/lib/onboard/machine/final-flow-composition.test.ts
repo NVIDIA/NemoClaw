@@ -37,6 +37,8 @@ describe("createFinalOnboardFlowPhases", () => {
       branchState: "agent_setup",
       agentSetupDeps: {
         waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+        waitForStartedOpenclawGatewayProcess:
+          finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
       },
       policiesDeps: {},
       finalization: {},

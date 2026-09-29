@@ -17,6 +17,7 @@ export interface AgentSetupStateOptions<Agent> {
   hermesToolGateways: string[];
   managedOpenclawStartup?: boolean;
   initializeNativeInferenceRoute?: boolean;
+  settleOpenclawStartupBeforeConfiguration?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
@@ -34,6 +35,10 @@ export interface AgentSetupStateOptions<Agent> {
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
     waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
+    waitForStartedOpenclawGatewayProcess(
+      sandboxName: string,
+      gatewayName: string,
+    ): Promise<boolean | null>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -90,6 +95,7 @@ export async function handleAgentSetupState<Agent>({
   hermesToolGateways,
   managedOpenclawStartup = false,
   initializeNativeInferenceRoute = false,
+  settleOpenclawStartupBeforeConfiguration = false,
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
@@ -176,6 +182,17 @@ export async function handleAgentSetupState<Agent>({
     );
   } else {
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
+    if (
+      settleOpenclawStartupBeforeConfiguration &&
+      (await deps.waitForStartedOpenclawGatewayProcess(
+        sandboxName,
+        agentSetupContext.gatewayName,
+      )) !== true
+    ) {
+      throw new Error(
+        `External-image OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
+      );
+    }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
     await deps.setupOpenclaw(
       sandboxName,
