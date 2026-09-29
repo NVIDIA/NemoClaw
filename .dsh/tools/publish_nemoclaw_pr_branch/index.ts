@@ -37,6 +37,17 @@ export default async function publish_nemoclaw_pr_branch(input: {
   remoteState: "not-checked" | "expected-commit" | "unchanged" | "unknown";
   recoveredPullUrl: string | null;
   guardedFallbackValidationPaths: string[];
+  guardedFallbackEvidence: null | {
+    schemaVersion: 1;
+    publicationValidated: true;
+    repository: string;
+    remote: string;
+    baseBranch: string;
+    branch: string;
+    candidateSha: string;
+    receipt: NonNullable<typeof input.hookBypassReceipt>;
+    differingValidationPaths: string[];
+  };
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
@@ -316,6 +327,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       remoteState: "not-checked",
       recoveredPullUrl: null,
       guardedFallbackValidationPaths,
+      guardedFallbackEvidence: null,
     };
   const beforePush = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -446,6 +458,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       remoteState,
       recoveredPullUrl,
       guardedFallbackValidationPaths,
+      guardedFallbackEvidence: null,
     };
   }
   const changedRemote = remoteBeforeReadOk && remoteBefore !== input.expectedHeadSha;
@@ -492,6 +505,20 @@ export default async function publish_nemoclaw_pr_branch(input: {
     remoteState,
     recoveredPullUrl,
     guardedFallbackValidationPaths,
+    guardedFallbackEvidence:
+      allVerified && bypass !== undefined
+        ? {
+            schemaVersion: 1,
+            publicationValidated: true,
+            repository: repo,
+            remote,
+            baseBranch,
+            branch,
+            candidateSha: head,
+            receipt: { ...bypass },
+            differingValidationPaths: [...guardedFallbackValidationPaths],
+          }
+        : null,
     blocker: allVerified
       ? null
       : verificationError

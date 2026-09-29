@@ -95,9 +95,11 @@ existing expected commit is an ancestor of the candidate. Reconcile the remote b
 verification after the write. A later invocation may recover only after independently observing the
 exact matching draft PR; an unchanged branch by itself cannot prove the absent-ref lease. Keep the
 PR in draft until the base-controlled job validates the published commit. Supply the PR-body renderer
-the complete typed fallback receipt and the independently observed differing validation paths. It
-renders the skipped local validation, differing machinery, and canonical base SHA in `Verification`
-and `Review notes`. This fallback needs no additional publication approval. Stop when no
+only the canonical validated fallback-evidence object returned by the publication operation. That
+object contains the validated receipt and independently observed differing validation paths. A
+standalone caller-provided receipt is not publication evidence and must not satisfy the renderer.
+The renderer records the skipped local validation, differing machinery, and canonical base SHA in
+`Verification` and `Review notes`. This fallback needs no additional publication approval. Stop when no
 base-controlled job meets these conditions or when another publication gate independently fails.
 
 When the installed pre-push hook and its execution surface match the trusted base, use a normal

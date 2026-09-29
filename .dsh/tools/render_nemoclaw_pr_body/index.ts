@@ -19,19 +19,29 @@ export default async function render_nemoclaw_pr_body(input: {
   sensitivePath?: { changed: boolean; reviewEvidence?: string };
   ciWaiver?: { check: string; approval: string; followUpIssue: Integer };
   hooks?: { passed: boolean; evidence?: string };
-  guardedFallback?: {
-    receipt: {
+  guardedFallbackPublication?: {
+    apply: true;
+    remoteState: "expected-commit";
+    allVerified: true;
+    blocker: null;
+    headSha: string;
+    guardedFallbackEvidence: {
       schemaVersion: 1;
+      publicationValidated: true;
       candidateSha: string;
-      canonicalBaseSha: string;
-      workflowRevisionSha: string;
-      workflowPath: string;
-      workflowBlobSha: string;
-      workflowJob: string;
-      draftOnly: true;
-      expectedRemoteSha: string | null;
+      receipt: {
+        schemaVersion: 1;
+        candidateSha: string;
+        canonicalBaseSha: string;
+        workflowRevisionSha: string;
+        workflowPath: string;
+        workflowBlobSha: string;
+        workflowJob: string;
+        draftOnly: true;
+        expectedRemoteSha: string | null;
+      };
+      differingValidationPaths: string[];
     };
-    differingValidationPaths: string[];
   };
   broadGate?: { passed: boolean; evidence: string };
   docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
@@ -101,11 +111,19 @@ export default async function render_nemoclaw_pr_body(input: {
     blockers.push("Test evidence is required.");
   if (tests.result !== "added-or-updated" && !tests.justification)
     blockers.push("Test justification is required.");
-  const fallback = input.guardedFallback;
+  const fallbackPublication = input.guardedFallbackPublication;
+  const fallback = fallbackPublication?.guardedFallbackEvidence;
   const fallbackReceipt = fallback?.receipt;
   const fallbackPaths = fallback?.differingValidationPaths;
   const validFallback =
-    fallback !== undefined &&
+    fallbackPublication?.apply === true &&
+    fallbackPublication.remoteState === "expected-commit" &&
+    fallbackPublication.allVerified === true &&
+    fallbackPublication.blocker === null &&
+    fallbackPublication.headSha === fallback?.candidateSha &&
+    fallback?.publicationValidated === true &&
+    fallback?.schemaVersion === 1 &&
+    fallback.candidateSha === fallbackReceipt?.candidateSha &&
     fallbackReceipt?.schemaVersion === 1 &&
     /^[0-9a-f]{40}$/.test(fallbackReceipt?.candidateSha ?? "") &&
     /^[0-9a-f]{40}$/.test(fallbackReceipt?.canonicalBaseSha ?? "") &&
@@ -131,7 +149,7 @@ export default async function render_nemoclaw_pr_body(input: {
         !path.includes("..") &&
         !/[\r\n]/.test(path),
     );
-  if (fallback !== undefined && !validFallback)
+  if (fallbackPublication !== undefined && !validFallback)
     blockers.push("Guarded fallback validation evidence is incomplete or invalid.");
   if (input.hooks?.passed !== true && !validFallback)
     blockers.push("Hook or validate:pr evidence is required.");
