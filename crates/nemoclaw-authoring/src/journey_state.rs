@@ -16,10 +16,9 @@ use crate::{
     PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset, SettingQuestion,
     diagnostics::diagnostic,
     journey_definition::{
-        HARNESS, INFERENCE_PRESET, JourneyDefinition, NAME, SETTINGS, adapter_field,
+        HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, SETTINGS, adapter_field,
         adapter_schema, sdk_field_schema,
     },
-    journey_design::JourneyGuidance,
 };
 
 const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";
@@ -116,7 +115,6 @@ impl JourneyResolution {
 #[derive(Clone, Debug)]
 pub struct JourneyState {
     definition: JourneyDefinition,
-    guidance: JourneyGuidance,
     values: Value,
     accepted: BTreeSet<String>,
     omitted: BTreeSet<String>,
@@ -141,7 +139,6 @@ impl JourneyState {
             .then_some(0);
         Self {
             definition,
-            guidance: JourneyGuidance::default(),
             values,
             accepted: BTreeSet::new(),
             omitted: BTreeSet::new(),
@@ -154,11 +151,6 @@ impl JourneyState {
             selected_route,
             completed_routes: BTreeSet::new(),
         }
-    }
-
-    pub(crate) fn with_guidance(mut self, guidance: JourneyGuidance) -> Self {
-        self.guidance = guidance;
-        self
     }
 
     pub fn values(&self) -> &Value {
@@ -465,7 +457,11 @@ impl JourneyState {
             }
         }
 
-        if self.guidance.ask_route_models {
+        if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::RouteModels)
+        {
             if let Some(path) = self.route_model_path()
                 && !self.accepted.contains(&path)
                 && !questions.iter().any(|question| question.id == path)
@@ -548,7 +544,10 @@ impl JourneyState {
                 schema: serde_json::json!({"type":"string"}),
             });
         }
-        if self.guidance.ask_inference_api
+        if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::InferenceApi)
             && let Some(provider) = self.provider_path()
         {
             let path = format!("{provider}/api");
@@ -681,7 +680,11 @@ impl JourneyState {
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
                 if value.is_none()
                     || !valid
-                    || ((self.guidance.ask_adapter || self.definition.ask.contains(&id))
+                    || ((self
+                        .definition
+                        .ask_scopes
+                        .contains(&JourneyScope::ActiveAdapterSettings)
+                        || self.definition.ask.contains(&id))
                         && !self.accepted.contains(&id))
                 {
                     questions.push(JourneyQuestion {
@@ -711,7 +714,10 @@ impl JourneyState {
             }
         }
 
-        if self.guidance.ask_deployment
+        if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::DeploymentFields)
             && let Some(document) = assessment.document()
         {
             for field in crate::deployment::deployment_questions_for_document(document)? {
@@ -730,7 +736,10 @@ impl JourneyState {
                 });
             }
         }
-        if self.guidance.ask_native
+        if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::NativeSettings)
             && let Some(document) = assessment.document()
         {
             for field in native_questions_for_document(document, capabilities, self.selected_route)?
@@ -932,7 +941,10 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if self.guidance.ask_native
+        } else if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::NativeSettings)
             && (id.starts_with("workflow:") || id.starts_with("model:"))
         {
             candidate.put_native_field(id, value.clone())?;
@@ -953,16 +965,27 @@ impl JourneyState {
                 candidate.omitted.remove(id);
             }
         } else if ((self.definition.ask.contains(id)
-            || self.guidance.ask_inference_api
+            || self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::InferenceApi)
                 && self
                     .provider_path()
                     .is_some_and(|path| id == format!("{path}/api"))
             || self
                 .provider_path()
                 .is_some_and(|path| id == format!("{path}/endpoint"))
-            || self.guidance.ask_route_models && self.route_model_path().as_deref() == Some(id))
+            || self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::RouteModels)
+                && self.route_model_path().as_deref() == Some(id))
             && sdk_field_schema(id).is_some())
-            || self.guidance.ask_deployment && id.starts_with('/')
+            || self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::DeploymentFields)
+                && id.starts_with('/')
         {
             candidate.put_sdk_field(id, value.clone())?;
             if id == "/spec/gateway/engine" {
@@ -971,7 +994,10 @@ impl JourneyState {
             if id == RUNTIME_PROVIDER {
                 candidate.sync_gateway_engine_for_runtime()?;
             }
-            if self.guidance.ask_deployment
+            if self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::DeploymentFields)
                 && !self.definition.ask.contains(id)
                 && self.resolve(capabilities)?.question(id).is_some()
                 && PartialDocument::from_value(self.values.clone())
@@ -1054,7 +1080,11 @@ impl JourneyState {
             self.current_preset()
                 .map(|preset| Value::String(preset.id().into()))
         } else if sdk_field_schema(id).is_some()
-            || (self.guidance.ask_deployment && self.values.pointer(id).is_some())
+            || (self
+                .definition
+                .ask_scopes
+                .contains(&JourneyScope::DeploymentFields)
+                && self.values.pointer(id).is_some())
         {
             previous.values.pointer(id).cloned()
         } else {

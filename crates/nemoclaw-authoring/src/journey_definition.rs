@@ -21,6 +21,44 @@ pub(crate) const INFERENCE_PRESET: &str = "inference:preset";
 const MAX_BRANCHES: usize = 32;
 const MAX_SETTINGS: usize = 32;
 
+/// A schema-discovered family of applicable questions. The schema determines
+/// which fields exist and whether they are required; this only asks to review
+/// supplied values in that family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum JourneyScope {
+    ActiveAdapterSettings,
+    NativeSettings,
+    RouteModels,
+    InferenceApi,
+    DeploymentFields,
+}
+
+/// Select one field or a family discovered from the active SDK and Fabric
+/// schemas. Selection controls prompting, not applicability or requiredness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JourneySelector {
+    Field(String),
+    Scope(JourneyScope),
+}
+
+impl From<&str> for JourneySelector {
+    fn from(value: &str) -> Self {
+        Self::Field(value.into())
+    }
+}
+
+impl From<String> for JourneySelector {
+    fn from(value: String) -> Self {
+        Self::Field(value)
+    }
+}
+
+impl From<JourneyScope> for JourneySelector {
+    fn from(value: JourneyScope) -> Self {
+        Self::Scope(value)
+    }
+}
+
 /// A deployment seed and deliberate prompt or omission guidance.
 /// The preview currently expands one sandbox's identity and adapter settings;
 /// other SDK constraints remain visible as an unresolved frontier.
@@ -30,6 +68,7 @@ pub struct JourneyDefinition {
     pub(crate) base: PartialDocument,
     pub(crate) ask: BTreeSet<String>,
     pub(crate) ask_order: Vec<String>,
+    pub(crate) ask_scopes: BTreeSet<JourneyScope>,
     pub(crate) omit: BTreeSet<String>,
 }
 
@@ -40,15 +79,22 @@ impl JourneyDefinition {
             base,
             ask: BTreeSet::new(),
             ask_order: Vec::new(),
+            ask_scopes: BTreeSet::new(),
             omit: BTreeSet::new(),
         }
     }
 
-    pub fn ask(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        for field in fields {
-            let field = field.into();
-            if self.ask.insert(field.clone()) {
-                self.ask_order.push(field);
+    pub fn ask(mut self, selectors: impl IntoIterator<Item = impl Into<JourneySelector>>) -> Self {
+        for selector in selectors {
+            match selector.into() {
+                JourneySelector::Field(field) => {
+                    if self.ask.insert(field.clone()) {
+                        self.ask_order.push(field);
+                    }
+                }
+                JourneySelector::Scope(scope) => {
+                    self.ask_scopes.insert(scope);
+                }
             }
         }
         self
@@ -321,7 +367,11 @@ impl JourneyDefinition {
         }
 
         for question in initial.questions().iter().filter(|question| {
-            question.id().starts_with('/') && question.id() != NAME && question.id() != HARNESS
+            let id = question.id();
+            (id.starts_with('/') && id != NAME && id != HARNESS)
+                || id.starts_with("workflow:")
+                || id.starts_with("model:")
+                || id == "route:selection"
         }) {
             questions += 1;
             let kind = question.schema()["type"].as_str().unwrap_or("JSON value");
@@ -359,7 +409,7 @@ impl JourneyDefinition {
         for warning in initial.warnings() {
             lines.push(format!("  Warning: {warning}"));
         }
-        lines.push("  Preview scope: asked SDK fields, inference preset, harness choice, top-level adapter settings; other conditional SDK and Fabric branches are not expanded.".into());
+        lines.push("  Preview scope: current resolver questions and bounded finite branches; dependent free-form and conditional branches are not fully expanded.".into());
         Ok(lines.join("\n"))
     }
 }

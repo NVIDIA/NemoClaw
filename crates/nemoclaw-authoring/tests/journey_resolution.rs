@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_authoring::{Capabilities, JourneyDesign, JourneyQuestionReason, PartialDocument};
+use nemoclaw_authoring::{
+    Capabilities, JourneyDefinition, JourneyQuestionReason, JourneyScope, PartialDocument,
+};
 use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
 
@@ -28,7 +30,7 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture-schema-agent");
-    let mut state = JourneyDesign::new(
+    let mut state = JourneyDefinition::new(
         "conditional",
         PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
     )
@@ -78,8 +80,8 @@ fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits(
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/spark/remote-vllm.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("deployment", base)
-        .ask_deployment_fields()
+    let mut state = JourneyDefinition::new("deployment", base)
+        .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
         .unwrap();
     let path = "/spec/services/qwen/serving/contextTokens";
@@ -119,11 +121,11 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     base["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.native-owner");
-    let mut state = JourneyDesign::new(
+    let mut state = JourneyDefinition::new(
         "native",
         PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
     )
-    .ask_native_fields()
+    .ask([JourneyScope::NativeSettings])
     .start(&capabilities)
     .unwrap();
     assert!(
@@ -179,8 +181,8 @@ fn invalid_complete_native_model_settings_cannot_reach_review() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("native-validation", base)
-        .ask_native_fields()
+    let mut state = JourneyDefinition::new("native-validation", base)
+        .ask([JourneyScope::NativeSettings])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
@@ -216,8 +218,8 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("discovered", base)
-        .ask_route_models()
+    let mut state = JourneyDefinition::new("discovered", base)
+        .ask([JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
     let document = state
@@ -267,7 +269,7 @@ fn runtime_question_uses_finite_sdk_schema_choices() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let state = JourneyDesign::new("runtime", base)
+    let state = JourneyDefinition::new("runtime", base)
         .ask(["/spec/sandboxes/0/runtime/provider"])
         .start(&capabilities)
         .unwrap();
@@ -287,7 +289,7 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("runtime", base)
+    let mut state = JourneyDefinition::new("runtime", base)
         .ask(["/spec/sandboxes/0/runtime/provider"])
         .start(&capabilities)
         .unwrap();
@@ -318,7 +320,7 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("delegate", base)
+    let mut state = JourneyDefinition::new("delegate", base)
         .ask(["/spec/sandboxes/0/harness/kind", "/metadata/name"])
         .start(&capabilities)
         .unwrap();
@@ -359,17 +361,17 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("delegate", base)
+    let mut state = JourneyDefinition::new("delegate", base)
         .ask([
             "/spec/sandboxes/0/harness/kind",
             "/metadata/name",
             "inference:preset",
         ])
-        .ask_route_models()
-        .ask_inference_api()
-        .ask_adapter_fields()
-        .ask_native_fields()
-        .ask_deployment_fields()
+        .ask([JourneyScope::RouteModels])
+        .ask([JourneyScope::InferenceApi])
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .ask([JourneyScope::NativeSettings])
+        .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
         .unwrap();
     state
@@ -471,8 +473,8 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
         "../../../examples/spark/local-and-hosted.yaml"
     ))
     .unwrap();
-    let mut state = JourneyDesign::new("routes", base)
-        .ask_route_models()
+    let mut state = JourneyDefinition::new("routes", base)
+        .ask([JourneyScope::RouteModels])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
@@ -554,8 +556,8 @@ fn route_preset_changes_only_the_selected_external_provider() {
         "../../../examples/spark/local-and-hosted.yaml"
     ))
     .unwrap();
-    let mut state = JourneyDesign::new("route-presets", base)
-        .ask_route_models()
+    let mut state = JourneyDefinition::new("route-presets", base)
+        .ask([JourneyScope::RouteModels])
         .ask(["inference:preset"])
         .start(&capabilities)
         .unwrap();
@@ -622,7 +624,7 @@ fn route_preset_changes_only_the_selected_external_provider() {
 #[test]
 fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     let capabilities = Capabilities::available();
-    let definition = JourneyDesign::new("minimum", minimum());
+    let definition = JourneyDefinition::new("minimum", minimum());
     let mut state = definition.start(&capabilities).unwrap();
     let questions = state.resolve(&capabilities).unwrap();
     assert!(questions.question("/metadata/name").is_some());
@@ -682,7 +684,7 @@ fn accepting_a_supplied_suggestion_resolves_an_explicit_ask() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition = JourneyDesign::new("guided", base).ask(["/metadata/name"]);
+    let definition = JourneyDefinition::new("guided", base).ask(["/metadata/name"]);
     let mut state = definition.start(&capabilities).unwrap();
     let suggested = state
         .resolve(&capabilities)
@@ -726,7 +728,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "/spec/inferenceProviders/0/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ];
-    let definition = JourneyDesign::new("guided", base).ask(fields).omit([
+    let definition = JourneyDefinition::new("guided", base).ask(fields).omit([
         "adapter:nvidia.fabric.openclaw:/agent_name",
         "adapter:nvidia.fabric.openclaw:/cli",
         "adapter:nvidia.fabric.openclaw:/home",
@@ -818,7 +820,7 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let provider_name = "/spec/inferenceProviders/0/name";
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     let name = "/metadata/name";
-    let mut state = JourneyDesign::new("preset", base)
+    let mut state = JourneyDefinition::new("preset", base)
         .ask([name, preset, api, model, provider_name])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
@@ -943,7 +945,7 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("custom", base)
+    let mut state = JourneyDefinition::new("custom", base)
         .ask([
             "inference:preset",
             "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
@@ -1023,7 +1025,7 @@ fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     let endpoint = "/spec/inferenceProviders/0/endpoint";
     let preset = "inference:preset";
-    let mut state = JourneyDesign::new("order", base)
+    let mut state = JourneyDefinition::new("order", base)
         .ask([api, model, preset])
         .start(&capabilities)
         .unwrap();
@@ -1061,7 +1063,7 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let mut state = JourneyDesign::new("optional-api", base)
+    let mut state = JourneyDefinition::new("optional-api", base)
         .ask(["/spec/inferenceProviders/0/api"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
@@ -1088,7 +1090,7 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
 #[test]
 fn invalid_answer_does_not_mutate_a_sparse_journey() {
     let capabilities = Capabilities::available();
-    let mut state = JourneyDesign::new("minimum", minimum())
+    let mut state = JourneyDefinition::new("minimum", minimum())
         .start(&capabilities)
         .unwrap();
     assert!(
@@ -1111,7 +1113,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition = JourneyDesign::new("switch", base).ask(["/spec/sandboxes/0/harness/kind"]);
+    let definition = JourneyDefinition::new("switch", base).ask(["/spec/sandboxes/0/harness/kind"]);
     let mut state = definition.start(&capabilities).unwrap();
     state
         .answer(
@@ -1159,7 +1161,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
 #[test]
 fn accepted_answers_can_be_revisited_without_losing_other_values() {
     let capabilities = Capabilities::available();
-    let mut state = JourneyDesign::new("minimum", minimum())
+    let mut state = JourneyDefinition::new("minimum", minimum())
         .start(&capabilities)
         .unwrap();
     state
@@ -1210,7 +1212,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
             .unwrap();
     base["spec"]["sandboxes"][0]["harness"]["settings"] = json!({"cli": 42});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
-    let mut state = JourneyDesign::new("fabric-invalid", base)
+    let mut state = JourneyDefinition::new("fabric-invalid", base)
         .start(&capabilities)
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();
@@ -1245,7 +1247,7 @@ fn fully_supplied_express_definition_has_no_current_questions() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition = JourneyDesign::new("express", base).omit([
+    let definition = JourneyDefinition::new("express", base).omit([
         "adapter:nvidia.fabric.openclaw:/agent_name",
         "adapter:nvidia.fabric.openclaw:/cli",
         "adapter:nvidia.fabric.openclaw:/home",
@@ -1270,7 +1272,7 @@ fn missing_catalog_schema_keeps_unreachable_guidance_as_a_warning() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let definition =
-        JourneyDesign::new("catalog-gap", base).ask(["adapter:nvidia.fabric.hermes:/mode"]);
+        JourneyDefinition::new("catalog-gap", base).ask(["adapter:nvidia.fabric.hermes:/mode"]);
 
     let resolved = definition
         .start(&capabilities)
@@ -1292,7 +1294,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    let definition = JourneyDesign::new("guided-complete", base)
+    let definition = JourneyDefinition::new("guided-complete", base)
         .ask(["/metadata/name", "/spec/sandboxes/0/harness/kind"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
@@ -1347,7 +1349,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
 #[test]
 fn absent_harness_catalog_cannot_silently_accept_an_unadvertised_choice() {
     let capabilities = Capabilities::from_harnesses([]);
-    let mut state = JourneyDesign::new("empty-catalog", minimum())
+    let mut state = JourneyDefinition::new("empty-catalog", minimum())
         .start(&capabilities)
         .unwrap();
     let resolved = state.resolve(&capabilities).unwrap();

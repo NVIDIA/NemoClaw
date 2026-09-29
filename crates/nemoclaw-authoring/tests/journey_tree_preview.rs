@@ -1,7 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_authoring::{Capabilities, JourneyDefinition, PartialDocument};
+use nemoclaw_authoring::{Capabilities, JourneyDefinition, JourneyScope, PartialDocument};
+
+#[test]
+fn configured_native_questions_appear_in_the_same_definition_tree() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let definition = JourneyDefinition::new("native", base).ask([JourneyScope::NativeSettings]);
+    let capabilities = Capabilities::available();
+    let state = definition.start(&capabilities).unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution
+        .questions()
+        .iter()
+        .find(|question| question.id().starts_with("model:"))
+        .expect("native model question");
+    let tree = definition.print_tree(&capabilities).unwrap();
+    assert!(tree.contains(question.id()), "{tree}");
+}
 
 #[test]
 fn minimum_values_preview_shows_harness_branches_and_optional_omission() {

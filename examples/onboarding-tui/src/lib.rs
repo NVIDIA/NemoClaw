@@ -16,7 +16,7 @@ use nemoclaw_authoring::Answers;
 use nemoclaw_authoring::{Capabilities, Session};
 #[cfg(test)]
 use nemoclaw_authoring::{Draft, TargetFacts};
-use nemoclaw_authoring::{JourneyDesign, JourneyState, PartialDocument};
+use nemoclaw_authoring::{JourneyDefinition, JourneyScope, JourneyState, PartialDocument};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
 use std::{
     io::{IsTerminal, Read, Write},
@@ -105,18 +105,18 @@ fn load_journey(
         .ok_or("template metadata must be an object")?
         .insert("uid".into(), serde_json::json!(Session::new()?.uid()));
     let partial = PartialDocument::from_yaml(&serde_json::to_vec(&supplied)?)?;
-    JourneyDesign::new("onboarding", partial)
+    JourneyDefinition::new("onboarding", partial)
         .ask([
             "/metadata/name",
             "/spec/sandboxes/0/harness/kind",
             "/spec/sandboxes/0/runtime/provider",
             "inference:preset",
         ])
-        .ask_inference_api()
-        .ask_route_models()
-        .ask_adapter_fields()
-        .ask_native_fields()
-        .ask_deployment_fields()
+        .ask([JourneyScope::InferenceApi])
+        .ask([JourneyScope::RouteModels])
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .ask([JourneyScope::NativeSettings])
+        .ask([JourneyScope::DeploymentFields])
         .start(capabilities)
         .map_err(Into::into)
 }
