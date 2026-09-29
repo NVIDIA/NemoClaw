@@ -112,8 +112,8 @@ export function pinTrustedAgentRemoteBaseImageOverrideForOperation(
   return baseImage.pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, override);
 }
 
-export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
-  return baseImage.hermesBaseImageSupportsMcp(imageRef);
+export function hermesBaseImageSupportsRuntime(imageRef: string, expectedVersion: string): boolean {
+  return baseImage.hermesBaseImageSupportsRuntime(imageRef, expectedVersion);
 }
 
 export function ensureAgentBaseImage(

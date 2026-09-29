@@ -34,35 +34,21 @@ const readWechatPackageName: (
   }
 };
 
-const addManagedNpmProjectWechatCandidates: (
-  projectsDir: string,
-  candidates: string[],
-  fileSystem: typeof fs,
-  pathModule: typeof path,
-) => void = function addManagedNpmProjectWechatCandidates(
-  projectsDir,
-  candidates,
-  fileSystem,
-  pathModule,
-) {
-  const entries = (() => {
-    try {
-      return fileSystem.readdirSync(projectsDir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-  })();
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-    candidates.push(
-      pathModule.join(
-        projectsDir,
-        entry.name,
-        "node_modules",
-        "@tencent-weixin",
-        "openclaw-weixin",
-      ),
+const resolveNativeOpenClawPluginRoot: (
+  pluginId: string,
+  executeFileSync: typeof execFileSync,
+) => string | undefined = function resolveNativeOpenClawPluginRoot(pluginId, executeFileSync) {
+  try {
+    const inspectArgs = ["plugins", "inspect", pluginId, "--json"];
+    const output = String(
+      executeFileSync("openclaw", inspectArgs, {
+        encoding: "utf8",
+        env: { ...process.env, HOME: "/sandbox" },
+      }),
     );
+    return JSON.parse(output.slice(output.indexOf("{")).trim()).plugin.rootDir;
+  } catch {
+    return undefined;
   }
 };
 
@@ -104,35 +90,31 @@ const resolveInstalledWechatPluginRootWithDependencies: (
   stateDir: string,
   fileSystem: typeof fs,
   pathModule: typeof path,
+  nativePluginRoot?: string,
 ) => string | null = function resolveInstalledWechatPluginRootWithDependencies(
   stateDir,
   fileSystem,
   pathModule,
+  nativePluginRoot = pathModule.join(stateDir, "extensions", "openclaw-weixin"),
 ) {
-  const candidates = [pathModule.join(stateDir, "extensions", "openclaw-weixin")];
-  addManagedNpmProjectWechatCandidates(
-    pathModule.join(stateDir, "npm", "projects"),
-    candidates,
-    fileSystem,
-    pathModule,
-  );
-  const matches: string[] = [];
-  for (const candidate of candidates) {
-    if (
-      readWechatPackageName(candidate, fileSystem, pathModule) !== "@tencent-weixin/openclaw-weixin"
-    ) {
-      continue;
-    }
-    try {
-      const resolved = fileSystem.realpathSync(candidate);
-      if (!matches.includes(resolved)) matches.push(resolved);
-    } catch {}
+  if (
+    readWechatPackageName(nativePluginRoot, fileSystem, pathModule) !==
+    "@tencent-weixin/openclaw-weixin"
+  ) {
+    return null;
   }
-  return matches.length === 1 ? matches[0] : null;
+  try {
+    return fileSystem.realpathSync(nativePluginRoot);
+  } catch {
+    return null;
+  }
 };
 
-export function resolveInstalledWechatPluginRoot(stateDir: string): string | null {
-  return resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path);
+export function resolveInstalledWechatPluginRoot(
+  stateDir: string,
+  nativePluginRoot?: string,
+): string | null {
+  return resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path, nativePluginRoot);
 }
 
 const resolveInstalledOpenClawRoot: (
@@ -188,7 +170,7 @@ function invariant(condition, message) {
 }
 
 const readWechatPackageName = ${readWechatPackageName.toString()};
-const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandidates.toString()};
+const resolveNativeOpenClawPluginRoot = ${resolveNativeOpenClawPluginRoot.toString()};
 const linkWechatNodeModulesEntries = ${linkWechatNodeModulesEntries.toString()};
 const resolveInstalledWechatPluginRootWithDependencies = ${resolveInstalledWechatPluginRootWithDependencies.toString()};
 const resolveInstalledOpenClawRoot = ${resolveInstalledOpenClawRoot.toString()};
@@ -240,8 +222,14 @@ function stopPolicyRelay(server) {
 }
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
-const pluginRoot = resolveInstalledWechatPluginRootWithDependencies(stateDir, fs, path);
-invariant(pluginRoot, "installed openclaw-weixin plugin is missing or has multiple installations");
+const nativePluginRoot = resolveNativeOpenClawPluginRoot("openclaw-weixin", execFileSync);
+const pluginRoot = resolveInstalledWechatPluginRootWithDependencies(
+  stateDir,
+  fs,
+  path,
+  nativePluginRoot,
+);
+invariant(pluginRoot, "installed openclaw-weixin plugin is missing");
 const pluginMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
 invariant(
   pluginMetadata.name === "@tencent-weixin/openclaw-weixin",

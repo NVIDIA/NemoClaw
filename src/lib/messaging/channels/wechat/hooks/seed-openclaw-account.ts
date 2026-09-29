@@ -25,12 +25,9 @@ export {
 
 export { WECHAT_TOKEN_PLACEHOLDER } from "../contract.ts";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
-export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 
 export interface WechatSeedOpenClawAccountHookOptions {
   readonly now?: () => Date | string;
-  readonly pluginInstallPath?: string;
-  readonly pluginSpec?: string;
 }
 
 export function createWechatSeedOpenClawAccountHook(
@@ -62,8 +59,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
     optionalInputString(inputs, "credential.wechatBotToken.placeholder") ||
     WECHAT_TOKEN_PLACEHOLDER;
   const savedAt = isoTimestamp(options.now);
-  const pluginInstallPath = options.pluginInstallPath ?? WECHAT_PLUGIN_INSTALL_PATH;
-  const pluginSpec = options.pluginSpec ?? "@tencent-weixin/openclaw-weixin@2.4.3";
 
   return {
     openclawWeixinAccountsIndex: {
@@ -93,13 +88,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
         path: "openclaw.json",
         merge: {
           plugins: {
-            installs: {
-              [WECHAT_PLUGIN_ID]: {
-                source: "npm",
-                spec: pluginSpec,
-                installPath: pluginInstallPath,
-              },
-            },
             entries: {
               [WECHAT_PLUGIN_ID]: {
                 enabled: true,

@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { redactAdvisorDiagnostic } from "./failure-artifacts.mts";
+
 import { getChangedFiles, getDiff, getHeadSha } from "../advisors/git.mts";
 import { parseArgs, parsePositiveInt } from "../advisors/io.mts";
 import {
@@ -88,6 +90,41 @@ export function runSpecialistAdvisor(
   });
 }
 
+export function preserveSpecialistRun(
+  outDir: string,
+  interest: AdvisorInterest,
+  run: RunAdvisorResult,
+): void {
+  const errors = advisorRunErrors(run);
+  // Failed output is diagnostic evidence, never a complete review or a clear ledger.
+  if (errors.length > 0) {
+    fs.writeFileSync(path.join(outDir, "failed-analysis.txt"), redactAdvisorDiagnostic(run.text), {
+      mode: 0o600,
+    });
+  }
+  try {
+    if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
+    const sessionStat = fs.lstatSync(run.sessionFile);
+    if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
+      throw new Error("Pi specialist session must be a regular file");
+    }
+    fs.copyFileSync(run.sessionFile, path.join(outDir, `pr-review-${interest}-session.jsonl`));
+  } catch (error) {
+    if (!errors.length) throw error;
+    errors.push(
+      `Session preservation failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (errors.length) {
+    fs.writeFileSync(
+      path.join(outDir, "failure.json"),
+      JSON.stringify({ status: "failed", errors: errors.map(redactAdvisorDiagnostic) }, null, 2),
+      { mode: 0o600 },
+    );
+    throw new Error(errors.join("; "));
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const artifactName = process.env.PR_REVIEW_ADVISOR_ARTIFACT_DIR || "pr-review-specialist";
@@ -156,8 +193,15 @@ async function main(): Promise<void> {
         ? { review: followUpReview, diffPath: followUpDiffPath }
         : undefined,
   });
-  const findingController = createAdvisorFindingToolController({ headSha, interest });
   const inventory = trustedE2eRecommendationInventory();
+  const recommendations = createE2eRecommendationRecorder(inventory);
+  const findingController = createAdvisorFindingToolController({
+    headSha,
+    interest,
+    validatePrerequisites: () => {
+      recommendations.snapshot();
+    },
+  });
   const evidenceContext = {
     baseSha: getHeadSha(baseRef),
     expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
@@ -169,7 +213,6 @@ async function main(): Promise<void> {
     `${JSON.stringify(buildReviewQueueContext(evidenceContext, process.env), null, 2)}\n`,
     { flag: "wx", mode: 0o600 },
   );
-  const recommendations = createE2eRecommendationRecorder(inventory);
   const run = await runSpecialistAdvisor(
     interest,
     { baseRef, headRef, headSha },
@@ -195,8 +238,7 @@ async function main(): Promise<void> {
     runReadOnlyAdvisor,
     findingController,
   );
-  const errors = advisorRunErrors(run);
-  if (errors.length > 0) throw new Error(errors.join("; "));
+  preserveSpecialistRun(outDir, interest, run);
   const receipt = buildSpecialistE2eReceipt({
     ...evidenceContext,
     interest,
@@ -209,12 +251,6 @@ async function main(): Promise<void> {
   );
   writeSpecialistSummary(outDir, interest, run.text);
   writeAdvisorFindingLedger(outDir, interest, findingController.snapshot());
-  if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
-  const sessionStat = fs.lstatSync(run.sessionFile);
-  if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
-    throw new Error("Pi specialist session must be a regular file");
-  }
-  fs.copyFileSync(run.sessionFile, path.join(outDir, `pr-review-${interest}-session.jsonl`));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

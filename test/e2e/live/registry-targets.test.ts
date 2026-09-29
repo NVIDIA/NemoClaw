@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -21,10 +22,9 @@ import {
   dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
-import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import { buildLiveTargetRunPlan, liveTargetProgressPhases } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
-  "post-reboot-recovery",
   "dcode-rebuild-invalid-credential",
 ]);
 
@@ -51,33 +51,30 @@ const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
   (targetId): targetId is string => targetId !== undefined,
 );
 requireTargets(SELECTED_TARGET_IDS);
-const REGISTRY_TARGET_PHASES = [
-  "resolve the target contract and run plan",
-  "confirm the target environment is ready",
-  "prepare the target lifecycle prerequisites",
-  "onboard the registry-selected sandbox",
-  "execute the target lifecycle boundary",
-  "verify the expected sandbox state",
-  "run target-specific cloud checks",
-  "record target completion evidence",
-] as const;
-
 for (const [targetIndex, target] of listTargets().entries()) {
-  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
+  const runPlan = buildLiveTargetRunPlan(target);
+  const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
+  const runChecksFirst = checkScripts.length > 0;
+  const timeoutContract = liveTargetTimeoutContract(
+    target.environment.lifecycle,
+    target.configExport.expectation,
+  );
 
   test(
     liveTargetTestTitle(target),
     {
       meta: {
         e2eArtifactRootId: target.id,
-        e2ePhases: REGISTRY_TARGET_PHASES,
+        e2ePhases: liveTargetProgressPhases(runPlan),
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
-        : { timeout: timeoutContract.testTimeoutMs }),
+        : { timeout: testTimeout(timeoutContract.testTimeoutMs) }),
     },
     async ({
       artifacts,
+      cleanup,
+      configExportValidation,
       environment,
       host,
       lifecycle,
@@ -105,7 +102,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         pendingRuntimeSuites: target.suiteIds,
       });
 
-      const runPlan = buildLiveTargetRunPlan(target);
       await artifacts.writeJson("run-plan.json", runPlan);
 
       progress.phase("confirm the target environment is ready");
@@ -120,9 +116,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         );
       }
       progress.phase("prepare the target lifecycle prerequisites");
-      await (lifecycleProfile === "post-reboot-recovery"
-        ? lifecycle.preparePostReboot()
-        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
@@ -154,18 +147,32 @@ for (const [targetIndex, target] of listTargets().entries()) {
             : await lifecycle.simulate(lifecycleProfile, instance);
       }
 
-      progress.phase("verify the expected sandbox state");
-      const validation = await stateValidation.from(target.expectedStateId, instance);
-
-      progress.phase("run target-specific cloud checks");
-      const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
-      expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
-      await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
-        artifacts,
-        dcodeBaseImageReference,
-        host,
-        secrets,
-      });
+      let validation!: Awaited<ReturnType<typeof stateValidation.from>>;
+      let configExport!: Awaited<ReturnType<typeof configExportValidation.from>>;
+      const validateState = async () => {
+        progress.phase("verify the expected sandbox state");
+        validation = await stateValidation.from(target.expectedStateId, instance);
+      };
+      const validateConfigExport = async () => {
+        progress.phase("validate the exported sandbox configuration");
+        configExport = await configExportValidation.from(target, instance);
+      };
+      const runCloudChecks = async () => {
+        progress.phase("run target-specific cloud checks");
+        expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
+        await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
+          artifacts,
+          cleanup,
+          dcodeBaseImageReference,
+          host,
+          secrets,
+        });
+      };
+      await (runChecksFirst ? undefined : validateState());
+      await (runChecksFirst ? undefined : validateConfigExport());
+      await runCloudChecks();
+      await (runChecksFirst ? validateConfigExport() : undefined);
+      await (runChecksFirst ? validateState() : undefined);
 
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract
@@ -175,6 +182,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
+        configExport: {
+          expectation: configExport.expectation,
+          classification: configExport.classification,
+          contract: configExport.contract,
+          elapsedMs: configExport.elapsedMs,
+        },
         pendingRuntimeSuites: target.suiteIds,
         dcodeBaseImage,
         lifecycle: lifecycleResult

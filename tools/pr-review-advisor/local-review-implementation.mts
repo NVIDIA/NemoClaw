@@ -197,6 +197,25 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
+export function createExactCommitReviewSnapshot(
+  source: string,
+  destination: string,
+  baseRef?: string,
+): { baseRef: string; headRef: string } {
+  if (!baseRef) throw new Error("Exact-commit review requires a base commit");
+  const status = gitValue(source, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (status) throw new Error("Exact-commit review source must be clean");
+  const headRef = gitValue(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  git(path.dirname(destination), ["clone", "--no-hardlinks", "--no-checkout", source, destination]);
+  git(destination, ["read-tree", headRef]);
+  git(destination, [...disabledFilters(source), "checkout-index", "--all", "--force"]);
+  git(destination, ["update-ref", "--no-deref", "HEAD", headRef]);
+  removeSnapshotSymlinksResolvingOutside(destination);
+  git(destination, ["cat-file", "-e", baseRef + "^{commit}"]);
+  git(destination, ["cat-file", "-e", headRef + "^{commit}"]);
+  return { baseRef, headRef };
+}
+
 function assertPublicationPath(root: string, resource: string): void {
   root = fs.realpathSync(root);
   const relative = path.relative(root, resource);
@@ -608,6 +627,7 @@ async function runRequestedPullRequestReview(
       source: targetDirectory,
       publicationRoot,
       baseRef: before.baseSha,
+      prepareSnapshot: createExactCommitReviewSnapshot,
       github: {
         contextPath,
         prNumber: request.number,

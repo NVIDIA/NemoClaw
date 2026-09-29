@@ -52,10 +52,6 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/sandbox/privileged-exec.ts",
   "src/lib/state/registry/lifecycle-generation.ts",
 ] as const;
-const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
-  "src/lib/onboard/managed-bootstrap/docker.ts",
-  "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
-] as const;
 const LEGACY_BUFFERED_EXEC_HELPER = "src/lib/actions/sandbox/exec.ts";
 const INTERACTIVE_EXEC_HELPER_IMPORTERS = new Set([
   "src/lib/actions/sandbox/agent/passthrough-json.ts",
@@ -812,13 +808,10 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
     visit(sourceFile);
   }
 
-  const managedBootstrapFiles = [
-    ...walk(path.join(SRC_ROOT, "lib/onboard/managed-bootstrap")),
-  ].filter((absPath) => !path.basename(absPath).includes("test-fixture"));
   const podmanProviderFiles = [...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider"))].filter(
     (absPath) => path.basename(absPath).startsWith("podman"),
   );
-  for (const absPath of [...managedBootstrapFiles, ...podmanProviderFiles]) {
+  for (const absPath of podmanProviderFiles) {
     const repoPath = toRepoPath(absPath);
     const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
     const report = (node: ts.Node, detail: string): void => {
@@ -851,32 +844,13 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
     }
     const visit = (node: ts.Node): void => {
       if (ts.isStringLiteralLike(node) && MANAGED_AGENT_IDS.has(node.text)) {
-        report(node, "managed bootstrap and Podman provider code must not encode agent IDs");
+        report(node, "Podman provider code must not encode agent IDs");
       }
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
   }
 
-  for (const repoPath of MANAGED_STATE_ROOT_PROVIDER_MODULES) {
-    const absPath = path.join(REPO_ROOT, repoPath);
-    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
-    const ownsGenericStateRootPreparation = collectImportRefs(sourceFile).some(
-      (ref) =>
-        resolveInternalImport(absPath, ref.specifier) ===
-        "src/lib/onboard/managed-bootstrap/state-root-authority.ts",
-    );
-    if (!ownsGenericStateRootPreparation) {
-      addViolation(
-        violations,
-        repoPath,
-        1,
-        1,
-        "managed-state-root-neutrality",
-        "managed provider bootstrap must consume the generic state-root authority operation",
-      );
-    }
-  }
   return violations;
 }
 

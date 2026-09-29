@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createExactCommitReviewSnapshot,
   createLocalReviewSnapshot,
   runLocalReview,
   type LocalReviewLifecycle,
@@ -545,18 +546,35 @@ describe("local PR review advisor", () => {
 
   it("binds a requested PR review to its exact base, GitHub context, and coordinator output (#10610)", async () => {
     const source = repository();
+    git(source, ["add", "--all"]);
+    git(source, ["commit", "-m", "exact pull request head"]);
     const publicationRoot = temporaryDirectory();
     const contextPath = path.join(temporaryDirectory(), "github-context.json");
     fs.writeFileSync(contextPath, '{"repo":"NVIDIA/NemoClaw","prNumber":42}\n');
     const baseRef = git(source, ["rev-parse", "origin/main"]);
+    const headRef = git(source, ["rev-parse", "HEAD"]);
     const observed: NodeJS.ProcessEnv[] = [];
     const lifecycle = artifactLifecycle();
     lifecycle.prepare = async (env) => void observed.push({ ...env });
+    const download = lifecycle.download;
+    lifecycle.download = async (env) => {
+      await download(env);
+      const output = path.join(
+        env.GITHUB_WORKSPACE as string,
+        "artifacts",
+        env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
+      );
+      const interest = env.PR_REVIEW_ADVISOR_INTEREST as string;
+      const identity = `${JSON.stringify({ headSha: env.HEAD_REF })}\n`;
+      fs.writeFileSync(path.join(output, `pr-review-${interest}-findings.json`), identity);
+      fs.writeFileSync(path.join(output, "review-queue-context.json"), identity);
+    };
 
     const destination = await runLocalReview({
       source,
       publicationRoot,
       baseRef,
+      prepareSnapshot: createExactCommitReviewSnapshot,
       github: {
         contextPath,
         prNumber: 42,
@@ -572,11 +590,36 @@ describe("local PR review advisor", () => {
     expect(observed).toHaveLength(1);
     expect(observed[0]).toMatchObject({
       BASE_REF: baseRef,
+      HEAD_REF: headRef,
       PR_NUMBER: "42",
       PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: contextPath,
       PR_REVIEW_ADVISOR_REVIEWER_LOGIN: "maintainer",
       TARGET_REPO: "NVIDIA/NemoClaw",
     });
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(
+            destination,
+            `pr-review-specialist-${ADVISOR_SPECIALISTS[0]!.interest}`,
+            `pr-review-${ADVISOR_SPECIALISTS[0]!.interest}-findings.json`,
+          ),
+          "utf8",
+        ),
+      ),
+    ).toEqual({ headSha: headRef });
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(
+            destination,
+            `pr-review-specialist-${ADVISOR_SPECIALISTS[0]!.interest}`,
+            "review-queue-context.json",
+          ),
+          "utf8",
+        ),
+      ),
+    ).toEqual({ headSha: headRef });
     expect(fs.existsSync(destination)).toBe(true);
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });

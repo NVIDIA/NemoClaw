@@ -21,31 +21,6 @@ export type InstalledSlackRuntimeProof = {
 };
 
 export const SLACK_RUNTIME_DISCOVERY_SOURCE = String.raw`
-function addManagedNpmProjectSlackCandidates(projectsDir, addExternalCandidate) {
-  let entries;
-  try {
-    entries = fs.readdirSync(projectsDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory()) continue;
-    const projectRoot = path.join(projectsDir, entry.name);
-    let dependencies;
-    try {
-      dependencies = JSON.parse(
-        fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
-      ).dependencies;
-    } catch {
-      continue;
-    }
-    if (!dependencies || !Object.hasOwn(dependencies, "@openclaw/slack")) continue;
-    addExternalCandidate(
-      path.join(projectRoot, "node_modules", "@openclaw", "slack"),
-    );
-  }
-}
-
 function resolveInstalledPackageRoot(candidate) {
   try {
     return fs.realpathSync(candidate);
@@ -88,10 +63,6 @@ function resolveOpenClawSlackApiLocation() {
   };
   const openclawStateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
   addExternalCandidate(path.join(openclawStateDir, "extensions", "slack"));
-  addManagedNpmProjectSlackCandidates(
-    path.join(openclawStateDir, "npm", "projects"),
-    addExternalCandidate,
-  );
   addExternalCandidate(process.env.OPENCLAW_SLACK_PACKAGE_ROOT);
   addCoreCandidate(process.env.OPENCLAW_PACKAGE_ROOT);
   for (const base of [
@@ -115,6 +86,18 @@ function resolveOpenClawSlackApiLocation() {
     addCoreCandidate(path.join(globalRoot, "openclaw"));
   } catch {}
   try {
+    const inspectArgs = ["plugins", "inspect", "slack", "--json"];
+    const inspectOutput = execFileSync(
+      "openclaw",
+      inspectArgs,
+      {
+        encoding: "utf8",
+        env: { ...process.env, HOME: "/sandbox" },
+      },
+    );
+    addExternalCandidate(
+      JSON.parse(inspectOutput.slice(inspectOutput.indexOf("{")).trim()).plugin.rootDir,
+    );
     const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw || true"], {
       encoding: "utf8",
     }).trim();
@@ -177,6 +160,29 @@ async function importProofModules(slackDir) {
 }
 `;
 
+export const SLACK_SQLITE_TMPDIR_SETUP_SOURCE = String.raw`
+function prepareSqliteTmpdir(openclawStateDir = "/sandbox/.openclaw") {
+  const sqliteTmpdir = path.join(openclawStateDir, "tmp");
+  let metadata;
+  try {
+    metadata = fs.lstatSync(sqliteTmpdir);
+  } catch (error) {
+    invariant(error?.code === "ENOENT", "unable to inspect OpenClaw SQLite temporary directory");
+    fs.mkdirSync(sqliteTmpdir, { mode: 0o700 });
+    metadata = fs.lstatSync(sqliteTmpdir);
+  }
+  invariant(
+    metadata.isDirectory() &&
+      !metadata.isSymbolicLink() &&
+      (typeof process.getuid !== "function" || metadata.uid === process.getuid()),
+    "unsafe OpenClaw SQLite temporary directory",
+  );
+  fs.chmodSync(sqliteTmpdir, 0o700);
+  process.env.SQLITE_TMPDIR = sqliteTmpdir;
+  return sqliteTmpdir;
+}
+`;
+
 export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -190,6 +196,10 @@ ${SLACK_RUNTIME_DISCOVERY_SOURCE}
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+${SLACK_SQLITE_TMPDIR_SETUP_SOURCE}
+
+prepareSqliteTmpdir();
 
 function postForm(pathname, fields, authorization) {
   const body = new URLSearchParams(fields).toString();

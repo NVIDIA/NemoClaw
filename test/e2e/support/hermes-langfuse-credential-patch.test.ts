@@ -37,30 +37,56 @@ _LANGFUSE_KEY_PREFIXES: Dict[str, str] = {
     "HERMES_LANGFUSE_SECRET_KEY": "sk-lf-",
 }
 
-def _redact_key_preview(value: str) -> str:
-    return repr(value[:6] + "...")
-
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
+def _secret(name: str) -> str:
+    return _env(name)
+
 def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
     expected = _LANGFUSE_KEY_PREFIXES.get(env_name, "")
-    if not expected:
+    if not expected or value.startswith(expected):
         return None
-    if value.startswith(expected):
-        return None
-    return (
-        f"{env_name}={_redact_key_preview(value)} "
-        f"(expected {expected!r} prefix)"
-    )
+    preview = "<empty>" if not value else repr(value) if len(value) <= 12 else repr(value[:6] + "...")
+    return f"{env_name}={preview} (expected {expected!r} prefix)"
 
+
+def _settled_client() -> Any:
+    return _LANGFUSE_CLIENT
+
+def _settle_client() -> Any:
+    global _LANGFUSE_CLIENT
+    client = _build_client()
+    _LANGFUSE_CLIENT = _INIT_FAILED if client is None else client
+    return _LANGFUSE_CLIENT
 
 def _get_langfuse() -> Optional[Langfuse]:
-    global _LANGFUSE_CLIENT
-    with _LANGFUSE_CLIENT_LOCK:
-        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+    settled = _settled_client()
+    if settled is None:
+        with _LANGFUSE_CLIENT_LOCK:
+            settled = _settled_client()
+            if settled is None:
+                settled = _settle_client()
+    return None if settled is _INIT_FAILED else settled
+
+def _build_client() -> Optional[Langfuse]:
+    public_key, secret_key = (_secret(f"HERMES_LANGFUSE_{n}") for n in ("PUBLIC_KEY", "SECRET_KEY"))
+    if not (public_key and secret_key):
         return None
+    placeholder_issues = [issue for issue in (
+        _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", public_key),
+        _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", secret_key),
+    ) if issue]
+    if placeholder_issues:
+        return None
+    kwargs: Dict[str, Any] = {"public_key": public_key, "secret_key": secret_key}
+    for key, name, default in (("base_url", "BASE_URL", "https://cloud.langfuse.com"), ("environment", "ENV", ""),
+                               ("release", "RELEASE", "")):
+        value = _secret(f"HERMES_LANGFUSE_{name}") or default
+        if value:
+            kwargs[key] = value
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
+    return kwargs
 `;
 
 const validatorAssertions = `\
@@ -85,6 +111,8 @@ assert _validate_langfuse_base_url("https://cloud.langfuse.com?project=other") i
 assert _validate_langfuse_base_url("https://cloud.langfuse.com#fragment") is not None
 assert _validate_langfuse_base_url("https://cloud.langfuse.com:invalid") is not None
 os.environ["HERMES_LANGFUSE_BASE_URL"] = "http://cloud.langfuse.com"
+os.environ["HERMES_LANGFUSE_PUBLIC_KEY"] = "pk-lf-public"
+os.environ["HERMES_LANGFUSE_SECRET_KEY"] = "sk-lf-secret"
 assert _get_langfuse() is None
 assert _LANGFUSE_CLIENT is _INIT_FAILED
 del os.environ["HERMES_LANGFUSE_BASE_URL"]

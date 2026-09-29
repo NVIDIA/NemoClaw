@@ -11,6 +11,8 @@ import type {
   RuntimeProviderSnapshotPreflightReceipt,
   RuntimeProviderSnapshotRestoreReceipt,
   RuntimeProviderSnapshotSurface,
+  RuntimeProviderStoppedStateCapture,
+  RuntimeProviderStoppedStateProjection,
 } from "../../../onboard/runtime-provider/contract";
 import {
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -152,6 +154,34 @@ export function captureSandboxRuntimeSnapshot(
   });
 }
 
+/** Prepare provider-owned read-only capture without granting filesystem mutation authority. */
+export function prepareSandboxStoppedStateCapture(
+  bundle: RuntimeProviderBundle,
+  sandbox: SandboxEntry,
+  source: SandboxRuntimeSnapshot,
+  projection: RuntimeProviderStoppedStateProjection,
+): RuntimeProviderStoppedStateCapture | null {
+  const surface = requireSnapshotSurface(bundle, "backup");
+  if (source.providerId !== bundle.identity.id || source.lifecycleState !== "stopped") {
+    throw new SandboxSnapshotProviderError(
+      "stopped state source does not match the owning provider",
+    );
+  }
+  const prepared = surface.prepareStoppedStateCapture?.(
+    cloneAndDeepFreeze(sandbox),
+    cloneAndDeepFreeze(source),
+    cloneAndDeepFreeze(projection),
+  );
+  if (prepared == null) return null;
+  if (typeof prepared.capture !== "function" || typeof prepared.assertCurrent !== "function") {
+    throw new SandboxSnapshotProviderError("provider returned invalid stopped state capture");
+  }
+  return {
+    capture: (fd) => prepared.capture(fd),
+    assertCurrent: () => prepared.assertCurrent(),
+  };
+}
+
 export interface PreparedSandboxRuntimeRestore {
   readonly phase: "preflighted";
   readonly targetProviderId: string;
@@ -203,7 +233,14 @@ export function prepareSandboxRuntimeRestore(
     "restore",
     surface.preflight("restore", providerTarget),
   );
-  if (preflight.lifecycleState !== source.lifecycleState) {
+  if (
+    preflight.lifecycleState !== source.lifecycleState &&
+    surface.canRestoreLifecycle?.(
+      providerTarget,
+      source.lifecycleState,
+      preflight.lifecycleState,
+    ) !== true
+  ) {
     throw new SandboxSnapshotProviderError(
       `target '${target.name}' cannot represent the snapshot lifecycle state`,
     );

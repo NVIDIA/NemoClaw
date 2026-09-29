@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory state survives the rebuild",
+        "Hermes memory, native user plugin, lazy package state, operator config, and migrated dashboard session state survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -94,10 +94,46 @@ test(
 
     progress.phase("write durable Hermes state");
     const marker = `rebuild-hermes-${Date.now()}`;
+    const operatorMaxTokens = 24_577;
+    const legacyDashboardHome = "/sandbox/.hermes/profiles/dashboard-home";
+    const legacyDashboardSession = `${legacyDashboardHome}/platforms/whatsapp/session/creds.json`;
+    const nativeDashboardSession = "/sandbox/.hermes/platforms/whatsapp/session/creds.json";
+    await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "config",
+        "set",
+        "--key",
+        "model.max_tokens",
+        "--value",
+        String(operatorMaxTokens),
+        "--config-accept-new-path",
+      ],
+      {
+        artifactName: "rebuild-hermes-set-operator-config",
+        env,
+        redactionValues: redactions,
+      },
+    );
+    const assertOperatorConfig = `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys, yaml; cfg = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text()) or {}; sys.exit(cfg.get("model", {}).get("max_tokens") != ${operatorMaxTokens})'`;
     const write = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+      [
+        "set -eu",
+        assertOperatorConfig,
+        `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+        `mkdir -p "$(dirname '${legacyDashboardSession}')"; printf '%s\\n' '{"e2e_marker":"${marker}"}' > '${legacyDashboardSession}'`,
+        "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
+        "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
+        'mkdir -p "$plugin" "$package"',
+        "printf '%s\\n' 'name: e2e-native-plugin' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
+        "printf '%s\\n' 'E2E_NATIVE_PLUGIN = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
+        "printf '%s\\n' 'E2E_NATIVE_PACKAGE = \"present\"' > \"$package/__init__.py\"",
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-before-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-before-rebuild",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+      ].join("\n"),
       { artifactName: "rebuild-hermes-write-marker", redactionValues: redactions },
     );
     assertExitZero(write, "write Hermes rebuild marker");
@@ -124,7 +160,19 @@ test(
     const read = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      "cat /sandbox/.hermes/memories/.rebuild-state-marker",
+      [
+        "set -eu",
+        assertOperatorConfig,
+        `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys; sys.exit(${JSON.stringify(marker)} not in Path("${nativeDashboardSession}").read_text())'`,
+        `test ! -e '${legacyDashboardHome}'`,
+        "test ! -e /sandbox/.hermes/dashboard-home",
+        'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
+        "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+        'printf "%s\\n" "$marker"',
+      ].join("\n"),
       { artifactName: "rebuild-hermes-read-marker", redactionValues: redactions },
     );
     assertExitZero(read, "read restored Hermes marker");

@@ -18,7 +18,6 @@ import {
 import {
   capturePodmanDestroyIdentity,
   capturePodmanDestroyIdentityByName,
-  createCurrentPodmanOperationEngine,
   createPodmanRuntimeProviderSnapshotSurface,
   NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
   prepareNativePodmanGatewayHostRuntime,
@@ -153,7 +152,7 @@ describe("current Podman runtime provider", () => {
     });
 
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.bootstrap.supported).toBe(true);
+    expect(bundle.bootstrap).toMatchObject({ supported: false });
     expect(bundle.snapshot.supported).toBe(true);
     expect(bundle.recovery.supported).toBe(true);
     expect(bundle.cleanup.supported).toBe(true);
@@ -187,17 +186,6 @@ describe("current Podman runtime provider", () => {
     expect(() => bundle.gateway.prepareHostRuntime(input)).toThrow(
       /Inspecting the native Podman gateway address failed.*ENOENT/u,
     );
-  });
-
-  it("projects managed workspace preparation through the lazy production engine", () => {
-    const engine = createCurrentPodmanOperationEngine("managed-bootstrap", {
-      HOME: "/nonexistent/nemoclaw-podman-home",
-      PATH: "/nonexistent/nemoclaw-podman-bin",
-      OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
-    });
-
-    expect(engine.prepareManagedWorkspaceRoot).toBeTypeOf("function");
-    expect(engine.prepareManagedVolumeRoot).toBeTypeOf("function");
   });
 
   it("projects native gateway authority independently from the portable profile", () => {

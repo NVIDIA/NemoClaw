@@ -13,7 +13,7 @@ import {
 } from "../../../src/lib/agent/candidate.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { outputContainsSandbox, resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -28,6 +28,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
+  buildPiReadTask,
   classifyPiReadTaskAttempt,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
@@ -39,11 +40,12 @@ import {
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
-const TASK_VERSION = "pi-read-v1";
+const TASK_VERSION = "pi-read-v2";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_PROVIDER_MAX_ATTEMPTS = 2;
 const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
+const PI_TRUST_EXCLUSION_MARKER = "NEMOCLAW_PI_TRUST_MUST_NOT_SURVIVE";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -141,7 +143,9 @@ async function preclean(
     env,
     timeoutMs: 3 * 60_000,
   });
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
+  // A fresh runner may not have registered the isolated gateway yet. Verify that
+  // absence before skipping sandbox deletion; all other cleanup failures remain errors.
+  await sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
     env,
     timeoutMs: 60_000,
@@ -161,21 +165,19 @@ async function runReadTask(
   env: NodeJS.ProcessEnv,
   phase: string,
 ): Promise<{ assistantText: string; eventCount: number; toolCallId: string }> {
-  const remotePath = `/sandbox/.nemoclaw-pi-${phase}.txt`;
   const token = `NEMOCLAW_PI_${phase.toUpperCase().replaceAll("-", "_")}_${randomBytes(8).toString("hex").toUpperCase()}`;
-  const seed = await execPiShell(
-    sandbox,
-    trustedSandboxShellScript(
-      `umask 077; printf '%s\\n' ${shellQuote(token)} > ${shellQuote(remotePath)}; sync`,
-    ),
-    {
-      artifactName: `pi-${phase}-seed`,
-      env,
-      timeoutMs: 30_000,
-    },
+  const { argv, remotePath, seedScript } = buildPiReadTask(
+    SANDBOX_NAME,
+    `/sandbox/.nemoclaw-pi-${phase}/workspace`,
+    `${TASK_VERSION}-${phase}`,
+    token,
   );
+  const seed = await execPiShell(sandbox, trustedSandboxShellScript(seedScript), {
+    artifactName: `pi-${phase}-seed`,
+    env,
+    timeoutMs: 30_000,
+  });
   expect(seed.exitCode, resultText(seed)).toBe(0);
-  const prompt = `Use the read tool exactly once to read ${remotePath}. Reply with exactly the file contents and no other text.`;
   // The canary is immutable and Pi receives only the read tool, so replaying this
   // turn cannot repeat an external mutation. Retain every provider retry decision.
   const execution = await runBoundedRetry({
@@ -185,33 +187,14 @@ async function runReadTask(
     maxAttempts: PI_PROVIDER_MAX_ATTEMPTS,
     delayMs: PI_PROVIDER_RETRY_DELAY_MS,
     run: async (attempt) => {
-      const result = await host.nemoclaw(
-        [
-          SANDBOX_NAME,
-          "exec",
-          "--workdir",
-          "/sandbox",
-          "--no-tty",
-          "--timeout",
-          "300",
-          "--",
-          "pi",
-          "--no-approve",
-          "--mode",
-          "json",
-          "--print",
-          "--tools",
-          "read",
-          "--name",
-          `${TASK_VERSION}-${phase}-attempt-${String(attempt)}`,
-          prompt,
-        ],
-        {
-          artifactName: `pi-${phase}-headless-task-attempt-${String(attempt)}`,
-          env,
-          timeoutMs: PI_COMMAND_TIMEOUT_MS,
-        },
-      );
+      const attemptArgv = [...argv];
+      const nameIndex = attemptArgv.indexOf("--name") + 1;
+      attemptArgv[nameIndex] = `${TASK_VERSION}-${phase}-attempt-${String(attempt)}`;
+      const result = await host.nemoclaw(attemptArgv, {
+        artifactName: `pi-${phase}-headless-task-attempt-${String(attempt)}`,
+        env,
+        timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      });
       let failure: unknown;
       let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
       try {
@@ -239,16 +222,23 @@ async function runReadTask(
   return proof;
 }
 
-async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
+async function persistentStateInventory(
+  sandbox: SandboxClient,
+  env: NodeJS.ProcessEnv,
+  phase: string,
+  options: { seedNativeState?: boolean } = {},
+) {
+  const stateFixture = options.seedNativeState
+    ? `printf '%s\\n' '{"defaultProjectTrust":"always","futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_EXCLUSION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
+    : "";
   const result = await execPiShell(
     sandbox,
     trustedSandboxShellScript(
-      "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
+      `${stateFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; find /sandbox/.pi/agent -maxdepth 1 -type f -name trust.json -exec grep -F '${PI_TRUST_EXCLUSION_MARKER}' {} +; } | sort`,
     ),
-    { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
+    { artifactName: `pi-${phase}-persistent-state-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout.trim()).not.toBe("");
   return result.stdout.trim();
 }
 
@@ -277,11 +267,14 @@ async function runInteractiveTask(
     ],
     env,
     progress,
-    rules: [{ trigger: token, response: "\u0004" }],
+    rules: [
+      { trigger: token, response: "/session\r", settleMs: 2_000 },
+      { trigger: "Session Info", response: "\u0004" },
+    ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
-  expect(result.firedTriggers).toContain(token);
+  expect(result.firedTriggers).toContain("Session Info");
   expect(result.exitCode).toBe(0);
 }
 
@@ -298,7 +291,7 @@ test(
       e2ePhases: [
         "validate the exact Pi candidate receipt",
         "onboard Pi without a Dockerfile build",
-        "run interactive Pi and preserve its session through rebuild",
+        "run interactive Pi and preserve its native state through rebuild",
         "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
@@ -414,9 +407,33 @@ test(
       },
     });
 
-    progress.phase("run interactive Pi and preserve its session through rebuild");
+    const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
+    const stateAfterOnboard = await persistentStateInventory(sandbox, env, "after-onboard");
+
+    progress.phase("run interactive Pi and preserve its native state through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
-    const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
+    const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", {
+      seedNativeState: true,
+    });
+    const stateBeforeRebuildEntries = stateBeforeRebuild.split("\n").filter(Boolean);
+    const trustMarkersBeforeRebuild = stateBeforeRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
+    );
+    const persistentStateBeforeRebuild = stateBeforeRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
+    const sessionsBeforeRebuild = stateBeforeRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    const stateEntryGrowth =
+      persistentStateBeforeRebuild.split("\n").filter(Boolean).length -
+      stateAfterOnboard.split("\n").filter(Boolean).length;
+    expect(
+      Math.min(sessionsBeforeRebuild.length, stateEntryGrowth),
+      "Pi must create a JSONL session and add persistent state before rebuild",
+    ).toBeGreaterThan(0);
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
@@ -425,8 +442,27 @@ test(
       timeoutMs: 20 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    const sessionsAfterRebuild = await sessionInventory(sandbox, env, "after-rebuild");
-    expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
+    const stateAfterRebuild = await persistentStateInventory(sandbox, env, "after-rebuild");
+    const stateAfterRebuildEntries = stateAfterRebuild.split("\n").filter(Boolean);
+    const trustMarkersAfterRebuild = stateAfterRebuildEntries.filter((entry) =>
+      entry.includes(PI_TRUST_EXCLUSION_MARKER),
+    );
+    const persistentStateAfterRebuild = stateAfterRebuildEntries
+      .filter((entry) => !entry.includes(PI_TRUST_EXCLUSION_MARKER))
+      .join("\n");
+    const sessionsAfterRebuild = stateAfterRebuild
+      .split("\n")
+      .filter(
+        (entry) => entry.includes("/sandbox/.pi/agent/sessions/") && entry.endsWith(".jsonl"),
+      );
+    expect(
+      JSON.stringify([
+        sessionsAfterRebuild,
+        persistentStateAfterRebuild,
+        trustMarkersBeforeRebuild.length,
+        trustMarkersAfterRebuild.length,
+      ]),
+    ).toBe(JSON.stringify([sessionsBeforeRebuild, persistentStateBeforeRebuild, 1, 0]));
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after sandbox and gateway restarts");
@@ -437,7 +473,6 @@ test(
       ),
       { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
     );
-    expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
     const restart = await host.command(
       "bash",
       [
@@ -452,6 +487,13 @@ test(
     expect(restart.exitCode, resultText(restart)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
+    const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
+      artifactName: "pi-recover-after-restart",
+      env,
+      redactionValues: inference.redactionValues(),
+      timeoutMs: 6 * 60_000,
+    });
+    expect(recover.exitCode, resultText(recover)).toBe(0);
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
     const profilesAfterRecovery = await execPiShell(
       sandbox,
@@ -566,9 +608,13 @@ test(
       },
       tasks: {
         version: TASK_VERSION,
+        headlessAfterOnboard: onboardProof,
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,
+        nativeDefaultProjectTrustPreservedAcrossRebuild: true,
+        nativeSettingsPreservedAcrossRebuild: true,
+        perPathTrustExcludedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],

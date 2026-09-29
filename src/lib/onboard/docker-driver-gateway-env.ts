@@ -621,6 +621,19 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
   }
 }
 
+export function preparePackageManagedDockerDriverGatewayServiceEnv(
+  gatewayEnv: Record<string, string>,
+  opts: { env?: NodeJS.ProcessEnv; home?: string } = {},
+): void {
+  const env = opts.env ?? process.env;
+  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, env);
+  const serviceGatewayEnv = { ...gatewayEnv };
+  delete serviceGatewayEnv.DOCKER_HOST;
+  const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+  if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+  writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, opts);
+}
+
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {
@@ -645,11 +658,7 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
       options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
       try {
-        const serviceGatewayEnv = { ...gatewayEnv };
-        delete serviceGatewayEnv.DOCKER_HOST;
-        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
-        writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+        preparePackageManagedDockerDriverGatewayServiceEnv(gatewayEnv, {
           env,
           home: effectiveHome,
         });

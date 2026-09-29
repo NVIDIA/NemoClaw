@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { shellQuote } from "../../runner";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -11,7 +12,7 @@ import {
   assertPersistedAuthenticatedBridgeEntry,
   validateMcpCredentialEnvName,
 } from "./mcp-bridge-validation";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
 
@@ -48,13 +49,16 @@ function executeMcpCredentialProofCommand(
   sandboxName: string,
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): ReturnType<typeof executeSandboxExecCommand> {
+  timeoutMs?: number,
+): Promise<Awaited<ReturnType<typeof executeSandboxExecCommand>> | null> {
   // OpenShell preserves the proof as one multiline command argument. The
   // script classifies placeholder shape/revision only and never prints a raw
   // credential value or writes sandbox state.
-  return executeSandboxExecCommand(sandboxName, command, undefined, {
-    localDockerFallbackPolicy: "never",
+  return executeSandboxExecCommand(sandboxName, command, timeoutMs, {
     runtimeSelection,
+  }).catch((error: unknown) => {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
   });
 }
 
@@ -122,11 +126,13 @@ async function tryObserveMcpCredentialRevision(
   sandboxName: string,
   envName: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  timeoutMs?: number,
 ): Promise<McpCredentialRevisionAttempt> {
   const result = await executeMcpCredentialProofCommand(
     sandboxName,
     buildMcpCredentialRevisionObservationCommand(envName),
     runtimeSelection,
+    timeoutMs,
   );
   if (!result) return { kind: "transport-unavailable" };
   if (result.status !== 0) return { kind: "command-failed", status: result.status };
@@ -151,12 +157,14 @@ export async function observeMcpCredentialRevision(
   sandboxName: string,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  timeoutMs?: number,
 ): Promise<McpCredentialRevisionObservation> {
   assertAuthenticatedBridgeEntry(entry);
   const attempt = await tryObserveMcpCredentialRevision(
     sandboxName,
     entry.env[0],
     runtimeSelection,
+    timeoutMs,
   );
   if (attempt.kind !== "observation") {
     throw new McpBridgeError(

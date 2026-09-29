@@ -27,6 +27,8 @@ describe("standard E2E execution profile", () => {
   });
 
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
+    // The original 70-minute path now includes native configuration and plugin lifecycle work.
+    expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
     expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
       FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     );
@@ -87,11 +89,11 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;
     };
-    workflow.jobs["catalogue-brave-nvidia-inference"]!.with.trusted_main =
+    workflow.jobs["catalogue-nvidia-inference"]!.with.trusted_main =
       "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue-brave-nvidia-inference must pass trusted_main from the catalogue matrix",
+      "catalogue-nvidia-inference must pass trusted_main from the catalogue matrix",
     );
   });
 

@@ -697,28 +697,35 @@ startGateway(null).catch((error) => {
     );
   });
 
-  it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const onboardScriptMocksPath = JSON.stringify(
-      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
-    );
+  it.each(["unreadable selection", "native model edit"])(
+    "restores the dashboard without recreating a ready sandbox with %s",
+    async (selectionState) => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const onboardScriptMocksPath = JSON.stringify(
+        path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+      fs.mkdirSync(fakeBin, { recursive: true });
+      writeOkOpenshell(fakeBin);
 
-    const script = String.raw`
+      const script = String.raw`
 	const runner = require(${runnerPath});
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 	const registry = require(${registryPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
+const selectionState = ${JSON.stringify(selectionState)};
 
 const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
@@ -727,11 +734,20 @@ existingSandbox.installRuntimeObservation();
 const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
+  if (_n(command).includes("sandbox download") && _n(command).includes("/sandbox/.nemoclaw/config.json")) {
+    if (selectionState === "unreadable selection") return { status: 1 };
+    fs.writeFileSync(path.join(command.at(-1), "config.json"), JSON.stringify({ provider: "nvidia-prod", model: "gpt-5.4" }));
+    return { status: 0 };
+  }
 	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
+  commands.push({ command: _n(command), env: null });
+  if (_n(command).includes("openclaw config get agents.defaults.model.primary")) {
+    return JSON.stringify("inference/native-model-edit");
+  }
   const sandboxResult = existingSandbox.run(sandboxCommand(command));
   if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
@@ -769,98 +785,64 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      sandboxName: string;
-      commands: CommandEntry[];
-    }>(result.stdout);
-    assert.equal(payload.sandboxName, "my-assistant");
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward service my-assistant") &&
-          entry.command.includes("--target-port 18789") &&
-          entry.command.includes("--local 127.0.0.1:18789"),
-      ),
-      "expected dashboard forward restore on sandbox reuse",
-    );
-    assert.ok(
-      payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
-      "did not expect sandbox create when reusing existing sandbox",
-    );
-    assert.match(
-      result.stdout,
-      /Existing provider\/model selection is unreadable; reusing sandbox\./,
-    );
-  });
-
-  it("accepts gateway inference when system inference is separately not configured", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
-
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? {
-                status: 0,
-                stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-                stderr: "",
-              }
-            : undefined,
-        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
       });
 
-      await harness.setupInference(
-        "test-box",
-        "gpt-5.4",
-        "openai-api",
-        "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
+      assert.equal(result.status, 0, result.stderr);
+      const payload = parseStdoutJson<{
+        sandboxName: string;
+        commands: CommandEntry[];
+      }>(result.stdout);
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.ok(
+        payload.commands.some(
+          (entry: CommandEntry) =>
+            entry.command.includes("forward service my-assistant") &&
+            entry.command.includes("--target-port 18789") &&
+            entry.command.includes("--local 127.0.0.1:18789"),
+        ),
+        "expected dashboard forward restore on sandbox reuse",
       );
+      assert.ok(
+        payload.commands.every(
+          (entry: CommandEntry) => !/sandbox (create|delete)\b/u.test(entry.command),
+        ),
+        "did not expect sandbox creation or deletion when reusing existing sandbox",
+      );
+      assert.ok(
+        payload.commands.every(
+          (entry: CommandEntry) => !/openclaw config|openclaw\.json/u.test(entry.command),
+        ),
+        "reuse must neither inspect nor overwrite native OpenClaw configuration",
+      );
+      assert.equal(
+        result.stdout.includes("Existing provider/model selection is unreadable; reusing sandbox."),
+        selectionState === "unreadable selection",
+      );
+    },
+    30_000,
+  );
 
-      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
-      assert.equal(harness.commands.length, 3);
+  it("accepts a complete configured route from the typed observer", async () => {
+    const route = createInferenceRouteHelpers({
+      observeInferenceRoute: () => ({
+        ok: true,
+        value: {
+          state: "configured",
+          route: { provider: "openai-api", model: "gpt-5.4" },
+        },
+      }),
     });
-  });
-  it("accepts gateway inference output that omits the Route line", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
 
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({

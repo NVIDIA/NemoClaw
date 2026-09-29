@@ -84,7 +84,6 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
     const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
-    const configGuardPath = path.join(localLib, "openclaw-config-guard.py");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
@@ -93,9 +92,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "entrypoint-env-wrapper.sh"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "sandbox-rlimits.sh"),
-      configGuardPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
-      path.join(localLib, "normalize_mutable_config_perms.py"),
+      path.join(localLib, "openclaw_pairing_state.py"),
       generatorPath,
       toolSearchValidatorPath,
       extraAgentsValidationPath,
@@ -119,7 +117,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       });
       const messagingPermissionCommand = dockerRunCommandBetween(
         dockerfile,
-        "# Add messaging source after the non-messaging install",
+        "COPY src/lib/messaging/ /src/lib/messaging/",
         "# Bake reduced messaging runtime metadata for the entrypoint",
       );
       const runtimePermissionCommand = dockerRunCommandBetween(
@@ -160,15 +158,12 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
         ).toString(8),
       ).toBe("644");
       expect(
-        (
-          fs.statSync(path.join(localLib, "normalize_mutable_config_perms.py")).mode & 0o777
-        ).toString(8),
-      ).toBe("555");
+        (fs.statSync(path.join(localLib, "openclaw_pairing_state.py")).mode & 0o777).toString(8),
+      ).toBe("644");
       expect((fs.statSync(pluginDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(pluginFile).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(nestedPluginDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(nestedPluginFile).mode & 0o777).toString(8)).toBe("644");
-      expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("555");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

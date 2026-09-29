@@ -19,9 +19,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const MANIFEST_KIND = "nemoclaw-locked-npm-cache-seed-v1";
-const MANIFEST_NAME = "manifest.json";
+export const LOCKED_NPM_CACHE_SEED_MANIFEST_NAME = "manifest.json";
 const REGISTRY_ORIGIN = "https://registry.npmjs.org";
-const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
+// OpenClaw 2026.9.1 is 55,564,082 bytes. Keep downloads bounded while allowing
+// that reviewed lock-pinned archive and modest upstream packaging growth.
+const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const DOWNLOAD_CONCURRENCY = 6;
 const DOWNLOAD_ATTEMPTS = 4;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -207,7 +209,11 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
       targetAllows(entry, "os", target.os) &&
       targetAllows(entry, "cpu", target.cpu) &&
       targetAllows(entry, "libc", target.libc);
-    if (!compatible) {
+    // npm still inspects bundled optional packages while reifying a packed
+    // plugin and can resolve their external dependencies or peers even when
+    // the bundled package itself targets another platform. Traverse those
+    // embedded records so the exact external archives are available offline.
+    if (!compatible && entry.inBundle !== true) {
       if (edge.optional || entry.optional === true) continue;
       throw new Error(`required package-lock dependency is incompatible: ${packagePath}`);
     }
@@ -265,6 +271,7 @@ export function lockedArchives(
 
   for (const packagePath of reachablePackagePaths(packages, target)) {
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
+    if (entry.inBundle === true) continue;
     const resolved = entry.resolved;
     const integrity = entry.integrity;
     if (resolved === undefined && integrity === undefined) continue;
@@ -435,7 +442,7 @@ export async function materializeLockedNpmCacheSeed(options: {
       await writeFile(destination, bytes, { flag: "wx", mode: 0o444 });
     }
     await writeFile(
-      path.join(directory.temporary, MANIFEST_NAME),
+      path.join(directory.temporary, LOCKED_NPM_CACHE_SEED_MANIFEST_NAME),
       `${JSON.stringify(manifest, null, 2)}\n`,
       {
         flag: "wx",
@@ -505,7 +512,10 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
   const target = exactTarget(options.target);
   const expected = lockedArchives(lockSource.toString("utf8"), target);
   const seed = await exactDirectory(options.seed, "seed directory");
-  const manifestSource = await exactFileSource(path.join(seed, MANIFEST_NAME), "seed manifest");
+  const manifestSource = await exactFileSource(
+    path.join(seed, LOCKED_NPM_CACHE_SEED_MANIFEST_NAME),
+    "seed manifest",
+  );
   const manifest = parseManifest(manifestSource.toString("utf8"));
   if (manifest.lockSha256 !== lockSha256(lockSource)) {
     throw new Error("npm cache seed manifest does not match the selected package-lock.json");
@@ -521,7 +531,10 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
     throw new Error("npm cache seed manifest does not contain the complete locked archive set");
   }
   const entries = await readdir(seed, { withFileTypes: true });
-  const expectedNames = [...expected.map(({ archive }) => archive), MANIFEST_NAME].sort();
+  const expectedNames = [
+    ...expected.map(({ archive }) => archive),
+    LOCKED_NPM_CACHE_SEED_MANIFEST_NAME,
+  ].sort();
   const actualNames = entries.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
     throw new Error("npm cache seed directory contains missing or unexpected files");

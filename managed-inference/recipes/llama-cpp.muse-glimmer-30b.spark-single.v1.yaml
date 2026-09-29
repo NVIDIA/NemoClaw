@@ -87,7 +87,7 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 16384
+      maxRequestBodyBytes: 1048576
       maxRequestHeaderBytes: 32768
       maxOutputTokens: 4096
       requestTimeoutSeconds: 900

@@ -52,7 +52,7 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
     expect.objectContaining({ selectGateway: expect.any(Function) }),
     undefined,
   );
-  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080", "nemoclaw-19080"]);
+  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
     ["sandbox", "list", "-o", "json"],
     expect.objectContaining({ ignoreError: true }),

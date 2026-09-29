@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import type { PendingSandboxCreateIdentity } from "./types";
 
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const KEYS = new Set([
   "gatewayName",
   "gatewayPort",
+  "openshellGatewayStateDir",
   "lifecycleGeneration",
   "createAttemptNonce",
+  "managedBootstrapIdentity",
   "exactFinalHandoffCommitStarted",
   "exactFinalHandoffRuntimeId",
   "exactFinalHandoffAcknowledged",
@@ -45,6 +48,10 @@ export function normalizePendingSandboxCreateIdentity(
     !Number.isSafeInteger(value.gatewayPort) ||
     Number(value.gatewayPort) < 1 ||
     Number(value.gatewayPort) > 65_535 ||
+    (value.openshellGatewayStateDir !== undefined &&
+      (typeof value.openshellGatewayStateDir !== "string" ||
+        !path.isAbsolute(value.openshellGatewayStateDir) ||
+        path.resolve(value.openshellGatewayStateDir) !== value.openshellGatewayStateDir)) ||
     typeof value.sandboxName !== "string" ||
     value.sandboxName.length === 0 ||
     typeof value.lifecycleGeneration !== "string" ||
@@ -54,6 +61,9 @@ export function normalizePendingSandboxCreateIdentity(
     (value.createAttemptNonce !== undefined &&
       (typeof value.createAttemptNonce !== "string" ||
         !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce))) ||
+    (value.managedBootstrapIdentity !== undefined &&
+      (typeof value.managedBootstrapIdentity !== "string" ||
+        !SHA256_DIGEST_PATTERN.test(value.managedBootstrapIdentity))) ||
     (value.exactFinalHandoffAcknowledged !== undefined &&
       value.exactFinalHandoffAcknowledged !== true) ||
     (value.exactFinalHandoffCommitStarted !== undefined &&
@@ -79,10 +89,16 @@ export function normalizePendingSandboxCreateIdentity(
     state: "verified-create",
     gatewayName: value.gatewayName,
     gatewayPort: Number(value.gatewayPort),
+    ...(typeof value.openshellGatewayStateDir === "string"
+      ? { openshellGatewayStateDir: value.openshellGatewayStateDir }
+      : {}),
     sandboxName: value.sandboxName,
     lifecycleGeneration: value.lifecycleGeneration,
     sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
     ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
+    ...(typeof value.managedBootstrapIdentity === "string"
+      ? { managedBootstrapIdentity: value.managedBootstrapIdentity }
+      : {}),
     route: value.route,
     ...(value.exactFinalHandoffCommitStarted === true
       ? { exactFinalHandoffCommitStarted: true as const }

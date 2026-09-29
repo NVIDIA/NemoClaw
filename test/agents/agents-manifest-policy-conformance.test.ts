@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Policy conformance: prove that a manifest-baked openclaw.json produces an
-// `agents.list[].subagents.allowAgents` shape that OpenClaw's runtime
+// `agents.entries.*.subagents.allowAgents` shape that OpenClaw's runtime
 // `sessions_spawn` validator honours for configured ids, unknown ids, and
 // the `"*"` wildcard. Heavy E2E (rebuild + sandbox boot + spawn) lives in
 // the nightly E2E suite; this in-process test mirrors OpenClaw's
@@ -129,13 +129,11 @@ function resolveSubagentTargetPolicy(params: {
 }
 
 function configuredAgentIds(config: any): string[] {
-  return (config.agents.list as Array<{ id: string }>).map((entry) => entry.id);
+  return Object.keys(config.agents.entries);
 }
 
 function mainAllowAgents(config: any): string[] | undefined {
-  const main = (
-    config.agents.list as Array<{ id: string; subagents?: { allowAgents?: string[] } }>
-  ).find((entry) => entry.id === "main");
+  const main = config.agents.entries.main as { subagents?: { allowAgents?: string[] } } | undefined;
   return main?.subagents?.allowAgents;
 }
 

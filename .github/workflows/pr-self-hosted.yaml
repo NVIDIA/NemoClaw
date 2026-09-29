@@ -28,6 +28,89 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select-hermes-root-entrypoint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      selected: ${{ steps.changed.outputs.selected }}
+    steps:
+      - id: changed
+        name: Select Hermes root-entrypoint qualification from PR files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^pull-request/([0-9]+)$ ]] || {
+            echo "::error::Copied branch name does not identify a PR" >&2
+            exit 1
+          }
+          pr_number="${BASH_REMATCH[1]}"
+          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
+          head_sha="$(jq -er '.head.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
+          [[ "$head_sha" == "$GITHUB_SHA" ]] || {
+            echo "::error::Copied PR branch SHA does not match the current PR head" >&2
+            exit 1
+          }
+          changed_files="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+          )"
+          jq -e '
+            type == "array"
+            and all(.[]; type == "array")
+            and all(.[][]; type == "object" and (.filename | type == "string"))
+          ' <<<"$changed_files" >/dev/null
+          expected_file_count="$(jq -er '.changed_files | select(type == "number" and floor == . and . >= 0)' <<<"$pr_json")"
+          actual_file_count="$(jq -er 'flatten | length' <<<"$changed_files")"
+          [[ "$actual_file_count" -eq "$expected_file_count" ]] || {
+            echo "::error::Changed-file response is incomplete ($actual_file_count of $expected_file_count files)" >&2
+            exit 1
+          }
+          if jq -e '
+              flatten
+              | any(
+                  .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == ".github/workflows/sandbox-images.yaml"
+                  or .filename == "package.json"
+                  or .filename == "package-lock.json"
+                  or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json"
+                  or .filename == "src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"
+                  or .filename == "src/lib/hermes-managed-route.ts"
+                  or .filename == "src/lib/providerless-inference.ts"
+                  or .filename == "src/lib/tool-disclosure.ts"
+                  or .filename == "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
+                  or .filename == "test/e2e/live/hermes-sandbox-secret-boundary.test.ts"
+                  or .filename == "test/e2e/mock-parity.json"
+                  or .filename == "ci/reviewed-npm-audit.json"
+                  or (.filename | startswith(".github/actions/"))
+                  or (.filename | startswith("agents/hermes/"))
+                  or (.filename | startswith("agents/common/"))
+                  or (.filename | startswith("nemoclaw-blueprint/"))
+                  or (.filename | startswith("scripts/"))
+                  or (.filename | startswith("src/lib/messaging/"))
+                  or (.filename | startswith("test/e2e/fixtures/"))
+                  or (.filename | startswith("test/e2e/support/"))
+                  or (.filename | startswith("tools/mcp-tool-discovery-runtime/"))
+                  or (.filename | startswith("tools/e2e/"))
+                  or (.filename | startswith("tsconfig"))
+                  or (.filename | startswith("vitest."))
+                )
+            ' <<<"$changed_files" >/dev/null; then
+            selected=true
+          else
+            selected=false
+          fi
+          printf 'selected=%s\n' "$selected" >>"$GITHUB_OUTPUT"
+
+  hermes-root-entrypoint-smoke:
+    needs: select-hermes-root-entrypoint
+    if: ${{ needs.select-hermes-root-entrypoint.outputs.selected == 'true' }}
+    uses: ./.github/workflows/sandbox-images.yaml
+    with:
+      hermes_only: true
+
   select-llama-cpp-generic-gpu:
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -71,6 +154,11 @@ jobs:
                   or .filename == "src/lib/onboard/runtime-provider/configured-runtime.ts"
                   or .filename == "src/lib/onboard/runtime-provider/current.ts"
                   or .filename == "src/lib/onboard/setup-nim-flow.ts"
+                  or .filename == "test/e2e/fixtures/admin-approval-connect.sh"
+                  or .filename == "test/e2e/fixtures/admin-approval-connect.ts"
+                  or .filename == "test/e2e/fixtures/admin-request-selector.ts"
+                  or .filename == "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts"
+                  or .filename == "test/e2e/lib/issue-4462-admin-request-selector.py"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
                   or .filename == "test/e2e/mock-parity.json"
@@ -92,6 +180,8 @@ jobs:
           fi
           {
             printf 'base_sha=%s\n' "$base_sha"
+            printf 'head_sha=%s\n' "$head_sha"
+            printf 'pr_number=%s\n' "$pr_number"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
@@ -121,17 +211,52 @@ jobs:
         name: Verify complete base and managed-image publication
         if: ${{ steps.changed.outputs.selected == 'true' }}
         env:
-          EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
+          BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_SHA: ${{ steps.changed.outputs.head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1"
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1"
+          MANAGED_IMAGE_SHA: ${{ steps.changed.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.changed.outputs.pr_number }}
         shell: bash
         run: |
           set -euo pipefail
-          export GITHUB_REF=refs/heads/main
-          export GITHUB_SHA="$EXPECTED_SHA"
-          node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          error_path="${RUNNER_TEMP}/pr-managed-image-publication-error.txt"
+          deadline=$((SECONDS + 3000))
+          while true; do
+            rm -f -- "$catalog_path" "$error_path"
+            if selection="$(node --no-warnings \
+              tools/e2e/pr-managed-image-publication.mts \
+              "$catalog_path" 2>"$error_path")"; then
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              cat "$error_path" >&2
+              exit 1
+            fi
+            echo "::notice::Waiting for exact PR managed-image publication for ${CANDIDATE_SHA}"
+            sleep 30
+          done
+          case "$selection" in
+            candidate-catalog)
+              printf 'head_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
+              ;;
+            base-cohort)
+              export EXPECTED_SHA="$BASE_SHA"
+              export GITHUB_REF=refs/heads/main
+              export GITHUB_SHA="$EXPECTED_SHA"
+              export PUBLICATION_HISTORY_ALLOW_NON_HEAD=1
+              export REQUIRE_MANAGED_IMAGE_PUBLICATION=1
+              export SELECT_NEAREST_SUCCESSFUL_PUBLICATION=0
+              node --no-warnings tools/e2e/base-image-publication.mts \
+                --wait-seconds 3000 \
+                --poll-seconds 30
+              ;;
+            *)
+              echo "::error::PR managed-image selection is invalid" >&2
+              exit 1
+              ;;
+          esac
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU
@@ -247,7 +372,6 @@ jobs:
           build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
-
 
   managed-image-openclaw-security:
     runs-on: linux-amd64-cpu4

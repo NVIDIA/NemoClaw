@@ -78,7 +78,7 @@ export interface IncompleteOnboarding {
 
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
-  getLiveInference: () => GatewayInference | null;
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
   /**
    * Returns the last onboard session's sandbox name and step state. The
    * step state is needed to filter out phantom names from interrupted
@@ -144,7 +144,7 @@ export interface GatewayHealth {
 
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
-  getLiveInference: () => GatewayInference | null;
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
   showServiceStatus: (options: { sandboxName?: string }) => void;
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
@@ -196,6 +196,10 @@ export interface StatusSandboxRow {
   openshellVersion: string | null;
   policies: string[];
   agent: string;
+  configuredInference: {
+    provider: string | null;
+    model: string | null;
+  };
   phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
   isDefault: boolean;
@@ -289,7 +293,7 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
   return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
 }
 
-type PublicSandboxFields = Omit<StatusSandboxRow, "phase" | "isDefault">;
+type PublicSandboxFields = Omit<StatusSandboxRow, "configuredInference" | "phase" | "isDefault">;
 
 async function projectPublicSandboxFields(
   sandbox: SandboxEntry,
@@ -506,7 +510,7 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   const log = deps.log ?? console.log;
   const recovery = await deps.recoverRegistryEntries();
   const inventory = await buildSandboxInventory(deps, recovery);
-  const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const liveInference = inventory.sandboxes.length > 0 ? await deps.getLiveInference() : null;
   const resolvedDefault = resolveDefaultSandboxName(() => ({
     defaultSandbox: recovery.defaultSandbox ?? null,
   }));
@@ -533,17 +537,23 @@ async function buildStatusSandboxRow(
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
-  const inference = getSandboxEntryDisplayInference(sandbox);
+  const configuredInference = getSandboxEntryDisplayInference(sandbox);
+  // Preserve schema-version-1 `model`/`provider` semantics for existing
+  // consumers while publishing this sandbox's recorded route explicitly.
   const publicFields = await projectPublicSandboxFields(
     sandbox,
     {
-      model: liveModel || inference.model,
-      provider: liveProvider || inference.provider,
+      model: liveModel || configuredInference.model,
+      provider: liveProvider || configuredInference.provider,
     },
     getPolicyPresets,
   );
   return {
     ...publicFields,
+    configuredInference: {
+      provider: safeStatusString(configuredInference.provider),
+      model: safeStatusString(configuredInference.model),
+    },
     ...(portablePhase ? { phase: portablePhase } : {}),
     isDefault,
   };
@@ -618,7 +628,8 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
     sandboxList.sandboxes,
     deps.loadLastSession?.(),
   );
-  const liveInference = sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
+  const liveInference =
+    sandboxes.length > 0 && !hasHermesPortable ? await deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
       ? await deps.getGatewayHealth()
@@ -666,6 +677,10 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
  * model so it agrees with `openshell inference get` (#2369); when it drifts
  * from the stored onboarded model a `(onboarded: …)` line is appended.
  * Non-default rows and the unreachable-gateway case fall back to stored.
+ * The labeled `Inference (configured): …` line always reports this
+ * sandbox's own recorded provider/model, never the shared live gateway
+ * route, so a different sandbox's stop/start cannot change what this line
+ * reports (#11412).
  */
 export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<void> {
   const log = deps.log ?? console.log;
@@ -693,7 +708,7 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
   log("");
   log("  Global status (registered sandboxes and host services):");
   if (sandboxes.length > 0) {
-    const live = hasHermesPortable ? null : deps.getLiveInference();
+    const live = hasHermesPortable ? null : await deps.getLiveInference();
     log("  Sandboxes:");
     for (const sb of sandboxes) {
       const isDefault = sb.name === resolvedDefault;
@@ -704,8 +719,12 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       const liveProvider = safeStatusString(isDefault && live ? live.provider : null);
       const inference = getSandboxEntryDisplayInference(sb);
       const storedModel = safeStatusString(inference.model);
+      const storedProvider = safeStatusString(inference.provider);
+      const liveRouteDrifted = Boolean(
+        (liveModel && liveModel !== storedModel) ||
+        (liveProvider && liveProvider !== storedProvider),
+      );
       const model = liveModel || storedModel;
-      const provider = liveProvider || safeStatusString(inference.provider);
       const name = safeStatusString(sb.name) ?? "unknown";
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
@@ -718,9 +737,16 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // SSH-session count as labeled fields. Bare `nemoclaw status` previously
       // only had the model in parens above — users had to run
       // `nemoclaw <name> status` to see provider and session state.
-      if (provider || model) {
-        const parts = [provider, model].filter(Boolean).join(" / ");
-        log(`      Inference (configured): ${parts}`);
+      // #11412: this line is documented and labeled "configured", so it must
+      // always show this sandbox's own recorded provider/model, never the
+      // shared live gateway route (that would silently show one sandbox's
+      // "configured" line as another sandbox's route after a stop/start
+      // realigns the one shared route).
+      const configuredParts = [storedProvider ?? "unknown", storedModel ?? "unknown"];
+      log(`      Inference (configured): ${configuredParts.join(" / ")}`);
+      if (liveRouteDrifted) {
+        const parts = [liveProvider, liveModel].filter(Boolean).join(" / ");
+        log(`      Inference (live): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);

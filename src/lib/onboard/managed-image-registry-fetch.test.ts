@@ -2,9 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createServer, type Server } from "node:http";
+import fs from "node:fs";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
+import { rootCertificates } from "node:tls";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import {
+  type CaMaterial,
+  cleanupCaSetup,
+  resolveCaSetup,
+} from "../../../test/helpers/corporate-ca-support";
 
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import {
@@ -13,6 +21,7 @@ import {
 } from "./managed-image/registry-fetch";
 
 const servers: Server[] = [];
+const corporateCaSetup = resolveCaSetup("managed-image-registry-corporate-ca");
 
 async function listen(server: Server): Promise<number> {
   servers.push(server);
@@ -33,6 +42,10 @@ afterEach(async () => {
         }),
     ),
   );
+});
+
+afterAll(() => {
+  cleanupCaSetup(corporateCaSetup);
 });
 
 describe("managed image registry transport", () => {
@@ -159,7 +172,38 @@ describe("managed image registry transport", () => {
           "proxy TLS": options.proxyTls,
         } as const
       )[scenario]!;
-      expect((tls as { ca?: readonly string[] }).ca).toContain(PEM);
+      const ca = (tls as { ca?: readonly string[] }).ca;
+      expect(ca).toContain(rootCertificates[0]);
+      expect(ca).toContain(PEM);
+    },
+  );
+
+  it.skipIf(!corporateCaSetup.ok)(
+    "trusts a local HTTPS registry that uses the configured corporate CA (#12059)",
+    async () => {
+      const setup = corporateCaSetup as CaMaterial;
+      const targetPort = await listen(
+        https.createServer(
+          {
+            cert: fs.readFileSync(setup.serverCert),
+            key: fs.readFileSync(setup.serverKey),
+          },
+          (_request, response) => {
+            response.end("trusted");
+          },
+        ),
+      );
+      const session = createManagedImageRegistryFetchSession({
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: setup.corporateCaCert },
+      });
+
+      try {
+        const response = await session.fetchImpl(`https://127.0.0.1:${targetPort}/v2/`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("trusted");
+      } finally {
+        await session.close();
+      }
     },
   );
 

@@ -7,6 +7,7 @@ import {
   HERMES_OPENAI_API_PORT,
   isHermesApiPort,
 } from "../core/ports";
+import { parseServicePortOverride } from "../core/service-port-boundary";
 import * as registry from "../state/registry";
 import {
   createDashboardPortScopedSandboxEntryPoints,
@@ -163,14 +164,20 @@ export function isValidHermesApiPort(value: unknown): value is number {
  */
 export function readHermesApiPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env[HERMES_API_PORT_ENV];
-  if (raw === undefined || raw.trim() === "") return HERMES_OPENAI_API_PORT;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed) || !isValidHermesApiPort(Number(trimmed))) {
+  let port: number;
+  try {
+    port = parseServicePortOverride(HERMES_API_PORT_ENV, raw, HERMES_OPENAI_API_PORT);
+  } catch {
     throw new Error(
       `Invalid port: ${HERMES_API_PORT_ENV}="${raw}" must be an integer from 8642 through 8652`,
     );
   }
-  return Number(trimmed);
+  if (!isValidHermesApiPort(port)) {
+    throw new Error(
+      `Invalid port: ${HERMES_API_PORT_ENV}="${raw}" must be an integer from 8642 through 8652`,
+    );
+  }
+  return port;
 }
 
 export function findAvailableHermesApiPortFromObservations(

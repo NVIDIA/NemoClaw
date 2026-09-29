@@ -39,11 +39,19 @@ function writePackage(
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(
     path.join(target, "package.json"),
-    JSON.stringify({ version: record.version, peerDependencies: record.peerDependencies }),
+    JSON.stringify({
+      type: "module",
+      version: record.version,
+      peerDependencies: record.peerDependencies,
+    }),
   );
 }
 
-function fixture(): { lockFile: string; projectsRoot: string; installedLock: string } {
+function fixture(sdkPath = "channel-message"): {
+  lockFile: string;
+  projectsRoot: string;
+  installedLock: string;
+} {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-lock-"));
   tempDirs.push(root);
   const projectsRoot = path.join(root, "projects");
@@ -52,6 +60,26 @@ function fixture(): { lockFile: string; projectsRoot: string; installedLock: str
   for (const [location, record] of Object.entries(packages)) {
     writePackage(installedRoot, location, record);
   }
+  const pluginRoot = path.join(installedRoot, "node_modules/@tencent-weixin/openclaw-weixin");
+  const handlerDir = path.join(pluginRoot, "dist/src/messaging");
+  const peerRoot = path.join(pluginRoot, "node_modules/openclaw");
+  fs.mkdirSync(handlerDir, { recursive: true });
+  fs.mkdirSync(peerRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(peerRoot, "package.json"),
+    JSON.stringify({
+      type: "module",
+      exports: { "./plugin-sdk/channel-message": "./channel-message.js" },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(peerRoot, "channel-message.js"),
+    "export function createTypingCallbacks() {}\n",
+  );
+  fs.writeFileSync(
+    path.join(handlerDir, "process-message.js"),
+    `import { createTypingCallbacks } from "openclaw/plugin-sdk/${sdkPath}";\nexport { createTypingCallbacks };\n`,
+  );
   const lockFile = path.join(root, "reviewed-lock.json");
   const installedLock = path.join(installedRoot, "package-lock.json");
   fs.writeFileSync(lockFile, JSON.stringify({ packages }));
@@ -64,9 +92,18 @@ describe("WeChat runtime dependency lock", () => {
     expect([...expectedWechatGraph({ packages }).keys()]).toEqual(Object.keys(packages));
   });
 
-  it("accepts one managed npm graph that exactly matches the lock", () => {
+  it("loads the inbound handler after verifying the installed graph and peer range", async () => {
     const { lockFile, projectsRoot } = fixture();
-    expect(() => verifyWechatRuntimeLock(lockFile, projectsRoot, "2026.6.10")).not.toThrow();
+    await expect(
+      verifyWechatRuntimeLock(lockFile, projectsRoot, "2026.6.10"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a removed SDK import even when the peer range is satisfied (#12288)", async () => {
+    const { lockFile, projectsRoot } = fixture("channel-runtime");
+    await expect(verifyWechatRuntimeLock(lockFile, projectsRoot, "2026.9.1")).rejects.toThrow(
+      /channel-runtime/,
+    );
   });
 
   it("rejects an OpenClaw runtime below the locked plugin peer minimum", () => {
@@ -80,14 +117,14 @@ describe("WeChat runtime dependency lock", () => {
     );
   });
 
-  it("rejects lock metadata drift and an unreviewed package", () => {
+  it("rejects lock metadata drift and an unreviewed package", async () => {
     const metadataDrift = fixture();
     const driftedPackages = structuredClone(packages);
     driftedPackages["node_modules/zod"].integrity = "sha512-drift";
     fs.writeFileSync(metadataDrift.installedLock, JSON.stringify({ packages: driftedPackages }));
-    expect(() =>
+    await expect(
       verifyWechatRuntimeLock(metadataDrift.lockFile, metadataDrift.projectsRoot, "2026.6.10"),
-    ).toThrow(/metadata does not match/);
+    ).rejects.toThrow(/metadata does not match/);
 
     const extraPackage = fixture();
     fs.writeFileSync(
@@ -96,8 +133,8 @@ describe("WeChat runtime dependency lock", () => {
         packages: { ...packages, "node_modules/unreviewed": { version: "1.0.0" } },
       }),
     );
-    expect(() =>
+    await expect(
       verifyWechatRuntimeLock(extraPackage.lockFile, extraPackage.projectsRoot, "2026.6.10"),
-    ).toThrow(/dependency set does not match/);
+    ).rejects.toThrow(/dependency set does not match/);
   });
 });

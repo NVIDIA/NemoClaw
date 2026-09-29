@@ -5,7 +5,6 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
-import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
   type E2eGatewayRuntime,
   type E2eGatewayRuntimeSupport,
@@ -14,10 +13,10 @@ import {
   runtimeCoverageVariant,
   runtimeExecutionId,
 } from "../../../tools/e2e/gateway-runtime.mts";
-
+import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { liveTargetTestTitle, requireLiveTargetExecution } from "./execution.ts";
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
-import { liveTargetTestTitle, requireLiveTargetExecution } from "./execution.ts";
 import type { TargetDefinition } from "./types.ts";
 
 interface Args {
@@ -105,7 +104,10 @@ function liveMatrixEntry(
     suites: target.suiteIds,
     requiredSecrets: target.requiredSecrets,
     pendingRuntimeSuites: target.suiteIds,
-    timeout_minutes: liveTargetTimeoutContract(target.environment.lifecycle).targetTimeoutMinutes,
+    timeout_minutes: liveTargetTimeoutContract(
+      target.environment.lifecycle,
+      target.configExport.expectation,
+    ).targetTimeoutMinutes,
   };
 }
 

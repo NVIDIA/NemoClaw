@@ -39,6 +39,7 @@ const canonicalOpenShellObservationBoundary = path.resolve(
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPortBoundary = path.resolve("nemoclaw/src/shared/port-boundary.cts");
 const canonicalPrivateNetworksBoundary = path.resolve(
   "nemoclaw/src/shared/private-networks-boundary.cts",
 );
@@ -66,6 +67,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*port-boundary\.cjs$/,
+    replacement: canonicalPortBoundary,
   },
   {
     find: /^.*private-networks-boundary\.cjs$/,

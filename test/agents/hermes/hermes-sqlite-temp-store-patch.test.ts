@@ -14,23 +14,18 @@ const patcher = path.join(root, "agents", "hermes", "patch-hermes-sqlite-temp-st
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const fixtures: string[] = [];
 
-const pragmaSetup = 'apply_database_pragmas(self._conn, db_label="state.db")';
-const tempStore = '                self._conn.execute("PRAGMA temp_store=MEMORY")';
-const foreignKeys = '                self._conn.execute("PRAGMA foreign_keys=ON")';
-const unpatchedConnection = `${pragmaSetup}\n${foreignKeys}`;
-const legacyTempStoreConnection = `${pragmaSetup}\n${tempStore}\n${foreignKeys}`;
-const unpatchedImports = ["import os", "import re", "import sqlite3", "import sys"].join("\n");
-
-function moduleSource(connection: string): string {
-  return `${unpatchedImports}
+function moduleSource(): string {
+  return `import os
+import sqlite3
+import stat
 from pathlib import Path
 
 def get_hermes_home():
     return Path("/fixture")
 
-DEFAULT_DB_PATH = get_hermes_home() / "state.db"
+DEFAULT_DB_PATH = _IMPORT_DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-# How long SessionDB stops attempting read-only opens after one fails.
+# Back off from read-only opens after one fails.
 
 def _connect_tracked_db(*args, **kwargs):
     return sqlite3.connect(*args, **kwargs)
@@ -38,16 +33,27 @@ def _connect_tracked_db(*args, **kwargs):
 def apply_database_pragmas(_connection, *, db_label):
     return db_label
 
+def _secure_state_db_files(_path, *, create_main=False):
+    return create_main
+
 class SessionDB:
     def _init_schema(self):
         pass
 
-    def connect(self):
-            def _connect_and_init():
-                self._conn = _connect_tracked_db(":memory:")
-                ${connection}
-                self._init_schema()
-            _connect_and_init()
+    def _open_writer_conn(self):
+        conn = _connect_tracked_db(":memory:")
+        try:
+            _secure_state_db_files(self.db_path)
+            apply_database_pragmas(conn, db_label="state.db")
+            conn.execute("PRAGMA foreign_keys=ON")
+        except BaseException:
+            raise
+        return conn
+
+    def _connect_and_init(self):
+        _secure_state_db_files(self.db_path, create_main=True)
+        self._conn = self._open_writer_conn()
+        self._init_schema()
 `;
 }
 
@@ -71,9 +77,9 @@ afterEach(() => {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
-describe("Hermes SQLite temp-store patch", () => {
-  it("inserts the temp store and fixed-layout descriptor normalizer", () => {
-    const stateModule = fixtureFile(moduleSource(unpatchedConnection));
+describe("Hermes shared-state permission patch", () => {
+  it("inserts the fixed-layout descriptor normalizer after native hardening", () => {
+    const stateModule = fixtureFile(moduleSource());
 
     const result = runPatcher(stateModule);
 
@@ -86,13 +92,14 @@ describe("Hermes SQLite temp-store patch", () => {
     expect(
       patched.match(/_nemoclaw_normalize_shared_state_permissions\(self[.]db_path\)/gu),
     ).toHaveLength(2);
-    expect(patched.indexOf("PRAGMA temp_store=MEMORY")).toBeLessThan(
-      patched.indexOf("PRAGMA foreign_keys=ON"),
+    expect(patched).not.toContain("PRAGMA temp_store=MEMORY");
+    expect(patched.indexOf("_secure_state_db_files(self.db_path)\n")).toBeLessThan(
+      patched.indexOf("_nemoclaw_normalize_shared_state_permissions(self.db_path)\n"),
     );
   });
 
   it("accepts one already-patched state module without rewriting it", () => {
-    const stateModule = fixtureFile(moduleSource(unpatchedConnection));
+    const stateModule = fixtureFile(moduleSource());
     expect(runPatcher(stateModule).status).toBe(0);
     const patched = fs.readFileSync(stateModule, "utf8");
 
@@ -102,19 +109,8 @@ describe("Hermes SQLite temp-store patch", () => {
     expect(fs.readFileSync(stateModule, "utf8")).toBe(patched);
   });
 
-  it("upgrades the legacy temp-store-only patch to the shared-state contract", () => {
-    const stateModule = fixtureFile(moduleSource(legacyTempStoreConnection));
-
-    const result = runPatcher(stateModule);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(stateModule, "utf8")).toContain(
-      "def _nemoclaw_normalize_shared_state_permissions(",
-    );
-  });
-
   it("normalizes only the fixed state ledger and its sidecars through pinned descriptors", () => {
-    const stateModule = fixtureFile(moduleSource(unpatchedConnection));
+    const stateModule = fixtureFile(moduleSource());
     expect(runPatcher(stateModule).status).toBe(0);
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shared-state-"));
     fixtures.push(fixture);
@@ -164,16 +160,31 @@ print(f"unrelated={stat.S_IMODE(unrelated.stat().st_mode):03o}")
   });
 
   it.each([
-    ["duplicate", moduleSource(`${legacyTempStoreConnection}\n${tempStore}`)],
-    ["partial", moduleSource(`${pragmaSetup}\n${tempStore}`)],
-    ["misplaced", moduleSource(`${tempStore}\n${unpatchedConnection}`)],
-  ])("rejects a %s connection patch", (_case, source) => {
+    [
+      "missing writer hardening",
+      moduleSource().replace("            _secure_state_db_files(self.db_path)\n", ""),
+    ],
+    [
+      "missing initialization hardening",
+      moduleSource().replace(
+        "        _secure_state_db_files(self.db_path, create_main=True)\n",
+        "",
+      ),
+    ],
+    [
+      "duplicate writer hardening",
+      moduleSource().replace(
+        "            _secure_state_db_files(self.db_path)\n",
+        "            _secure_state_db_files(self.db_path)\n            _secure_state_db_files(self.db_path)\n",
+      ),
+    ],
+  ])("rejects a %s source shape", (_case, source) => {
     const stateModule = fixtureFile(source);
 
     const result = runPatcher(stateModule);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Hermes SessionDB.__init__ connection setup shape changed");
+    expect(result.stderr).toContain("Hermes shared state hardening shape changed");
     expect(fs.readFileSync(stateModule, "utf8")).toBe(source);
   });
 
@@ -188,5 +199,18 @@ print(f"unrelated={stat.S_IMODE(unrelated.stat().st_mode):03o}")
     expect(dockerfile).toContain(
       "RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
     );
+  });
+
+  it("wraps the Hermes 0.21.3 kanban schema in one write transaction", () => {
+    expect(dockerfile).toContain(
+      "grep -Fc 'conn.executescript(_kb.SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db_connect.py",
+    );
+    expect(dockerfile).toContain(
+      'conn.executescript("BEGIN IMMEDIATE;\\\\n" + _kb.SCHEMA_SQL + "\\\\nCOMMIT;")',
+    );
+    expect(dockerfile).toContain(
+      "/opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db_connect.py",
+    );
+    expect(dockerfile).not.toContain("conn.executescript(SCHEMA_SQL)");
   });
 });

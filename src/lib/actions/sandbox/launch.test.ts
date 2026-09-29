@@ -56,6 +56,10 @@ vi.mock("./launch-readiness", () => ({
     capture,
     commandExecutor,
   }),
+  formatLaunchReadinessUnsafeAuthorityEvidence: (evidence?: { observedMode?: string | null }) =>
+    evidence
+      ? ` persistent receipt evidence: observed mode ${evidence.observedMode}`
+      : " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
   withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
@@ -546,9 +550,9 @@ describe("launchSandbox", () => {
     expect(command).not.toEqual(["openclaw", "tui"]);
   });
 
-  // `connect` applies the managed light skin before opening its SSH session, so
-  // `launch` must too or a Hermes TUI on a light terminal keeps the dark skin.
-  it("applies the Hermes light terminal skin before starting the agent (#6006)", async () => {
+  // `connect` retires the managed light skin before opening its SSH session, so
+  // `launch` must run the same Hermes compatibility cleanup.
+  it("retires the Hermes light terminal skin before starting the agent (#6006)", async () => {
     const hermes = loadAgent("hermes");
     prepareSession("hermes", hermes);
 
@@ -1195,10 +1199,13 @@ describe("launchSandbox", () => {
       fenceFailed: false,
       recoveryBlocked: false,
     });
-    mocks.withLaunchReadinessMutationGate.mockResolvedValue({ kind: "unsafe" });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValue({
+      kind: "unsafe",
+      evidence: { observedMode: "0640" },
+    });
 
     await expect(launchSandbox("alpha")).rejects.toThrow(
-      "Launch readiness evidence could not be safely invalidated",
+      "Launch readiness evidence could not be safely invalidated. persistent receipt evidence: observed mode 0640",
     );
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();

@@ -55,7 +55,6 @@ import type {
 import {
   createGpuFlowDeps,
   createGpuFlowInput,
-  createGpuPatchFixture,
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "../__test-helpers__/sandbox-gpu-create-flow";
@@ -64,11 +63,68 @@ import { runSandboxGpuCreateFlow } from "../sandbox-gpu-create-flow";
 import { createCreatedSandboxLifecycle } from "../sandbox-recreate-transaction";
 import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction";
 import {
+  allowsNotReadyCreatedSandboxReconciliation,
+  allowsNotReadyCreatedSandboxRevalidation,
   createFinalHandoffCheckpointPersistence,
   createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
   prepareResumedFinalHandoffCheckpoint,
+  revalidateCreatedSandboxIdentityDuringCreate,
 } from "./orchestration";
 import { resolveLegacyCompatibilityFinalHandoffRuntime } from "./identity-boundary";
+
+describe("compatibility create reconciliation", () => {
+  it("allows same-identity NotReady reconciliation before cutover but withholds publication (#11905)", () => {
+    const input = {
+      managedBootstrapCreateFinished: false,
+      createRoute: "compatibility" as const,
+      currentCheckpoint: null,
+      acceptedCheckpoint: null,
+    };
+
+    expect(allowsNotReadyCreatedSandboxReconciliation(input)).toBe(true);
+    expect(allowsNotReadyCreatedSandboxRevalidation(input)).toBe(false);
+  });
+
+  it("uses only the nonce-selected identity during the reversible cutover window (#11905)", () => {
+    const sandboxId = "compatibility-sandbox-id";
+    const expectedIdentity = fingerprintSandboxRecreateValue(sandboxId);
+    const revalidateLifecycle = vi.fn(() => {
+      throw new Error("OpenShell lifecycle is Error before compatibility cutover");
+    });
+
+    expect(() =>
+      revalidateCreatedSandboxIdentityDuringCreate({
+        expectedIdentity,
+        compatibilityReconciliation: { resolveSandboxId: () => sandboxId },
+        fingerprintSandboxId: fingerprintSandboxRecreateValue,
+        revalidateLifecycle,
+      }),
+    ).not.toThrow();
+    expect(revalidateLifecycle).not.toHaveBeenCalled();
+
+    expect(() =>
+      revalidateCreatedSandboxIdentityDuringCreate({
+        expectedIdentity,
+        compatibilityReconciliation: { resolveSandboxId: () => "replacement-sandbox-id" },
+        fingerprintSandboxId: fingerprintSandboxRecreateValue,
+        revalidateLifecycle,
+      }),
+    ).toThrow(/identity changed during initial compatibility reconciliation/u);
+  });
+
+  it("keeps ordinary and final lifecycle revalidation outside the cutover window (#11905)", () => {
+    const revalidateLifecycle = vi.fn();
+
+    revalidateCreatedSandboxIdentityDuringCreate({
+      expectedIdentity: "a".repeat(64),
+      compatibilityReconciliation: null,
+      fingerprintSandboxId: fingerprintSandboxRecreateValue,
+      revalidateLifecycle,
+    });
+
+    expect(revalidateLifecycle).toHaveBeenCalledOnce();
+  });
+});
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
@@ -377,34 +433,6 @@ describe("durable final-handoff publication", () => {
       flowInput.persistRetainedSandboxRecovery = vi.fn(() => true);
       flowInput.persistResumedFinalHandoffAcknowledgement =
         checkpointPersistence.persistResumedFinalHandoffAcknowledgement;
-      const runtimePatch = createGpuPatchFixture();
-      flowInput.managedBootstrap = {
-        bootstrapIdentity: "managed-bootstrap-identity",
-        stateRoot: path.join(tempHome, "managed-bootstrap"),
-        runtimeProvider: {
-          identity: { id: "docker" },
-          bootstrap: {
-            createOnboardRouting: () => null,
-            createLifecycle: (options: { readonly launchArgv: readonly string[] }) => ({
-              launchArgv: options.launchArgv,
-              patch: runtimePatch,
-              recoverUnfinished: async () => null,
-              prepareNetwork: async () => undefined,
-              runCreate: async () => {
-                throw new Error("resumed handoff must not create another sandbox");
-              },
-            }),
-          },
-        },
-        authorityStore: {},
-        request: {},
-        image: {},
-        agentIdentity: {},
-        workspaceRoot: {},
-        managedStateRoots: [],
-        intendedWorkloadArgv: flowInput.sandboxStartupCommand,
-        expectedSupervisorArgv: [],
-      } as never;
       const deps = createGpuFlowDeps(sandboxId);
       const created = await runSandboxGpuCreateFlow(flowInput, deps);
 

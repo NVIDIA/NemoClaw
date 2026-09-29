@@ -224,4 +224,52 @@ describe("Hermes Portable typed forward recovery", () => {
       },
     });
   });
+
+  it("preserves a safe forward startup failure classification", async () => {
+    const test = fixture(new Map());
+    test.startForward.mockImplementationOnce(async ({ forward: target }) => ({
+      state: "failed",
+      forward: target,
+      effect: "none",
+      error: {
+        kind: "command",
+        message: "The OpenShell forward command failed.",
+      },
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    }));
+
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "recovery-failed",
+      context: {
+        cause: "forward-mutation-failed",
+        operation: "start",
+        port: 18_789,
+        startupFailure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+      },
+    });
+  });
+
+  it("preserves startup failure context when cleanup is unproved", async () => {
+    const test = fixture(new Map());
+    test.startForward.mockImplementationOnce(async ({ forward: target }) => ({
+      state: "cleanup_uncertain",
+      forward: target,
+      effect: "possible",
+      error: {
+        kind: "cleanup",
+        message: "NemoClaw could not prove OpenShell forward cleanup.",
+      },
+      failure: { stage: "startup", reason: "child_signaled", signal: "SIGTERM" },
+    }));
+
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: {
+        cause: "forward-mutation-failed",
+        operation: "start",
+        port: 18_789,
+        startupFailure: { stage: "startup", reason: "child_signaled", signal: "SIGTERM" },
+      },
+    });
+  });
 });

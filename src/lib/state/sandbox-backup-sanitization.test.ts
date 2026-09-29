@@ -235,6 +235,23 @@ describe("rebuild backup credential sanitization", () => {
     expect(sanitized).toContain("[STRIPPED_BY_MIGRATION]");
   });
 
+  it("removes credentials stored only in OpenClaw JSON5 comments", () => {
+    const backupPath = createBackup();
+    const configPath = join(backupPath, "state", "openclaw.json");
+    const secret = "nvapi-comment-only-secret-abcdefghijklmnopqrstuvwxyz";
+    writeFileSync(
+      configPath,
+      [`{`, `  // Retired API key: ${secret}`, `  model: 'inference/model-a',`, `}`].join("\n"),
+      { mode: 0o600 },
+    );
+
+    sanitizeBackupDirectory(backupPath);
+
+    const sanitized = readFileSync(configPath, "utf-8");
+    expect(sanitized).not.toContain(secret);
+    expect(JSON.parse(sanitized)).toEqual({ model: "inference/model-a" });
+  });
+
   it("still removes a credential file inside a dependency tree", () => {
     const backupPath = createBackup();
     const vendoredDirectory = join(backupPath, "state", "scripts", "node_modules", "some-package");

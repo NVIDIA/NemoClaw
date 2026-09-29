@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +12,7 @@ import {
   type CoordinatorFinding,
   type CoordinatorSnapshot,
   decideReviewAction,
+  parseCoordinatorSnapshot,
 } from "../../../tools/pr-review-coordinator/decision.mts";
 import { evaluateCoordinatorShadow } from "../../../tools/pr-review-coordinator/shadow.mts";
 
@@ -175,6 +180,69 @@ describe("repository-owned PR review coordination", () => {
     } as unknown as CoordinatorSnapshot;
 
     expect(() => decideReviewAction(changed)).toThrow("Advisor status is invalid");
+  });
+
+  it("strictly validates coordinator booleans", () => {
+    const valid = snapshot({ advisor: clear() });
+    const unverified = {
+      ...valid,
+      readiness: { ...valid.readiness, commitsVerified: "false" },
+    };
+    const draft = {
+      ...valid,
+      pullRequest: { ...valid.pullRequest, draft: "false" },
+    };
+
+    expect(() => parseCoordinatorSnapshot(unverified)).toThrow(
+      "readiness.commitsVerified must be a boolean",
+    );
+    expect(() => parseCoordinatorSnapshot(draft)).toThrow("pullRequest.draft must be a boolean");
+  });
+
+  it("rejects unsupported Advisor identity", () => {
+    const valid = snapshot({ advisor: clear() });
+    const changed = {
+      ...valid,
+      advisor: { ...valid.advisor, identity: "synthetic-head" },
+    };
+
+    expect(() => parseCoordinatorSnapshot(changed)).toThrow("Advisor identity is invalid");
+  });
+
+  it.each([
+    [
+      "string commit verification",
+      (valid: CoordinatorSnapshot) => ({
+        ...valid,
+        readiness: { ...valid.readiness, commitsVerified: "false" },
+      }),
+      "readiness.commitsVerified must be a boolean",
+    ],
+    [
+      "unsupported Advisor identity",
+      (valid: CoordinatorSnapshot) => ({
+        ...valid,
+        advisor: { ...valid.advisor, identity: "synthetic-head" },
+      }),
+      "Advisor identity is invalid",
+    ],
+  ])("fails the local JSON boundary for %s", (_case, mutate, expected) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "coordinator-input-test-"));
+    try {
+      const input = path.join(directory, "snapshot.json");
+      fs.writeFileSync(input, `${JSON.stringify(mutate(snapshot({ advisor: clear() })))}\n`);
+      const result = spawnSync(
+        process.execPath,
+        ["--no-warnings", path.resolve("tools/pr-review-coordinator/local.mts"), "--input", input],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(expected);
+      expect(result.stdout).not.toContain("would-approve");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rejects non-blocking Advisor noise at the input boundary", () => {

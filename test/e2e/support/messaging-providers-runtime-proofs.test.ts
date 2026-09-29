@@ -31,7 +31,6 @@ import {
   parseInstalledSlackProof,
   SLACK_RUNTIME_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import { resolveInstalledTelegramRuntimePath } from "../live/messaging-providers-telegram-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
@@ -580,6 +579,50 @@ describe("messaging provider installed-runtime proofs", () => {
     ]);
   });
 
+  it("limits a fake REST proof to its required methods", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-telegram-telegram-bridge";
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(
+                fakeEndpointPolicy(43_119, "rest", ["/usr/local/bin/node", "/usr/bin/node"]),
+              )
+            : successfulCommand();
+      },
+    } as unknown as HostCliClient;
+
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
+      endpoint: { port: "43119" },
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName,
+      env: { TELEGRAM_BOT_TOKEN: "test-fixture-token" },
+      redactionValues: ["test-fixture-token"],
+      artifactName: "apply-fake-telegram-policy",
+      restMethods: ["POST"],
+    });
+
+    expect(commands[1]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-telegram",
+      "--add-endpoint",
+      "host.openshell.internal:43119:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43119:POST:/**",
+      "--binary",
+      "/usr/local/bin/node",
+      "--binary",
+      "/usr/bin/node",
+      "--wait",
+    ]);
+  });
+
   it("rejects fake endpoint policy mutation when the provider is not attached", async () => {
     const commands: Array<{ command: string; args: string[] }> = [];
     const host = {
@@ -1087,66 +1130,27 @@ describe("messaging provider installed-runtime proofs", () => {
     ).toBe(false);
   });
 
-  it("finds Slack only in its canonical managed npm project", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-managed-project-"));
-    const projectsDir = path.join(dir, "npm", "projects");
-    const slackProject = path.join(projectsDir, "openclaw-slack-reviewed");
-    const unrelatedProject = path.join(projectsDir, "unrelated-plugin");
-    const malformedProject = path.join(projectsDir, "malformed-plugin");
-    const slackPackageRoot = path.join(slackProject, "node_modules", "@openclaw", "slack");
-
-    try {
-      fs.mkdirSync(slackPackageRoot, { recursive: true });
-      fs.writeFileSync(
-        path.join(slackProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
-      );
-      fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
-        recursive: true,
-      });
-      fs.writeFileSync(
-        path.join(unrelatedProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/discord": "2026.6.10" } }),
-      );
-      fs.mkdirSync(malformedProject, { recursive: true });
-      fs.writeFileSync(path.join(malformedProject, "package.json"), "not json");
-
-      const source = [
-        'import fs from "node:fs";',
-        'import path from "node:path";',
-        SLACK_RUNTIME_DISCOVERY_SOURCE,
-        "const candidates = [];",
-        "addManagedNpmProjectSlackCandidates(",
-        "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
-        "  (candidate) => candidates.push(path.resolve(candidate)),",
-        ");",
-        "process.stdout.write(JSON.stringify(candidates));",
-      ].join("\n");
-      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
-        encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_TEST_PROJECTS_DIR: projectsDir },
-        input: source,
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("loads Slack through its real managed-project root and nested OpenClaw symlink", () => {
+  it("loads Slack through the native root reported by OpenClaw inspection", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-root-"));
     const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
     const openclawPackageRoot = path.join(installRoot, "openclaw");
-    const slackProjectRoot = path.join(dir, "state", "npm", "projects", "openclaw-slack");
-    const slackPackageRoot = path.join(slackProjectRoot, "node_modules", "@openclaw", "slack");
+    const slackPackageRoot = path.join(
+      dir,
+      "state",
+      "npm",
+      "projects",
+      "openclaw-slack-0123456789",
+      "node_modules",
+      "@openclaw",
+      "slack",
+    );
     const globalNodeModules = path.join(dir, "lib", "node_modules");
+    const binDir = path.join(dir, "bin");
     try {
       fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
       fs.writeFileSync(
         path.join(openclawPackageRoot, "package.json"),
-        JSON.stringify({ name: "openclaw", version: "2026.7.1" }),
+        JSON.stringify({ name: "openclaw", version: "2026.9.1" }),
       );
       fs.writeFileSync(path.join(openclawPackageRoot, "dist", "plugin-sdk", "temp-path.js"), "");
       fs.mkdirSync(path.join(openclawPackageRoot, "node_modules", "ajv"), { recursive: true });
@@ -1166,10 +1170,6 @@ describe("messaging provider installed-runtime proofs", () => {
         'import uri from "fast-uri"; export default uri;',
       );
       fs.mkdirSync(path.join(slackPackageRoot, "dist"), { recursive: true });
-      fs.writeFileSync(
-        path.join(slackProjectRoot, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
-      );
       fs.writeFileSync(
         path.join(slackPackageRoot, "package.json"),
         JSON.stringify({ name: "@openclaw/slack", type: "module" }),
@@ -1193,8 +1193,19 @@ describe("messaging provider installed-runtime proofs", () => {
         path.join(installRoot, "fast-uri", "package.json"),
         JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
       );
-      fs.mkdirSync(path.join(globalNodeModules, "@openclaw"), { recursive: true });
-      fs.symlinkSync(slackPackageRoot, path.join(globalNodeModules, "@openclaw", "slack"), "dir");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(binDir, "openclaw"),
+        [
+          "#!/usr/bin/env node",
+          'process.stdout.write("[proxy] inspected native plugin\\n");',
+          "process.stdout.write(JSON.stringify({",
+          '  plugin: { id: "slack", rootDir: process.env.NEMOCLAW_TEST_SLACK_ROOT },',
+          "}, null, 2));",
+          'process.stdout.write("\\n");',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
       const source = [
         'import { execFileSync } from "node:child_process";',
@@ -1218,8 +1229,9 @@ describe("messaging provider installed-runtime proofs", () => {
         env: {
           ...process.env,
           OPENCLAW_PACKAGE_ROOT: path.join(globalNodeModules, "openclaw"),
-          OPENCLAW_SLACK_PACKAGE_ROOT: path.join(globalNodeModules, "@openclaw", "slack"),
-          OPENCLAW_STATE_DIR: path.join(dir, "state"),
+          OPENCLAW_STATE_DIR: path.join(dir, "empty-state"),
+          NEMOCLAW_TEST_SLACK_ROOT: slackPackageRoot,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
         input: source,
       });
@@ -1230,79 +1242,6 @@ describe("messaging provider installed-runtime proofs", () => {
         root: fs.realpathSync(slackPackageRoot),
         prepared: "loaded",
         sent: "sent",
-      });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("loads Telegram through the real OpenClaw root with hoisted dependencies", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-runtime-root-"));
-    const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
-    const openclawRoot = path.join(installRoot, "openclaw");
-    const globalNodeModules = path.join(dir, "lib", "node_modules");
-    const runtimeApi = path.join(openclawRoot, "dist", "extensions", "telegram", "runtime-api.js");
-
-    try {
-      fs.mkdirSync(path.dirname(runtimeApi), { recursive: true });
-      fs.writeFileSync(
-        path.join(openclawRoot, "package.json"),
-        JSON.stringify({ name: "openclaw", type: "module" }),
-      );
-      fs.writeFileSync(
-        runtimeApi,
-        'import uri from "../../../node_modules/ajv/index.js"; export const proof = uri;',
-      );
-      fs.mkdirSync(path.join(openclawRoot, "node_modules", "ajv"), { recursive: true });
-      fs.writeFileSync(
-        path.join(openclawRoot, "node_modules", "ajv", "package.json"),
-        JSON.stringify({ name: "ajv", type: "module" }),
-      );
-      fs.writeFileSync(
-        path.join(openclawRoot, "node_modules", "ajv", "index.js"),
-        'import uri from "fast-uri"; export default uri;',
-      );
-      fs.mkdirSync(path.join(installRoot, "fast-uri"), { recursive: true });
-      fs.writeFileSync(
-        path.join(installRoot, "fast-uri", "package.json"),
-        JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
-      );
-      fs.writeFileSync(path.join(installRoot, "fast-uri", "index.js"), 'export default "loaded";');
-      fs.mkdirSync(globalNodeModules, { recursive: true });
-      fs.symlinkSync(openclawRoot, path.join(globalNodeModules, "openclaw"), "dir");
-
-      const linkedRuntimeApi = path.join(
-        globalNodeModules,
-        "openclaw",
-        "dist",
-        "extensions",
-        "telegram",
-        "runtime-api.js",
-      );
-      const runtimePath = resolveInstalledTelegramRuntimePath(linkedRuntimeApi, fs.realpathSync);
-      const source = [
-        'import { pathToFileURL } from "node:url";',
-        "const runtimePath = process.env.NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH;",
-        "const runtime = await import(pathToFileURL(runtimePath).href);",
-        "process.stdout.write(JSON.stringify({ runtimePath, proof: runtime.proof }));",
-      ].join("\n");
-      const result = spawnSync(
-        process.execPath,
-        ["--preserve-symlinks", "--input-type=module", "-"],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH: runtimePath,
-          },
-          input: source,
-        },
-      );
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
-        runtimePath,
-        proof: "loaded",
       });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
