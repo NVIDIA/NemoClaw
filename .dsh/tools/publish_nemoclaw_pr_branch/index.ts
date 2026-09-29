@@ -506,7 +506,9 @@ export default async function publish_nemoclaw_pr_branch(input: {
         " at workflow revision " +
         bypass.workflowRevisionSha +
         " at workflow blob " +
-        bypass.workflowBlobSha;
+        bypass.workflowBlobSha +
+        "; candidate SHA " +
+        head;
   return {
     apply: true,
     mutated: changedRemote,

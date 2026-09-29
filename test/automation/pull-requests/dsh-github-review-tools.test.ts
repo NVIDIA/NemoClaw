@@ -285,7 +285,9 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     "at workflow revision " +
     baseSha +
     " at workflow blob " +
-    workflowBlobSha;
+    workflowBlobSha +
+    "; candidate SHA " +
+    HEAD_SHA;
   const guardedBody =
     "## Verification\n\n- Contributor validation: " +
     fallbackMarker +
@@ -306,9 +308,15 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
     expectedRemoteSha: previousSha,
   };
   const fallbackEvidence = {
+    schemaVersion: 1,
     publicationValidated: true,
+    repository: "NVIDIA/NemoClaw",
+    remote: "origin",
+    baseBranch: "main",
+    branch,
     candidateSha: HEAD_SHA,
     receipt: { ...receipt, expectedRemoteSha: null },
+    differingValidationPaths: [".pre-commit-config.yaml"],
     disclosure,
   };
   const publishInitial = () =>
@@ -947,7 +955,14 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       headSha: nextSha,
       commits: [{ sha: nextSha, verified: true, reason: "valid" }],
       blocker: null,
+      guardedFallbackEvidence: {
+        ...fallbackEvidence,
+        candidateSha: nextSha,
+        receipt: { ...receipt, candidateSha: nextSha, expectedRemoteSha: previousSha },
+        disclosure: fallbackEvidence.disclosure.replace(HEAD_SHA, nextSha),
+      },
     });
+    const refresh = vi.fn().mockResolvedValue({ ok: true });
     const bash = vi.fn(async ({ description }: { command: string; description: string }) => ({
       kind: "foreground",
       exitCode: 0,
@@ -986,6 +1001,7 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
       run_github_cli: vi.fn().mockResolvedValue({ stdout: JSON.stringify(pull) }),
       publish_nemoclaw_pr_branch: publish,
       read_nemoclaw_pr: vi.fn().mockResolvedValue({ state: "OPEN", headRefOid: nextSha }),
+      refresh_pr_body_evidence: refresh,
       summarize_pr_readiness: vi.fn().mockResolvedValue({ ready: false }),
     });
 
@@ -1003,7 +1019,9 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
         workflowJob: receipt.workflowJob,
         draftOnly: true,
       },
-      refreshBody: false,
+      docsResult: "no-docs-needed",
+      docsEvidence: "No public behavior changed.",
+      docsAgent: "documentation-writer",
       apply: true,
     });
 
@@ -1017,6 +1035,19 @@ describe("publish_nemoclaw_pr_branch guarded hook bypass", () => {
           workflowRevisionSha: baseSha,
           expectedRemoteSha: previousSha,
           draftOnly: true,
+        }),
+      }),
+    );
+    expect(refresh).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedHeadSha: nextSha,
+        guardedFallbackEvidence: expect.objectContaining({
+          candidateSha: nextSha,
+          receipt: expect.objectContaining({
+            candidateSha: nextSha,
+            expectedRemoteSha: previousSha,
+          }),
+          disclosure: expect.stringContaining("; candidate SHA " + nextSha),
         }),
       }),
     );
