@@ -205,6 +205,7 @@ function createPhases(
         endpointUrl: "https://example.test/v1",
       }),
       reserveSandboxInferenceRoute: vi.fn(() => true),
+      hasSandboxLifecycleAuthority: vi.fn(() => false),
       registryUpdateSandbox: vi.fn(),
       checkpointSandboxIdentity: vi.fn(async () => undefined),
       prepareLocalProviderForInference: vi.fn(async () => null),
