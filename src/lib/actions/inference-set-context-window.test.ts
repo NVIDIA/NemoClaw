@@ -185,7 +185,7 @@ describe("runInferenceSet context window", () => {
     },
   );
 
-  it.each(["native response", "session", "receipt"])(
+  it.each(["native response", "session", "receipt", "restart", "pairing"] as const)(
     "retains the pending route when %s completion fails",
     async (failure) => {
       const config = ollamaConfig();
@@ -202,6 +202,18 @@ describe("runInferenceSet context window", () => {
         session: baseSession(entry),
         contextWindow: 16384,
       });
+      const restart = deps.calls.restartSandboxGateway.getMockImplementation()!;
+      deps.calls.restartSandboxGateway.mockImplementationOnce(
+        failure === "restart"
+          ? async () => {
+              throw new Error("restart unavailable");
+            }
+          : restart,
+      );
+      const pairing = deps.calls.settleOpenClawPairing.getMockImplementation()!;
+      deps.calls.settleOpenClawPairing.mockImplementationOnce(
+        failure === "pairing" ? () => ({ ok: false, failureLayer: "approval-rejected" }) : pairing,
+      );
       deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(config));
       const updateSession = deps.calls.updateSession.getMockImplementation()!;
       deps.calls.updateSession.mockImplementationOnce(
@@ -241,15 +253,24 @@ describe("runInferenceSet context window", () => {
       const options = { provider: "ollama-local", model: "qwen2.5:7b", noVerify: true };
 
       await expect(runInferenceSet(options, deps)).rejects.toThrow(
-        failure === "native response"
-          ? "native response unavailable"
-          : failure === "session"
-            ? "session unavailable"
-            : "pending synchronization record could not be cleared",
+        {
+          "native response": "native response unavailable",
+          session: "session unavailable",
+          receipt: "pending synchronization record could not be cleared",
+          restart: "gateway restart/recovery did not complete successfully",
+          pairing: "pairing did not converge",
+        }[failure],
       );
       expect(entry.openClawConfigSyncPending).toBe(true);
       expect(inferenceModels(config)[0].contextWindow).toBe(16384);
-      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+      const completedRestarts = {
+        "native response": 0,
+        session: 0,
+        receipt: 1,
+        restart: 1,
+        pairing: 1,
+      }[failure];
+      expect(deps.calls.restartSandboxGateway).toHaveBeenCalledTimes(completedRestarts);
       rejectReceipt = false;
       await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
         configChanged: false,
@@ -257,7 +278,7 @@ describe("runInferenceSet context window", () => {
       });
       expect(entry.openClawConfigSyncPending).toBeUndefined();
       expect(inferenceModels(config)[0].contextWindow).toBe(16384);
-      expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+      expect(deps.calls.restartSandboxGateway).toHaveBeenCalledTimes(completedRestarts + 1);
     },
   );
 });

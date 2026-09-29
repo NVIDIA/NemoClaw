@@ -29,7 +29,6 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
-  withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { runOnboardProcessAsync } from "../../helpers/onboard-child-process-harness";
@@ -101,7 +100,6 @@ describe("E2E workflow plan", () => {
     expect(plan.hermesSelected).toBe(true);
     expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
-      "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
       "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
@@ -169,7 +167,6 @@ describe("E2E workflow plan", () => {
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
-      "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
       "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
@@ -183,15 +180,22 @@ describe("E2E workflow plan", () => {
       "openshell-credential-generation-window",
     ]);
   });
-  it("omits only targets whose optional credential is unavailable", () => {
-    const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
-    const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
-
-    expect(braveRows).not.toContain("brave-search");
-    expect(braveRows).not.toContain("common-egress-agent-openclaw-balanced-weather");
-    expect(braveRows).toContain("common-egress-agent-openclaw-open-reference");
-    expect(braveRows).toContain("common-egress-agent-hermes-open-reference");
-    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+  it("keeps Brave isolation and common egress coverage without a Brave credential", () => {
+    const plan = buildE2eWorkflowPlan();
+    const rows = plan.catalogueMatrices["nvidia-inference"].map((row) => row.id);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        "brave-search",
+        "common-egress-agent-openclaw-balanced-weather",
+        "common-egress-agent-openclaw-open-reference",
+        "common-egress-agent-hermes-open-reference",
+      ]),
+    );
+    const brave = buildE2eWorkflowPlan({ targets: "brave-search" });
+    expect(brave.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "brave-search",
+    );
+    expect(selectedWorkflowJobs(brave)).toEqual(["catalogue-nvidia-inference"]);
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
@@ -678,7 +682,6 @@ describe("E2E workflow plan", () => {
       "nvidia-api": false,
       "nvidia-inference": false,
       "github-read": false,
-      "brave-nvidia-inference": false,
     });
   });
 
@@ -704,16 +707,6 @@ describe("E2E workflow plan", () => {
 
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["gpu-e2e"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
-  });
-
-  it("selects Brave export qualification when its helper changes", () => {
-    const plan = buildE2eWorkflowPlan(
-      {},
-      { changedFiles: ["test/e2e/live/brave-search-helpers.ts"] },
-    );
-    const rows = Object.values(plan.catalogueMatrices).flat();
-
-    expect(rows.map((row) => row.id)).toEqual(["brave-search"]);
   });
 
   it("selects Hermes GPU startup when its output proof changes", () => {
@@ -1078,7 +1071,6 @@ describe("E2E workflow plan", () => {
           "nvidia-api": [],
           "nvidia-inference": [],
           "github-read": [],
-          "brave-nvidia-inference": [],
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],

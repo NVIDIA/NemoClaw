@@ -496,7 +496,7 @@ sandbox remains ready after the read-only command.
 Registry targets on Podman require the unsupported-runtime refusal and no output file.
 They retain source identity observations, state checks, target-specific checks, and cleanup.
 Successful-export schema, secret, and pinned-consumer checks remain on Docker because v1alpha1 export does not support Podman.
-The fixture contract is covered in `support/e2e-phase-config-export-validation.test.ts`; runtime refusal and Brave gating are covered in `support/brave-search-config.test.ts`.
+The fixture contract and runtime refusal are covered in `support/e2e-phase-config-export-validation.test.ts`.
 
 The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
 OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
@@ -593,7 +593,6 @@ The execution profile owns the credentials available to its target step:
 - `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 - `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
   The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
-- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
@@ -639,23 +638,49 @@ Cleanup destroys each sandbox before its inference runtime and removes private o
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
-The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
-On Docker, it validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
-On Podman, it requires the unsupported-runtime refusal and no output file before continuing the Brave lifecycle.
-The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
-Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
-The export assertions replace redundant checks within the same Brave lifecycle.
-Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
-Successful agent execution and its answer cover the negative diagnostic-text check.
-Retained sandbox identity, materialized configuration, and HTTP egress cover the reused status command.
-Complete JSON parsing and expected configuration fields cover config-read exit codes; valid exact UUID continuity covers sandbox-read exit codes.
-The retained nonzero HTTP response covers the extra egress command exit check.
-The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
+### Brave Search coverage
 
-For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
-Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
-Trusted `main` controls the 45-minute job limit.
-Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
+Brave Search is an optional integration. Its tests use synthetic credentials and mocked responses; the live E2E gate does not require a Brave account.
+`test/onboarding/brave-search-integration.test.ts` runs the production credential probe against a loopback HTTP backend.
+A test-only curl wrapper replaces only the canonical Brave URL and refuses other HTTP destinations.
+It preserves the real curl request, private credential file, query parameters, and response classification.
+The worker backend returns deterministic search results and HTTP 401, 403, 429, and 503 failures.
+The test removes its worker and temporary files after success or failure.
+
+The `brave-search` live target retains the Brave-specific isolation regression for #7425.
+It onboards a real OpenShell sandbox with a synthetic Brave credential, then starts a real `openclaw agent` command and opens a fresh login shell.
+The agent probe waits for the command's wrapper to exec Node, inspects only that child, and terminates its process group after inspection; it does not assert an inference result.
+It observes its own child because Yama blocks `/proc` environment reads across unrelated process trees, including the already-running gateway.
+Both observations must show an absent key or an OpenShell placeholder; missing or unreadable process evidence fails.
+The test uses the `nvidia-inference` profile and never reads a real Brave secret.
+Its host curl wrapper routes validation to the loopback backend and delegates unrelated requests.
+A test-only Node preload intercepts only onboarding's optional Brave egress subprocess and returns a failed probe without sending the request.
+The OpenShell CLI and installed component paths remain unchanged, so the production component-integrity check reads the real binaries.
+Sandbox creation, provider attachment, the production isolation guard, and the two runtime observations still execute through real OpenShell.
+The fixture verifies that validation ran and the configured Brave probe was intercepted, so disabled search cannot pass as isolation evidence.
+Cleanup destroys the sandbox and removes the mock backend, curl wrapper, and preload.
+Backend startup and request-report waits each have a five-second deadline; a failed wait terminates the worker and removes its temporary directory.
+
+`test/e2e/support/brave-search-isolation.test.ts` owns deterministic probe selection, raw-key rejection, missing-process failures, and stub delegation checks.
+It does not substitute for runtime isolation evidence.
+The coverage disposition is:
+
+| Former live evidence | Current owner and scope |
+| --- | --- |
+| Successful Brave validation | The local-backend integration test covers successful and failed HTTP validation without an external quota. |
+| Stable export, credential references, profile validation, and safe diagnostics | `src/lib/adapters/config/live-export-source.test.ts` and the config domain tests exercise production export logic with mocked SDK metadata. |
+| OpenClaw search configuration and credential placeholder | `test/generation/generate-openclaw-config-web-search.test.ts` tests generated configuration. |
+| Raw credential rejection and search response verification | `src/lib/onboard/web-search-verify.test.ts` covers the production isolation guard, placeholder requests, results, and failures with mocked sandbox commands. |
+| Disabled-search reuse and retained policy | `src/lib/onboard/openclaw-setup.test.ts` and `policy-resume-selection.test.ts` cover reconciliation and policy selection. |
+| Raw Brave credential isolation in the running agent and fresh login shell | `brave-search` retains both real sandbox observations with a synthetic key. |
+| Sandbox identity, cleanup, and inference/MCP provider credential rewriting | The existing lifecycle, security-posture, and `openshell-credential-generation-window` live targets retain the shared runtime boundaries. |
+| A live Brave result, model-generated search title, and Brave service reachability | Removed from the gate. These depended on third-party availability and quota; mocked coverage does not claim to qualify the live Brave service. |
+| Brave-specific export assertion helper and its self-tests | Removed with the export scenarios. Production export tests remain. |
+
+The common-egress targets retain their live network policy and agent-fetch boundaries.
+They disable optional search explicitly and use the `nvidia-inference` profile.
+The weather case checks five initial presets, then the added weather preset and its verified agent fetch.
+Brave preset inclusion belongs to the existing onboarding policy tests, independent of weather coverage.
 
 ### Catalogue Execution Evidence
 
@@ -1759,7 +1784,7 @@ The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
 A same-repository PR run with empty selectors exposes these values to candidate-controlled job processes:
 
-- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY` and `NVIDIA_API_KEY`.
 - Docker Hub credentials from `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, available to candidate processes through the job's temporary Docker configuration until cleanup.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
 - The job-scoped `GITHUB_TOKEN`, exposed only to the target step in the `token-rotation` and `openshell-gateway-upgrade` catalogue executions.

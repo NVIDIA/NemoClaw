@@ -1663,9 +1663,6 @@ async function runInferenceSetWithoutHostLock(
             reasoningEffortRequest,
           )
         : false;
-    if (inSandboxConfigSynced && openClawConfigSyncPending) {
-      clearOpenClawConfigSyncPending(sandboxName, deps);
-    }
     const mutation = finalizeInferenceMutation(
       {
         agentName,
@@ -1701,7 +1698,10 @@ async function runInferenceSetWithoutHostLock(
           `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
       );
     }
-    return mutation;
+    return {
+      ...mutation,
+      openClawConfigSyncPending: inSandboxConfigSynced && openClawConfigSyncPending,
+    };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     if (!providerMutation) throw error;
@@ -1794,6 +1794,10 @@ export async function runInferenceSet(
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
     await completeInferencePostCommit(mutation, deps);
+    // Keep recovery pending until both the running gateway and pairing have converged.
+    if (mutation.openClawConfigSyncPending) {
+      clearOpenClawConfigSyncPending(selected.sandboxName, deps);
+    }
     return mutation.result;
   });
 }
