@@ -16,6 +16,7 @@ async function failDockerCleanupOnce(
   keepOpenShell = false,
   legacyGateway = false,
   prepareRegistry?: (registryFile: string) => void,
+  failureStep: "docker" | "model" = "docker",
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bulk-cleanup-retry-"));
   const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
@@ -41,6 +42,7 @@ async function failDockerCleanupOnce(
   let gatewayRegistered = true;
   let gatewayVolumePresent = true;
   let volumeRemovalAttempts = 0;
+  let modelInventoryAttempts = 0;
   let deleteSubmissions = 0;
   let inventory = "";
   let rejectDeletion = false;
@@ -51,7 +53,7 @@ async function failDockerCleanupOnce(
     runUninstallPlanProduction(
       {
         assumeYes: true,
-        deleteModels: false,
+        deleteModels: failureStep === "model",
         destroyUserData: true,
         keepOpenShell,
         forceFreshReset: true,
@@ -111,6 +113,11 @@ async function failDockerCleanupOnce(
               return gatewayRegistered && !rejectDeletion ? ok() : failure;
             case "openshell sandbox list":
               return gatewayRegistered ? ok("No sandboxes found.\n") : failure;
+            case "ollama list":
+              modelInventoryAttempts += 1;
+              return failureStep === "model" && modelInventoryAttempts === 1
+                ? { status: 1, stdout: "", stderr: "model inventory unavailable" }
+                : ok("NAME ID SIZE MODIFIED\n");
             default:
               return ok();
           }
@@ -122,11 +129,15 @@ async function failDockerCleanupOnce(
             case "volume inspect openshell-cluster-nemoclaw":
               return gatewayVolumePresent
                 ? ok("{}")
-                : { status: 1, stdout: "", stderr: "Error: no such volume" };
+                : {
+                    status: 1,
+                    stdout: "",
+                    stderr: "Error: No such volume: openshell-cluster-nemoclaw",
+                  };
             case "volume rm -f openshell-cluster-nemoclaw":
               volumeRemovalAttempts += 1;
-              switch (volumeRemovalAttempts) {
-                case 1:
+              switch (`${failureStep}:${String(volumeRemovalAttempts)}`) {
+                case "docker:1":
                   return { status: 1, stdout: "", stderr: "volume is busy" };
                 default:
                   gatewayVolumePresent = false;
@@ -204,6 +215,24 @@ describe("bulk cleanup recovery after gateway removal", () => {
       expect(state.deleteSubmissions()).toBe(2);
       expect(state.volumeRemovalAttempts()).toBe(1);
       expect(state.gatewayVolumePresent()).toBe(true);
+      expect(fs.existsSync(state.progressFile)).toBe(false);
+    } finally {
+      state.cleanup();
+    }
+  });
+
+  it("preserves retry progress when model cleanup fails after Docker cleanup (#11831)", async () => {
+    const state = await failDockerCleanupOnce(false, false, undefined, "model");
+    try {
+      expect(state.initial.exitCode).toBe(1);
+      expect(state.gatewayRegistered()).toBe(false);
+      expect(state.gatewayVolumePresent()).toBe(false);
+      expect(fs.readFileSync(state.registryFile, "utf8")).toBe(state.originalRegistry);
+      expect(fs.existsSync(state.progressFile)).toBe(true);
+
+      expect((await state.retry()).exitCode).toBe(0);
+      expect(state.deleteSubmissions()).toBe(1);
+      expect(fs.existsSync(state.registryFile)).toBe(false);
       expect(fs.existsSync(state.progressFile)).toBe(false);
     } finally {
       state.cleanup();

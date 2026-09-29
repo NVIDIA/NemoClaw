@@ -4367,6 +4367,7 @@ async function executePreparedPlan(
   let scopedToSelectedGateway = initialScopedToSelectedGateway;
   let sharedRegistryMustBePreserved = initialSharedRegistryMustBePreserved;
   let otherGatewayPorts = initialOtherGatewayPorts;
+  let bulkCleanupProgressPending = false;
   const failedManagedLlamaStateDirs: string[] = [];
   const branding = runtimeBranding(runtime);
   const preserveSharedOpenShell =
@@ -4490,6 +4491,10 @@ async function executePreparedPlan(
               },
         );
       }
+      bulkCleanupProgressPending =
+        !portableRuntimeCleanup &&
+        !scopedToSelectedGateway &&
+        bulkCleanupProgress(paths, options, runtime, sandboxRegistrations, "read");
     } else if (step.name === "NemoClaw CLI") {
       const completion = await completePortablePlan(
         ok,
@@ -4593,6 +4598,9 @@ async function executePreparedPlan(
         continue;
       }
       if (
+        // Keep the fingerprinted checkpoint and its registry together until
+        // every later cleanup action has succeeded.
+        !bulkCleanupProgressPending &&
         !removeStateRootBeforeFinalCleanup(
           openShellCleanup,
           paths,
@@ -4651,6 +4659,17 @@ async function executePreparedPlan(
           interruptedOnboardLock,
           preservedStateRootEntries,
         ))
+      )
+        ok = false;
+      if (
+        bulkCleanupProgressPending &&
+        ok &&
+        !removeStateRootBeforeFinalCleanup(
+          openShellCleanup,
+          paths,
+          preservedStateRootEntries,
+          runtime,
+        )
       )
         ok = false;
     }
