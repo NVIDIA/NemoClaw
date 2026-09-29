@@ -7,7 +7,9 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use crate::{Capabilities, Diagnostics, PartialDocument, diagnostics::diagnostic};
+use crate::{
+    Capabilities, Diagnostics, PartialDocument, PartialIssueKind, diagnostics::diagnostic,
+};
 
 const NAME: &str = "/metadata/name";
 const HARNESS: &str = "/spec/sandboxes/0/harness/kind";
@@ -161,12 +163,14 @@ impl JourneyDefinition {
                 suggestion(self.base.supplied().pointer(HARNESS))
             ));
         }
+        let mut unverified_adapter = false;
         for harness in harnesses.iter().take(MAX_BRANCHES) {
             if branch_harness {
                 lines.push(format!("    ├─ {harness}"));
             }
             let indent = if branch_harness { "    │  " } else { "  " };
             let Some(schema) = adapter_schema(capabilities, harness)? else {
+                unverified_adapter = true;
                 lines.push(format!("{indent}adapter schema unverified"));
                 continue;
             };
@@ -220,12 +224,17 @@ impl JourneyDefinition {
         }
 
         let assessment = self.base.assess();
-        if !assessment.issues().is_empty() {
+        let remaining_issues = assessment
+            .issues()
+            .iter()
+            .filter(|issue| {
+                !(issue.kind() == PartialIssueKind::Missing
+                    && (issue.path() == NAME || issue.path() == HARNESS))
+            })
+            .collect::<Vec<_>>();
+        if !remaining_issues.is_empty() {
             lines.push("  Other unresolved SDK constraints:".into());
-            for issue in assessment.issues() {
-                if issue.path() == NAME || issue.path() == HARNESS {
-                    continue;
-                }
+            for issue in remaining_issues {
                 lines.push(format!(
                     "    {}: {:?} ({})",
                     issue.path(),
@@ -234,7 +243,7 @@ impl JourneyDefinition {
                 ));
             }
         }
-        if questions == 0 && assessment.issues().is_empty() {
+        if questions == 0 && assessment.issues().is_empty() && !unverified_adapter {
             lines.push("  No configuration questions in the inspected surface".into());
         }
         for field in self.ask.union(&self.omit) {

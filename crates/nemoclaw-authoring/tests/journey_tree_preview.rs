@@ -108,3 +108,32 @@ fn unreachable_adapter_guidance_is_warned_about_without_rejecting_the_journey() 
         "{tree}"
     );
 }
+
+#[test]
+fn invalid_supplied_name_remains_visible_in_the_preview() {
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["metadata"]["name"] = serde_json::json!("Bad Name");
+    let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
+    let journey = JourneyDefinition::new("invalid-name", base);
+
+    let tree = journey.print_tree(&Capabilities::available()).unwrap();
+    assert!(tree.contains("/metadata/name: Invalid"), "{tree}");
+    assert!(!tree.contains("No configuration questions"), "{tree}");
+}
+
+#[test]
+fn harness_without_a_fabric_schema_does_not_claim_zero_questions() {
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"][0]["harness"]["kind"] =
+        serde_json::json!("nvidia.fabric.unsupported");
+    let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
+    let journey = JourneyDefinition::new("invalid-harness", base);
+
+    let tree = journey.print_tree(&Capabilities::available()).unwrap();
+    assert!(tree.contains("adapter schema unverified"), "{tree}");
+    assert!(!tree.contains("No configuration questions"), "{tree}");
+}

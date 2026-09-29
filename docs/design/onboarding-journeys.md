@@ -100,6 +100,7 @@ The express preview reports zero questions only in its inspected surface; model 
 - The first tree preview names its inspected surface and prints an unresolved SDK frontier. It does not yet qualify the complete journey or drive the TUI.
 - Explicit omission guidance currently covers top-level optional adapter settings with an advertised schema. Conditional omissions need the later resolver slice.
 - The tree preview redacts suggestion values because native settings may contain sensitive data.
+- Invalid supplied SDK fields stay visible in the preview even when their paths are in the question surface. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.
 
 ## Decisions to revisit after the prototype
 
