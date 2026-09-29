@@ -16,11 +16,11 @@ clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 tempfile.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]
-serde_json.workspace = true
-serde-saphyr.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true

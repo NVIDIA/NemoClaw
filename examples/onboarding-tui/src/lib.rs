@@ -2,14 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
+mod journey_tui;
 #[cfg(test)]
 mod scenarios;
+#[cfg(test)]
 mod template;
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
 mod tui;
 
 #[cfg(test)]
 use nemoclaw_authoring::Answers;
-use nemoclaw_authoring::{Capabilities, Draft, Session, TargetFacts};
+use nemoclaw_authoring::{Capabilities, Session};
+#[cfg(test)]
+use nemoclaw_authoring::{Draft, TargetFacts};
+use nemoclaw_authoring::{JourneyDesign, JourneyState, PartialDocument};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
 use std::{
     io::{IsTerminal, Read, Write},
@@ -44,24 +51,24 @@ pub async fn author_with_bundle(
         return Err(Error::Cancelled.into());
     }
     let capabilities = Capabilities::available();
-    let draft = load(source, &capabilities)?;
+    let state = load_journey(source, &capabilities)?;
     if output.try_exists()? {
         return Err("output already exists; choose a new path with --output".into());
     }
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(draft) = tui::run(capabilities, draft, cancel, bundle).await? else {
+    let Some(document) = journey_tui::run(capabilities, state, cancel, bundle).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
-    let review = draft.review()?;
-    write_path(output, review.yaml().as_bytes())?;
+    write_path(output, document.yaml()?.as_bytes())?;
     Ok(true)
 }
 
+#[cfg(test)]
 fn load(
     source: Source<'_>,
     capabilities: &Capabilities,
@@ -78,6 +85,54 @@ fn load(
     Ok(draft)
 }
 
+fn load_journey(
+    source: Source<'_>,
+    capabilities: &Capabilities,
+) -> Result<JourneyState, Box<dyn std::error::Error>> {
+    let bytes = match source {
+        Source::Defaults => include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec(),
+        Source::Template(path) => read_template(path)?,
+    };
+    let partial = PartialDocument::from_yaml(&bytes)?;
+    let mut supplied = partial.supplied().clone();
+    let metadata = supplied
+        .as_object_mut()
+        .ok_or("template root must be an object")?
+        .entry("metadata")
+        .or_insert_with(|| serde_json::json!({}));
+    metadata
+        .as_object_mut()
+        .ok_or("template metadata must be an object")?
+        .insert("uid".into(), serde_json::json!(Session::new()?.uid()));
+    let partial = PartialDocument::from_yaml(&serde_json::to_vec(&supplied)?)?;
+    JourneyDesign::new("onboarding", partial)
+        .ask([
+            "/metadata/name",
+            "/spec/sandboxes/0/harness/kind",
+            "/spec/sandboxes/0/runtime/provider",
+            "inference:preset",
+        ])
+        .ask_inference_api()
+        .ask_route_models()
+        .ask_adapter_fields()
+        .ask_native_fields()
+        .ask_deployment_fields()
+        .start(capabilities)
+        .map_err(Into::into)
+}
+
+fn read_template(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err("configuration exceeds 1 MiB".into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
 fn read_draft(path: &Path) -> Result<Draft, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
@@ -107,6 +162,35 @@ fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use nemoclaw_authoring::{AnswerStatus, EditableField};
+
+    #[test]
+    fn default_source_starts_a_sparse_journey_with_existing_questions() {
+        let capabilities = Capabilities::available();
+        let journey = load_journey(Source::Defaults, &capabilities).unwrap();
+        let resolution = journey.resolve(&capabilities).unwrap();
+        assert!(resolution.question("/metadata/name").is_some());
+        assert!(resolution.question("inference:preset").is_some());
+        assert!(
+            resolution
+                .question("/spec/sandboxes/0/runtime/provider")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn tui_accepts_a_resolved_question_through_journey_state() {
+        let capabilities = Capabilities::available();
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard = journey_tui::JourneyWizard::new(capabilities, state);
+        assert_eq!(wizard.question().unwrap().id(), "/metadata/name");
+        wizard
+            .submit(Some(serde_json::json!("guided-deployment")))
+            .unwrap();
+        assert_eq!(
+            wizard.state().values().pointer("/metadata/name"),
+            Some(&serde_json::json!("guided-deployment"))
+        );
+    }
 
     #[test]
     fn built_in_defaults_use_the_partial_template() {
