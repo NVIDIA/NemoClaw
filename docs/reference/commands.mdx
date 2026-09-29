@@ -3472,13 +3472,11 @@ $$nemoclaw tunnel stop
 
 The command asks NemoClaw to stop an in-sandbox gateway only when NemoClaw directly owns that process. Supervisor-owned agent runtime processes remain managed inside their sandbox. The command leaves agent-owned host forwards and the managed OpenShell gateway port available.
 
-If NemoClaw cannot obtain an identity-bound handle for a live cloudflared process, the command preserves the PID file and does not signal the process. Restore process-inspection access, and then rerun the command to complete tunnel cleanup.
-
 `$$nemoclaw stop` remains as a deprecated legacy full stop. In addition to stopping tunnel services, it attempts to stop the selected agent's host forwards when the sandbox uses a manifest-resolved non-OpenClaw agent. It also attempts to safely release an unshared OpenShell gateway port whose ownership NemoClaw can verify. Shared gateways remain running, and ambiguous ownership fails closed without releasing the port. Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 
 ### `$$nemoclaw tunnel status`
 
-Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard. The output reports whether cloudflared is running, stopped, stale, or has a live PID whose process identity cannot be verified. An unverified live PID is preserved and must not be signaled or replaced; restore process-inspection access before retrying start or stop. The command includes the same recovery hint used by `$$nemoclaw status`. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+Show the current cloudflared public-URL tunnel status for the selected or default sandbox dashboard. The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `$$nemoclaw status`. Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
 $$nemoclaw tunnel status

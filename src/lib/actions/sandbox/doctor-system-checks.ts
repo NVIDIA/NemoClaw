@@ -18,7 +18,7 @@ import {
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState, type ProcessControl } from "../../tunnel/services";
+import { readCloudflaredState } from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -163,18 +163,12 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
     label: "cloudflared",
     status: "warn",
     detail: `PID ${pid}, identity unavailable`,
-    hint: "process identity is unavailable; retry after restoring process inspection access",
+    hint: "process identity is unavailable; restore process inspection access, then retry",
   };
 }
 
-export function cloudflaredDoctorCheck(
-  sandboxName: string,
-  processControl?: ProcessControl,
-): DoctorCheck {
-  const state = readCloudflaredState(
-    path.join("/tmp", `nemoclaw-services-${sandboxName}`),
-    processControl,
-  );
+export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
+  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();

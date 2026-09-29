@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT } from "../../../../core/ports";
-import { stopGooglechatWebhookTunnelAtPidDir } from "../tunnel/lifecycle";
 import { googlechatWebhookTunnelPidDir } from "../tunnel/pid-dir";
 import type { GooglechatTunnelAudienceGateHookOptions } from "./tunnel-audience-gate";
 
@@ -55,12 +54,6 @@ export function createDefaultGooglechatTunnelGateOptions(
     googlechatWebhookTunnelPidDir(
       loadServices().resolveServicePidDir({ sandboxName: resolveSandboxName() }),
     );
-  const stopTunnel = (pidDir: string): void => {
-    stopGooglechatWebhookTunnelAtPidDir(pidDir, {
-      services: loadServices(),
-      webhookProxy: loadWebhookProxy(),
-    });
-  };
   return {
     hasCloudflared:
       deps.hasCloudflared ??
@@ -87,15 +80,10 @@ export function createDefaultGooglechatTunnelGateOptions(
       };
     },
     startTunnel: async () => {
-      const { readCloudflaredState, startAll, stopCloudflared } = loadServices();
-      const { startGooglechatWebhookProxy } = loadWebhookProxy();
+      const { startAll, stopCloudflared } = loadServices();
+      const { startGooglechatWebhookProxy, stopGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
-      const stopOutcome = stopCloudflared({ pidDir });
-      if (stopOutcome.kind === "unverified-pid-process") {
-        throw new Error(
-          `Cannot replace cloudflared PID ${String(stopOutcome.pid)} while its process identity is unavailable. Restore process inspection access, then retry.`,
-        );
-      }
+      stopCloudflared({ pidDir });
       const proxyPort = await startGooglechatWebhookProxy(pidDir, dashboardPort);
       try {
         await startAll({
@@ -104,21 +92,18 @@ export function createDefaultGooglechatTunnelGateOptions(
           cloudflareTunnelToken: "",
           sandboxName: resolveSandboxName(),
         });
-        const state = readCloudflaredState(pidDir);
-        if (state.kind === "unverified-pid-process") {
-          throw new Error(
-            `Cloudflared PID ${String(state.pid)} started, but its process identity cannot be verified. Restore process inspection access, then retry.`,
-          );
-        }
-        if (state.kind !== "running") {
-          throw new Error("Cloudflared did not reach a verified running state.");
-        }
       } catch (error) {
-        stopTunnel(pidDir);
+        stopGooglechatWebhookProxy(pidDir);
         throw error;
       }
     },
-    stopTunnel: () => stopTunnel(resolveGooglechatPidDir()),
+    stopTunnel: () => {
+      const { stopCloudflared } = loadServices();
+      const { stopGooglechatWebhookProxy } = loadWebhookProxy();
+      const pidDir = resolveGooglechatPidDir();
+      stopCloudflared({ pidDir });
+      stopGooglechatWebhookProxy(pidDir);
+    },
     getTunnelUrl: () => {
       const { getTunnelUrl: getServiceTunnelUrl } = loadServices();
       const { readGooglechatWebhookProxyState } = loadWebhookProxy();

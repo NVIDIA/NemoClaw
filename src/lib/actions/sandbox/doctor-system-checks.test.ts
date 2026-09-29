@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -155,31 +155,5 @@ describe("doctor system checks", () => {
       detail: "not reachable or invalid response at http://127.0.0.1:11434/api/tags",
       hint: "start Ollama or change the sandbox inference provider",
     });
-  });
-
-  it("reports an unverified live cloudflared PID with safe recovery guidance", () => {
-    const sandboxName = `doctor-unverified-cloudflared-${String(process.pid)}`;
-    const pidDir = join("/tmp", `nemoclaw-services-${sandboxName}`);
-    mkdirSync(pidDir, { recursive: true });
-    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
-    const { cloudflaredDoctorCheck } = requireDist(modulePath);
-
-    try {
-      expect(
-        cloudflaredDoctorCheck(sandboxName, {
-          isAlive: () => true,
-          commandLine: () => null,
-          signal: vi.fn(),
-        }),
-      ).toEqual({
-        group: "Local services",
-        label: "cloudflared",
-        status: "warn",
-        detail: "PID 4242, identity unavailable",
-        hint: "process identity is unavailable; retry after restoring process inspection access",
-      });
-    } finally {
-      rmSync(pidDir, { recursive: true, force: true });
-    }
   });
 });

@@ -4,15 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { resolveServicePidDir } from "../../../../tunnel/services";
 import { createDefaultGooglechatTunnelGateOptions } from "../hooks/tunnel-runtime";
-import {
-  googlechatWebhookTunnelPidDir,
-  stopGooglechatWebhookTunnel,
-  stopGooglechatWebhookTunnelAtPidDir,
-} from "./lifecycle";
+import { googlechatWebhookTunnelPidDir, stopGooglechatWebhookTunnel } from "./lifecycle";
 
 describe("Google Chat webhook tunnel lifecycle", () => {
   it("stops the sandbox-scoped cloudflared process and route proxy", () => {
-    const stopCloudflared = vi.fn(() => ({ kind: "complete" }) as const);
+    const stopCloudflared = vi.fn();
     const stopGooglechatWebhookProxy = vi.fn();
     const pidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
@@ -34,37 +30,6 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     );
   });
 
-  it("preserves the proxy and recovery state when tunnel identity is unavailable", () => {
-    const stopGooglechatWebhookProxy = vi.fn();
-
-    expect(() =>
-      stopGooglechatWebhookTunnel("alpha", {
-        services: {
-          resolveServicePidDir: () => "/tmp/nemoclaw-services-alpha",
-          stopCloudflared: () => ({ kind: "unverified-pid-process", pid: 321 }),
-        },
-        webhookProxy: { stopGooglechatWebhookProxy },
-      }),
-    ).toThrow("Cannot stop cloudflared PID 321 while its process identity is unavailable");
-    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
-  });
-
-  it("uses the shared teardown owner for an already-resolved runtime PID directory", () => {
-    const stopGooglechatWebhookProxy = vi.fn();
-    const pidDir = "/tmp/nemoclaw-services-alpha-googlechat";
-
-    expect(() =>
-      stopGooglechatWebhookTunnelAtPidDir(pidDir, {
-        services: {
-          resolveServicePidDir: () => "/tmp/nemoclaw-services-alpha",
-          stopCloudflared: () => ({ kind: "unverified-pid-process", pid: 654 }),
-        },
-        webhookProxy: { stopGooglechatWebhookProxy },
-      }),
-    ).toThrow("Cannot stop cloudflared PID 654 while its process identity is unavailable");
-    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
-  });
-
   it("uses the same real sandbox-scoped PID resolver for enrollment and teardown", () => {
     const readCloudflaredState = vi.fn(() => ({ kind: "running", pid: 123 }) as const);
     const readGooglechatWebhookProxyState = vi.fn(
@@ -76,7 +41,7 @@ describe("Google Chat webhook tunnel lifecycle", () => {
         readCloudflaredState,
         resolveServicePidDir,
         startAll: async () => undefined,
-        stopCloudflared: () => ({ kind: "complete" }),
+        stopCloudflared: () => undefined,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState,
@@ -90,7 +55,7 @@ describe("Google Chat webhook tunnel lifecycle", () => {
     const teardownPidDir = stopGooglechatWebhookTunnel("alpha", {
       services: {
         resolveServicePidDir,
-        stopCloudflared: () => ({ kind: "complete" }),
+        stopCloudflared: () => undefined,
       },
       webhookProxy: { stopGooglechatWebhookProxy: () => undefined },
     });
