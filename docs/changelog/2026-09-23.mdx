@@ -175,3 +175,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Onboarding continues when the direct proof succeeds and stops without restarting Ollama when it fails or times out.
   Related change: [PR #12337](https://github.com/NVIDIA/NemoClaw/pull/12337).
   Refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- For a NemoClaw-managed gateway, full uninstall deletes sandboxes through the selected gateway authority and requires two consecutive empty inventories before it removes providers, registrations, or local state.
+  If authority or inventory verification fails, it preserves the downstream state for a retry.
+  Related change: [PR #12308](https://github.com/NVIDIA/NemoClaw/pull/12308).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for retry conditions.
