@@ -237,6 +237,20 @@ impl JourneyDefinition {
         if questions == 0 && assessment.issues().is_empty() {
             lines.push("  No configuration questions in the inspected surface".into());
         }
+        for field in self.ask.union(&self.omit) {
+            let Some((adapter, _)) = adapter_field(field) else {
+                continue;
+            };
+            if harnesses.iter().any(|harness| harness == adapter) {
+                continue;
+            }
+            let reason = if branch_harness {
+                "available harness choices".to_owned()
+            } else {
+                format!("selected harness '{}'", chosen.expect("selected harness"))
+            };
+            lines.push(format!("  Warning: {field} is not reachable from {reason}"));
+        }
         lines.push("  Preview scope: name, harness choice, top-level adapter settings; remaining SDK and Fabric branches are not expanded.".into());
         Ok(lines.join("\n"))
     }

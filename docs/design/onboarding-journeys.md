@@ -50,6 +50,7 @@ An applicable missing field prompts by default, including optional fields in the
 `omit(field)` leaves an absent optional field unset without a prompt.
 Reject `omit` for a required or supplied field, and reject `ask` plus `omit` for the same field.
 Fabric determines which native settings exist, apply, and are required; guidance only controls deliberate prompts and omissions.
+Keep guidance for a currently unreachable adapter and warn in the tree preview instead of rejecting the journey; it may become reachable if the harness choice changes.
 Re-evaluate the current state after every answer and after a descriptor or target change.
 Keep independent answers and explain any dependent answer that reopens.
 

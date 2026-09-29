@@ -84,3 +84,27 @@ fn omission_is_scoped_to_its_adapter() {
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
     assert!(!tree.contains("/cli: omitted"));
 }
+
+#[test]
+fn unreachable_adapter_guidance_is_warned_about_without_rejecting_the_journey() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let journey = JourneyDefinition::new("fixed-openclaw", base)
+        .ask(["adapter:nvidia.fabric.hermes:/mode"])
+        .omit(["adapter:nvidia.fabric.hermes:/api_mode"]);
+
+    let tree = journey.print_tree(&Capabilities::available()).unwrap();
+    assert!(
+        tree.contains("Warning: adapter:nvidia.fabric.hermes:/mode"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("Warning: adapter:nvidia.fabric.hermes:/api_mode"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("not reachable from selected harness"),
+        "{tree}"
+    );
+}
