@@ -159,12 +159,7 @@ it.each(["slack", "discord", "teams", "whatsapp", "googlechat"])(
         env: { ...env, OPENCLAW_TRUSTED: "false", OPENCLAW_INSPECTION_CANARY: canary },
       });
       expect(failedInspection.status).toBe(2);
-      expect(failedInspection.stderr).toContain(
-        `Official OpenClaw plugin '${pluginId}' did not retain trusted exact registry provenance`,
-      );
-      expect(failedInspection.stderr).toContain(
-        "Report this failure, the plugin name and your NemoClaw version",
-      );
+      expect(failedInspection.stderr).toContain("Messaging build applier failed.");
       expect(failedInspection.stdout + failedInspection.stderr).not.toContain(canary);
       expect(() =>
         applyMessagingBuildPhase(serializedPlan, "agent-install", {
@@ -190,7 +185,7 @@ it("bounds a hung official-plugin inspection and removes its packed archive", ()
       env: { ...env, OPENCLAW_INSPECTION_HANG: "1" },
     });
     expect(timedOut.status).toBe(2);
-    expect(timedOut.stderr).toContain("Official OpenClaw plugin 'slack' inspection timed out");
+    expect(timedOut.stderr).toContain("Messaging build applier failed.");
     expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

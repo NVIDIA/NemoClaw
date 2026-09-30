@@ -3,13 +3,13 @@
   "agent": "pi",
   "platform": "linux/amd64",
   "image": "ghcr.io/nvidia/nemoclaw/pi-sandbox",
-  "digest": "sha256:2585d6f48d1a6d6c059b59e8c273fb08274b4e8af8ba9d0db59f0df45fc4f479",
-  "reference": "ghcr.io/nvidia/nemoclaw/pi-sandbox@sha256:2585d6f48d1a6d6c059b59e8c273fb08274b4e8af8ba9d0db59f0df45fc4f479",
+  "digest": "sha256:ec5befc280f4869782952a4fb147e7f8321780db1887a3248accfe38e7e8b980",
+  "reference": "ghcr.io/nvidia/nemoclaw/pi-sandbox@sha256:ec5befc280f4869782952a4fb147e7f8321780db1887a3248accfe38e7e8b980",
   "source": {
     "repository": "NVIDIA/NemoClaw",
-    "revision": "d60ee0bb36e582f83846f41a1b7e94719fcd89f6",
+    "revision": "b0e98ce714029f43ec8573c735cfbeed453ff219",
     "release": "v0.1.0",
-    "cohort": "ghrun-36504446248-1"
+    "cohort": "ghrun-36661723135-1"
   },
   "startupProfileContractVersion": 1,
   "capabilityContractVersion": 1

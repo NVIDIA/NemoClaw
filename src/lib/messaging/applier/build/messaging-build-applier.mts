@@ -2211,24 +2211,11 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalMessagingBuildDiagnostic(error: unknown): string {
-  if (error instanceof OfficialPluginProvenanceError) {
-    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
-  }
-  if (error instanceof MessagingBuildCommandError) {
-    return "Messaging build applier command failed.";
-  }
-  if (error instanceof MessagingBuildApplierError) {
-    return "Messaging build applier rejected invalid or unsafe input.";
-  }
-  return "Messaging build applier failed.";
-}
-
 if (isMainModule()) {
   try {
     main();
-  } catch (error) {
-    console.error(fatalMessagingBuildDiagnostic(error));
+  } catch {
+    console.error("Messaging build applier failed.");
     process.exit(2);
   }
 }
