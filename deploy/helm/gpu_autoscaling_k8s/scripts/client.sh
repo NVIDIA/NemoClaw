@@ -5,12 +5,15 @@
 # End-user client for the OpenClaw + Ollama e2e. One simulated user per
 # sandbox (1:1). user-i sends chat.send to sandbox openclaw-ollama-e2e-00i
 # on that sandbox's :18789. Clients do not build images, create sandboxes,
-# or start OpenClaw. Run ./scripts/agentscaling.sh first.
+# start OpenClaw, or set the HPA metric.
 #
-# Default inflight 16→40 per sandbox so five users can keep GPU HPA busy.
-# 128 chats per 4Gi sandbox OOM-kills OpenClaw (exit 137). Users never talk
-# to the Envoy load balancer. OpenShell is only the exec tunnel into each
-# sandbox; it is not the user-facing listener.
+# Provision first (other terminal):
+#   ./scripts/agentscaling_gpuutil.sh   # GPU util HPA (this DGX success path)
+#   ./scripts/agentscaling_latency.sh   # LLM latency HPA (same client)
+#
+# This DGX GPU-util run: 5 users, inflight 1→2, 8Gi, MAX_TOKENS=608.
+# Users never talk to the Envoy load balancer. OpenShell is only the exec
+# tunnel into each sandbox; it is not the user-facing listener.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
@@ -38,8 +41,8 @@ export DURATION_SEC="${DURATION_SEC:-900}"
 export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
 export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
-export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-16}"
-export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-40}"
+export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
+export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
@@ -52,18 +55,18 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 openshell status >/dev/null \
   || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenClaw sandboxes (1:1). No sandbox create."
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenClaw sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
   if ! kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" >/dev/null 2>&1; then
-    echo "ERROR: sandbox ${name} does not exist (user-${i}). Run ./scripts/agentscaling.sh first." >&2
+    echo "ERROR: sandbox ${name} does not exist (user-${i}). Run ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh first." >&2
     missing=1
     continue
   fi
   echo "  user-${i} → ${name} :18789"
 done
-((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling.sh"
+((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh"
 
 echo "Checking each sandbox listens on :18789 (do not send chat if this fails)"
 unhealthy=0
@@ -79,7 +82,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   ' >/dev/null 2>&1; then
     echo "  ${name}: :18789 up"
   else
-    echo "ERROR: ${name} is Running but OpenClaw is not listening on :18789. Run ./scripts/agentscaling.sh start." >&2
+    echo "ERROR: ${name} is Running but OpenClaw is not listening on :18789. Run agentscaling_gpuutil.sh or agentscaling_latency.sh start." >&2
     unhealthy=1
   fi
 done

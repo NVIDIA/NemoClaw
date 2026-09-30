@@ -2,23 +2,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-OpenClaw + Ollama e2e: N end users send prompts into N CPU OpenClaw sandboxes.
-Default N is E2E_USERS=10 (one sandbox per user). GPU inference is Ollama.
+OpenClaw + Ollama client: N end users send prompts into N CPU OpenClaw sandboxes.
+Default N is E2E_USERS=5 (one sandbox per user). GPU inference is Ollama.
 
+Run agentscaling_gpuutil.sh or agentscaling_latency.sh first. This module is started by ./scripts/client.sh.
+The client does not set the HPA metric.
 Each user talks only to its sandbox (:18789). 1:1 mapping.
 Do not spawn `openclaw agent -m` (that starts a second Node CLI).
-Inflight defaults split the Job peak (640/pod) across E2E_USERS.
 
     openshell sandbox exec → chat.send on ws://127.0.0.1:18789/ws
 
-The agent then calls https://inference.local (Envoy → Ollama HPA).
+The agent then calls https://inference.local (Envoy load balancer → Ollama HPA).
 This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs).
 This is not in-sandbox curl to inference.local.
 Hermes + vLLM is a later e2e and is not this script.
 
 Usage:
-    E2E_USERS=10 python3 scripts/e2e-openclaw-ollama-load-test.py
-    python3 scripts/e2e-openclaw-ollama-load-test.py --users 10
+    E2E_USERS=5 python3 scripts/e2e-openclaw-ollama-load-test.py
+    python3 scripts/e2e-openclaw-ollama-load-test.py --users 5
 """
 
 from __future__ import annotations
@@ -91,6 +92,21 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     return current, desired
 
 
+def hpa_motion(current: int, desired: int) -> str:
+    if current < desired:
+        return "scale-up"
+    if current > desired:
+        return "scale-down"
+    return "hold"
+
+
+def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> str:
+    return (
+        f"[hpa] {hpa_motion(current, desired)} "
+        f"{namespace}/{name} current={current} desired={desired}"
+    )
+
+
 async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
@@ -114,7 +130,7 @@ async def simulate_user(
 ) -> dict[str, object]:
     """One kubectl exec per sandbox. In-process threads keep inflight chats.
 
-    Many parallel openshell/kubectl execs OOMKill the 4Gi CPU sandbox (exit 137).
+    Many parallel openshell/kubectl execs OOM-kill an undersized CPU sandbox (exit 137).
     """
     sandbox = sandbox_name(prefix, user_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,7 +244,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
     print(
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
-        "(1:1 user→sandbox :18789; keep per-sandbox inflight under 128 on 4Gi)"
+        "(1:1 user→sandbox :18789; this demo uses inflight 1→2 on 8Gi)"
     )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
@@ -247,7 +263,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 }
             )
             print(
-                f"[hpa] {args.hpa_namespace}/{args.hpa_name} current={current} desired={desired}",
+                format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired),
                 flush=True,
             )
             if current >= args.target_pods:
@@ -312,7 +328,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 "desired_replicas": desired,
             }
         )
-        print(f"[hpa] scale-down current={current} desired={desired}")
+        print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
         if current <= 1:
             scale_down_ok = True
             break
@@ -365,9 +381,9 @@ async def run_test(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="OpenClaw + Ollama e2e: N users send OpenClaw prompts into N sandboxes (not Envoy-direct); default E2E_USERS=10"
+        description="OpenClaw + Ollama client: N users send OpenClaw prompts into N sandboxes (not Envoy-direct); default E2E_USERS=5"
     )
-    parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "10")))
+    parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "5")))
     parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "openclaw-ollama-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/openclaw-ollama"))
     parser.add_argument("--model", default=os.environ.get("INFERENCE_MODEL", "llama3.2:3b"))
@@ -376,13 +392,13 @@ def main() -> int:
     parser.add_argument(
         "--inflight-per-user",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "40")),
-        help="Max concurrent chats per sandbox. 128 OOM-kills 4Gi OpenClaw.",
+        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "2")),
+        help="Max concurrent chats per sandbox. This DGX demo uses 2.",
     )
     parser.add_argument(
         "--inflight-start",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "16")),
+        default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
         help="Bootstrap concurrent chats per sandbox before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))

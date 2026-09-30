@@ -7,3 +7,4 @@ local.env
 hpa-tls-values.yaml
 .git
 *.tgz
+e2e-results/

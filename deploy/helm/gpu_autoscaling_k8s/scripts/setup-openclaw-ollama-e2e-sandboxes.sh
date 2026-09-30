@@ -6,12 +6,14 @@
 # user) for the OpenClaw + Ollama HPA e2e. The model stays on Ollama GPU pods
 # in nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → Ollama HPA.
 #
-# Sandboxes are light CPU front ends (default 1 CPU / 4Gi). They do not run
+# Sandboxes are light CPU front ends (default 1 CPU / 8Gi). They do not run
 # inference; GPUs do. Create skips smoke, supervisor SSH waits, and NVIDIA
 # policy retries. Start is parallel, pins a slim OpenClaw config (nemoclaw
 # plugin only, empty extra channels), sets NEMOCLAW_MINIMAL_BOOTSTRAP=1, and
 # strips unused .openclaw/npm plugin trees so start does not walk hundreds of
-# MiB of messaging node_modules. Do not spawn a second Node CLI.
+# MiB of messaging node_modules. Do not spawn a second Node CLI. Prefer
+# ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh
+# over calling this file directly.
 #
 # Does not run openshell gateway start, nemoclaw launch, or the metrics-proxy
 # chat-completions Job (hpa-load-test-*.sh). Keep that Job as the fast HPA-only
@@ -21,8 +23,8 @@
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
-#   ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh          # default E2E_USERS=10
-#   E2E_USERS=4 ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh bringup
+#   ./scripts/agentscaling_gpuutil.sh                         # default E2E_USERS=5, GPU util HPA
+#   E2E_USERS=5 ./scripts/agentscaling_latency.sh bringup     # LLM latency HPA
 #   ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh 4
 #   ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh start
 #   ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh refresh-inference
@@ -59,7 +61,7 @@ require_cmd openshell
 require_cmd kubectl
 require_cmd python3
 
-E2E_USERS="${E2E_USERS:-10}"
+E2E_USERS="${E2E_USERS:-5}"
 ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
   ACTION="${E2E_USERS}"
@@ -199,7 +201,7 @@ print_e2e_layout() {
   echo "  ${count} end users send requests to ${count} OpenClaw agents"
   echo "  ${count} agents run in ${count} OpenShell sandboxes on CPU"
   echo "  LLM (Ollama ${INFERENCE_MODEL}) runs on GPUs"
-  echo "  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs"
+  echo "  When end-user demand increases, HPA scales Ollama from 1 to 8 GPUs"
   echo "------------------------------------------------------------------------"
   printf "  %-10s  %-24s  %-26s  %s\n" "end user" "CPU agent" "OpenShell sandbox" "sandbox"
   for ((i = 0; i < count; i += 1)); do
@@ -217,8 +219,12 @@ print_e2e_layout() {
     printf "  %-10s  %-24s  %-26s  %s\n" "user-${i}" "${agent_st}" "${name}" "${sandbox_st}"
   done
   echo "------------------------------------------------------------------------"
-  echo "  GPU HPA: Ollama ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE}  scales 1 → 8 GPUs as demand rises"
-  echo "  One OpenShell gateway; extra ${SANDBOX_PREFIX}* sandboxes are left idle."
+  echo "  HPA: Ollama ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
+  echo "  One OpenShell gateway. One Envoy load balancer."
+  echo "  Users talk to sandbox :18789, not Envoy."
+  echo "  Client (other terminal; same for GPU util or latency HPA):"
+  echo "    E2E_USERS=${count} ./scripts/client.sh"
+  echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"
 }
 
@@ -425,7 +431,7 @@ stop_one_agent() {
 count_from_existing() {
   local names max=0 n
   names="$(list_prefix_sandboxes)"
-  [[ -n "${names}" ]] || fail "no ${SANDBOX_PREFIX}* sandboxes; run ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh ${E2E_USERS} first"
+  [[ -n "${names}" ]] || fail "no ${SANDBOX_PREFIX}* sandboxes; run ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh first"
   while IFS= read -r n; do
     [[ -z "${n}" ]] && continue
     n="${n#"${SANDBOX_PREFIX}"}"
@@ -653,7 +659,7 @@ create_sandboxes() {
     fail "failed to create: ${failed[*]}"
   fi
   echo "Ready: ${count}/${count} light sandboxes in $((SECONDS - started_at))s (parallel). Envoy check runs at agent start."
-  echo "  ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh start"
+  echo "  ./scripts/agentscaling_gpuutil.sh start   # or agentscaling_latency.sh start"
 }
 
 case "${ACTION}" in

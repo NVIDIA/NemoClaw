@@ -76,6 +76,21 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
     return current, desired
 
 
+def hpa_motion(current: int, desired: int) -> str:
+    if current < desired:
+        return "scale-up"
+    if current > desired:
+        return "scale-down"
+    return "hold"
+
+
+def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> str:
+    return (
+        f"[hpa] {hpa_motion(current, desired)} "
+        f"{namespace}/{name} current={current} desired={desired}"
+    )
+
+
 async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
@@ -213,7 +228,7 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            print(f"[hpa] {args.hpa_namespace}/{args.hpa_name} current={current} desired={desired}")
+            print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
             if current >= args.target_pods:
                 if hold_started is None:
                     hold_started = time.monotonic()
@@ -275,7 +290,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 "desired_replicas": desired,
             }
         )
-        print(f"[hpa] scale-down current={current} desired={desired}")
+        print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
         if current <= 1:
             scale_down_ok = True
             break

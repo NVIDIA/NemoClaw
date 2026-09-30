@@ -17,12 +17,14 @@ what each script in this directory does — it has no instructions of its own.
 | `install-hpa.sh` | Monitoring + chart + HPA (+ Envoy if enabled). This is the autoscaling install path. |
 | `hpa-load-test-dgx-8xh100.sh` | **Keep.** Fast HPA-only test for **8× H100** (metrics-proxy pod-IP Job, `files/load-generator.ts`). GPU util or `HPA_METRIC=latency_avg`. The sandbox e2e does not replace this. |
 | `hpa-load-test-brev-4xl40s.sh` | HPA load test for **4× L40S** on AWS (Brev) |
-| `test-openclaw-ollama-e2e-hpa.sh` | Longer OpenClaw + Ollama e2e (additional): N sandboxes (default `E2E_USERS=10`, 1 CPU / 4Gi) send 1–2 Job-like chats (questions ~38 llama3.2 tokens, `max_tokens` 16× that) through Envoy **on GPU util**. Not a replacement for `hpa-load-test-dgx-8xh100.sh`. |
-| `test-openclaw-ollama-e2e-latency-hpa.sh` | Same user→sandbox path, but HPA metric is **LLM latency** (`latency_avg` / `nemoclaw_llm_latency_avg_milliseconds`, target 3000 ms) like `HPA_METRIC=latency_avg ./scripts/hpa-load-test-dgx-8xh100.sh`. Light per-agent inflight to avoid CPU-sandbox OOM. |
-| `agentscaling.sh` | Create/start/stop/cleanup OpenClaw sandboxes (one per user). Clients do not run this. |
-| `client.sh` | End users: 1:1 `chat.send` into each sandbox's `:18789`. Does not create sandboxes. |
-| `setup-openclaw-ollama-e2e-sandboxes.sh` | Implementation used by `agentscaling.sh` |
+| `agentscaling_gpuutil.sh` | Sandbox provision + GPU-util HPA (`gpu_utilization_percent` > 40%). This DGX success path. |
+| `agentscaling_latency.sh` | Same sandboxes, LLM-latency HPA (`latency_avg` > 3000 ms). |
+| `client.sh` | End users: 1:1 `chat.send` into each sandbox's `:18789`. Does not create sandboxes or set the HPA metric. Use after either agentscaling script. |
+| `agentscaling-common.sh` | Shared HPA apply + sandbox steps. Do not run it directly. |
+| `setup-openclaw-ollama-e2e-sandboxes.sh` | Sandbox create/start/stop used by the agentscaling scripts |
 | `e2e-openclaw-ollama-load-test.py` | Implementation used by `client.sh` |
+| `test-openclaw-ollama-e2e-hpa.sh` | Optional one-process wrapper: `agentscaling_gpuutil.sh` then `client.sh` |
+| `test-openclaw-ollama-e2e-latency-hpa.sh` | Optional one-process wrapper: `agentscaling_latency.sh` then `client.sh` |
 | `test-hermes-e2e-hpa.sh` | Hermes + vLLM e2e next (`hermes -z`); do not run while OpenClaw e2e owns the GPUs |
 | `setup-hermes-e2e-sandboxes.sh` | Create / start / stop / cleanup `hermes-e2e-*` only |
 | `e2e-hermes-load-test.py` | Per-user driver used by `test-hermes-e2e-hpa.sh` |

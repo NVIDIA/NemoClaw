@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Shared sandbox-side steps for OpenClaw + Ollama e2e. Sourced by
+# agentscaling_gpuutil.sh and agentscaling_latency.sh. The caller must set
+# HPA_METRIC (gpu_utilization or latency_avg). Clients do not source this.
+
+agentscaling_common_fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+agentscaling_common_pin_openclaw_ollama() {
+  export PATH="${HOME}/.local/bin:${PATH}"
+  if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "ollama" ]]; then
+    agentscaling_common_fail "OpenClaw + Ollama e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
+  fi
+  if [[ -n "${AGENT_NAME:-}" && "${AGENT_NAME}" != "openclaw" ]]; then
+    agentscaling_common_fail "OpenClaw + Ollama e2e (got AGENT_NAME=${AGENT_NAME})"
+  fi
+  agent_common_pin_example_pairing openclaw ollama
+  if [[ "${INFERENCE_MODEL}" != "llama3.2:3b" ]]; then
+    agentscaling_common_fail "OpenClaw + Ollama llama3.2:3b (got INFERENCE_MODEL=${INFERENCE_MODEL})"
+  fi
+  export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
+  export RELEASE="${RELEASE:-nemoclaw-gpu}"
+  if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
+    agentscaling_common_fail "uses NAMESPACE=nemoclaw-gpu RELEASE=nemoclaw-gpu (got ${NAMESPACE}/${RELEASE})"
+  fi
+  export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
+  export ENABLE_AUTOSCALING="${ENABLE_AUTOSCALING:-1}"
+  export MIN_REPLICAS="${MIN_REPLICAS:-1}"
+  export MAX_REPLICAS="${MAX_REPLICAS:-8}"
+  export TARGET_PODS="${TARGET_PODS:-8}"
+  export SKIP_MONITORING="${SKIP_MONITORING:-1}"
+  export USE_EXISTING_PROMETHEUS="${USE_EXISTING_PROMETHEUS:-1}"
+  export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
+  export E2E_USERS="${E2E_USERS:-5}"
+  export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
+  export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba}"
+  export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
+  export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
+  export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
+  if [[ "${MIN_REPLICAS}" != "1" ]]; then
+    agentscaling_common_fail "minReplicas must stay 1 (got MIN_REPLICAS=${MIN_REPLICAS})"
+  fi
+  if [[ "${MAX_REPLICAS}" != "8" || "${TARGET_PODS}" != "8" ]]; then
+    agentscaling_common_fail "this 8×H100 path uses MAX_REPLICAS/TARGET_PODS=8"
+  fi
+  if [[ "${ENABLE_ENVOY_LB}" != "1" ]]; then
+    agentscaling_common_fail "ENABLE_ENVOY_LB=1 is required so sandboxes reach GPUs through Envoy"
+  fi
+  if [[ "${ENABLE_AUTOSCALING}" != "1" ]]; then
+    agentscaling_common_fail "ENABLE_AUTOSCALING=1 is required"
+  fi
+}
+
+agentscaling_common_hpa_mode() {
+  kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" \
+    -o jsonpath='{.metadata.annotations.nemoclaw\.ai/hpa-mode}' 2>/dev/null || true
+}
+
+agentscaling_common_wait_baseline() {
+  local deadline=$((SECONDS + HPA_BASELINE_WAIT_SEC))
+  local hpa_status current desired
+  echo "Waiting for HPA baseline 1/1 (up to ${HPA_BASELINE_WAIT_SEC}s)"
+  while ((SECONDS < deadline)); do
+    hpa_status="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" \
+      -o jsonpath='{.status.currentReplicas}{" "}{.status.desiredReplicas}' 2>/dev/null || true)"
+    read -r current desired <<<"${hpa_status}"
+    if [[ "${current:-0}" == "1" && "${desired:-0}" == "1" ]]; then
+      echo "HPA baseline ready: 1 current / 1 desired replica"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "HPA was not 1/1 after ${HPA_BASELINE_WAIT_SEC}s; continuing (current=${current:-?} desired=${desired:-?})"
+}
+
+agentscaling_common_apply_hpa() {
+  local current_mode wanted="${HPA_METRIC}"
+  HPA_NAME="${HPA_NAME:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)}"
+  export HPA_NAME
+  export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
+  current_mode="$(agentscaling_common_hpa_mode)"
+  if [[ "${SKIP_INSTALL_HPA}" == "1" ]]; then
+    echo "SKIP_INSTALL_HPA=1; leaving HPA metric as ${current_mode:-unknown}"
+  elif [[ "${current_mode}" == "${wanted}" ]]; then
+    echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${wanted}"
+  else
+    echo "Setting HPA ${NAMESPACE}/${RELEASE} metric to ${wanted} (minReplicas=1 maxReplicas=8)"
+    SKIP_MONITORING=1 USE_EXISTING_PROMETHEUS=1 \
+      HPA_METRIC="${wanted}" \
+      "${SCRIPT_DIR}/install-hpa.sh"
+  fi
+  kubectl get gateway "${HPA_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1 \
+    || agentscaling_common_fail "Gateway ${HPA_NAME} missing in ${NAMESPACE}; sandboxes cannot use Envoy"
+  hpa_common_wait_for_envoy_dataplane_on_target_node "${NAMESPACE}" "${HPA_NAME}" 180
+  if [[ "${wanted}" == "latency_avg" ]]; then
+    kubectl get apiservice v1beta1.custom.metrics.k8s.io 2>/dev/null | grep -q True \
+      || agentscaling_common_fail "custom.metrics.k8s.io is not ready; latency HPA cannot run"
+    echo "Waiting up to ${LATENCY_METRIC_WAIT_SEC}s for nemoclaw_llm_latency_avg_milliseconds"
+    local ready=0
+    local deadline=$((SECONDS + LATENCY_METRIC_WAIT_SEC))
+    while ((SECONDS < deadline)); do
+      if hpa_common_verify_gpu_hpa_metric "${NAMESPACE}" >/dev/null 2>&1; then
+        ready=1
+        break
+      fi
+      sleep 5
+    done
+    if [[ "${ready}" -ne 1 ]]; then
+      hpa_common_verify_gpu_hpa_metric "${NAMESPACE}" || true
+      agentscaling_common_fail "Latency metric did not appear within ${LATENCY_METRIC_WAIT_SEC}s"
+    fi
+  fi
+  hpa_common_print_hpa "${NAMESPACE}" || true
+  agentscaling_common_wait_baseline
+}
+
+agentscaling_common_main() {
+  local cmd="${1:-bringup}"
+  HPA_BASELINE_WAIT_SEC="${HPA_BASELINE_WAIT_SEC:-240}"
+  LATENCY_METRIC_WAIT_SEC="${LATENCY_METRIC_WAIT_SEC:-180}"
+  SKIP_INSTALL_HPA="${SKIP_INSTALL_HPA:-0}"
+  agentscaling_common_pin_openclaw_ollama
+  command -v openshell >/dev/null 2>&1 || agentscaling_common_fail "missing command: openshell"
+  command -v kubectl >/dev/null 2>&1 || agentscaling_common_fail "missing command: kubectl"
+  command -v python3 >/dev/null 2>&1 || agentscaling_common_fail "missing command: python3"
+  openshell status >/dev/null \
+    || agentscaling_common_fail "OpenShell gateway is not connected; port-forward service/openshell first"
+  hpa_common_verify_target_node 1 || exit 1
+  hpa_common_verify_gpu_capacity "${MAX_REPLICAS}" || exit 1
+  kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True \
+    || agentscaling_common_fail "metrics-server not ready"
+  if ! kubectl get gatewayclass "${INGRESS_CLASS:-eg}" >/dev/null 2>&1; then
+    agentscaling_common_fail "GatewayClass ${INGRESS_CLASS:-eg} is missing"
+  fi
+  case "${cmd}" in
+    stop | cleanup | layout | refresh-inference) ;;
+    *)
+      command -v helm >/dev/null 2>&1 || agentscaling_common_fail "missing command: helm"
+      agentscaling_common_apply_hpa
+      ;;
+  esac
+  echo "HPA metric=${HPA_METRIC}. Client ./scripts/client.sh does not set this."
+  echo "After :18789 is up, run the client in another terminal."
+  exec "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" "${cmd}"
+}

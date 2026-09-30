@@ -100,7 +100,7 @@ export INFERENCE_MODEL=llama3.2:3b
 
 Optional pairing test (not required for autoscaling): [`scripts/test-openclaw-ollama.sh`](scripts/test-openclaw-ollama.sh).
 
-Multi-user HPA e2e: N sandboxes (one per end user). `E2E_USERS=10` is an example. **OpenClaw + Ollama now:** [`scripts/test-openclaw-ollama-e2e-hpa.sh`](scripts/test-openclaw-ollama-e2e-hpa.sh) (`nemoclaw-gpu`). **Hermes + vLLM next:** [`scripts/test-hermes-e2e-hpa.sh`](scripts/test-hermes-e2e-hpa.sh) — do not run it while OpenClaw e2e owns the GPUs.
+Multi-user HPA e2e: N sandboxes (one per end user). This DGX demo uses `E2E_USERS=5`. Provision with [`scripts/agentscaling_gpuutil.sh`](scripts/agentscaling_gpuutil.sh) (GPU util) or [`scripts/agentscaling_latency.sh`](scripts/agentscaling_latency.sh) (LLM latency). Send chats with the same [`scripts/client.sh`](scripts/client.sh). **Hermes + vLLM next:** [`scripts/test-hermes-e2e-hpa.sh`](scripts/test-hermes-e2e-hpa.sh) — do not run it while OpenClaw e2e owns the GPUs.
 
 ### Hermes
 
@@ -209,7 +209,7 @@ Multi-user HPA e2e for Deep Agents is the same N-user / N-sandbox example as Ope
 | `AGENT_SANDBOX_IMAGE` | — (required) | Pushed image reference for the selected agent |
 | `AGENT_SANDBOX_NAME` | See [Comparison](#comparison) | OpenShell sandbox name |
 | `OPENSHELL_PROVIDER_NAME` | See [Comparison](#comparison) | OpenShell inference provider name |
-| `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | Pairing `2` / `4Gi`; OpenClaw e2e `1` / `4Gi`; Hermes e2e `1` / `1Gi` | Sandbox pod requests. E2e sandboxes are light CPU front ends (inference is on GPUs). OpenClaw e2e uses 4Gi because 1Gi and 2Gi OOM-kill OpenClaw at agent start. Size `E2E_USERS × AGENT_SANDBOX_MEMORY` to the CPU node that runs the sandboxes. |
+| `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | Pairing `2` / `4Gi`; OpenClaw e2e `1` / `8Gi`; Hermes e2e `1` / `1Gi` | Sandbox pod requests. E2e sandboxes are light CPU front ends (inference is on GPUs). OpenClaw e2e uses 8Gi because 1Gi, 2Gi, and 4Gi OOM-kill OpenClaw at agent start. Size `E2E_USERS × AGENT_SANDBOX_MEMORY` to the CPU node that runs the sandboxes. |
 | `NEMOCLAW_TARGET_NODE` | unset (portable) | Pin GPU inference (and, in this demo, sandboxes) to a node. Agent sandboxes can run on a different CPU node with more memory. |
 | `VERIFY_HEALTH_TIMEOUT_SEC` | `90` | Plugin/version checks and OpenClaw/Hermes gateway readiness timeout |
 | `VERIFY_SMOKE_TIMEOUT_SEC` | `30` | `verify-agent-sandbox.sh` timeout for the Hermes/Deep Agents Code config-file existence checks and Deep Agents Code's `dcode --version` |
