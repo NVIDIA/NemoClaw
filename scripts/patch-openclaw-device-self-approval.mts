@@ -980,6 +980,9 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = AUTH_DEVICE_TOKEN_SQLITE_REPLACEMEN
 
 const AUTH_INLINE_APPROVAL_TARGET =
   "\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;";
+const AUTH_LOCAL_PAIRING_TARGET = "\t\t\t\tplan.allowSilentLocalPairing === true &&";
+const AUTH_LOCAL_PAIRING_REPLACEMENT =
+  '\t\t\t\t(plan.allowSilentLocalPairing === true || plan.localApproval === "silent") &&';
 const AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS = [
   "\t\t\tconst nemoclawExistingScopes = normalizeSortedUniqueTrimmedStringList(existingPairedDevice ? resolvePairedAccessScopes(existingPairedDevice) : []);",
   "\t\t\tconst nemoclawRequestedScopes = normalizeSortedUniqueTrimmedStringList(scopes);",
@@ -988,7 +991,7 @@ const AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS = [
   '\t\t\t\treason === "scope-upgrade" &&',
   "\t\t\t\tpairing.request.isRepair === true &&",
   "\t\t\t\tpairing.request.silent === true &&",
-  "\t\t\t\tplan.allowSilentLocalPairing === true &&",
+  AUTH_LOCAL_PAIRING_REPLACEMENT,
   '\t\t\t\t(authMethod === "device-token" || authMethod === "token") &&',
   "\t\t\t\tconnectParams.client.id === GATEWAY_CLIENT_IDS.CLI &&",
   "\t\t\t\tconnectParams.client.mode === GATEWAY_CLIENT_MODES.CLI &&",
@@ -2236,6 +2239,23 @@ const BASE_FILE_SPECS: FileSpec[] = [
         result.source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
         result.source.includes(AUTH_INLINE_APPROVAL_TARGET) ||
         result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER);
+      // 2026.9.2 returns a localApproval policy instead of the former boolean.
+      // Keep the deferral limited to silent local approval, excluding trusted CIDRs.
+      if (
+        sqliteLayout &&
+        result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER) &&
+        result.source.includes(AUTH_LOCAL_PAIRING_TARGET)
+      ) {
+        result = replaceExactlyOnce(
+          result.source,
+          AUTH_LOCAL_PAIRING_TARGET,
+          AUTH_LOCAL_PAIRING_REPLACEMENT,
+          "gateway silent local approval policy",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
       if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
         const appliedReplacement = sqliteLayout
           ? AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT
