@@ -733,42 +733,22 @@ describe("stopAll", () => {
   });
 
   it.each(["darwin", "win32"] as const)(
-    "stops an identity-confirmed cloudflared process on %s",
+    "does not raw-signal an identity-confirmed cloudflared process on %s",
     (platform) => {
-      const signals: Array<{ pid: number; sig: string }> = [];
-
       expect(
-        signalCloudflaredForPlatform(
-          4242,
-          "SIGTERM",
-          platform,
-          () => (platform === "win32" ? "cloudflared.exe tunnel run" : "cloudflared tunnel run"),
-          (pid, sig) => {
-            signals.push({ pid, sig });
-          },
+        signalCloudflaredForPlatform(4242, "SIGTERM", platform, () =>
+          platform === "win32" ? "cloudflared.exe tunnel run" : "cloudflared tunnel run",
         ),
-      ).toBe("signaled");
-      expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
+      ).toBe("unavailable");
     },
   );
 
   it.each(["darwin", "win32"] as const)(
     "does not signal a mismatched process on %s",
     (platform) => {
-      const signals: Array<{ pid: number; sig: string }> = [];
-
       expect(
-        signalCloudflaredForPlatform(
-          4242,
-          "SIGTERM",
-          platform,
-          () => "/usr/bin/node vitest",
-          (pid, sig) => {
-            signals.push({ pid, sig });
-          },
-        ),
+        signalCloudflaredForPlatform(4242, "SIGTERM", platform, () => "/usr/bin/node vitest"),
       ).toBe("not-cloudflared");
-      expect(signals).toEqual([]);
     },
   );
 
