@@ -206,7 +206,7 @@ describe("full E2E gateway ownership", () => {
       });
     },
   );
-  it("uses the declared state root even when the shell has a different override", () => {
+  it("uses the declared state root even when the shell has a different override (#12389)", () => {
     const configured = fullE2eGateway(true, {
       ...declaration(),
       NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/ubuntu/.local/state/nemoclaw",

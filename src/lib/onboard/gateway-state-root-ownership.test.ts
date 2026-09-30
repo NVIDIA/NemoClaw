@@ -17,7 +17,7 @@ function target(stateDir: string, gatewayPort = 9123) {
 }
 
 describe("managed gateway state root ownership", () => {
-  it("identifies a missing gateway ancestor without weakening the ownership check", () => {
+  it("identifies a missing gateway ancestor without weakening the ownership check (#12389)", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-missing-gateway-parent-"));
     const stateDir = path.join(root, "missing", "gateway");
     try {
@@ -30,7 +30,7 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
-  it("does not copy unexpected filesystem error text into gateway diagnostics", () => {
+  it("does not copy unexpected filesystem error text into gateway diagnostics (#12389)", () => {
     const error = Object.assign(new Error("credential-shaped private detail"), { code: "EIO" });
     const inspect = vi.spyOn(fs, "lstatSync").mockImplementationOnce(() => {
       throw error;

@@ -258,6 +258,13 @@ export function managedGatewayStateRootOwnershipFailure(
     : "the managed gateway state root marker and legacy managed configuration are both missing";
 }
 
+/** After validating external supervision, accept its private root without a managed marker. */
+export function externallySupervisedGatewayStateRootOwnershipFailure(
+  target: ManagedGatewayStateRootTarget,
+): string | null {
+  return managedGatewayStateRootOwnershipFailure(target, { allowLegacyManagedState: true });
+}
+
 /** Whether onboarding reserved this managed root but wrote no gateway state into it. */
 export function isManagedGatewayStateRootReservation(
   target: ManagedGatewayStateRootTarget,
