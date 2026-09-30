@@ -377,11 +377,13 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn mutation_boundary_survives_child_failure_and_short_secret_redaction() {
+        // macOS has no /bin/false. `sh <operation>` starts and then fails
+        // because the empty working directory has no such script.
         for (operation, binary, cancelled, expected) in [
-            ("plan", "/bin/false", false, false),
-            ("apply", "/bin/false", false, true),
+            ("plan", "/bin/sh", false, false),
+            ("apply", "/bin/sh", false, true),
             ("apply", "/missing-nemoclaw-binary", false, false),
-            ("apply", "/bin/false", true, false),
+            ("apply", "/bin/sh", true, false),
         ] {
             let directory = tempfile::tempdir().unwrap();
             let token = CancellationToken::new();

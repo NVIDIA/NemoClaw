@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Deployment planning requires image discovery, whose engine transports are Unix-only.
+#![cfg(unix)]
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, Error, config::Document};
@@ -16,6 +18,7 @@ async fn export_refreshes_through_opentofu_without_applying_or_losing_bindings()
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();
@@ -89,6 +92,7 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
     document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
         env: "EXPORT_INFERENCE_REFERENCE".into(),
@@ -135,6 +139,7 @@ async fn export_rejects_observed_pi_model_drift_without_reconfiguring_it() {
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = "nvidia.fabric.pi".parse().unwrap();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -195,6 +200,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
         Document::parse(include_bytes!("../../../examples/fabric-openclaw.yaml").as_slice())
             .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     document.spec.inference_providers[0].endpoint = "https://127.0.0.1:9/v1".into();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "shared-search":{"kind":"webSearch", "provider":"tavily", "credential":{"env":"EXPORT_TAVILY_KEY"}},
@@ -229,8 +235,8 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
         let state = fixture.state.lock().unwrap();
         assert_eq!(
             state.providers.len(),
-            3,
-            "one inference and two search registrations"
+            6,
+            "one inference and one search registration per sandbox image and adapter"
         );
         (
             state.providers.clone(),

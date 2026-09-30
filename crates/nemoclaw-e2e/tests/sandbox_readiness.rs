@@ -22,6 +22,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let generations = ["workspace", "provider", "sandbox"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
