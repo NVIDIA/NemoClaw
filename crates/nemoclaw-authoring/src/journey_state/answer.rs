@@ -23,7 +23,7 @@ impl JourneyState {
         if value.is_none() && question.required {
             return Err(diagnostic("journey", "This question is required."));
         }
-        if id == HARNESS && question.choices.is_empty() {
+        if question.target == QuestionTarget::Harness && question.choices.is_empty() {
             return Err(diagnostic(
                 "journey",
                 "No harness choices are advertised by the current Fabric catalog.",
@@ -47,137 +47,153 @@ impl JourneyState {
                 "The answer does not satisfy its field schema.",
             ));
         }
-        if self
-            .provider_path()
-            .is_some_and(|path| id == format!("{path}/endpoint"))
-            && let Some(endpoint) = value.as_ref().and_then(Value::as_str)
+        if matches!(
+            question.target,
+            QuestionTarget::SdkField {
+                role: SdkFieldRole::ProviderEndpoint,
+                ..
+            }
+        ) && let Some(endpoint) = value.as_ref().and_then(Value::as_str)
         {
             nemoclaw_sdk::config::validate_endpoint(endpoint, false)
                 .map_err(|error| diagnostic("journey", &error.to_string()))?;
         }
         let mut candidate = self.clone();
         let omitted = value.is_none();
-        if id == NAME {
-            candidate.authored.put_name(value.expect("required"))?;
-            if PartialDocument::from_value(candidate.authored.values.clone())
-                .assess()
-                .issues()
-                .iter()
-                .any(|issue| issue.path() == NAME && issue.kind() == PartialIssueKind::Invalid)
-            {
-                return Err(diagnostic(
-                    "journey",
-                    "The deployment name does not satisfy the SDK schema.",
-                ));
+        match &question.target {
+            QuestionTarget::DeploymentName => {
+                candidate.authored.put_name(value.expect("required"))?;
+                if PartialDocument::from_value(candidate.authored.values.clone())
+                    .assess()
+                    .issues()
+                    .iter()
+                    .any(|issue| issue.path() == NAME && issue.kind() == PartialIssueKind::Invalid)
+                {
+                    return Err(diagnostic(
+                        "journey",
+                        "The deployment name does not satisfy the SDK schema.",
+                    ));
+                }
             }
-        } else if id == HARNESS {
-            candidate
-                .authored
-                .put_harness(&candidate.position, value.expect("required"))?;
-        } else if let Some(path) = id.strip_prefix("form:") {
-            let selected = value
-                .as_ref()
-                .and_then(Value::as_str)
-                .expect("advertised form")
-                .to_owned();
-            for other in question
-                .choices()
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|other| *other != selected)
-            {
-                let field = format!("{path}/{}", escape_pointer(other));
-                candidate.authored.put_sdk_field(&field, None)?;
-                candidate.decisions.accepted.remove(&field);
-            }
-            candidate
-                .position
-                .selected_forms
-                .insert(path.into(), selected);
-        } else if id == ROUTE_SELECTION {
-            let name = value
-                .as_ref()
-                .and_then(Value::as_str)
-                .expect("advertised route");
-            let routes =
+            QuestionTarget::Harness => {
                 candidate
                     .authored
-                    .values
-                    .pointer(&routes_path(&candidate.authored.values).ok_or_else(|| {
-                        diagnostic("journey", "Inference routes are unavailable.")
-                    })?)
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| diagnostic("journey", "Inference routes are unavailable."))?;
-            let index = routes
-                .iter()
-                .position(|route| route["name"] == name)
-                .ok_or_else(|| diagnostic("journey", "The selected route is unavailable."))?;
-            candidate.position.select_route(index);
-        } else if id == INFERENCE_PRESET {
-            let preset = ProviderPreset::from_id(
-                value
+                    .put_harness(&candidate.position, value.expect("required"))?;
+            }
+            QuestionTarget::StructuralForm { path } => {
+                let selected = value
                     .as_ref()
                     .and_then(Value::as_str)
-                    .expect("advertised preset"),
-            )
-            .expect("advertised preset");
-            candidate.put_inference_preset(preset)?;
-        } else if let Some((adapter, pointer)) = adapter_field(id) {
-            if harness_kind(&candidate.authored.values) != Some(adapter) {
-                return Err(diagnostic("journey", "This adapter setting is not active."));
+                    .expect("advertised form")
+                    .to_owned();
+                for other in question
+                    .choices()
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|other| *other != selected)
+                {
+                    let field = format!("{path}/{}", escape_pointer(other));
+                    candidate.authored.put_sdk_field(&field, None)?;
+                    candidate.decisions.accepted.remove(&field);
+                }
+                candidate
+                    .position
+                    .selected_forms
+                    .insert(path.into(), selected);
             }
-            candidate.authored.put_setting(pointer, value.clone())?;
-        } else if native_field(id) {
-            candidate
-                .authored
-                .put_native_field(&candidate.position, id, value.clone())?;
-        } else if id.starts_with('/') {
-            let previous = candidate.authored.values.pointer(id).cloned();
-            let provider_for_dependency = candidate.provider_path().and_then(|path| {
-                (id == format!("{path}/api") || id == format!("{path}/endpoint"))
-                    .then(|| candidate.authored.values.pointer(&format!("{path}/name")))
-                    .flatten()
+            QuestionTarget::RouteSelection { routes } => {
+                let name = value
+                    .as_ref()
                     .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
-            candidate.authored.put_sdk_field(id, value.clone())?;
-            if previous != candidate.authored.values.pointer(id).cloned()
-                && let Some(provider) = provider_for_dependency
-            {
-                candidate.reopen_models_for_provider(&provider, id);
+                    .expect("advertised route");
+                let index = routes
+                    .iter()
+                    .find_map(|(route_name, index)| (route_name == name).then_some(*index))
+                    .ok_or_else(|| diagnostic("journey", "The selected route is unavailable."))?;
+                candidate.position.select_route(index);
             }
-            if id == "/spec/gateway/engine" {
-                candidate.authored.generated_gateway_engine = false;
+            QuestionTarget::InferencePreset { .. } => {
+                let preset = ProviderPreset::from_id(
+                    value
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .expect("advertised preset"),
+                )
+                .expect("advertised preset");
+                candidate.put_inference_preset(preset)?;
             }
-            if id == RUNTIME_PROVIDER {
-                candidate.authored.sync_gateway_engine_for_runtime()?;
+            QuestionTarget::AdapterSetting { adapter, pointer } => {
+                if harness_kind(&candidate.authored.values) != Some(adapter.as_str()) {
+                    return Err(diagnostic("journey", "This adapter setting is not active."));
+                }
+                candidate.authored.put_setting(pointer, value.clone())?;
             }
-            if self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::DeploymentFields)
-                && !self.definition.ask.contains(id)
-                && self.resolve(capabilities)?.question(id).is_some()
-                && PartialDocument::from_value(self.authored.values.clone())
-                    .assess()
-                    .document()
-                    .is_some()
-                && PartialDocument::from_value(candidate.authored.values.clone())
-                    .assess()
-                    .document()
-                    .is_none()
-            {
-                return Err(diagnostic(
-                    "journey",
-                    "The deployment answer invalidates the SDK document.",
-                ));
+            QuestionTarget::WorkflowSetting { pointer } => {
+                candidate.authored.put_native_field(
+                    NativeSettingOwner::Workflow,
+                    pointer,
+                    value.clone(),
+                )?;
             }
-        } else {
-            return Err(diagnostic("journey", "This question is not supported."));
+            QuestionTarget::ModelSetting { route, pointer } => {
+                candidate.authored.put_native_field(
+                    NativeSettingOwner::Model(*route),
+                    pointer,
+                    value.clone(),
+                )?;
+            }
+            QuestionTarget::SdkField { path, role } => {
+                let previous = candidate.authored.values.pointer(path).cloned();
+                let provider_for_dependency = if matches!(
+                    role,
+                    SdkFieldRole::ProviderApi | SdkFieldRole::ProviderEndpoint
+                ) {
+                    path.rsplit_once('/')
+                        .and_then(|(base, _)| {
+                            candidate.authored.values.pointer(&format!("{base}/name"))
+                        })
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                } else {
+                    None
+                };
+                candidate.authored.put_sdk_field(path, value.clone())?;
+                if previous != candidate.authored.values.pointer(path).cloned()
+                    && let Some(provider) = provider_for_dependency
+                {
+                    candidate.reopen_models_for_provider(&provider, path);
+                }
+                if *role == SdkFieldRole::GatewayEngine {
+                    candidate.authored.generated_gateway_engine = false;
+                }
+                if *role == SdkFieldRole::RuntimeProvider {
+                    candidate.authored.sync_gateway_engine_for_runtime()?;
+                }
+                if self
+                    .definition
+                    .ask_scopes
+                    .contains(&JourneyScope::DeploymentFields)
+                    && !self.definition.ask.contains(path)
+                    && self.resolve(capabilities)?.question(id).is_some()
+                    && PartialDocument::from_value(self.authored.values.clone())
+                        .assess()
+                        .document()
+                        .is_some()
+                    && PartialDocument::from_value(candidate.authored.values.clone())
+                        .assess()
+                        .document()
+                        .is_none()
+                {
+                    return Err(diagnostic(
+                        "journey",
+                        "The deployment answer invalidates the SDK document.",
+                    ));
+                }
+            }
         }
         candidate
             .decisions
-            .record_answer(id, omitted, candidate.position.selected_route);
+            .record_answer(id, &question.target, omitted);
         *self = candidate;
         Ok(())
     }
@@ -188,94 +204,108 @@ impl JourneyState {
         id: &str,
     ) -> Result<JourneyQuestion, Diagnostics> {
         let mut previous = self.clone();
+        let target = previous
+            .decisions
+            .targets
+            .get(id)
+            .cloned()
+            .ok_or_else(|| diagnostic("journey", "This question is no longer applicable."))?;
         previous.decisions.accepted.remove(id);
-        if id == INFERENCE_PRESET
-            && let Some(route) = previous.position.selected_route
-        {
+        if let QuestionTarget::InferencePreset { route } = target {
             previous.decisions.accepted_presets.remove(&route);
         }
         previous.decisions.omitted.remove(id);
-        let suggestion = if id == NAME {
-            let value = previous.authored.values.pointer(id).cloned();
-            previous
-                .authored
-                .values
-                .pointer_mut("/metadata")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| diagnostic("journey", "Metadata must be an object."))?
-                .remove("name");
-            value
-        } else if id == HARNESS {
-            let owner_path = harness_path(&previous.authored.values)
-                .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
-            let value = previous
-                .authored
-                .values
-                .pointer(&format!("{owner_path}/kind"))
-                .cloned();
-            previous
-                .authored
-                .values
-                .pointer_mut(&owner_path)
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?
-                .remove("kind");
-            value
-        } else if let Some((adapter, pointer)) = adapter_field(id) {
-            if harness_kind(&previous.authored.values) != Some(adapter) {
+        let suggestion = match &target {
+            QuestionTarget::DeploymentName => {
+                let value = previous.authored.values.pointer(NAME).cloned();
+                previous
+                    .authored
+                    .values
+                    .pointer_mut("/metadata")
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| diagnostic("journey", "Metadata must be an object."))?
+                    .remove("name");
+                value
+            }
+            QuestionTarget::Harness => {
+                let owner_path = harness_path(&previous.authored.values)
+                    .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?;
+                let value = previous
+                    .authored
+                    .values
+                    .pointer(&format!("{owner_path}/kind"))
+                    .cloned();
+                previous
+                    .authored
+                    .values
+                    .pointer_mut(&owner_path)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| diagnostic("journey", "Harness must be an object."))?
+                    .remove("kind");
+                value
+            }
+            QuestionTarget::AdapterSetting { adapter, pointer } => {
+                if harness_kind(&previous.authored.values) != Some(adapter.as_str()) {
+                    return Err(diagnostic(
+                        "journey",
+                        "This question is no longer applicable.",
+                    ));
+                }
+                let value = previous
+                    .authored
+                    .values
+                    .pointer(&format!(
+                        "{}{pointer}",
+                        settings_path(&previous.authored.values).ok_or_else(|| diagnostic(
+                            "journey",
+                            "Harness settings are unavailable."
+                        ))?
+                    ))
+                    .cloned();
+                previous.authored.put_setting(pointer, None)?;
+                value
+            }
+            QuestionTarget::InferencePreset { .. } => self
+                .current_preset()
+                .map(|preset| Value::String(preset.id().into())),
+            QuestionTarget::StructuralForm { path } => {
+                let selected = previous
+                    .position
+                    .selected_forms
+                    .remove(path)
+                    .ok_or_else(|| {
+                        diagnostic("journey", "This structural choice is no longer applicable.")
+                    })?;
+                previous
+                    .authored
+                    .put_sdk_field(&format!("{path}/{}", escape_pointer(&selected)), None)?;
+                Some(Value::String(selected))
+            }
+            QuestionTarget::SdkField { path, .. }
+                if sdk_field_schema_for(&self.authored.values, path).is_some()
+                    || (self
+                        .definition
+                        .ask_scopes
+                        .contains(&JourneyScope::DeploymentFields)
+                        && self.authored.values.pointer(path).is_some()) =>
+            {
+                previous.authored.values.pointer(path).cloned()
+            }
+            _ => {
                 return Err(diagnostic(
                     "journey",
                     "This question is no longer applicable.",
                 ));
             }
-            let value = previous
-                .authored
-                .values
-                .pointer(&format!(
-                    "{}{pointer}",
-                    settings_path(&previous.authored.values).ok_or_else(|| diagnostic(
-                        "journey",
-                        "Harness settings are unavailable."
-                    ))?
-                ))
-                .cloned();
-            previous.authored.put_setting(pointer, None)?;
-            value
-        } else if id == INFERENCE_PRESET {
-            self.current_preset()
-                .map(|preset| Value::String(preset.id().into()))
-        } else if let Some(path) = id.strip_prefix("form:") {
-            let selected = previous
-                .position
-                .selected_forms
-                .remove(path)
-                .ok_or_else(|| {
-                    diagnostic("journey", "This structural choice is no longer applicable.")
-                })?;
-            previous
-                .authored
-                .put_sdk_field(&format!("{path}/{}", escape_pointer(&selected)), None)?;
-            Some(Value::String(selected))
-        } else if sdk_field_schema_for(&self.authored.values, id).is_some()
-            || (self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::DeploymentFields)
-                && self.authored.values.pointer(id).is_some())
-        {
-            previous.authored.values.pointer(id).cloned()
-        } else {
-            return Err(diagnostic(
-                "journey",
-                "This question is no longer applicable.",
-            ));
         };
         let mut question = previous.resolve(capabilities)?.question(id).cloned();
-        if question.is_none() && id.starts_with('/') {
+        if question.is_none()
+            && let QuestionTarget::SdkField { path, .. } = &target
+        {
             // An implicit missing-field question disappears after its first
             // answer. Recreate the gap in this temporary copy to recover its
             // current schema without changing the accepted document.
-            previous.authored.put_sdk_field(id, None)?;
+            previous.authored.put_sdk_field(path, None)?;
             question = previous.resolve(capabilities)?.question(id).cloned();
         }
         let mut question = question

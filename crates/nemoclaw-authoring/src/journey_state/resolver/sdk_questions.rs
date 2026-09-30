@@ -32,6 +32,7 @@ impl QuestionResolver<'_> {
             || (self.definition.ask.contains(NAME) && !self.decisions.accepted.contains(NAME))
         {
             questions.push(JourneyQuestion {
+                target: QuestionTarget::DeploymentName,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: NAME.into(),
@@ -81,6 +82,7 @@ impl QuestionResolver<'_> {
             let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
             if value.is_none() || !valid || !self.decisions.accepted.contains(field) {
                 questions.push(JourneyQuestion {
+                    target: QuestionTarget::sdk(field.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
                     id: field.clone(),
@@ -146,6 +148,7 @@ impl QuestionResolver<'_> {
                 continue;
             }
             questions.push(JourneyQuestion {
+                target: QuestionTarget::sdk(issue.path()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: issue.path().into(),

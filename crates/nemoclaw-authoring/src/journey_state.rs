@@ -48,10 +48,70 @@ pub enum JourneyQuestionKind {
     StructuralForm,
 }
 
+/// The operation represented by a question. IDs remain stable UI keys; this
+/// target carries the meaning needed to apply and record an answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum QuestionTarget {
+    DeploymentName,
+    Harness,
+    SdkField { path: String, role: SdkFieldRole },
+    StructuralForm { path: String },
+    RouteSelection { routes: Vec<(String, usize)> },
+    InferencePreset { route: usize },
+    AdapterSetting { adapter: String, pointer: String },
+    WorkflowSetting { pointer: String },
+    ModelSetting { route: usize, pointer: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SdkFieldRole {
+    Plain,
+    ProviderApi,
+    ProviderEndpoint,
+    RuntimeProvider,
+    GatewayEngine,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSettingOwner {
+    Workflow,
+    Model(usize),
+}
+
+impl QuestionTarget {
+    fn sdk(path: impl Into<String>) -> Self {
+        let path = path.into();
+        if path == NAME {
+            return Self::DeploymentName;
+        }
+        if path == HARNESS {
+            return Self::Harness;
+        }
+        let segments = path.split('/').collect::<Vec<_>>();
+        let provider_field = segments.len() == 5
+            && segments[1] == "spec"
+            && segments[2] == "inferenceProviders"
+            && segments[3].parse::<usize>().is_ok();
+        let role = if path == RUNTIME_PROVIDER {
+            SdkFieldRole::RuntimeProvider
+        } else if path == "/spec/gateway/engine" {
+            SdkFieldRole::GatewayEngine
+        } else if provider_field && segments[4] == "api" {
+            SdkFieldRole::ProviderApi
+        } else if provider_field && segments[4] == "endpoint" {
+            SdkFieldRole::ProviderEndpoint
+        } else {
+            SdkFieldRole::Plain
+        };
+        Self::SdkField { path, role }
+    }
+}
+
 /// One currently applicable decision in the bounded journey surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JourneyQuestion {
     id: String,
+    target: QuestionTarget,
     reason: JourneyQuestionReason,
     reopened_because: Option<String>,
     required: bool,

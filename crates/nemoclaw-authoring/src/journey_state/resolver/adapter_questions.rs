@@ -66,6 +66,7 @@ impl QuestionResolver<'_> {
                     .push("no harness choices are advertised by the current Fabric catalog".into());
             }
             questions.push(JourneyQuestion {
+                target: QuestionTarget::Harness,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: HARNESS.into(),
@@ -153,6 +154,10 @@ impl QuestionResolver<'_> {
                             && !self.decisions.accepted.contains(&id))
                     {
                         questions.push(JourneyQuestion {
+                            target: QuestionTarget::AdapterSetting {
+                                adapter: harness.into(),
+                                pointer: field.path.clone(),
+                            },
                             kind: JourneyQuestionKind::Field,
                             reopened_because: None,
                             id,

@@ -9,6 +9,7 @@ use super::*;
 #[derive(Clone, Debug, Default)]
 pub(super) struct DecisionRecord {
     pub(super) accepted: BTreeSet<String>,
+    pub(super) targets: BTreeMap<String, QuestionTarget>,
     pub(super) reopened_by: BTreeMap<String, String>,
     pub(super) omitted: BTreeSet<String>,
     pub(super) selected_presets: BTreeMap<usize, ProviderPreset>,
@@ -21,7 +22,10 @@ impl DecisionRecord {
     pub(super) fn status(&self, id: &str, selected_route: Option<usize>) -> DecisionStatus {
         // Native model settings and the compound provider preset are decisions
         // about one route, even though their question IDs contain no route index.
-        if id.starts_with("model:") {
+        if matches!(
+            self.targets.get(id),
+            Some(QuestionTarget::ModelSetting { .. })
+        ) {
             return selected_route.map_or(DecisionStatus::Unreviewed, |route| {
                 let key = (route, id.to_owned());
                 if self.omitted_model_settings.contains(&key) {
@@ -33,7 +37,10 @@ impl DecisionRecord {
                 }
             });
         }
-        if id == "inference:preset" {
+        if matches!(
+            self.targets.get(id),
+            Some(QuestionTarget::InferencePreset { .. })
+        ) {
             return if selected_route.is_some_and(|route| self.accepted_presets.contains(&route)) {
                 DecisionStatus::Accepted
             } else {
@@ -53,23 +60,20 @@ impl DecisionRecord {
         }
     }
 
-    pub(super) fn record_answer(&mut self, id: &str, omitted: bool, selected_route: Option<usize>) {
+    pub(super) fn record_answer(&mut self, id: &str, target: &QuestionTarget, omitted: bool) {
         self.accepted.insert(id.into());
+        self.targets.insert(id.into(), target.clone());
         self.reopened_by.remove(id);
-        if id.starts_with("model:") {
-            if let Some(route) = selected_route {
-                let key = (route, id.to_owned());
-                self.accepted_model_settings.insert(key.clone());
-                if omitted {
-                    self.omitted_model_settings.insert(key);
-                } else {
-                    self.omitted_model_settings.remove(&key);
-                }
+        if let QuestionTarget::ModelSetting { route, .. } = target {
+            let key = (*route, id.to_owned());
+            self.accepted_model_settings.insert(key.clone());
+            if omitted {
+                self.omitted_model_settings.insert(key);
+            } else {
+                self.omitted_model_settings.remove(&key);
             }
-        } else if id == "inference:preset" {
-            if let Some(route) = selected_route {
-                self.accepted_presets.insert(route);
-            }
+        } else if let QuestionTarget::InferencePreset { route } = target {
+            self.accepted_presets.insert(*route);
         } else if omitted {
             self.omitted.insert(id.into());
         } else {
@@ -99,8 +103,19 @@ mod tests {
     fn model_and_preset_decisions_follow_the_selected_route() {
         let mut record = DecisionRecord::default();
         let setting = "model:/model_metadata/contextWindow";
-        record.record_answer(setting, false, Some(0));
-        record.record_answer("inference:preset", false, Some(0));
+        record.record_answer(
+            setting,
+            &QuestionTarget::ModelSetting {
+                route: 0,
+                pointer: "/model_metadata/contextWindow".into(),
+            },
+            false,
+        );
+        record.record_answer(
+            "inference:preset",
+            &QuestionTarget::InferencePreset { route: 0 },
+            false,
+        );
         assert_eq!(record.status(setting, Some(0)), DecisionStatus::Accepted);
         assert_eq!(
             record.status("inference:preset", Some(0)),
@@ -113,5 +128,16 @@ mod tests {
         );
         record.omitted_model_settings.insert((1, setting.into()));
         assert_eq!(record.status(setting, Some(1)), DecisionStatus::Omitted);
+    }
+
+    #[test]
+    fn recording_uses_the_resolved_target_instead_of_the_display_id() {
+        let mut record = DecisionRecord::default();
+        record.record_answer(
+            "a display id with no route prefix",
+            &QuestionTarget::InferencePreset { route: 2 },
+            false,
+        );
+        assert!(record.accepted_presets.contains(&2));
     }
 }

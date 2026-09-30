@@ -114,41 +114,27 @@ impl AuthoredValues {
 
     pub(super) fn put_native_field(
         &mut self,
-        position: &JourneyPosition,
-        id: &str,
+        owner: NativeSettingOwner,
+        path: &str,
         value: Option<Value>,
     ) -> Result<(), Diagnostics> {
-        let (root, path) = if let Some(path) = id.strip_prefix("workflow:") {
-            (
-                harness_path(&self.values)
-                    .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?,
-                path,
-            )
-        } else if let Some(path) = id.strip_prefix("model:") {
-            (
-                format!(
-                    "{}/{}",
-                    routes_path(&self.values).ok_or_else(|| diagnostic(
-                        "journey",
-                        "Inference routes are unavailable."
-                    ))?,
-                    position.selected_route.ok_or_else(|| diagnostic(
-                        "journey",
-                        "Select a route before model settings."
-                    ))?
-                ),
-                path,
-            )
-        } else {
-            return Err(diagnostic("journey", "Invalid native question path."));
+        let root = match owner {
+            NativeSettingOwner::Workflow => harness_path(&self.values)
+                .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?,
+            NativeSettingOwner::Model(route) => format!(
+                "{}/{}",
+                routes_path(&self.values)
+                    .ok_or_else(|| diagnostic("journey", "Inference routes are unavailable."))?,
+                route
+            ),
         };
-        let owner = self
+        let owner_object = self
             .values
             .pointer_mut(&root)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The native setting owner is unavailable."))?;
-        let settings = if id.starts_with("workflow:") {
-            owner
+        let settings = if owner == NativeSettingOwner::Workflow {
+            owner_object
                 .entry("config")
                 .or_insert_with(|| Value::Object(Map::new()))
                 .as_object_mut()
@@ -156,7 +142,7 @@ impl AuthoredValues {
                 .entry("workflow")
                 .or_insert_with(|| Value::Object(Map::new()))
         } else {
-            owner
+            owner_object
                 .entry("overrides")
                 .or_insert_with(|| Value::Object(Map::new()))
                 .as_object_mut()

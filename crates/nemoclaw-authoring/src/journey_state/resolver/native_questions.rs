@@ -81,6 +81,20 @@ impl QuestionResolver<'_> {
                         && !accepted)
                 {
                     questions.push(JourneyQuestion {
+                        target: if let Some(pointer) = field.path.strip_prefix("workflow:") {
+                            QuestionTarget::WorkflowSetting {
+                                pointer: pointer.into(),
+                            }
+                        } else {
+                            QuestionTarget::ModelSetting {
+                                route: self.position.selected_route.expect("selected model route"),
+                                pointer: field
+                                    .path
+                                    .strip_prefix("model:")
+                                    .expect("native model field")
+                                    .into(),
+                            }
+                        },
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
                         id: field.path,

@@ -79,9 +79,6 @@ impl JourneyState {
     pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
         self.selection().route_provider()
     }
-    pub(super) fn provider_path(&self) -> Option<String> {
-        self.selection().provider_path()
-    }
     pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
         self.selection().current_preset()
     }

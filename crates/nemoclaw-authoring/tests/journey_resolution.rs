@@ -2465,6 +2465,40 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
 }
 
 #[test]
+fn changing_the_second_provider_api_reopens_its_route_model() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/spark/local-and-hosted.yaml"
+    ))
+    .unwrap();
+    let mut state = JourneyDefinition::new("second-provider-api", base)
+        .ask([JourneyScope::RouteModels])
+        .ask(["/spec/inferenceProviders/1/api"])
+        .start(&capabilities)
+        .unwrap();
+    let api = "/spec/inferenceProviders/1/api";
+    let model = "/spec/sandboxes/0/agent/inference/routes/1/overrides/model";
+    state
+        .answer(&capabilities, "route:selection", Some(json!("hosted")))
+        .unwrap();
+    state
+        .answer(&capabilities, model, Some(json!("vendor/selected-model")))
+        .unwrap();
+    state
+        .answer(&capabilities, api, Some(json!("openai-responses")))
+        .unwrap();
+    assert_eq!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(model)
+            .unwrap()
+            .reopened_because(),
+        Some(api)
+    );
+}
+
+#[test]
 fn optional_sdk_question_can_be_deliberately_omitted() {
     let capabilities = Capabilities::available();
     let base =

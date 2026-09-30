@@ -24,6 +24,7 @@ pub(super) fn collect_required_leaf_questions(
             if !supplied.is_some_and(|value| schema_accepts(&choice_schema, value) == Some(true)) {
                 if !questions.iter().any(|question| question.id == choice_path) {
                     questions.push(JourneyQuestion {
+                        target: QuestionTarget::sdk(choice_path.clone()),
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
                         id: choice_path,
@@ -82,6 +83,7 @@ pub(super) fn collect_required_leaf_questions(
                     let choices = finite_choices(&child_schema);
                     if scalar_question(&child_schema, &choices) {
                         questions.push(JourneyQuestion {
+                            target: QuestionTarget::sdk(child_path.clone()),
                             kind: JourneyQuestionKind::Field,
                             reopened_because: None,
                             id: child_path,
@@ -111,6 +113,7 @@ pub(super) fn collect_required_leaf_questions(
             let id = format!("form:{path}");
             if !questions.iter().any(|question| question.id == id) {
                 questions.push(JourneyQuestion {
+                    target: QuestionTarget::StructuralForm { path: path.into() },
                     kind: JourneyQuestionKind::StructuralForm,
                     reopened_because: None,
                     id,
@@ -145,6 +148,7 @@ pub(super) fn collect_required_leaf_questions(
         let choices = finite_choices(&child_schema);
         if scalar_question(&child_schema, &choices) {
             questions.push(JourneyQuestion {
+                target: QuestionTarget::sdk(child_path.clone()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: child_path,

@@ -19,6 +19,7 @@ impl QuestionResolver<'_> {
                 {
                     let value = self.authored.values.pointer(&path);
                     questions.push(JourneyQuestion {
+                        target: QuestionTarget::sdk(path.clone()),
                         kind: JourneyQuestionKind::InferenceModel,
                         reopened_because: None,
                         id: path,
@@ -62,6 +63,18 @@ impl QuestionResolver<'_> {
                     };
                     if !choices.is_empty() {
                         questions.push(JourneyQuestion {
+                            target: QuestionTarget::RouteSelection {
+                                routes: routes
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(index, route)| {
+                                        route
+                                            .get("name")
+                                            .and_then(Value::as_str)
+                                            .map(|name| (name.to_owned(), index))
+                                    })
+                                    .collect(),
+                            },
                             kind: JourneyQuestionKind::Field,
                             reopened_because: None,
                             id: ROUTE_SELECTION.into(),
@@ -87,6 +100,12 @@ impl QuestionResolver<'_> {
                 .current_preset()
                 .map(|preset| Value::String(preset.id().into()));
             questions.push(JourneyQuestion {
+                target: QuestionTarget::InferencePreset {
+                    route: self
+                        .position
+                        .selected_route
+                        .expect("selected external route"),
+                },
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: INFERENCE_PRESET.into(),
@@ -126,6 +145,7 @@ impl QuestionResolver<'_> {
                 }
                 let value = self.authored.values.pointer(&path);
                 questions.push(JourneyQuestion {
+                    target: QuestionTarget::sdk(path.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
                     id: path,
@@ -166,6 +186,7 @@ impl QuestionResolver<'_> {
                 .expect("external provider endpoint is in the SDK schema")
                 .0;
             questions.push(JourneyQuestion {
+                target: QuestionTarget::sdk(endpoint.clone()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
                 id: endpoint.clone(),
