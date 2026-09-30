@@ -1684,6 +1684,22 @@ function readPatchJson(filename: string): JsonObject {
   }
 }
 
+function linuxProcessIdentity(pid: number): string | undefined {
+  try {
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const start = stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/u)[19];
+    if (!/^[a-f0-9-]{36}$/u.test(boot) || !start || !/^\d+$/u.test(start)) {
+      throw new Error("Invalid Undici patch process identity");
+    }
+    return `${boot}:${start}`;
+  } catch (error) {
+    // Without procfs, retain the conservative PID check used by older recovery records.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 function recoverInterruptedUndiciPatch(
   root: string,
   installed: string,
@@ -1698,11 +1714,21 @@ function recoverInterruptedUndiciPatch(
     if (!lstatSync(recoveryPath, { throwIfNoEntry: false })) continue;
     const recovery = readPatchJson(recoveryPath);
     if (recovery.packageName !== packageName) continue;
-    if (!Number.isSafeInteger(recovery.pid) || recovery.pid <= 0)
+    if (
+      !Number.isSafeInteger(recovery.pid) ||
+      recovery.pid <= 0 ||
+      (recovery.processIdentity !== undefined &&
+        (typeof recovery.processIdentity !== "string" ||
+          !/^[a-f0-9-]{36}:\d+$/u.test(recovery.processIdentity)))
+    )
       throw new Error(`Invalid Undici recovery process: ${workspace}`);
     let exited = false;
     try {
       process.kill(recovery.pid, 0);
+      if (recovery.processIdentity !== undefined) {
+        const current = linuxProcessIdentity(recovery.pid);
+        exited = current !== undefined && current !== recovery.processIdentity;
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       exited = true;
@@ -1807,6 +1833,7 @@ export function patchInstalledOpenClawUndici(options: {
       writeJson(join(workspace, "recovery.json"), {
         packageName: options.packageName,
         pid: process.pid,
+        processIdentity: linuxProcessIdentity(process.pid),
       });
       renameSync(installed, backup);
       replaced = true;
@@ -1821,14 +1848,17 @@ export function patchInstalledOpenClawUndici(options: {
       if (replaced) {
         rmSync(installed, { recursive: true, force: true });
         renameSync(backup, installed);
+        replaced = false;
       }
       writeFileSync(manifestPath, originalManifest);
       writeFileSync(lockPath, originalLock);
     } catch (rollbackError) {
-      retainBackup = true;
+      retainBackup = replaced;
       throw new AggregateError(
         [error, rollbackError],
-        `Undici patch rollback failed; recovery workspace retained at ${workspace}`,
+        retainBackup
+          ? `Undici patch rollback failed; recovery workspace retained at ${workspace}`
+          : "Undici patch metadata rollback failed; no recovery backup remains",
       );
     }
     throw error;
@@ -1864,7 +1894,7 @@ export function patchVerifiedOfficialPluginUndici(options: {
     child === ".." ||
     child.startsWith(`..${sep}`) ||
     isAbsolute(child) ||
-    resolve(options.installPath) !== join(npmRoot, "node_modules", ...packageName.split("/"))
+    realpathSync(options.installPath) !== join(npmRoot, "node_modules", ...packageName.split("/"))
   ) {
     throw new Error("Official plugin install path escaped its managed npm projects");
   }

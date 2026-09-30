@@ -64,7 +64,7 @@ function officialPluginFixture(channelId: string) {
       'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
       'if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { setInterval(() => {}, 1000); return; }',
-      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false" && !(process.env.OPENCLAW_PATCH_REJECT_FILE && fs.existsSync(process.env.OPENCLAW_PATCH_REJECT_FILE)), diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
+      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false" && !(process.env.OPENCLAW_PATCH_REJECT_FILE && fs.existsSync(process.env.OPENCLAW_PATCH_REJECT_FILE)), diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH, resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
       "process.exit(42);",
       "",
     ].join("\n"),
@@ -99,6 +99,11 @@ function officialPluginFixture(channelId: string) {
     OPENCLAW_PACKED_DIRECTORIES: packedDirectories,
     OPENCLAW_PLUGIN_INTEGRITY: pkg.integrityByVersion!["2026.9.1"]!,
     OPENCLAW_PLUGIN_ID: pluginId,
+    OPENCLAW_PLUGIN_INSTALL_PATH: path.join(
+      tmp,
+      "npm/projects/plugin/node_modules",
+      packageSpec.split("@2026")[0]!,
+    ),
     OPENCLAW_PLUGIN_SPEC: packageSpec,
     OPENCLAW_PLUGIN_TARBALL: pkg.tarballUrlByVersion!["2026.9.1"]!,
     OPENCLAW_VERSION: "2026.9.1",
@@ -210,6 +215,11 @@ it.each(["slack", "discord"])(
     try {
       vi.mocked(patchVerifiedOfficialPluginUndici).mockReturnValueOnce(true);
       expect(applyMessagingBuildPhase(serializedPlan, "agent-install", env)).toEqual([]);
+      expect(patchVerifiedOfficialPluginUndici).toHaveBeenNthCalledWith(1, {
+        packageSpec: env.OPENCLAW_PLUGIN_SPEC,
+        installPath: env.OPENCLAW_PLUGIN_INSTALL_PATH,
+        env: { ...env, NPM_CONFIG_IGNORE_SCRIPTS: "true", npm_config_ignore_scripts: "true" },
+      });
       expect(fs.readFileSync(tracePath, "utf8").match(/openclaw\|plugins\|inspect/g)).toHaveLength(
         2,
       );
