@@ -10,30 +10,14 @@ The [accepted scope](scope.md) remains authoritative for SDK, Fabric, and target
 
 One Rust journey definition combines a partial desired-state document with guidance about which decisions to ask for or omit.
 The authoring library resolves questions using SDK and Fabric schemas, then produces an SDK document only when required decisions are complete.
-The example TUI and a tree printer should consume the same resolver.
+The example TUI and tree printer consume the same resolver.
 No separate journey YAML format is needed for this prototype.
 
-## Terms and boundaries
+## Domain model
 
-| Term | Meaning |
-| --- | --- |
-| Deployment template | Supplied desired-state values, which may omit required fields during authoring. |
-| Journey definition | A partial template, `ask` and `omit` guidance, and target prerequisites. |
-| Journey state | One mutable run containing authored values, a decision record, and the current route or form position. |
-| Decision record | Accepted, omitted, and reopened decisions, separate from values supplied in the template. |
-| Question resolver | A read-only interpretation of the current run against the definition and SDK and Fabric schemas. |
-| Question policy | Dependencies, prompt omissions, provider API choices, and presentation order applied to schema-discovered questions. |
-| Question | One currently applicable unresolved decision, with choices and a suggestion where known. |
-| Validation result | Invalid supplied value, pending decision, SDK-valid document, or target compatibility still unverified. |
-
-`JourneyDefinition` owns the sparse template and its question guidance.
-The minimum-inline fixture fixes topology in the partial document; the definition's guidance decides which supplied values to revisit.
-`JourneyState` owns sparse authored values, the decision record, and route or form position; a read-only `QuestionResolver` derives missing leaf questions from the SDK and Fabric schemas.
-Schema collectors discover candidate questions; the resolver's `QuestionPolicy` owns prompt dependencies and presentation order.
-Exact field guidance and scope guidance use the same provider API constraints.
-The example TUI and tree preview use the same resolver through `JourneyState::resolve` and submit answers through `JourneyState::answer`.
-A resolved question identifies its domain kind so terminal presentation can request model discovery and offer custom model text without inferring meaning from a document path.
-The SDK owns complete document validation; Fabric owns adapter compatibility; target probes supply evidence without changing authored intent.
+The [authoring domain model](authoring-domain.md) defines the concepts, ownership, answer transitions, and validation gates implemented by this prototype.
+Use it to distinguish reusable journey configuration from a mutable run and its computed resolution.
+This page owns the design choices, supported surface, and inspection criteria.
 
 ## Partial document
 
@@ -73,17 +57,18 @@ Show the SDK schema and Fabric catalog revisions, unsupported schema constructs,
 The printed tree must not include arbitrary supplied native setting values; it may indicate that a suggestion exists.
 Tree printing reads fixtures only and does not probe or apply resources.
 
-## Delivery slices
+## Delivery status
 
-1. **Schema probe and partial values.** Add behavioral tests for a missing required field, an invalid supplied value, and a conditional choice; observe them fail, then parse sparse values and report invalid versus pending without constructing `Document`.
-2. **Journey definition.** Add a real base partial document with `ask` and `omit` guidance. Resolve the minimum viable values and fully supplied fixtures through the same API. Preserve current guided behavior while moving the example's policy into the new definition.
-3. **Question resolver and tree printer.** Start with a bounded preview of identity, harness choices, and top-level adapter settings. Expand SDK and Fabric conditional branches through the same resolver used by interactive authoring rather than listing schema properties statically.
-4. **Fabric and deployment coverage.** Incorporate adapter settings, model settings, and SDK deployment fields. Validate against the selected descriptor; retain an unverified result when no trusted descriptor is available.
-5. **TUI integration.** Move question selection into authoring, then drive the example TUI from journey state and the shared next-question result. Retire the separate guided, setting, and deployment cursor loops after equivalent cases pass.
+| Slice | Implemented | Remaining work |
+| --- | --- | --- |
+| Schema probe and partial values | Safe sparse parsing and conservative missing, invalid, and deferred assessment using the SDK schema. | A broader partial evaluator for unresolved SDK constructs. |
+| Journey definition | Sparse base, exact and scope guidance, explicit omissions, and target prerequisites. | Additional prerequisite types and a decision on broader optional surfaces. |
+| Shared resolver and tree printer | One resolver and answer API for TUI and bounded symbolic inspection. | Broader structural traversal and free-value branch analysis. |
+| Fabric and deployment coverage | Adapter, workflow, model, and deployment questions under their owner schemas. | Native model questions before complete SDK projection; complete partial-document coverage. |
+| TUI integration | The example uses the new state and resolver for question selection, answers, review, and delegation. | Live requalification against an explicitly configured bundle. |
 
-Each implementation slice starts with a failing behavioral test, then focused tests.
-Before committing, run the workspace format, Clippy, and test gates required by `AGENTS.md`.
-Keep each commit small and green.
+The original five slices have working implementations within the bounded single-sandbox surface.
+The limits below define what broader coverage still requires.
 
 ## Inspection scenarios
 
@@ -91,7 +76,7 @@ Keep each commit small and green.
 | --- | --- |
 | Minimum viable values | Reach every applicable supported question; show optional omit branches and conditional Fabric questions. |
 | Fully supplied | Zero configuration questions; SDK validation passes, while target compatibility is reported separately. |
-| Existing example | Keep its deliberate onboarding prompts and suggestions without extra optional or prefilled-field screens. |
+| Existing example | Keep deliberate prompts and suggestions; include additional applicable settings selected by the definition's scopes. |
 | Harness change | Drop inapplicable adapter questions; reopen incompatible dependent values; retain independent answers. |
 | Unknown descriptor or target | Mark the branch unverified and explain the missing evidence rather than claiming compatibility. |
 
@@ -125,7 +110,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 - SDK field choices are derived from finite schema alternatives. A runtime change fills a managed gateway engine only when the template did not supply one. An explicitly supplied engine remains authored intent.
 - `JourneyState::resolve_with_evidence` combines endpoint model suggestions and target compatibility in one resolution used by the TUI for questions and review. Endpoint observations add model suggestions for the current route without restricting custom text. Bulk acceptance of remaining suggestions requires current compatible engine and image observations, an advertised selected model, and observed credentials. Target evidence never changes the desired state.
 - SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. A definition may additionally require compatible engine and image observations. `ready_document` rejects any observed target conflict and waits for compatible evidence when the definition requires it; unknown evidence otherwise remains unverified. Observations never change the authored document, and the TUI does not reject a runtime choice based on the author's workstation OS.
-- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its materialized SDK document. Resolver errors surface as errors rather than appearing to finish the questionnaire. The repeatable tmux replay and single-sandbox example tests exercise this path.
+- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The repeatable tmux replay and single-sandbox example tests exercise this path.
 
 ## Alignment to the intended model
 
@@ -139,7 +124,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 
 The direct suite covers the default and minimum-inline replays, complete single-sandbox examples, mixed local and hosted routes, discovered model choices, and safe delegation. The earlier pinned live Fabric qualification belongs to its recorded revision; this implementation still needs live requalification against an explicitly configured bundle.
 
-## Decisions to revisit after the prototype
+## Remaining work
 
 - Whether the partial evaluator can cover the generated SDK schema constructs used by the supported single-sandbox journey without duplicating constraints.
 - Which optional schema regions belong to the bounded onboarding question surface.

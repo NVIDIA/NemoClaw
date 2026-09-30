@@ -5,6 +5,7 @@
 
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
+The [authoring domain model](../../docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
 It writes validated YAML and can read target observations through a verified native bundle.
 Review reminds you to set missing credential references before applying, without retaining their values.
 Onboarding does not create deployment state or apply resources.
@@ -161,10 +162,14 @@ Remote placement retains the authored SSH engine; an external gateway does not i
 Inline recipes and explicit policies are edited as complete JSON values using the SDK schema.
 The questionnaire does not invent missing service definitions or discover a qualified image/model revision catalog.
 
-Each answer must satisfy the field schema and the complete SDK document before replacing the previous configuration.
+Each answer must satisfy its active field schema before changing journey state.
+For deployment-scope edits to an already SDK-valid document, authoring also rejects changes that invalidate the complete SDK document.
+Sparse authoring can continue while unrelated required values are still missing; review and saving use the consolidated [authoring gates](../../docs/design/authoring-domain.md#resolution-and-validation-gates).
 Invalid answers leave the document unchanged.
 Unedited fields and reference scopes remain intact, including inline providers, named inference definitions, and public Fabric configuration.
-For multiple routes, choose the route to edit; other routes remain unchanged.
+For multiple routes, choose the route to edit.
+Model edits apply to the selected route.
+Shared-provider API, endpoint, or preset changes affect every referencing route and reopen its model decisions.
 Managed inference retains its service connection instead of being replaced by a hosted endpoint preset.
 
 Template authoring does not install or adopt a service, qualify its image, or establish that the target can run it.

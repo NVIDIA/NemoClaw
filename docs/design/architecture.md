@@ -98,13 +98,9 @@ That change removes `config.schema` without a replacement; NemoClaw must stop us
 Settings, model, and target schemas remain owner contracts.
 A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
 
-`JourneyDefinition` combines a sparse template with deliberate `ask` and `omit` guidance.
-`JourneyState` owns sparse authored values, a decision record, and the current journey position.
-Its read-only question resolver derives active questions from guidance, the SDK schema, and the current Fabric descriptor after each answer.
-An answer is validated before it changes state; a provider API or endpoint change reopens affected model questions while retaining the previous model as a suggestion.
-Unrelated accepted answers remain intact.
-Delegation accepts remaining suggestions only with current compatible target and endpoint evidence.
-Target observations remain separate from authored intent.
+The [authoring domain model](authoring-domain.md) defines the journey's configuration, run state, question resolution, and validation gates.
+It separates authored intent from decision status, interview position, and target observations.
+The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.

@@ -64,8 +64,8 @@ impl From<JourneyScope> for JourneySelector {
 }
 
 /// A deployment seed and deliberate prompt or omission guidance.
-/// The preview currently expands one sandbox's identity and adapter settings;
-/// other SDK constraints remain visible as an unresolved frontier.
+/// Starts a single-sandbox run and supports a bounded preview through the same
+/// resolver. Unsupported SDK structure remains an explicit frontier.
 #[derive(Clone, Debug)]
 pub struct JourneyDefinition {
     pub(crate) id: String,
