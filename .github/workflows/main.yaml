@@ -104,7 +104,8 @@ jobs:
       - name: Verify exported defaults with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
-        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
 
   compile-artifacts:
     permissions:

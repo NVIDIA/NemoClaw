@@ -50,6 +50,7 @@ import {
   type RebuildRoutePreflightReceipt,
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
+import { preflightExternalImageRebuild } from "./lifecycle/rebuild-external-image-preflight";
 import {
   hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
@@ -201,7 +202,7 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedDcodeAutoApprovalMode,
   );
   if (!targetConfig) return null;
-  const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
+  const { resumeConfig, durableConfig, credentialEnv, fromDockerfile, fromImage } = targetConfig;
   const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
   const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(
@@ -209,6 +210,7 @@ export async function prepareRebuildTargetPreflights(args: {
     sandboxEntry,
     rebuildAgent,
     fromDockerfile,
+    fromImage,
     resumeConfig.registryInferenceRoute,
     autoYes,
     baseImageResolutionHint,
@@ -240,6 +242,15 @@ export async function prepareRebuildTargetPreflights(args: {
         runtime,
         runtimeProvider,
       );
+    }
+    if (fromImage) {
+      preflightExternalImageRebuild({
+        agentName: rebuildAgent,
+        expectedToolDisclosure: durableConfig.toolDisclosure,
+        receipt: sandboxEntry.workload,
+        runtime,
+        provider: runtimeProvider,
+      });
     }
   } catch (error) {
     bail(error instanceof Error ? error.message : String(error));
@@ -344,8 +355,9 @@ export async function prepareRebuildTargetPreflights(args: {
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
   const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;
+  const rebuildsExternalImage = fromImage !== null;
   const baseImagePreflight =
-    rebuildsDcodeSandbox || rebuildsManagedWorkload
+    rebuildsDcodeSandbox || rebuildsManagedWorkload || rebuildsExternalImage
       ? { ok: true, imageRef: null, overrideEnvVar: null }
       : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
           resolutionHint: baseImageResolutionHint,
@@ -368,7 +380,8 @@ export async function prepareRebuildTargetPreflights(args: {
         bail,
         {
           allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
-          skipImagePreflight: rebuildsDcodeSandbox || rebuildsManagedWorkload,
+          skipImagePreflight:
+            rebuildsDcodeSandbox || rebuildsManagedWorkload || rebuildsExternalImage,
         },
       );
     } finally {

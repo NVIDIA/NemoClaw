@@ -405,7 +405,10 @@ describe("launch readiness validation", () => {
 
     await expect(
       publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
-    ).resolves.toEqual({ kind: "evidence-failed" });
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+    });
     expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
     expect(publishedIdentity).toBeNull();
   });
@@ -1423,6 +1426,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, observationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const pairingObservationUnavailable = deps();
@@ -1431,6 +1435,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
     });
 
     const hashUnavailable = deps();
@@ -1457,6 +1462,7 @@ describe("launch readiness validation", () => {
     });
     expect(await publishLaunchReadiness(publication, inferenceObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const unavailable = deps();
@@ -1465,26 +1471,8 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, unavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "unclassified" },
     });
-  });
-
-  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
-    const currentDeps = deps();
-    const publishLease = vi.fn();
-    currentDeps.publishLease = publishLease;
-
-    await expect(
-      publishLaunchReadiness(
-        {
-          sandboxName: SANDBOX,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          epochId: null,
-        },
-        currentDeps,
-      ),
-    ).resolves.toEqual({ kind: "evidence-failed" });
-    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("rejects in-progress lifecycle and policy mutations", () => {

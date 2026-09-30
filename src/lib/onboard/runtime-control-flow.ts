@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type Session, updateSession } from "../state/onboard-session";
+import { resolveLegacyModelRouterPort } from "../core/model-router-port";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
 import { isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
@@ -137,7 +138,12 @@ export function planSelectedAgentTransition(
           deps.note(
             `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
           );
-          await deps.stopTrackedModelRouterForAgentChange(originalSession, input.routerPort);
+          await deps.stopTrackedModelRouterForAgentChange(
+            originalSession,
+            originalSession.routerPort ??
+              resolveLegacyModelRouterPort(originalSession) ??
+              input.routerPort,
+          );
         }
         return deps.updateSession((current) => {
           const transitioned = resumeAgentChanged

@@ -187,6 +187,7 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  resolveConfiguredModelRouterPort,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
@@ -2029,12 +2030,9 @@ async function handleRemoteProviderSelection(
     );
     const compatibleNoAuth =
       selected.key === "custom" &&
-      Boolean(
-        state.endpointUrl &&
-        compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(
-          state.provider,
-          state.endpointUrl,
-        ) !== state.endpointUrl,
+      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
+        state.provider,
+        state.endpointUrl,
       );
     const useNoAuth =
       compatibleNoAuth &&
@@ -2595,7 +2593,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   onboardRuntimeBoundary.reset();
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
-    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}`,
+    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}${initialEntryOptions.requestedFromImage ? ` --from-image ${initialEntryOptions.requestedFromImage}` : ""}`,
     displayName: cliDisplayName(),
     homeDir: process.env.HOME || os.homedir(),
     loadRegistry: registry.load,
@@ -2603,23 +2601,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     sessionFile: onboardSession.SESSION_FILE,
     withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
   });
-  let portableEnvScope:
+  let portableEnvScope = null as
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
-    | null = null;
+    | null;
   const restorePortableEnvScope = () => portableEnvScope?.restore();
-  // Secure removal remains gated on successful migration of every staged legacy credential.
   let stagedLegacyKeys: string[] = [];
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
   };
-  let completed = false;
-  let preserveIncompleteSession = false;
+  let [completed, preserveIncompleteSession, preserveDeferredExitSession] = [false, false, false];
   registerIncompleteOnboardExitHandlerForSession(
     { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
     () => completed || preserveIncompleteSession,
   );
-  let preserveDeferredExitSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const entryOptions = resolveEntryOptions();
@@ -2663,12 +2658,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       });
       onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
       let selectedMessagingChannels: string[] = [];
-      let { session, fromDockerfile } =
+      let { session, fromDockerfile, fromImage } =
         await onboardSessionBootstrap.prepareOnboardSessionValidated(
           {
             resume,
             fresh,
             requestedFromDockerfile,
+            requestedFromImage: entryOptions.requestedFromImage ?? null,
             requestedSandboxName,
             cannotPrompt,
             nonInteractive: isNonInteractive(),
@@ -2784,7 +2780,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         session,
         selectedAgentName: agent?.name,
-        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+        routerPort: resolveConfiguredModelRouterPort(),
         note,
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");
@@ -3126,6 +3122,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
+                  fromImage ?? null,
+                  opts.toolDisclosure ?? null,
                 ),
               ),
             ),
@@ -3181,10 +3179,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: (): import("./agent/onboard").OnboardContext => ({
+          agentSetupContext: () => ({
             step,
             sandboxCommandExecutor: sandboxExec,
-            gatewayName: GATEWAY_NAME,
+            gatewayName: GATEWAY_NAME!,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,
