@@ -1126,6 +1126,17 @@ impl JourneyState {
                     .unwrap_or(usize::MAX),
             )
         });
+        if let (Some(provider), Some(model)) = (self.provider_path(), self.route_model_path()) {
+            let api = format!("{provider}/api");
+            if let (Some(api_index), Some(model_index)) = (
+                questions.iter().position(|question| question.id == api),
+                questions.iter().position(|question| question.id == model),
+            ) && api_index > model_index
+            {
+                let api_question = questions.remove(api_index);
+                questions.insert(model_index, api_question);
+            }
+        }
         JourneyResolution {
             questions,
             omitted,

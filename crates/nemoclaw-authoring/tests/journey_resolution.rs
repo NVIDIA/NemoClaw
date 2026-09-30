@@ -156,6 +156,37 @@ fn exact_and_scope_guidance_keep_route_model_question_kind() {
 }
 
 #[test]
+fn asked_inference_api_precedes_route_model_in_question_order() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("api-before-model", base)
+        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+    let api_path = "/spec/inferenceProviders/0/api";
+    let model_path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+
+    let first = state.resolve(&capabilities).unwrap();
+    let api = first.question(api_path).expect("asked API");
+    assert!(first.question(model_path).is_some());
+    assert_eq!(first.next_question().unwrap().id(), api_path);
+    state
+        .answer(
+            &capabilities,
+            api_path,
+            Some(api.suggestion().expect("supplied API").clone()),
+        )
+        .unwrap();
+    let next = state.resolve(&capabilities).unwrap();
+    assert_eq!(
+        next.question(model_path).expect("model after API").kind(),
+        JourneyQuestionKind::InferenceModel
+    );
+}
+
+#[test]
 fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
     let capabilities = Capabilities::available();
     let base =

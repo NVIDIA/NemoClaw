@@ -55,6 +55,7 @@ The resolver checks active native settings even when the definition gives no nat
 Keep guidance for a currently unreachable SDK or adapter field and warn in the tree preview instead of rejecting the journey when the field exists in another valid schema branch; it may become reachable after another answer or catalog change. Reject guidance for a field absent from every SDK branch.
 Re-evaluate the current state after every answer and after a descriptor or target change.
 Keep independent answers and explain any dependent answer that reopens.
+When both the selected route's inference API and model are open, present the API first; either active question may still be answered directly.
 
 ## Tree inspection
 
