@@ -729,7 +729,7 @@ describe("native Podman E2E setup boundary", () => {
       "isolate-docker-cli": "false",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@5bd2a18d20f3d26e17bd27cc370ba2cf5dee938f",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
     );
     expect(live).toMatchObject({
       env: {
