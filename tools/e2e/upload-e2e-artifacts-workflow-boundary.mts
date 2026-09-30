@@ -400,6 +400,11 @@ function validateUploadPlacement(
     ["Restore Docker CLI after native Podman public install"],
     ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
     ["Restore Docker and retire Portable Podman runtime", "Clean up Docker auth"],
+    [
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
   ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
   if (!validTail) {
     errors.push(

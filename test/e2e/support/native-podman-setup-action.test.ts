@@ -539,24 +539,26 @@ describe("native Podman E2E setup boundary", () => {
     expect(dependencyInstall?.run).toContain("APT::Get::AllowUnauthenticated=false");
     expect(dependencyInstall?.run).toContain("Acquire::AllowInsecureRepositories=false");
     expect(dependencyInstall?.run).toContain('--snapshot "$UBUNTU_SNAPSHOT_ID"');
-    expect(dependencyInstall?.run).toContain(`
-            "gcc=4:13.2.0-7ubuntu1"
-            "git=1:2.43.0-1ubuntu7.3"
-            "libapparmor-dev=4.0.1really4.0.1-0ubuntu0.24.04.7"
-            "libbtrfs-dev=6.6.3-1.1build2"
-            "libc6-dev=2.39-0ubuntu8.9"
-            "libdevmapper-dev=2:1.02.185-3ubuntu3.2"
-            "libglib2.0-dev=2.80.0-6ubuntu3.8"
-            "libprotobuf-c-dev=1.4.1-1ubuntu4"
-            "libprotobuf-dev=3.21.12-8.2ubuntu0.3"
-            "libseccomp-dev=2.5.5-1ubuntu3.1"
-            "libselinux1-dev=3.5-2ubuntu2.1"
-            "libsqlite3-dev=3.45.1-1ubuntu2.7"
-            "libsystemd-dev=255.4-1ubuntu8.17"
-            "make=4.3-4.1build2"
-            "pkg-config=1.8.1-2build1"
-            "protobuf-compiler=3.21.12-8.2ubuntu0.3"
-`);
+    expect(dependencyInstall?.run).toContain(
+      [
+        '  "gcc=4:13.2.0-7ubuntu1"',
+        '  "git=1:2.43.0-1ubuntu7.3"',
+        '  "libapparmor-dev=4.0.1really4.0.1-0ubuntu0.24.04.7"',
+        '  "libbtrfs-dev=6.6.3-1.1build2"',
+        '  "libc6-dev=2.39-0ubuntu8.9"',
+        '  "libdevmapper-dev=2:1.02.185-3ubuntu3.2"',
+        '  "libglib2.0-dev=2.80.0-6ubuntu3.8"',
+        '  "libprotobuf-c-dev=1.4.1-1ubuntu4"',
+        '  "libprotobuf-dev=3.21.12-8.2ubuntu0.3"',
+        '  "libseccomp-dev=2.5.5-1ubuntu3.1"',
+        '  "libselinux1-dev=3.5-2ubuntu2.1"',
+        '  "libsqlite3-dev=3.45.1-1ubuntu2.7"',
+        '  "libsystemd-dev=255.4-1ubuntu8.17"',
+        '  "make=4.3-4.1build2"',
+        '  "pkg-config=1.8.1-2build1"',
+        '  "protobuf-compiler=3.21.12-8.2ubuntu0.3"',
+      ].join("\n"),
+    );
     expect(dependencyInstall?.run).toContain("dpkg-query --show --showformat='${Version}'");
     expect(dependencyInstall?.run).toContain('[[ "$actual_version" == "$expected_version" ]]');
     expect(replace?.run).toContain("sha256sum --check --strict SHA256SUMS");
@@ -581,11 +583,24 @@ describe("native Podman E2E setup boundary", () => {
       (step) => step.name === "Start native Podman runtime",
     );
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const trustedCheckout = job.steps?.find(
+      (step) => step.name === "Check out trusted workflow cleanup authority",
+    );
+    const fixtureInstall = job.steps?.find(
+      (step) => step.name === "Install immutable native Podman cleanup fixture",
+    );
+    const candidateCheckout = job.steps?.find(
+      (step) => step.name === "Check out the exact candidate",
+    );
     const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
-    const gpu = job.steps?.find((step) => step.name === "Prove x86-64 NVIDIA GPU host authority");
     const live = job.steps?.find(
       (step) => step.name === "Run Portable Hermes finalization live Vitest test",
     );
+    const fixtureRemoval = job.steps?.find(
+      (step) => step.name === "Remove immutable native Podman cleanup fixture",
+    );
+    const trustedCheckoutIndex = job.steps?.indexOf(trustedCheckout!) ?? -1;
+    const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
     const setupIndex = job.steps?.indexOf(setup!) ?? -1;
     const uploadIndex =
       job.steps?.findIndex(
@@ -595,6 +610,7 @@ describe("native Podman E2E setup boundary", () => {
       job.steps?.findIndex(
         (step) => step.name === "Restore Docker and retire Portable Podman runtime",
       ) ?? -1;
+    const fixtureRemovalIndex = job.steps?.indexOf(fixtureRemoval!) ?? -1;
 
     expect(job.needs).toEqual(["generate-matrix", "portable-podman-toolchain"]);
     expect(job["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
@@ -615,6 +631,19 @@ describe("native Podman E2E setup boundary", () => {
     expect(setupRuntime?.run).toContain('== "0:0:555"');
     expect(setupRuntime?.run).toContain("setup_completed=true");
     expect(setupRuntime?.run).toContain("trap - EXIT INT TERM");
+    expect(trustedCheckout?.with).toMatchObject({
+      ref: "${{ github.workflow_sha }}",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(fixtureInstall?.env).toMatchObject({
+      TRUSTED_FIXTURE_SHA256: "f9b26c07e5b84660a0f2710307cefc9c0c811d3d88628bb0a9500e031ec02ba8",
+    });
+    expect(createHash("sha256").update(restoreRunScript()).digest("hex")).toBe(
+      "f9b26c07e5b84660a0f2710307cefc9c0c811d3d88628bb0a9500e031ec02ba8",
+    );
+    expect(fixtureInstall?.run).toContain("sha256sum --check --strict");
+    expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
     expect(setup?.with).toEqual({
       "cleanup-fixture":
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
@@ -622,17 +651,27 @@ describe("native Podman E2E setup boundary", () => {
       toolchain: "portable-5.7",
       "isolate-docker-cli": "false",
     });
-    expect(gpu?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
-    expect(gpu?.run).toContain("nvidia-smi --query-gpu=name");
+    expect(setup?.uses).toBe(
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8",
+    );
     expect(live).toMatchObject({
       env: {
         E2E_HERMES_BASE_STORAGE_HOME: "${{ runner.temp }}/nemoclaw-hermes-base-storage",
       },
     });
+    expect(live?.run).toContain("trap restore_runner EXIT");
+    expect(live?.run).toContain("trap 'exit 130' INT");
+    expect(live?.run).toContain("trap 'exit 143' TERM");
+    expect(live?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
+    expect(live?.run).toContain("nvidia-smi --query-gpu=name");
+    expect(live?.run).toContain("podman build");
     expect(live?.run).toContain("test/e2e/live/portable-profile-rootless-linux.test.ts");
+    expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
+    expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
     expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);
     expect(restoreIndex).toBeGreaterThan(uploadIndex);
+    expect(fixtureRemovalIndex).toBeGreaterThan(restoreIndex);
     expect(JSON.stringify(job)).not.toContain("NVIDIA_API_KEY");
     expect(JSON.stringify(job)).not.toContain("NVIDIA_INFERENCE_API_KEY");
   });

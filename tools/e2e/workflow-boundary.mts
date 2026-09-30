@@ -1706,6 +1706,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       if (jobName === "managed-image-multiarch-startup") {
         return step.name === "Checkout trusted Hermes resolver" ? [index] : [];
       }
+      if (jobName === "portable-hermes-finalization") {
+        return step.name === "Check out the exact candidate" ? [index] : [];
+      }
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
     const checkoutIndex = checkoutIndexes[0] ?? -1;

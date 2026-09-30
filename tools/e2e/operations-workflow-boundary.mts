@@ -601,6 +601,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedPortablePodmanCleanupCheckout =
+        jobName === "portable-hermes-finalization" &&
+        step.name === "Check out trusted workflow cleanup authority" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.["fetch-depth"] === 1 &&
+        step.with?.["persist-credentials"] === false;
       const trustedE2ePlannerCheckout =
         jobName === "generate-matrix" &&
         step.name === "Check out trusted E2E planner" &&
@@ -706,6 +712,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedCheckout =
         trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
+        trustedPortablePodmanCleanupCheckout ||
         trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
         trustedReleaseQualificationCheckout ||
