@@ -117,13 +117,7 @@ pub async fn wait_service_ready(
                     "service stopped during readiness; inspect logs and explicitly reapply",
                 ));
             }
-            let phase = if spec.kind == ollama::SERVICE_KIND {
-                ollama::artifacts::runtime_status(&engine, &observed)
-                    .await?
-                    .phase
-            } else {
-                engine.runtime_status(&observed).await?.phase
-            };
+            let phase = super::status::runtime_phase(&engine, &observed).await?;
             match phase.as_str() {
                 "ready" => {
                     if spec.kind == vllm::SERVICE_KIND
