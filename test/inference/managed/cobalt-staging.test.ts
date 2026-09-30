@@ -97,6 +97,7 @@ describe("inactive Cobalt staging", () => {
   it("materializes the fixed BF16 command with bounded media and direct tools", () => {
     const recipe = stagingCatalog().recipes[0]!;
     assert.ok(isHostLocalInferenceServingRecipe(recipe), "Expected host-local recipe");
+    assert.ok(recipe.spec.serve.directInstall, "Expected fixed direct-install policy");
     const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "station");
     const command = buildVllmServeCommand(model, {
       [VLLM_EXTRA_ARGS_ENV]: '["--max-model-len","999999"]',
