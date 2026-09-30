@@ -11,6 +11,7 @@ export type DestroyGatewayCleanupDecision = "cleanup" | "preserve" | "prompt";
 
 export type DestroyGatewayCleanupOptions = {
   cleanupGateway?: boolean;
+  cleanupGatewayPromptAnswer?: boolean;
   yes?: boolean;
   force?: boolean;
 };
@@ -67,6 +68,8 @@ export type LiveSandboxProbeVerdict =
  * the listener without forced gateway cleanup.
  * Native win32 hosts keep the conservative non-macOS default because supported
  * Windows runs go through WSL2 and report `linux`.
+ * A prompt answer recorded before a delegated destroy replaces the prompt and
+ * the unattended default, but not an explicit flag.
  */
 export function resolveDestroyGatewayCleanupDecision(
   options: DestroyGatewayCleanupOptions,
@@ -74,6 +77,9 @@ export function resolveDestroyGatewayCleanupDecision(
 ): DestroyGatewayCleanupDecision {
   if (options.cleanupGateway === true) return "cleanup";
   if (options.cleanupGateway === false) return "preserve";
+  if (options.cleanupGatewayPromptAnswer !== undefined) {
+    return options.cleanupGatewayPromptAnswer ? "cleanup" : "preserve";
+  }
   if (options.yes === true || options.force === true || context.nonInteractive) {
     return context.platform === "darwin" ? "cleanup" : "preserve";
   }

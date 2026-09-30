@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
 import { withSandboxLifecycleLock } from "../../dist/lib/actions/sandbox/lifecycle/lock";
+import { recordRetainedSandboxRecovery } from "../../dist/lib/state/onboard-session/retained-sandbox-recovery";
 import { testTimeout } from "../helpers/timeouts";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -470,6 +471,73 @@ describe("compiled rebuild owning-registry worker", () => {
     },
     testTimeout(30_000),
   );
+
+  it("rejects a destroy descriptor with a non-boolean option before destroy runs", async () => {
+    await expect(
+      rebuildOwningRegistryDependencies.runWorker(
+        { operation: "destroy", sandboxName: "alpha", options: { yes: "true" } } as never,
+        9000,
+      ),
+    ).rejects.toThrow(
+      "Delegated destroy in the owning gateway registry did not complete successfully.",
+    );
+  });
+
+  it("runs a delegated destroy against the owning root's recovery records and reports its exit status", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-destroy-root-"));
+    try {
+      writeSiblingRegistry(home);
+      const recoveryFile = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "retained-sandbox-recovery.json",
+      );
+      recordRetainedSandboxRecovery(recoveryFile, {
+        sandboxName: "alpha",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        gatewayName: "nemoclaw-9000",
+        gatewayPort: 9000,
+        lifecycleGeneration: "unmatched-generation",
+        createAttemptNonce: "b".repeat(62),
+        resources: {
+          sharedInferenceProviders: [],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: [],
+        },
+        reason: "retained_after_sandbox_creation_failure",
+      });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeMissingSandboxOpenShell(home));
+      let failure: unknown;
+
+      try {
+        await rebuildOwningRegistryDependencies.runWorker(
+          { operation: "destroy", sandboxName: "alpha", options: { yes: true } },
+          9000,
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).cause).toEqual({
+        ok: false,
+        operation: "destroy",
+        sandboxName: "alpha",
+        gatewayPort: 9000,
+        exitCode: 1,
+      });
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "gateways", "9000", "sandboxes.json"), "utf8"),
+      );
+      expect(Object.keys(registry.sandboxes)).toEqual(["alpha"]);
+      expect(JSON.parse(fs.readFileSync(recoveryFile, "utf8")).unresolved).toHaveLength(1);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
   it("reports an unreaped worker as potentially active", async () => {
     const kill = process.kill.bind(process);

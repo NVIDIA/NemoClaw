@@ -1070,6 +1070,8 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 
 List sandboxes in the registry for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and any sandbox entries recovered from that live gateway, with their model, provider, and policy presets.
 The command reads that port's registry and live gateway; it does not scan registries for other gateway ports.
+When the latest onboarding session records a created sandbox that is missing from that registry, `list` adds that sandbox only when that live gateway lists it.
+A sandbox-scoped command that names an unregistered sandbox applies the same rule.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
 NemoClaw redacts recognized credential values, including credentials in URLs, from text and JSON inventory fields before it writes them.
 When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command.
@@ -2030,6 +2032,11 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 ### `$$nemoclaw <name> destroy`
 
 Stop managed local inference resources, remove runtime-provider-owned resources created during onboarding, and delete the sandbox. This removes the sandbox from the registry. NemoClaw resolves the registry that owns the sandbox before it starts cleanup, even when another local OpenShell gateway is active. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
+
+If the sandbox belongs to the registry of a gateway port other than the one that `NEMOCLAW_GATEWAY_PORT` selects, NemoClaw runs the destroy in a worker process for the state root of that port.
+Before the worker starts, NemoClaw shows the destroy confirmation and, when the sandbox is the last registered sandbox, the final-sandbox gateway cleanup prompt.
+`--yes`, `--force`, and `NEMOCLAW_NON_INTERACTIVE=1` skip both prompts.
+The worker also removes the sandbox from the onboarding session in that state root, so a later `$$nemoclaw list` for that port does not restore it.
 
 `destroy` considers retirement of the host-global `nemoclaw-vllm` container for a sandbox with provider `vllm-local`, including Local NIM.
 It requires confirmed sandbox deletion and no remaining registered `vllm-local` consumer in any gateway state root.
