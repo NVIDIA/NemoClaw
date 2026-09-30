@@ -149,7 +149,12 @@ class LocalTestTests(unittest.TestCase):
                     patch.object(
                         runner,
                         "preflight",
-                        return_value=(["cargo"], ["docker"], "darwin_arm64", "linux/arm64"),
+                        return_value=(
+                            ["cargo"],
+                            ["sudo", "-n", "docker"] if keep else ["docker"],
+                            "darwin_arm64",
+                            "linux/arm64",
+                        ),
                     ),
                 ):
                     if fail:
@@ -172,6 +177,21 @@ class LocalTestTests(unittest.TestCase):
                     build[1][-3:], ["--platform", "linux/arm64", "openclaw-kubernetes"]
                 )
                 self.assertNotIn("bake", build[1])
+                metadata = next(c for c in calls if c[0] == "Export immutable image metadata")
+                self.assertIn(str(e2e.REPO / "image/export_metadata.py"), metadata[1])
+                self.assertEqual(
+                    metadata[1][0], e2e.PYTHON, "private output must belong to the caller"
+                )
+                self.assertEqual("--sudo-docker" in metadata[1], keep)
+                self.assertEqual(metadata[1][-2:], ["--output", str(state / "image-metadata.json")])
+                self.assertLess(
+                    calls.index(metadata),
+                    next(i for i, c in enumerate(calls) if c[0] == "Create isolated kind cluster"),
+                )
+                self.assertEqual(
+                    lifecycle[2]["env"]["NEMOCLAW_AGENT_IMAGE_METADATA"],
+                    str(state / "image-metadata.json"),
+                )
                 retry = (state / "retry-inference.sh").read_text()
                 self.assertNotIn("cargo", retry)
                 self.assertNotIn("private-test-key", retry)

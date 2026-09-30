@@ -198,7 +198,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             "local.yaml",
             "/spec/gateway/engine",
             json!("unix:///var/run/docker.sock"),
-            false,
+            true,
         ),
         (
             "local.yaml",
@@ -492,7 +492,6 @@ fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
 fn gateway_variants_reject_fields_owned_by_the_other_mode() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (field, value) in [
-        ("engine", json!("")),
         ("image", json!("")),
         ("networkCIDR", json!("")),
         ("imagePullPolicy", json!("Never")),

@@ -31,6 +31,59 @@ fn json_operation_failures_have_one_result_and_no_secret_or_state_mutation() {
     }
 }
 
+#[test]
+fn preflight_failures_report_no_runtime_mutations_in_text_and_json() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = write_credential_document(directory.path());
+    for format in ["text", "json"] {
+        for failure in ["missing-input", "missing-credential", "missing-bundle"] {
+            let state = directory.path().join(format!("{format}-{failure}"));
+            let input = if failure == "missing-input" {
+                directory.path().join("missing.yaml")
+            } else {
+                config.clone()
+            };
+            let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+            command.args([
+                "apply",
+                "--non-interactive",
+                "--progress",
+                "off",
+                "-o",
+                format,
+            ]);
+            command
+                .arg(input)
+                .arg("--state-dir")
+                .arg(&state)
+                .arg("--bundle")
+                .arg(directory.path().join("missing-bundle"));
+            if failure == "missing-credential" {
+                command.env_remove("STORY_CREDENTIAL_KEY");
+            } else {
+                command.env("STORY_CREDENTIAL_KEY", "private-sentinel");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            let text = if format == "json" {
+                assert!(output.stderr.is_empty());
+                let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(result["outcome"], "failed");
+                result["remainingState"].as_str().unwrap().to_owned()
+            } else {
+                assert!(output.stdout.is_empty());
+                String::from_utf8(output.stderr).unwrap()
+            };
+            assert!(
+                text.contains("No runtime resources changed."),
+                "{failure}: {text}"
+            );
+            assert!(!text.contains("Changes may already have been made"));
+            assert!(!state.exists());
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn interrupted_json_credential_prompt_returns_130_and_a_parseable_result() {
@@ -101,6 +154,7 @@ fn interrupted_json_credential_prompt_returns_130_and_a_parseable_result() {
     assert_eq!(output.status.code(), Some(130));
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["outcome"], "interrupted");
+    assert_eq!(result["remainingState"], "No runtime resources changed.");
     assert!(!state.exists());
 }
 

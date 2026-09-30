@@ -21,10 +21,10 @@ pub(crate) struct CapacityState {
     compatible: Value<bool>,
 }
 fn requirements(config: &CapacityState) -> Result<(), nemoclaw_sdk::Error> {
-    use nemoclaw_sdk::{Error, docker::Engine, services::validate_capacity_specs};
+    use crate::{Error, services::validate_capacity_specs};
     let engine = match &config.engine {
         Value::Value(engine) => {
-            Engine::validate_endpoint(engine)?;
+            crate::config::validate_engine_endpoint(engine)?;
             Some(engine.as_str())
         }
         Value::Unknown => None,
@@ -139,8 +139,7 @@ impl DataSource for CapacityDataSource {
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            nemoclaw_sdk::services::observe_service_capacity(self.0.connections(), engine, &specs)
-                .await
+            crate::services::observe_service_capacity(self.0.connections(), engine, &specs).await
         }
         .await;
         match work {

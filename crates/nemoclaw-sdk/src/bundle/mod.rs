@@ -6,11 +6,9 @@ mod tests;
 
 use crate::Error;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
-    io::Read,
+    fs,
     path::{Component, Path, PathBuf},
 };
 
@@ -113,18 +111,5 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
     ])
 }
 pub fn hash_file(path: &Path) -> Result<String, Error> {
-    let mut file =
-        File::open(path).map_err(|_| Error::Bundle("cannot open artifact for verification"))?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0_u8; 65536];
-    loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|_| Error::Bundle("cannot read artifact for verification"))?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    nemoclaw_runtime::files::hash_file(path).map_err(Into::into)
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{docker::Engine, managed::Spec};
+use nemoclaw_provider::docker::Engine;
+use nemoclaw_sdk::managed::Spec;
 
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE and NEMOCLAW_TEST_RUNTIME_ENGINE; reads existing owned runtimes only"]
@@ -82,7 +83,10 @@ async fn retained_inference_credentials_preserve_their_reference_binding() {
         let engine = Engine::connect(&storage.engine).unwrap();
         let id = attributes["id"].as_str().unwrap();
         assert_eq!(
-            storage.observe(&engine, id).await.unwrap().as_deref(),
+            nemoclaw_provider::managed::observe_storage(&storage, &engine, id)
+                .await
+                .unwrap()
+                .as_deref(),
             Some(id)
         );
         observed += 1;

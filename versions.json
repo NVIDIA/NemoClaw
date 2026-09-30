@@ -1,6 +1,6 @@
 {
   "opentofu": "1.12.6",
-  "openshell": "0.0.117-dev.186+g1fe79f539",
+  "openshell": "0.1.2",
   "openclaw": "2026.9.4",
   "ollama": "0.34.0",
   "platforms": {
@@ -77,12 +77,12 @@
   },
   "rust": "1.98.1",
   "protobuf": "36.1",
-  "openshellRevision": "1fe79f53991debf32776853a60f0cbd4e127dcfb",
+  "openshellRevision": "6648bd0c290efbc41ba131ee9831ee45cd431f94",
   "images": {
     "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
-    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d039ba7f9a0c3e6788cb04c17fc7738f06db42002fcaaef01e0d2dda375938d1",
-    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:5b2131ff985a0ab7b3bb2fd21cba5a18819431134fce9f17ceffde20970ec736"
+    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f"
   },
   "dockerProvider": "4.6.0"
 }

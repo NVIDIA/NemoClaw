@@ -72,13 +72,29 @@ pub enum ComputeDriver {
     Podman,
     #[serde(rename = "kubernetes")]
     Kubernetes,
+    #[serde(rename = "openshift")]
+    OpenShift,
 }
 impl ComputeDriver {
+    /// Cluster-backed profiles share the upstream Kubernetes compute driver.
+    pub const fn is_kubernetes(self) -> bool {
+        matches!(self, Self::Kubernetes | Self::OpenShift)
+    }
+
+    /// Driver advertised and served by the pinned OpenShell gateway.
+    pub const fn openshell_driver(self) -> Self {
+        match self {
+            Self::OpenShift => Self::Kubernetes,
+            driver => driver,
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Docker => "docker",
             Self::Podman => "podman",
             Self::Kubernetes => "kubernetes",
+            Self::OpenShift => "openshift",
         }
     }
 }
@@ -94,6 +110,7 @@ impl FromStr for ComputeDriver {
             "docker" => Ok(Self::Docker),
             "podman" => Ok(Self::Podman),
             "kubernetes" => Ok(Self::Kubernetes),
+            "openshift" => Ok(Self::OpenShift),
             _ => Err(super::ConfigError::new("unsupported compute driver")),
         }
     }
@@ -133,17 +150,5 @@ impl FromStr for InferenceProviderKind {
                 "unsupported inference provider kind",
             )),
         }
-    }
-}
-
-// Empty input is a legacy runtime default, not a compute-driver variant.
-pub(super) fn runtime_driver<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ComputeDriver, D::Error> {
-    let value = String::deserialize(deserializer)?;
-    if value.is_empty() {
-        Ok(ComputeDriver::Docker)
-    } else {
-        value.parse().map_err(serde::de::Error::custom)
     }
 }

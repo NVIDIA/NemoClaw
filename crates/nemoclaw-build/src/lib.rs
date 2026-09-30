@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use std::io::{Cursor, Read};
+#[cfg(feature = "sdk")]
 pub mod docker_provider;
+#[cfg(feature = "sdk")]
 pub mod docs;
+#[cfg(feature = "sdk")]
 pub mod schema;
 mod source;
 pub use source::{hex, source_inputs, source_version};
+#[cfg(feature = "sdk")]
 pub const BUILDER_SOURCE_VERSION: &str = env!("NEMOCLAW_BUILD_SOURCE_VERSION");
 pub fn extract_tofu(bytes: &[u8], windows: bool) -> Result<Vec<u8>, String> {
     extract_entry(bytes, if windows { "tofu.exe" } else { "tofu" }, 256 << 20)
@@ -40,20 +44,10 @@ fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String
     Ok(output)
 }
 
-/// Retain supervisor build inputs without hosted-inference recipes or preparation tools.
-/// The Fabric recipe supplies source pins checked when compiling the embedded catalog.
-pub fn supervisor_source_files(
-    root: &std::path::Path,
-) -> Result<Vec<(String, std::path::PathBuf)>, String> {
-    Ok(source_inputs(root)?
-        .into_iter()
-        .filter(|(name, _)| !name.starts_with("runtimes/"))
-        .map(|(name, _)| {
-            let path = root.join(&name);
-            (name, path)
-        })
-        .collect())
-}
+mod runtime_source;
+pub use runtime_source::{
+    native_runtime_platform, runtime_source_inputs, stage_runtime_sources, supervisor_source_files,
+};
 
 pub fn source_archive(
     files: &[(String, std::path::PathBuf)],

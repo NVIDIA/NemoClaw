@@ -52,10 +52,17 @@ pub(crate) async fn run_with_progress(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    let mutation_progress = progress.clone();
     let redactions = std::sync::Arc::new(secret_values(overrides));
+    let withhold_child_text = has_short_secret(&redactions);
     let progress = progress.map(|callback| {
         let redactions = redactions.clone();
         std::sync::Arc::new(move |mut event: crate::Progress| {
+            // Omit opaque child identities uniformly; masking their matching
+            // characters would disclose short values and collapse identities.
+            if withhold_child_text {
+                return;
+            }
             match &mut event {
                 crate::Progress::Resource {
                     address: Some(address),
@@ -94,7 +101,7 @@ pub(crate) async fn run_with_progress(
         }
         command.envs(overrides);
         if let Some(downloads) = &downloads {
-            command.env("NEMOCLAW_INTERNAL_PROGRESS_ENDPOINT", &downloads.endpoint);
+            command.env(crate::download::ENV, &downloads.endpoint);
         }
     });
     command.wrap(KillOnDrop);
@@ -107,6 +114,13 @@ pub(crate) async fn run_with_progress(
         diagnostic: "cannot launch bundled executable".into(),
         postcondition_failures: None,
     })?;
+    // This SDK fact is independent of optional child UI/download events and
+    // their redaction or transport. A failed spawn cannot have changed resources.
+    if args.first() == Some(&"apply")
+        && let Some(callback) = mutation_progress
+    {
+        callback(crate::Progress::MutationStarted);
+    }
     let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
         64 * 1024 * 1024,
@@ -188,7 +202,12 @@ pub(crate) async fn run_with_progress(
             }
         }
     }
-    redact(&mut message, &redactions);
+    if withhold_child_text {
+        message =
+            "child diagnostic withheld because a credential is too short for safe redaction".into();
+    } else {
+        redact(&mut message, &redactions);
+    }
     if overflow || diagnostic_overflow {
         message = "child output exceeds the supported limit".into();
     }
@@ -219,16 +238,54 @@ fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
             secrets.push(value);
         }
     }
-    // Replace whole credentials before a shorter credential can partially mask one.
-    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    secrets.sort_unstable();
     secrets.dedup();
     secrets
 }
 
+fn has_short_secret(secrets: &[String]) -> bool {
+    // This is a diagnostic-disclosure threshold, not a credential-strength rule.
+    secrets
+        .iter()
+        .any(|secret| !secret.is_empty() && secret.chars().take(8).count() < 8)
+}
+
 fn redact(text: &mut String, secrets: &[String]) {
-    for secret in secrets {
-        *text = text.replace(secret, "[redacted]");
+    if has_short_secret(secrets) {
+        *text = "[redacted]".into();
+        return;
     }
+    // Search only the original input. Merge every overlapping match, including
+    // self-overlaps, so neither replacement text nor a credential suffix leaks.
+    // Include existing markers in the same union without exempting credentials
+    // that contain or overlap a marker.
+    let mut matches = text.char_indices().filter_map(|(start, _)| {
+        secrets
+            .iter()
+            .filter(|secret| !secret.is_empty() && text[start..].starts_with(secret.as_str()))
+            .map(|secret| start + secret.len())
+            .chain(
+                text[start..]
+                    .starts_with("[redacted]")
+                    .then_some(start + 10),
+            )
+            .max()
+            .map(|end| (start, end))
+    });
+    let Some((start, mut end)) = matches.next() else {
+        return;
+    };
+    let mut output = text[..start].to_owned();
+    output.push_str("[redacted]");
+    for (start, next_end) in matches {
+        if start > end {
+            output.push_str(&text[end..start]);
+            output.push_str("[redacted]");
+        }
+        end = end.max(next_end);
+    }
+    output.push_str(&text[end..]);
+    *text = output;
 }
 
 fn inherited_variable(name: &str) -> bool {
@@ -351,6 +408,45 @@ async fn cancelling_a_running_command_kills_its_background_child() {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn mutation_boundary_survives_child_failure_and_short_secret_redaction() {
+        for (operation, binary, cancelled, expected) in [
+            ("plan", "/bin/false", false, false),
+            ("apply", "/bin/false", false, true),
+            ("apply", "/missing-nemoclaw-binary", false, false),
+            ("apply", "/bin/false", true, false),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let token = CancellationToken::new();
+            if cancelled {
+                token.cancel();
+            }
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = events.clone();
+            let result = run_with_progress(
+                directory.path(),
+                Path::new(binary),
+                &[operation],
+                &[("CUSTOM_CREDENTIAL".into(), "a".into())].into(),
+                &token,
+                Some(std::sync::Arc::new(move |event| {
+                    captured.lock().unwrap().push(event)
+                })),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(
+                *events.lock().unwrap(),
+                if expected {
+                    vec![crate::Progress::MutationStarted]
+                } else {
+                    vec![]
+                },
+                "{operation}, {binary}, cancelled={cancelled}"
+            );
+        }
+    }
+
     #[tokio::test]
     #[cfg(unix)]
     async fn failed_children_do_not_echo_referenced_secrets() {
@@ -511,4 +607,106 @@ async fn early_failure_keeps_stderr_even_without_a_ui_version() {
     .await
     .unwrap_err();
     assert!(error.to_string().contains("launch-failed"));
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact;
+
+    #[test]
+    fn colliding_credentials_do_not_rescan_the_replacement_marker() {
+        let mut text = "request rejected: secret-sentinel; token=redacted".to_owned();
+        redact(&mut text, &["secret-sentinel".into(), "redacted".into()]);
+        assert_eq!(text, "request rejected: [redacted]; token=[redacted]");
+    }
+
+    #[test]
+    fn existing_markers_do_not_nest_or_exempt_credentials_containing_them() {
+        let mut text = "already [redacted]; next secret-sentinel".to_owned();
+        redact(&mut text, &["redacted".into(), "secret-sentinel".into()]);
+        assert_eq!(text, "already [redacted]; next [redacted]");
+        let mut text = "token=[redacted]-credential-suffix".to_owned();
+        redact(&mut text, &["[redacted]-credential-suffix".into()]);
+        assert_eq!(text, "token=[redacted]");
+    }
+
+    #[test]
+    fn overlapping_credentials_are_fully_hidden_in_any_order() {
+        for secrets in [
+            vec!["abcdefghij".into(), "fghijklmno".into()],
+            vec!["fghijklmno".into(), "abcdefghij".into()],
+        ] {
+            let mut text = "before abcdefghijklmno after".to_owned();
+            redact(&mut text, &secrets);
+            assert_eq!(text, "before [redacted] after");
+        }
+        let mut repeated = "before ababababab after".to_owned();
+        redact(&mut repeated, &["abababab".into()]);
+        assert_eq!(repeated, "before [redacted] after");
+    }
+
+    #[test]
+    fn short_credentials_hide_the_field_without_disclosing_match_positions() {
+        for secret in ["a", "b", "c", "notseen", "éééé"] {
+            for input in [
+                "Resource replacement would discard sandbox files",
+                "XYZ",
+                secret,
+            ] {
+                let mut text = input.to_owned();
+                redact(&mut text, &[secret.into()]);
+                assert_eq!(text, "[redacted]");
+            }
+        }
+    }
+
+    #[test]
+    fn long_unicode_credentials_and_empty_values_preserve_unrelated_text() {
+        let mut text = "原因: 密碼測試密碼測試 / safe".to_owned();
+        redact(&mut text, &[String::new(), "密碼測試密碼測試".into()]);
+        assert_eq!(text, "原因: [redacted] / safe");
+    }
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn short_credentials_withhold_child_text_without_preventing_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut messages = Vec::new();
+    for secret in ["a", "c", "z"] {
+        for script in [
+            "printf '%s' 'Resource replacement would discard sandbox files' >&2; exit 1",
+            r#"printf '%s\n' '{"type":"diagnostic","diagnostic":{"summary":"Resource replacement","detail":"would discard sandbox files"}}'; exit 1"#,
+            "printf '%s' \"$CUSTOM_CREDENTIAL\" >&2; exit 1",
+        ] {
+            let error = run(
+                directory.path(),
+                Path::new("/bin/sh"),
+                &["-c", script],
+                &[("CUSTOM_CREDENTIAL".into(), secret.into())].into(),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+            let Error::Execution { diagnostic, .. } = error else {
+                panic!("expected child failure")
+            };
+            assert_eq!(
+                diagnostic,
+                "child diagnostic withheld because a credential is too short for safe redaction"
+            );
+            messages.push(diagnostic);
+        }
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events = received.clone();
+        run_with_progress(directory.path(), Path::new("/bin/sh"),
+            &["-c", r#"test -n "$CUSTOM_CREDENTIAL" && printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox","addr":"nemoclaw_sandbox.alpha"},"action":"create"}}'"#],
+            &[("CUSTOM_CREDENTIAL".into(), secret.into())].into(), &CancellationToken::new(),
+            Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event)))).await.unwrap();
+        assert!(
+            received.lock().unwrap().is_empty(),
+            "short credentials must not expose child progress text"
+        );
+    }
+    assert!(messages.windows(2).all(|pair| pair[0] == pair[1]));
 }

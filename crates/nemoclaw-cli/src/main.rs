@@ -69,7 +69,13 @@ async fn run() -> ExitCode {
         _ => None,
     };
     let mut reporter = progress::Reporter::new(cli.progress, cli.verbose, context.header());
-    let result = dispatch::run(cli, tokio::io::stdin(), &cancel, reporter.callback()).await;
+    let result = dispatch::run(
+        cli,
+        tokio::io::stdin(),
+        &cancel,
+        context.progress(reporter.callback()),
+    )
+    .await;
     reporter.finish();
     signals.abort();
     match result {

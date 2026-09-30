@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
-    config::{Document, schema::input_schema},
-    hardware::{Capacity, GIB, GpuMemory},
-    services::{
-        ServiceDefinition,
-        installers::vllm::hardware_capacity::{check_capacity, serving_memory},
-    },
+use nemoclaw_runtime::{
+    hardware::Capacity, hardware::GIB, hardware::GpuMemory,
+    vllm::hardware_capacity::check_capacity, vllm::hardware_capacity::serving_memory,
 };
+use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::ServiceDefinition};
 use serde_json::{Value, json};
 
 fn input(hardware: Value) -> Value {
@@ -53,12 +50,9 @@ fn hardware_failures_report_the_requirement_and_observation() {
     let ServiceDefinition::Ollama(ollama) = &ollama_document.spec.services["qwen"] else {
         panic!("expected Ollama")
     };
-    let ollama_error = nemoclaw_sdk::services::installers::ollama::hardware_capacity::check_memory(
-        ollama,
-        &old_driver,
-        true,
-    )
-    .unwrap_err();
+    let ollama_error =
+        nemoclaw_runtime::ollama::hardware_capacity::check_memory(ollama, &old_driver, true)
+            .unwrap_err();
     assert_eq!(ollama_error.to_string(), error.to_string());
     let mut old_compute = capacity.clone();
     old_compute.compute_capability = 89;

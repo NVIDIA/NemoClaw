@@ -18,12 +18,42 @@ pub struct ResourceInventoryEntry {
     /// Present in prior state or the refreshed plan's before value; not a health assertion.
     pub existed: bool,
     pub planned_actions: Vec<String>,
+    /// OpenTofu refresh differences, including computed metadata changes.
     pub drifted: bool,
+    /// Observed pre-apply Fabric runtime status, only for agent configuration resources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_running: Option<bool>,
     /// The owner's teardown compiler retains this established resource.
     pub retained: bool,
     /// An established resource has an unchanged plan and no reported drift.
     pub reuse_planned: bool,
 }
+/// Authored identity of a provider whose native registration uses a scoped key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceSource {
+    pub name: String,
+    pub path: String,
+}
+
+impl OperationResult {
+    pub(super) fn describe_sources(&mut self, document: &Document) -> Result<(), Error> {
+        for provider in document.selected_providers()? {
+            if provider.key != provider.definition.name {
+                for kind in ["provider", "provider_profile"] {
+                    self.resource_sources.insert(
+                        format!("nemoclaw_{kind}.inference_{}", provider.key),
+                        ResourceSource {
+                            name: provider.definition.name.clone(),
+                            path: provider.path.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 pub use crate::discovery::DiscoveryObservation;
 /// Safe, validated query inputs. This allowlist intentionally excludes specs,
 /// credentials, local credential file paths, and provider resource identity.
@@ -73,16 +103,36 @@ impl DiscoveryReport {
             && self.credentials.is_empty()
             && self.resources.is_empty()
     }
-    /// Unresolved facts after merging the latest observation for each query.
+    /// Unresolved prerequisites that prevent a complete resource plan.
     pub fn deferred(&self) -> Vec<String> {
+        self.unresolved(false)
+    }
+    /// Supplemental catalog or apply-time readiness facts, not planning gates.
+    pub fn unverified(&self) -> Vec<String> {
+        self.unresolved(true)
+    }
+    fn unresolved(&self, advisory: bool) -> Vec<String> {
         self.observations
             .iter()
             .filter_map(|(name, observation)| {
                 use crate::discovery::ObservationStatus::Available;
+                let supplemental = match observation {
+                    DiscoveryObservation::Inference(_) | DiscoveryObservation::Service { .. } => {
+                        true
+                    }
+                    DiscoveryObservation::Unresolved { category } => {
+                        matches!(category.as_str(), "inference" | "service")
+                    }
+                    _ => false,
+                };
+                if supplemental != advisory {
+                    return None;
+                }
                 let resolved = match observation {
                     DiscoveryObservation::Engine(value) => value.status == Available,
                     DiscoveryObservation::Hardware(value) => value.status == Available,
                     DiscoveryObservation::Inference(value) => value.status == Available,
+                    DiscoveryObservation::RuntimeImage(value) => value.status == Available,
                     DiscoveryObservation::Gateway(value) => {
                         value.status == Available && value.compatible == Some(true)
                     }
@@ -131,6 +181,7 @@ fn observation_name(address: &str) -> Option<String> {
     } else {
         [
             "data.nemoclaw_fabric_capabilities.",
+            "data.nemoclaw_runtime_image.",
             "data.nemoclaw_target_hardware.",
             "data.nemoclaw_inference_capabilities.",
         ]
@@ -143,6 +194,8 @@ pub(super) fn category(name: &str) -> &'static str {
         "engine"
     } else if name == "gateway" {
         "gateway"
+    } else if name.starts_with("runtime_image_") {
+        "runtime_image"
     } else if name.starts_with("target_") {
         "hardware"
     } else if name.starts_with("endpoint_") {
@@ -157,9 +210,10 @@ pub(super) fn unverified_message(name: &str) -> String {
     match category(name){
         "engine"=>"Selected engine capabilities are unverified; provider discovery could not establish prerequisites.",
         "gateway"=>"Gateway version and compute-driver compatibility remain unverified until its provider observation completes.",
+        "runtime_image"=>"Runtime image compatibility remains unverified until the image is acquired and its runtime specification is checked.",
         "hardware"=>"Target hardware inventory remains unverified; requirements are still checked by the owning runtime.",
         "inference"=>"Inference endpoint catalog remains unverified from the control host; sandbox connectivity and generation APIs require their own checks.",
-        "service"=>"Managed inference readiness remains unverified until the existing service observation completes.",
+        "service"=>"Managed inference readiness is checked during apply; plan does not establish current service readiness.",
         _=>"Selected image Fabric capabilities are unverified; image metadata or compatibility is incomplete. Runtime adapter checks remain required.",
     }.into()
 }
@@ -260,6 +314,9 @@ impl Plan {
                     "hardware" => DiscoveryObservation::Hardware(
                         serde_json::from_str(encoded).map_err(invalid)?,
                     ),
+                    "runtime_image" => DiscoveryObservation::RuntimeImage(
+                        serde_json::from_str(encoded).map_err(invalid)?,
+                    ),
                     "inference" => DiscoveryObservation::Inference(
                         serde_json::from_str(encoded).map_err(invalid)?,
                     ),
@@ -289,6 +346,15 @@ impl Plan {
                 existed,
                 planned_actions: change.change.actions.clone(),
                 drifted,
+                agent_running: change
+                    .address
+                    .starts_with("nemoclaw_agent_configuration.")
+                    .then(|| {
+                        change.change.before["running"]
+                            .as_str()
+                            .and_then(|value| value.parse().ok())
+                    })
+                    .flatten(),
                 retained: retained.contains(&change.address),
                 reuse_planned: existed && !drifted && change.change.actions == ["no-op"],
             });
@@ -303,6 +369,95 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inline_and_scoped_provider_sources_preserve_authored_names_without_values() {
+        let mut input: Value =
+            serde_saphyr::from_str(include_str!("../../tests/fixtures/config/local.yaml")).unwrap();
+        let mut provider = input["spec"]["inferenceProviders"][0].take();
+        provider["name"] = "responses".into();
+        input["spec"]
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceProviders");
+        let sandbox = &mut input["spec"]["sandboxes"][0];
+        sandbox["inferenceProviders"] = json!([provider]);
+        let route = &mut sandbox["agent"]["inference"]["routes"][0];
+        route["providerRef"] = "responses".into();
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        let mut result = OperationResult::planned(Vec::new());
+        result.describe_sources(&document).unwrap();
+        assert_eq!(result.resource_sources.len(), 2);
+        assert!(
+            result
+                .resource_sources
+                .values()
+                .all(|source| source.name == "responses"
+                    && source.path == "spec.sandboxes[assistant].inferenceProviders[responses]")
+        );
+        let sandbox = &mut input["spec"]["sandboxes"][0];
+        let mut provider = sandbox["inferenceProviders"][0].take();
+        sandbox
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceProviders");
+        provider["name"] = "anthro".into();
+        provider["credential"] = json!({"env":"PRIVATE_REFERENCE"});
+        provider["endpoint"] = "https://inference.example.test/v1".into();
+        let route = &mut sandbox["agent"]["inference"]["routes"][0];
+        route.as_object_mut().unwrap().remove("providerRef");
+        route["provider"] = provider;
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        let mut result = OperationResult::planned(Vec::new());
+        result.describe_sources(&document).unwrap();
+        assert_eq!(result.resource_sources.len(), 2);
+        assert!(
+            result
+                .resource_sources
+                .values()
+                .all(|source| source.name == "anthro"
+                    && source.path
+                        == "spec.sandboxes[assistant].agent.inference.routes[primary].provider")
+        );
+        assert!(
+            !serde_json::to_string(&result.resource_sources)
+                .unwrap()
+                .contains("PRIVATE_REFERENCE")
+        );
+    }
+
+    #[test]
+    fn catalog_and_apply_time_readiness_do_not_defer_resource_planning() {
+        let mut report: DiscoveryReport = serde_json::from_value(json!({"observations":{
+            "endpoint_0":{"kind":"inference","observation":{"status":"unknown","reason":"catalog unsupported","source":"control_host_http_models","reachable":true,"authentication":"unknown","models":[],"api_verified":false}},
+            "endpoint_1":{"kind":"unresolved","observation":{"category":"inference"}},
+            "service_model":{"kind":"service","observation":{"ready":null,"source":"service_readiness"}},
+            "service_stopped":{"kind":"service","observation":{"ready":false,"source":"service_readiness"}}
+        }})).unwrap();
+        assert!(report.deferred().is_empty(), "{:?}", report.deferred());
+        assert_eq!(report.unverified().len(), 4);
+        report.observations.insert(
+            "gateway".into(),
+            DiscoveryObservation::Unresolved {
+                category: "gateway".into(),
+            },
+        );
+        assert_eq!(report.deferred().len(), 1);
+        assert!(report.deferred()[0].contains("Gateway"));
+        let encoded = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            encoded["observations"]["service_model"]["observation"]["ready"],
+            Value::Null
+        );
+        assert_eq!(
+            encoded["observations"]["service_stopped"]["observation"]["ready"],
+            false
+        );
+        assert_eq!(
+            encoded["observations"]["endpoint_0"]["observation"]["status"],
+            "unknown"
+        );
+    }
+
     #[test]
     fn query_provenance_copies_only_safe_inputs_not_provider_payloads() {
         let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"endpoint":"https://example.com/v1","api":"openai-completions","credential_env":"API_KEY","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
@@ -345,7 +500,7 @@ mod freshness_tests {
         let mut later = DiscoveryReport::default();
         later.observations.insert(
             "gateway".into(),
-            DiscoveryObservation::Gateway(crate::openshell::GatewayObservation {
+            DiscoveryObservation::Gateway(crate::discovery::GatewayObservation {
                 status: crate::discovery::ObservationStatus::Available,
                 reason: None,
                 source: "openshell_gateway_info".into(),

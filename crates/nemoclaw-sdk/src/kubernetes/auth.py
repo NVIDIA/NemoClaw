@@ -303,13 +303,7 @@ class DevelopmentAuth:
                         "metadata": {"labels": selector},
                         "spec": {
                             "automountServiceAccountToken": False,
-                            "securityContext": {
-                                "runAsNonRoot": True,
-                                "runAsUser": 10001,
-                                "runAsGroup": 10001,
-                                "fsGroup": 10001,
-                                "seccompProfile": {"type": "RuntimeDefault"},
-                            },
+                            "securityContext": self.platform.pod_security_context(),
                             "containers": [
                                 {
                                     "name": "issuer",

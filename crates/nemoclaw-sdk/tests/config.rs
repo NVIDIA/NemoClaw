@@ -418,7 +418,7 @@ fn harness_selection_does_not_determine_service_ownership() {
 #[test]
 fn external_gateways_reject_installation_fields_even_when_empty() {
     let base = include_str!("fixtures/config/local.yaml");
-    for field in ["engine", "image", "networkCIDR"] {
+    for field in ["image", "networkCIDR"] {
         let input = base.replace(
             "management: external",
             &format!("management: external\n    {field}: \"\""),

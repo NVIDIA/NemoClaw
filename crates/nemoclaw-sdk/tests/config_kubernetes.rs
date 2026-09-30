@@ -8,6 +8,7 @@ fn external_document() -> Value {
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
     input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
     input
 }
 
@@ -51,13 +52,32 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
                 .bridge()
                 .is_err()
         );
-        assert_eq!(document.credential_names(), ["CLUSTER_KUBECONFIG"]);
+        assert_eq!(
+            document.credential_names(),
+            ["CLUSTER_KUBECONFIG", "TEST_IMAGE_METADATA"]
+        );
         assert_eq!(serde_json::to_value(&document).unwrap(), input);
         assert_eq!(
             Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
             document
         );
     }
+}
+
+#[test]
+fn default_kubernetes_distribution_preserves_existing_intent_and_platform_identity() {
+    let implicit = Document::parse(managed_document().to_string().as_bytes()).unwrap();
+    let mut explicit = managed_document();
+    explicit["spec"]["gateway"]["kubernetes"]["distribution"] = json!("kubernetes");
+    let explicit = Document::parse(explicit.to_string().as_bytes()).unwrap();
+    assert_eq!(explicit, implicit);
+    assert_eq!(explicit.digest(), implicit.digest());
+    assert_eq!(explicit.yaml().unwrap(), implicit.yaml().unwrap());
+    assert!(
+        serde_json::to_value(explicit).unwrap()["spec"]["gateway"]["kubernetes"]
+            .get("distribution")
+            .is_none()
+    );
 }
 
 #[test]
@@ -316,6 +336,10 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
     ] {
         let mut input = external_document();
         input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("docker");
+        input["spec"]["sandboxes"][0]["image"]
+            .as_object_mut()
+            .unwrap()
+            .remove("metadata");
         input["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
         input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": name});
         Document::parse(input.to_string().as_bytes()).unwrap();
@@ -324,8 +348,10 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
 
 #[test]
 fn managed_kubernetes_target_cannot_enter_legacy_engine_specs() {
-    let fixtures: Vec<Value> =
-        serde_json::from_str(include_str!("../src/managed/reference.json")).unwrap();
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(
+        "../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let mut raw: Value = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let mut gateway = managed_document()["spec"]["gateway"].clone();

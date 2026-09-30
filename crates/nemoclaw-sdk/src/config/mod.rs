@@ -3,19 +3,29 @@
 
 mod agent_inference;
 pub(crate) mod constraints;
+#[doc(hidden)]
+pub mod credential_metadata;
+mod engine_endpoint;
 mod execution;
+pub use engine_endpoint::validate_engine_endpoint;
 pub(crate) mod integration_policy;
 mod integrations;
+pub use integration_policy::search_policy;
 pub use integrations::*;
 mod inference;
 mod providers;
 pub(crate) mod references;
 mod source;
+mod yaml_source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
+mod inference_profile;
+pub use inference_profile::definition as inference_profile;
+mod sandbox_policy;
+pub use sandbox_policy::policy_json;
 mod network;
 pub use network::*;
 mod kinds;
@@ -28,9 +38,9 @@ mod types;
 pub use inference::{InferenceConnection, InferenceTarget};
 pub(crate) mod validation;
 use sha2::{Digest, Sha256};
-use std::{fmt, io::Read};
+use std::io::Read;
 pub use types::*;
-pub use validation::{is_fabric_harness, validate_endpoint};
+pub use validation::{is_fabric_harness, valid_name, validate_endpoint};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
@@ -38,19 +48,7 @@ pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigError(pub String);
-impl ConfigError {
-    pub fn new(message: &'static str) -> Self {
-        Self(message.into())
-    }
-}
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for ConfigError {}
+pub use nemoclaw_runtime::config::ConfigError;
 
 impl Document {
     /// Read, default, and validate a configuration document.
@@ -68,7 +66,9 @@ impl Document {
         }
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+        yaml_source::validate_tags(text)?;
         let mut options = serde_saphyr::Options::default();
+        options.with_snippet = false;
         let mut budget = serde_saphyr::Budget::default();
         budget.max_aliases = 0;
         budget.max_anchors = 0;
@@ -77,8 +77,8 @@ impl Document {
         options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
-        schema::validate_input(&tree)?;
+            .map_err(yaml_source::syntax_error)?;
+        schema::validate_input(&tree, Some(text))?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
@@ -164,6 +164,9 @@ impl Document {
             }
         }
         for sandbox in &self.spec.sandboxes {
+            if let Some(metadata) = &sandbox.image.metadata {
+                names.push(metadata.env.as_str());
+            }
             for binding in sandbox
                 .integration_bindings(&self.spec.integrations)
                 .expect("validated integration references")
@@ -197,7 +200,7 @@ impl Document {
             crate::services::defaults(service);
         }
         for sandbox in &mut self.spec.sandboxes {
-            if sandbox.runtime.provider != ComputeDriver::Kubernetes {
+            if !sandbox.runtime.provider.is_kubernetes() {
                 default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
             }
         }
@@ -306,13 +309,13 @@ impl Gateway {
             "operation requires a managed local gateway",
         ))
     }
-    pub(crate) fn credential(&self) -> Option<&Credential> {
+    pub fn credential(&self) -> Option<&Credential> {
         match self {
             Self::Managed(_) => None,
             Self::External(gateway) => gateway.credential.as_ref(),
         }
     }
-    pub(crate) fn tls(&self) -> Option<&TLS> {
+    pub fn tls(&self) -> Option<&TLS> {
         match self {
             Self::Managed(_) => None,
             Self::External(gateway) => gateway.tls.as_ref(),

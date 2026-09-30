@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated gateway fixture"]
-async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_observations() {
+async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindings() {
     let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
     let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -65,9 +65,16 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
         .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
         .unwrap();
     assert_eq!(health["values"]["ready"], false);
-    let report: Value =
+    let failed_health: nemoclaw_sdk::RuntimeHealth =
         serde_json::from_str(health["values"]["health_json"].as_str().unwrap()).unwrap();
-    assert_eq!(report["reason_code"], "fabric_health_timeout");
+    assert!(failed_health.supported);
+    assert!(failed_health.report.is_none());
+    assert_eq!(
+        failed_health.reason_code.as_deref(),
+        Some("fabric_health_failed")
+    );
+    assert!(!failed_health.allows_apply_completion());
+    assert!(health["values"]["error_message"].is_null());
     let token = health["values"]["read_trigger"]
         .as_str()
         .unwrap()
@@ -93,7 +100,10 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
             .unwrap()
             .exec_calls
             .iter()
-            .all(|cmd| !cmd.iter().any(|part| part == "health"))
+            .all(|cmd| !cmd.iter().any(|part| matches!(
+                part.as_str(),
+                "--active" | "--ready" | "--operational" | "invoke"
+            )))
     );
     fixture.state.lock().unwrap().health_report = None;
     run(&["apply", "-input=false", "-no-color", "apply.plan"], true);
@@ -116,7 +126,8 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
             .unwrap()
             .exec_calls
             .iter()
-            .any(|cmd| cmd.last().is_some_and(|part| part == "health"))
+            .any(|cmd| cmd.get(1).is_some_and(|part| part == "check")
+                && cmd.iter().any(|part| part == "--ready"))
     );
     let after: Value = serde_json::from_slice(&run(&["show", "-json"], true)).unwrap();
     let observation = after["values"]["root_module"]["resources"]
@@ -127,6 +138,44 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
         .unwrap();
     assert_ne!(observation["values"]["read_trigger"], token);
     assert_eq!(observation["values"]["ready"], true);
+    // Recheck admission independently of previously successful configuration.
+    // The gateway may reject a policy while the sandbox is still Starting.
+    {
+        let mut state = fixture.state.lock().unwrap();
+        for sandbox in state.sandboxes.values_mut() {
+            let status = sandbox.status.as_mut().unwrap();
+            status.phase = openshell_core::proto::SandboxPhase::Starting as i32;
+            status.configuration_admission =
+                Some(openshell_core::proto::SandboxConfigurationAdmission {
+                    state: openshell_core::proto::ConfigurationAdmissionState::Rejected as i32,
+                    error: "PRIVATE_SENTINEL".into(),
+                    ..Default::default()
+                });
+        }
+    }
+    run(&["plan", "-input=false", "-out=rejected.plan"], true);
+    let started = std::time::Instant::now();
+    run(&["apply", "-input=false", "rejected.plan"], false);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    let rejected: Value = serde_json::from_slice(&run(&["show", "-json"], true)).unwrap();
+    let rejection = rejected["values"]["root_module"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
+        .unwrap();
+    let message = rejection["values"]["error_message"].as_str().unwrap();
+    assert!(
+        message.contains("sandbox/assistant: OpenShell configuration rejected"),
+        "{message}"
+    );
+    assert!(
+        message.contains("inspect the sandbox configuration"),
+        "{message}"
+    );
+    assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+    assert_eq!(rejection["values"]["ready"], false);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // Teardown omits observations so an unavailable runtime cannot block deletion.
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");

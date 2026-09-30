@@ -31,7 +31,7 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Fabric runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
-| NemoClaw provider data source | Engine and Fabric image capabilities, gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
+| NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
@@ -87,8 +87,9 @@ An observation describes the selected target at the time of its read; it is not 
 |---|---|---|
 | Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
-| GPU memory, driver, compute capability, and disk measurements | Direct SDK `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
-| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and managed deployment planning |
+| GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
+| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
+| Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
 | Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
 | Gateway version and compute drivers | Existing `nemoclaw_gateway_capabilities`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
@@ -121,20 +122,39 @@ The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`,
 The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
 Fabric owns settings, model, extension and workflow validation.
 Missing native capability contracts and mismatched Fabric revisions remain unknown; explicit schema violations are unsupported.
+The `fabric_plan` check retains a bounded canonical field path and a fixed explanation for classified planner failures.
+Raw schema messages and rejected values are omitted; unsafe or overlong field identifiers fall back to `configuration`.
+For a rejected model token limit, the reason also names `overrides.maxTokens` and up to 16 model routes carrying that setting, including Fabric's generated `default` role.
+Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
+Onboarding uses the same assessment; unknown error variants retain a generic rejection.
 Omitting requirements preserves metadata-only discovery.
 
 The [agent image builder](build.md#build-agent-images) reads `Fabric.discover()` inside each assembled image and stores the result in `io.nemoclaw.fabric.catalog`.
 It selects installed-package records using Fabric's provenance, without editing their descriptors.
+Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
+With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
 The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
 See [source notices and regeneration](../image/NOTICE.md).
 Older images and direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 
-For a managed gateway, generated graphs observe each sandbox image independently of resource creation or image acquisition.
-Lifecycle postconditions reject known engine incompatibility or conflicting image/adapter metadata.
-Unknown evidence is reported as deferred work; it does not relax required resource-refresh or gateway checks.
+Generated graphs observe each sandbox image independently of resource creation or image acquisition.
+Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
+With `requirements_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
+The sandbox consumes `runtime_json`; its `policy_json` retains authored policy and managed endpoint inputs, resolved against that layout before creation.
+Provider profiles require nonempty `binaries_json`; search registrations retain their scoped `profile_name`.
+Refresh verifies the actual launch and policy against retained metadata, and export and teardown do not need another image inspection.
+
+Inference registrations are scoped by authored provider identity, image digest, and adapter ID; search registrations also include the credential reference.
+Sandboxes using the same image and adapter can share registrations, while different image or adapter executable lists remain separate.
+Adding a sandbox preserves existing bindings.
+Export preserves authored definitions and refuses conflicting credential references among registrations for one inference definition.
+
+Lifecycle postconditions reject known engine incompatibility, conflicting image/adapter metadata, and missing image runtime metadata.
+Other unknown evidence does not relax required resource-refresh or gateway checks.
 An image observation is scoped to the selected engine, not every possible execution host.
+Legacy sandbox bindings without retained runtime metadata require their original bundle for recovery and teardown; automatic migration is not provided.
 
 ## Target Hardware
 
@@ -143,7 +163,7 @@ The passive read reports the daemon identity, architecture, CPU/memory fields, a
 GPU IDs advertised as engine generic resources are retained without inventing names, VRAM, driver versions, or compute capability.
 No GPU advertisement means unknown inventory, not zero GPUs.
 
-For complete host measurements, explicitly call the SDK's `hardware_discovery::observe_host_hardware` with the selected engine and a `HostObserver`.
+For complete host measurements, the provider library exposes `hardware_observation::observe_host_hardware` with the selected engine and a `HostObserver`.
 The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
 It reports unsupported GPU memory counters separately from unobserved counters.
 Collector failure never falls back to the client's hardware.
@@ -161,6 +181,7 @@ The observation identifies control-host reachability, catalog authentication, an
 It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
 Authentication denial is distinguished from a missing or unsupported model-list endpoint.
 Shared endpoint/API/credential-reference requests are deduplicated.
+The SDK reports unavailable or unverified catalogs under the plan result's `unverified` list, preserving their typed status without treating catalog availability as a resource-planning prerequisite.
 Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
@@ -170,9 +191,10 @@ See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboardin
 ## Gateway Capabilities
 
 The deployment graph reads `data.nemoclaw_gateway_capabilities.current` during planning through the provider's configured OpenShell connection.
-The data source reports the observed gateway version, driver names and aliases, driver-entry count, and compatibility with the required compute drivers.
+The data source reports the observed `gateway_version`, driver names and aliases in `compute_drivers`, the driver-entry count in `compute_driver_count`, `compatible` for the `required_compute_drivers`, and an `incompatibility` description that is empty when compatible.
 Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
-OpenTofu lifecycle conditions report required and observed values when they differ.
+OpenTofu lifecycle conditions name each failed requirement with its required and observed values.
+SDK discovery observations use the same description as their `reason`.
 Missing metadata, authentication failures, and transport failures stop ordinary planning without changing runtime resources.
 Each API read is bounded to 30 seconds.
 
@@ -180,6 +202,16 @@ The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zer
 A positive timeout retries only transport failures, not authentication failures, incomplete metadata, or incompatibility.
 For a managed gateway, the earlier runtime graph sets this timeout to 90 seconds and orders its capability read after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
+
+For managed Docker gateways, the runtime graph also passes `managed_spec` and `container_id` from the Docker provider's process resource.
+These optional inputs must be supplied together and may remain unknown until apply.
+The data source validates the specification and checks the exact container ID, name, and owner through read-only engine inspection while waiting for the API.
+Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
+A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
+A running but unreachable gateway remains a transport failure; failed or incomplete engine observations are not treated as process absence.
+The error names the container, includes its observed exit code when available, and points to its logs without copying raw engine errors or log text.
+The observation neither restarts nor deletes the process; follow [gateway startup recovery](troubleshooting.md#recover-a-managed-gateway-startup-failure).
+Podman and external gateway capability reads retain their API-only wait.
 
 A known data-source result can be retained in a saved plan.
 The deployment graph also declares `data.nemoclaw_gateway_capabilities.apply`, with a `read_trigger` that is unknown during planning.
@@ -199,6 +231,21 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 Fabric configuration writes are owned by `nemoclaw_agent_configuration`; unchanged apply preserves the active runtime handle.
 Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
 
+## Runtime Image Compatibility
+
+`nemoclaw_runtime_image` requires the compiled managed-service `spec` and returns `observation_json` with `status`, `source`, and `required_version`.
+The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the compiled platform and required backend, recipe, and authentication labels.
+It performs one engine image inspection with a 20-second bound and never pulls an image or starts a process.
+Missing or mismatched runtime-spec labels fail with [rebuild guidance](build.md#retained-sources-and-compatibility); authentication, transport, and incomplete inspection failures also stop the operation.
+Diagnostics do not echo image label values.
+
+Optional `allow_missing: true` permits a confirmed absent image to return `status: unknown` before acquisition; omission or false rejects absence.
+Optional `image_id` requires the inspected image to match the Docker provider's acquired image ID.
+The SDK emits a read for the currently selected image and another dependent on acquisition, then orders all other runtime resource mutations after compatibility succeeds.
+An absent image may therefore be pulled before a compatibility failure, but storage, network, and container creation remain blocked.
+SDK plan reports preserve unresolved runtime-image checks in `deferred`, separate from supplemental catalog and service-readiness advisories.
+Teardown removes both image observations and their dependency gates.
+
 ## Runtime Capacity and Readiness
 
 Configuration validation checks hardware profiles, architecture selections, and memory settings without contacting an execution host.
@@ -217,6 +264,7 @@ Its optional `wait_timeout_seconds` accepts zero to 32400 seconds; omission mean
 Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
 The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
+This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
 The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
 The OpenShell graph uses the same data source for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
 A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
@@ -231,15 +279,23 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 ## Sandbox Completion
 
 The OpenShell graph uses `nemoclaw_sandbox_readiness` after sandbox creation and any runtime configuration resource.
-Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting Fabric health.
+Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
 
+Agent configuration and sandbox completion inspect the bound sandbox's OpenShell configuration admission before executing runtime commands.
+An explicit `Rejected` admission stops the startup wait even while the sandbox is `Starting`.
+The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
+Passive refresh retains a rejected nonterminal sandbox so apply can repair attached providers, and teardown does not require admission.
+See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
+
 The data source returns `ready`, nullable `health_json`, and nullable `error_message`.
-Runtime observation failures return `ready: false` with an error message; a valid Fabric response is retained in `health_json`, including unsupported health.
+Runtime observation failures return `ready: false` with an error message.
+The pinned bridge's explicit unsupported response is retained in `health_json`; unrecognized reports are errors.
 The graph must enforce `ready` with a lifecycle postcondition: a data-source observation alone does not reject an unsuccessful result.
 Failed postconditions retain observations and resource bindings for recovery.
-The SDK reads these values through OpenTofu JSON and preserves structured Fabric health in its result or error.
+The SDK reads these values through OpenTofu JSON and includes the unsupported bridge response in successful apply results.
+Failures preserve ordinary execution or observation errors without an unverified health payload.
 SDK-generated graphs defer health until apply; export and teardown omit the observation.
 Standalone configurations with known inputs may read during planning unless the trigger defers them.
 Existing sandbox resource refresh still verifies configuration.

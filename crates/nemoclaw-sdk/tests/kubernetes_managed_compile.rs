@@ -20,6 +20,7 @@ fn document() -> Document {
         }
     });
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
@@ -114,11 +115,7 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    for data_source in [
-        "nemoclaw_engine_capabilities",
-        "nemoclaw_target_hardware",
-        "nemoclaw_fabric_capabilities",
-    ] {
+    for data_source in ["nemoclaw_engine_capabilities", "nemoclaw_target_hardware"] {
         assert!(
             agents["data"].get(data_source).is_none(),
             "Kubernetes discovery must not contact the client engine: {data_source}"
@@ -134,6 +131,10 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
             .get("nemoclaw_inference_capabilities")
             .is_some()
     );
+    let image = &agents["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+    assert_eq!(image["engine"], "");
+    assert_eq!(image["metadata_env"], "TEST_IMAGE_METADATA");
+    assert!(image.get("architecture").is_none());
     let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(platform.get("output").is_none());
 }

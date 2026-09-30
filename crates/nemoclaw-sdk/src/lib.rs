@@ -2,12 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Programmatic desired-state contracts shared by NemoClaw consumers.
+//!
+//! Backend mutation belongs to the provider, outside the SDK API:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::openshell::OpenShell;
+//! let _ = OpenShell::connect;
+//! ```
+//!
+//! Download callbacks are delivered through deployment progress:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::with_download_progress;
+//! ```
+//!
+//! Engine operations are implemented by the bundled provider:
+//!
+//! ```compile_fail
+//! use nemoclaw_sdk::docker::Engine;
+//! ```
 
 use std::fmt;
 
 pub mod fabric_capabilities;
 pub mod fabric_catalog;
 pub mod fabric_config;
+pub mod image_metadata;
+pub mod image_runtime;
 
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
@@ -74,7 +95,15 @@ pub enum ObservationError {
     BindingMismatch,
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
-    Hardware(crate::hardware::HardwareDiagnostic),
+    Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic),
+    FabricConfiguration {
+        stage: &'static str,
+        code: &'static str,
+        runtime_state: &'static str,
+    },
+    SandboxConfigurationRejected {
+        reason: &'static str,
+    },
     SandboxStartup {
         phase: &'static str,
         reason: &'static str,
@@ -85,14 +114,27 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SandboxConfigurationRejected { reason } => write!(
+                f,
+                "OpenShell configuration rejected: {reason}; resources retained"
+            ),
             Self::SandboxStartup {
                 phase,
                 reason,
                 exit_code,
             } => write!(
                 f,
-                "sandbox unavailable: {phase}, reason {reason}, exit code {}; resources retained",
-                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                "sandbox unavailable: {phase}, reason {reason}, exit code {}{}; resources retained",
+                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string()),
+                error::sandbox_startup_guidance(reason)
+            ),
+            Self::FabricConfiguration {
+                stage,
+                code,
+                runtime_state,
+            } => write!(
+                f,
+                "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}; resources retained"
             ),
             Self::Hardware(diagnostic) => diagnostic.fmt(f),
             Self::Backend(message) => f.write_str(message),
@@ -136,7 +178,9 @@ pub mod config;
 mod error;
 mod health;
 pub use health::{RuntimeHealth, SandboxHealth};
-pub mod openshell;
+mod secrets;
+pub use secrets::{EnvironmentSecrets, Secrets};
+mod gateway_observation;
 #[doc(hidden)]
 pub mod services;
 mod state;
@@ -146,28 +190,20 @@ mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
-    Change, Deployment, DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget,
-    OperationResult, Outcome, Progress, ResourceInventoryEntry, StepOutcome,
+    Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
+    DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, Progress, ResourceInventoryEntry,
+    ResourceSource, StepOutcome,
 };
-
-pub mod snapshot;
-
-pub mod docker;
 
 pub mod managed;
 
-pub mod kubernetes;
-
-pub mod hardware;
 pub mod hardware_discovery;
+pub mod kubernetes;
 
 mod tofu_ui;
 
 mod download;
-pub use download::{
-    ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
-    with_provider_download_progress,
-};
+pub use download::{ByteProgress, DownloadPhase, DownloadProgress};
 
 mod docker_compute;
 

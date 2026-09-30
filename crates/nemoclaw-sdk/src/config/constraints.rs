@@ -13,12 +13,4 @@ pub(crate) const IMAGE: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{6
 pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 pub(crate) const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 pub(crate) const KUBERNETES_GATEWAY_ENDPOINT: &str = r"^https://127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$(?![\s\S])";
-pub(crate) const RUNTIME: &str = super::ComputeDriver::Docker.as_str();
 pub(crate) const NETWORK_TIER: &str = "isolated";
-
-/// Zero in authored YAML selects the default; validation uses normalized values.
-pub(crate) struct DefaultedInteger {
-    pub default: i64,
-    pub min: i64,
-    pub max: i64,
-}

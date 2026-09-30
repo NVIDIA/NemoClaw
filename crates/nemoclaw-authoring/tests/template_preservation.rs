@@ -139,3 +139,26 @@ fn native_questions_update_selected_referenced_harness_and_model_definitions() {
     assert!(draft.document().spec.sandboxes[0].harness.is_none());
     assert!(draft.document().spec.sandboxes[0].agent.inference.is_none());
 }
+
+#[test]
+fn nvidia_templates_keep_explicit_credential_references_when_the_default_changes() {
+    let yaml = include_str!("../../../examples/onboarding/openclaw.yaml")
+        .replace("NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY");
+    let mut draft = Draft::from_yaml(yaml.as_bytes()).unwrap();
+    let capabilities = Capabilities::available();
+    draft
+        .set_guided_field(
+            &capabilities,
+            EditableField::Model,
+            FieldValue::Model("organization/selected-model".into()),
+        )
+        .unwrap();
+    assert_eq!(
+        draft.review().unwrap().credential_references(),
+        ["NVIDIA_INFERENCE_API_KEY"]
+    );
+    assert_eq!(
+        draft.document().inference_provider().unwrap().endpoint,
+        "https://integrate.api.nvidia.com/v1"
+    );
+}

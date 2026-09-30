@@ -101,6 +101,11 @@ impl Document {
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
         }
+        if let Gateway::External(gateway) = gateway
+            && !gateway.engine.is_empty()
+        {
+            super::validate_engine_endpoint(&gateway.engine)?;
+        }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
         let selected_providers = self.selected_inference_providers()?;
@@ -112,13 +117,17 @@ impl Document {
         let mut sandbox_names = std::collections::BTreeSet::new();
         for sandbox in &self.spec.sandboxes {
             require(
+                sandbox.runtime.provider.is_kubernetes() || sandbox.image.metadata.is_none(),
+                "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
+            )?;
+            credential(&sandbox.image.metadata)?;
+            require(
                 sandbox_names.insert(&sandbox.name),
                 "sandbox names must be unique",
             )?;
             sandbox.network.validate()?;
-            sandbox.network.validate_runtime_access()?;
             let web_search = self.web_search(sandbox)?;
-            sandbox.policy_proto(web_search.as_ref().map(|search| search.provider))?;
+            crate::image_runtime::PolicyInput::for_sandbox(self, sandbox)?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {
@@ -177,7 +186,7 @@ impl super::ManagedGateway {
         let bind = authority.parse::<SocketAddr>().ok();
         require(
             bind.is_some_and(|a| a.port() >= 1024)
-                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
+                && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
             "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
@@ -201,6 +210,6 @@ impl Document {
     }
 }
 
-pub(crate) fn valid_name(name: &str) -> bool {
+pub fn valid_name(name: &str) -> bool {
     schema::validate_property("Metadata", "name", &name).is_ok()
 }

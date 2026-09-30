@@ -176,6 +176,7 @@ impl Deployment {
             .export_observations(&bundle, &store, &record, false, cancel)
             .await?;
         let mut document = record.document;
+        consistent_provider_credentials(&document, &record.generations, &observations)?;
         for target in compile::targets(&document, &record.generations)? {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
@@ -188,20 +189,6 @@ impl Deployment {
             let mut expected = target.values;
             expected.insert("id".into(), observed["id"].clone());
             match target.kind.as_str() {
-                "provider"
-                    if expected
-                        .get("provider_type")
-                        .is_some_and(|kind| kind == "brave") =>
-                {
-                    if expected
-                        .iter()
-                        .any(|(key, value)| observed.get(key) != Some(value))
-                    {
-                        return Err(Error::Conflict(
-                            "web search provider drift requires inspection",
-                        ));
-                    }
-                }
                 "provider" => export_provider(&mut document, &expected, &observed)?,
                 "sandbox" => export_sandbox(&expected, &observed)?,
                 _ => {}
@@ -260,7 +247,57 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
     Ok(())
 }
 
+fn consistent_provider_credentials(
+    document: &Document,
+    generations: &compile::Generations,
+    observations: &BTreeMap<String, Value>,
+) -> Result<(), Error> {
+    let selected = document.selected_providers()?;
+    let mut credentials = BTreeMap::new();
+    for target in compile::targets(document, generations)?
+        .into_iter()
+        .filter(|target| target.kind == "provider")
+    {
+        let Some(provider) = selected
+            .iter()
+            .find(|provider| provider.key == target.values["name"])
+        else {
+            continue;
+        };
+        let reference = observations
+            .get(&target.address)
+            .and_then(|row| row["credential_env"].as_str())
+            .ok_or(Error::State("incomplete provider credential observation"))?;
+        if credentials
+            .insert(provider.path.clone(), reference)
+            .is_some_and(|previous| previous != reference)
+        {
+            return Err(Error::Conflict(
+                "registrations for one inference definition disagree on the credential reference; no YAML exported",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
+    // Search targets come from selected integrations, not inference definitions.
+    // Keep their authored scopes and credential references unchanged on export.
+    if expected
+        .get("provider_type")
+        .and_then(|kind| crate::config::SearchProvider::from_name(kind))
+        .is_some()
+    {
+        if expected
+            .iter()
+            .any(|(key, value)| observed.get(key) != Some(value))
+        {
+            return Err(Error::Conflict(
+                "web search provider drift requires inspection",
+            ));
+        }
+        return Ok(());
+    }
     if observed["provider_type"] != expected["provider_type"]
         || observed["endpoint"] != expected["endpoint"]
         || observed["credential_env"].is_empty() != expected["credential_env"].is_empty()
@@ -312,8 +349,6 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
         "agent_name",
         "agent_runtime",
         "policy_json",
-        "proxy_host",
-        "proxy_port",
         "provider_names_json",
     ]
     .iter()
@@ -331,6 +366,30 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_requires_shared_definition_registrations_to_agree_on_credentials() {
+        let mut document =
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap();
+        let mut second = document.spec.sandboxes[0].clone();
+        second.name = "second".into();
+        second.image.ref_ = format!("fixture/second@sha256:{}", "b".repeat(64));
+        document.spec.sandboxes.push(second);
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let mut observations: BTreeMap<String, Value> = compile::targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.kind == "provider")
+            .map(|target| (target.address, json!({"credential_env":"SAME_KEY"})))
+            .collect();
+        assert_eq!(observations.len(), 2);
+        consistent_provider_credentials(&document, &generations, &observations).unwrap();
+        observations.values_mut().next().unwrap()["credential_env"] = json!("OTHER_KEY");
+        assert!(consistent_provider_credentials(&document, &generations, &observations).is_err());
+    }
 
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
@@ -415,7 +474,10 @@ mod tests {
             if let Some((pending, destroying, destroyed)) = flags {
                 let mut record = Record::new(document.clone()).unwrap();
                 if pending {
-                    record.begin_runtime_apply(&document);
+                    let target = compile::targets(&document, &record.generations)
+                        .unwrap()
+                        .remove(0);
+                    record.begin_apply(&document, [(target.address, target.values)].into());
                 }
                 if destroying {
                     record.begin_destroy();
@@ -448,6 +510,68 @@ mod tests {
             .find(|target| target.kind == "provider")
             .unwrap()
             .values
+    }
+
+    #[test]
+    fn export_preserves_search_definitions_and_rejects_registration_drift() {
+        for provider in ["tavily", "brave"] {
+            for scope in ["deployment", "sandbox", "agent"] {
+                let mut document = Document::parse(
+                    include_str!("../../tests/fixtures/config/local.yaml").as_bytes(),
+                )
+                .unwrap();
+                let definitions = serde_json::from_value(json!({
+                    "search":{"kind":"webSearch", "provider":provider,
+                        "credential":{"env":"SEARCH_KEY"}}
+                }))
+                .unwrap();
+                let sandbox = &mut document.spec.sandboxes[0];
+                sandbox.agent.integration_refs = vec!["search".into()];
+                match scope {
+                    "deployment" => document.spec.integrations = definitions,
+                    "sandbox" => sandbox.integrations = definitions,
+                    _ => {
+                        sandbox.agent.integration_refs.clear();
+                        sandbox.agent.integrations = definitions;
+                    }
+                }
+                let record = Record::new(document.clone()).unwrap();
+                let expected = compile::targets(&document, &record.generations)
+                    .unwrap()
+                    .into_iter()
+                    .find(|target| {
+                        target.kind == "provider" && target.values["provider_type"] == provider
+                    })
+                    .unwrap()
+                    .values;
+                let mut exported = document.clone();
+                export_provider(&mut exported, &expected, &expected).unwrap();
+                assert_eq!(exported, document, "{provider}/{scope}");
+                for field in [
+                    "provider_type",
+                    "endpoint",
+                    "credential_env",
+                    "name",
+                    "workspace",
+                    "owner",
+                    "generation",
+                ] {
+                    for replacement in [Some("foreign"), None] {
+                        let mut observed = expected.clone();
+                        if let Some(value) = replacement {
+                            observed.insert(field.into(), value.into());
+                        } else {
+                            observed.remove(field);
+                        }
+                        assert!(
+                            export_provider(&mut exported, &expected, &observed).is_err(),
+                            "{provider}/{scope}/{field}/{replacement:?}"
+                        );
+                        assert_eq!(exported, document);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -529,7 +653,10 @@ mod tests {
         let expected = compile::targets(&document, &record.generations)
             .unwrap()
             .into_iter()
-            .find(|target| target.kind == "provider" && target.values["name"] == "hosted")
+            .find(|target| {
+                target.kind == "provider"
+                    && target.values["endpoint"] == "https://hosted.example/v1"
+            })
             .unwrap()
             .values;
         let mut observed = expected.clone();

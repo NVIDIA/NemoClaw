@@ -4,10 +4,10 @@
 use crate::{Capabilities, Diagnostics, Draft, EditableField, FieldValue, GuidedField};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Gateway},
+    discovery::GatewayObservation,
     discovery::ObservationStatus,
     hardware_discovery::HardwareObservation,
     inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
-    openshell::GatewayObservation,
 };
 
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ impl AuthoringFacts {
         if self
             .hardware
             .as_ref()
-            .is_some_and(|evidence| evidence.engine != key.engine)
+            .is_some_and(|evidence| !key.managed_gateway || evidence.engine != key.engine)
         {
             self.hardware = None;
         }

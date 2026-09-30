@@ -9,9 +9,12 @@ use serde_json::json;
 
 #[test]
 fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mutation() {
-    let input = include_str!("fixtures/config/local.yaml")
-        .replace("provider: docker", "provider: kubernetes");
-    let document = Document::parse(input.as_bytes()).unwrap();
+    let original =
+        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let mut input = serde_json::to_value(original).unwrap();
+    input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();

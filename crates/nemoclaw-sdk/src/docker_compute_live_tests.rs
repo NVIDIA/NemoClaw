@@ -6,6 +6,8 @@ use crate::{
     bundle::Bundle,
     compile::{self, Generations},
     config::Document,
+};
+use nemoclaw_provider::{
     docker::Engine,
     managed::{Spec, Storage},
 };
@@ -106,7 +108,7 @@ fn assert_noop(bundle: &Bundle, root: &Path) {
     }
 }
 
-async fn wait_ready(engine: &Engine, observed: &crate::managed::RuntimeObservation) {
+async fn wait_ready(engine: &Engine, observed: &nemoclaw_provider::managed::RuntimeObservation) {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let status = engine.runtime_status(observed).await.unwrap();

@@ -2,8 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::app::{Input, Step, Wizard};
+use super::logo::BrandImage;
 use nemoclaw_authoring::{Answers, ApiChoice, Capabilities, Draft, HarnessChoice, Session};
 use ratatui::{Terminal, backend::TestBackend};
+
+fn installed_catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
+    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
+    catalog
+}
 
 fn wizard() -> Wizard {
     let capabilities = Capabilities::available();
@@ -175,6 +197,29 @@ fn focused_screen_uses_a_static_texture_inline_step_and_thin_footer_progress() {
 }
 
 #[test]
+fn compatible_terminal_places_the_nvidia_image_beside_the_wordmark() {
+    let wizard = wizard();
+    let backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let brand = BrandImage::from_id(0x12_34_56);
+    terminal
+        .draw(|frame| wizard.render_with_brand(frame, Some(brand)))
+        .unwrap();
+    let rendered = terminal.backend().to_string();
+
+    assert!(
+        rendered.contains('\u{10eeee}'),
+        "missing image anchors\n{rendered}"
+    );
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.contains("\u{10eeee}") && line.contains("██╔██╗")),
+        "image should sit beside the wordmark\n{rendered}"
+    );
+}
+
+#[test]
 fn welcome_uses_the_same_spacer_after_the_logo() {
     let wizard = wizard();
     let backend = TestBackend::new(100, 30);
@@ -245,7 +290,8 @@ fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
 
     assert_eq!(wizard.step(), Step::DeploymentName);
     assert!(
-        wizard.error().unwrap().contains("Metadata/properties/name"),
+        wizard.error().unwrap().contains("metadata.name")
+            && wizard.error().unwrap().contains("required pattern"),
         "{:?}",
         wizard.error()
     );
@@ -464,23 +510,18 @@ fn missing_credential_is_a_review_action_without_blocking_yaml_authoring() {
     let mut wizard = Wizard::new(capabilities, draft);
     wizard.target_status = Some("Target unverified. You can save and check it with plan.".into());
     wizard.facts.credentials = vec![CredentialObservation {
-        reference: "NVIDIA_INFERENCE_API_KEY".into(),
+        reference: "NVIDIA_API_KEY".into(),
         status: ObservationStatus::Unavailable,
         reason: None,
     }];
     let mut terminal = Terminal::new(TestBackend::new(72, 24)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
-    assert!(
-        !terminal
-            .backend()
-            .to_string()
-            .contains("NVIDIA_INFERENCE_API_KEY")
-    );
+    assert!(!terminal.backend().to_string().contains("NVIDIA_API_KEY"));
     navigate(&mut wizard, Step::Review, Input::Continue);
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let rendered = terminal.backend().to_string();
     assert!(
-        rendered.contains("Set NVIDIA_INFERENCE_API_KEY before applying."),
+        rendered.contains("Set NVIDIA_API_KEY before applying."),
         "{rendered}"
     );
     for diagnostic in [
@@ -653,7 +694,7 @@ fn every_guided_template_preserves_defaults_and_requires_missing_adapter_answers
 }
 
 #[test]
-fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
+fn a_podman_template_is_disabled_on_mac_and_windows_and_requires_a_runtime_change() {
     use nemoclaw_authoring::RuntimeChoice;
     let capabilities = Capabilities::available();
     let answers = Answers {
@@ -664,36 +705,38 @@ fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
         .unwrap()
         .project(&capabilities, &answers)
         .unwrap();
-    let mut wizard = Wizard::for_host(
-        capabilities.clone(),
-        Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
-        "macos",
-    );
-    navigate(&mut wizard, Step::Runtime, Input::Continue);
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| wizard.render(frame)).unwrap();
-    let rendered = terminal.backend().to_string();
-    assert!(
-        rendered.contains("Podman (unavailable: requires local Linux)"),
-        "{rendered}"
-    );
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Runtime);
-    assert_eq!(
-        wizard.draft().guided_answers(&capabilities).unwrap(),
-        answers
-    );
-    wizard.handle(Input::Previous);
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::DeploymentName);
-    assert_eq!(
-        wizard
-            .draft()
-            .guided_answers(&capabilities)
-            .unwrap()
-            .runtime,
-        RuntimeChoice::Docker
-    );
+    for host in ["macos", "windows"] {
+        let mut wizard = Wizard::for_host(
+            capabilities.clone(),
+            Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
+            host,
+        );
+        navigate(&mut wizard, Step::Runtime, Input::Continue);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| wizard.render(frame)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("Podman (unavailable: requires local Linux)"),
+            "{rendered}"
+        );
+        wizard.handle(Input::Continue);
+        assert_eq!(wizard.step(), Step::Runtime);
+        assert_eq!(
+            wizard.draft().guided_answers(&capabilities).unwrap(),
+            answers
+        );
+        wizard.handle(Input::Previous);
+        wizard.handle(Input::Continue);
+        assert_eq!(wizard.step(), Step::DeploymentName);
+        assert_eq!(
+            wizard
+                .draft()
+                .guided_answers(&capabilities)
+                .unwrap()
+                .runtime,
+            RuntimeChoice::Docker
+        );
+    }
 }
 
 #[test]
@@ -783,7 +826,7 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::Review, Input::Continue);
     let key = wizard.draft.discovery_key().unwrap();
-    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    let mut catalog = installed_catalog();
     catalog
         .adapters
         .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
@@ -934,7 +977,6 @@ fn establish_observed_discovery(wizard: &mut Wizard) {
     use nemoclaw_sdk::{
         discovery::{EngineObservation, FabricObservation, ObservationStatus},
         fabric_capabilities::ImageMetadata,
-        fabric_catalog::FabricCatalog,
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let key = wizard.draft.discovery_key().unwrap();
@@ -964,7 +1006,7 @@ fn establish_observed_discovery(wizard: &mut Wizard) {
             reason: None,
             source: "fixture".into(),
             image_id: Some("sha256:observed".into()),
-            catalog: Some(FabricCatalog::bundled()),
+            catalog: Some(installed_catalog()),
             image: ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),

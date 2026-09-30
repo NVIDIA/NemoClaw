@@ -16,7 +16,7 @@ impl Fixture {
     }
     fn resource(&self, kind: &str) -> PathBuf {
         self.directory.join(
-            if nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
+            if nemoclaw_provider::kubernetes::KubernetesBackend::supports(kind) {
                 format!("{kind}.json")
             } else {
                 "resource.json".into()
@@ -44,7 +44,7 @@ impl Backend for Fixture {
         let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = definition else {
             panic!("expected vLLM")
         };
-        use nemoclaw_sdk::hardware::{Capacity, GIB};
+        use nemoclaw_runtime::{hardware::Capacity, hardware::GIB};
         let capacity = Capacity {
             architecture: "arm64".into(),
             gpu: "NVIDIA GB10".into(),
@@ -59,9 +59,8 @@ impl Backend for Fixture {
             disk_free: 500 * GIB,
             ..Default::default()
         };
-        nemoclaw_sdk::services::installers::vllm::hardware_capacity::check_memory(
-            &service, &capacity, false,
-        )
+        nemoclaw_runtime::vllm::hardware_capacity::check_memory(&service, &capacity, false)
+            .map_err(Into::into)
     }
     async fn read(&self, kind: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
         let mode = self.mode();
@@ -90,10 +89,10 @@ impl Backend for Fixture {
         let mut row = want.clone();
         row.insert("id".into(), "fixture-id".into());
         let incomplete = self.mode() == format!("create-error-{kind}");
-        if nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
+        if nemoclaw_provider::kubernetes::KubernetesBackend::supports(kind) {
             row.insert("running".into(), "true".into());
         }
-        if incomplete && nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
+        if incomplete && nemoclaw_provider::kubernetes::KubernetesBackend::supports(kind) {
             row.insert("running".into(), "false".into());
         }
         fs::write(self.resource(kind), serde_json::to_vec(&row).unwrap()).unwrap();

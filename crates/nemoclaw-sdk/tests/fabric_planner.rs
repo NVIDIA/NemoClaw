@@ -11,6 +11,7 @@ fn catalog() -> FabricCatalog {
         schema_version: 2,
         fabric_revision: FabricCatalog::bundled().fabric_revision,
         source_sha256: "b".repeat(64),
+        bridge: None,
         targets: Vec::new(),
         adapters: vec![FabricAdapter {
             provenance: json!([{"source":"explicit_local","path":"/image/fixture.fabric-adapter.json","root":"/image"}]),
@@ -19,6 +20,8 @@ fn catalog() -> FabricCatalog {
             "model_schema":{"type":"object","properties":{"provider":{"const":"openai"},"model":{"pattern":"^fixture-"}},"required":["provider","model"]},
             "config":{"accepts":["models"]}}),
         }],
+        runtime_files: Default::default(),
+        runtime: None,
     }
 }
 fn config() -> serde_json::Value {
@@ -117,4 +120,172 @@ fn canonical_workflow_targets_are_planned_from_the_image_snapshot_only() {
     request["workflow"]["settings"]["budget"] = 4.into();
     let absent = FabricCatalog::from_json(&raw.to_string()).unwrap();
     assert!(plan_configuration(&absent, request).is_err());
+}
+
+#[test]
+fn explicit_filesystem_policy_must_allow_the_image_runtime_directory() {
+    use nemoclaw_sdk::fabric_capabilities::{
+        CapabilityCheck, FabricRequirements, Support, assess_fabric,
+    };
+    let mut catalog = catalog();
+    catalog
+        .runtime_files
+        .insert("org.fixture.new-adapter".into(), vec!["/opt/hermes".into()]);
+    let grants = |grants: Vec<&str>| FabricRequirements {
+        configuration: config(),
+        filesystem_read: Some(grants.into_iter().map(str::to_owned).collect()),
+    };
+    let report = assess_fabric(
+        &catalog,
+        &grants(vec!["/usr", "/opt/fabric", "/opt/nemoclaw"]),
+    );
+    assert_eq!(report.status, Support::Unsupported);
+    assert!(report.checks.contains(&CapabilityCheck {
+        requirement: "deployment_filesystem_grant".into(),
+        status: Support::Unsupported,
+        reason: "explicit filesystem policy must grant read access to /opt/hermes".into(),
+    }));
+    assert_eq!(
+        assess_fabric(&catalog, &grants(vec!["/opt/hermes/web"])).status,
+        Support::Unsupported
+    );
+    assert_eq!(
+        assess_fabric(&catalog, &grants(vec!["/usr", "/opt"])).status,
+        Support::Supported
+    );
+    let without_policy = FabricRequirements {
+        configuration: config(),
+        filesystem_read: None,
+    };
+    assert_eq!(
+        assess_fabric(&catalog, &without_policy).status,
+        Support::Supported
+    );
+}
+
+#[test]
+fn rejected_model_limit_identifies_the_field_and_authored_route_without_values() {
+    use nemoclaw_sdk::{
+        config::Document,
+        fabric_capabilities::{FabricRequirements, Support, assess_fabric},
+    };
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
+    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["name"] = "fast".into();
+    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
+        256.into();
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    let mut request =
+        FabricRequirements::for_sandbox(&document, &document.spec.sandboxes[0]).unwrap();
+    let report = assess_fabric(&FabricCatalog::bundled(), &request);
+    assert_eq!(report.status, Support::Unsupported);
+    let text = serde_json::to_string(&report).unwrap();
+    for expected in [
+        "nvidia.fabric.pi",
+        "models.default.max_tokens",
+        "overrides.maxTokens",
+        "fast",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+    for model in request.configuration["models"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        model.as_object_mut().unwrap().remove("max_tokens");
+    }
+    assert_eq!(
+        assess_fabric(&FabricCatalog::bundled(), &request).status,
+        Support::Supported
+    );
+}
+
+#[test]
+fn schema_rejection_reports_a_field_without_echoing_its_secret_value() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["settings"]["budget"] = "PRIVATE_SENTINEL\u{1b}[31m".into();
+    let report = assess_fabric(
+        &catalog(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    assert_eq!(report.status, Support::Unsupported);
+    let text = serde_json::to_string(&report).unwrap();
+    assert!(text.contains("harness.settings.budget"), "{text}");
+    assert!(!text.contains("PRIVATE_SENTINEL"));
+}
+
+#[test]
+fn image_compatibility_requires_a_matching_bridge_contract() {
+    use nemoclaw_sdk::fabric_capabilities::{
+        FabricRequirements, ImageMetadata, Support, assess_image,
+    };
+    let reference = format!("fixture@sha256:{}", "a".repeat(64));
+    let image = ImageMetadata {
+        repo_digests: vec![reference.clone()],
+        ..Default::default()
+    };
+    let request = FabricRequirements {
+        configuration: config(),
+        filesystem_read: None,
+    };
+    let bridge = json!({
+        "interface_version": 1,
+        "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
+        "health_checks": []
+    });
+    let mut raw = serde_json::to_value(catalog()).unwrap();
+    let status = |raw: &serde_json::Value| {
+        let catalog = FabricCatalog::from_json(&raw.to_string()).unwrap();
+        assess_image(Some(&catalog), &request, &image, &reference, None, None).status
+    };
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge.clone();
+    assert_eq!(status(&raw), Support::Supported);
+    raw["bridge"]["interface_version"] = 2.into();
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge.clone();
+    raw["bridge"]["operations"] = json!(["configure", "check"]);
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge.clone();
+    raw["bridge"]["health_checks"] = json!(["ready"]);
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge;
+    raw["bridge"]["health_checks"] = json!(["live", "active", "ready"]);
+    assert_eq!(status(&raw), Support::Supported);
+}
+
+#[test]
+fn relocated_image_runtime_read_requirements_replace_client_layout_assumptions() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut catalog = catalog();
+    let mut runtime: serde_json::Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    runtime["required_paths"] = json!(["/srv/runtime"]);
+    runtime["binaries"] = json!({"org.fixture.new-adapter":["/srv/runtime/python3.99"]});
+    catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+    for (paths, expected) in [
+        (
+            vec!["/usr", "/opt/fabric", "/opt/nemoclaw"],
+            Support::Unsupported,
+        ),
+        (vec!["/srv/runtime-other"], Support::Unsupported),
+        (vec!["/srv/runtime/../other"], Support::Unsupported),
+        (vec!["/srv"], Support::Supported),
+        (vec!["/srv/runtime"], Support::Supported),
+    ] {
+        let report = assess_fabric(
+            &catalog,
+            &FabricRequirements {
+                configuration: config(),
+                filesystem_read: Some(paths.into_iter().map(String::from).collect()),
+            },
+        );
+        assert_eq!(report.status, expected, "{:?}", report.checks);
+    }
 }

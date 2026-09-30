@@ -14,10 +14,13 @@ serde_json.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
+bollard.workspace = true
+nemoclaw-provider = { path = "../nemoclaw-provider" }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [dependencies]
+nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 jsonschema.workspace = true
 thiserror.workspace = true
@@ -27,14 +30,12 @@ serde.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
 sha2.workspace = true
-sha1.workspace = true
+time.workspace = true
 regex.workspace = true
 url.workspace = true
 ipnet.workspace = true
 openshell-core.workspace = true
-openshell-sdk.workspace = true
 openshell-policy.workspace = true
-tonic.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "fs"] }
 tempfile.workspace = true
 getrandom.workspace = true
@@ -42,17 +43,8 @@ process-wrap.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
-bollard.workspace = true
-tar.workspace = true
+bollard-stubs = "=1.53.1-rc.29.3.1"
 interprocess = { version = "2.4.4", features = ["tokio"] }
-time.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["process"] }
-
-[target.'cfg(unix)'.dependencies]
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

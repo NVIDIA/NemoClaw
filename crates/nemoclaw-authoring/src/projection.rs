@@ -137,6 +137,7 @@ impl Session {
                     }),
                     image: nemoclaw_sdk::config::Image {
                         ref_: answers.image.clone(),
+                        metadata: None,
                     },
                     name: answers.sandbox_name.clone(),
                     runtime: Runtime {

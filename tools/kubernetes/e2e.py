@@ -373,6 +373,13 @@ class Runner:
             raise Error(
                 "Docker did not retain the built repository digest; enable its containerd image store"
             )
+        metadata = self.state / "image-metadata.json"
+        self.run(
+            "Export immutable image metadata",
+            [PYTHON, str(REPO / "image/export_metadata.py")]
+            + (["--sudo-docker"] if docker[:-1] else [])
+            + ["--image", image, "--platform", agent, "--output", str(metadata)],
+        )
         helper = [PYTHON, str(REPO / "tools/kubernetes/stack.py")]
         cluster_state = self.state / "kind"
         self.run(
@@ -396,6 +403,7 @@ class Runner:
         )
         write_private(config, text)
         test_env = {
+            "NEMOCLAW_AGENT_IMAGE_METADATA": str(metadata),
             "NEMOCLAW_CLUSTER_KUBECONFIG": str(cluster_state / "kubeconfig"),
             "NEMOCLAW_TEST_KUBERNETES_CONFIG": str(config),
             "NEMOCLAW_TEST_KUBERNETES_STATE": str(self.state / "sdk-state"),

@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, compile, targets},
     config::{Document, schema::input_schema},
@@ -41,18 +43,22 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
-    assert!(graph["resource"]["nemoclaw_provider"]["inference_local"].is_object());
+    assert!(provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local").is_object());
     assert_eq!(
         graph["resource"]["nemoclaw_provider"][search.address.split_once('.').unwrap().1]["depends_on"],
         json!([
-            "nemoclaw_provider_profile.web_search",
+            rows.iter()
+                .find(|row| row.kind == "provider_profile"
+                    && row.values["name"] == search.values["profile_name"])
+                .unwrap()
+                .address,
             "data.nemoclaw_gateway_capabilities.apply"
         ])
     );
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
         json!([
-            "nemoclaw_provider.inference_local",
+            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
             search.address,
             "data.nemoclaw_gateway_capabilities.apply"
         ])
@@ -110,14 +116,16 @@ fn shared_integration_references_grant_only_the_selected_agents() {
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["reader"]["depends_on"],
         json!([
-            "nemoclaw_provider.inference_local",
+            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
             "data.nemoclaw_gateway_capabilities.apply"
         ])
     );
     let rows = targets(&doc, &generations).unwrap();
     assert_eq!(
         rows.iter()
-            .filter(|row| row.address == "nemoclaw_provider_profile.web_search")
+            .filter(|row| row
+                .address
+                .starts_with("nemoclaw_provider_profile.web_search_"))
             .count(),
         1
     );
@@ -126,14 +134,26 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         let providers: Vec<String> =
             serde_json::from_str(&row.values["provider_names_json"]).unwrap();
         if row.values["name"] == "reader" {
-            assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
+            assert!(
+                !policy["managed"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .any(|key| key.starts_with("nemoclaw-brave-"))
+            );
             assert!(
                 !providers
                     .iter()
                     .any(|name| name.starts_with("brave-search-"))
             );
         } else {
-            assert!(policy["network_policies"]["nemoclaw-brave"].is_object());
+            assert!(
+                policy["managed"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .any(|key| key.starts_with("nemoclaw-brave-"))
+            );
             assert!(
                 providers
                     .iter()
@@ -334,7 +354,11 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
         assert_eq!(
             graph["resource"]["nemoclaw_sandbox"][sandbox]["depends_on"],
             json!([
-                "nemoclaw_provider.inference_local",
+                provider_scope::address(
+                    &graph["resource"]["nemoclaw_provider"],
+                    "provider",
+                    "local"
+                ),
                 selected.address,
                 "data.nemoclaw_gateway_capabilities.apply"
             ])
@@ -407,23 +431,32 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         assert!(provider.values["name"].starts_with("tavily-search-"));
         let profile = rows
             .iter()
-            .find(|row| row.address == "nemoclaw_provider_profile.web_search_tavily")
+            .find(|row| {
+                row.address
+                    .starts_with("nemoclaw_provider_profile.web_search_tavily_")
+            })
             .unwrap();
-        assert_eq!(profile.values["name"], "nemoclaw-tavily");
+        assert!(profile.values["name"].starts_with("nemoclaw-tavily-"));
         let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
         let providers: Vec<String> =
             serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
         assert!(providers.contains(&provider.values["name"]));
         let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-        assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
-        assert_eq!(
-            policy["network_policies"]["nemoclaw-tavily"]["binaries"],
-            json!([{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3.13"}])
+        assert!(
+            !policy["managed"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|key| key.starts_with("nemoclaw-brave-"))
         );
-        let endpoint = &policy["network_policies"]["nemoclaw-tavily"]["endpoints"][0];
+        assert_eq!(
+            policy["managed"][&profile.values["name"]]["binaries"],
+            json!([])
+        );
+        let endpoint = &policy["managed"][&profile.values["name"]]["endpoints"][0];
         assert_eq!(endpoint["host"], "api.tavily.com");
         assert_ne!(endpoint["request_body_credential_rewrite"], true);
-        assert_eq!(endpoint["tls"], "terminate");
+        assert!(endpoint.get("tls").is_none());
         assert_eq!(endpoint["enforcement"], "enforce");
         assert_eq!(
             endpoint["rules"],
@@ -435,10 +468,7 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         let graph = compile(&doc, &generations, "0.1.0").unwrap();
         assert_eq!(
             graph["resource"]["nemoclaw_provider"][provider.address.split_once('.').unwrap().1]["depends_on"],
-            json!([
-                "nemoclaw_provider_profile.web_search_tavily",
-                "data.nemoclaw_gateway_capabilities.apply"
-            ])
+            json!([profile.address, "data.nemoclaw_gateway_capabilities.apply"])
         );
     }
 }
@@ -462,7 +492,7 @@ fn unused_tavily_definition_does_not_add_credentials_resources_or_agent_grants()
 }
 
 #[test]
-fn tavily_example_shares_one_registration_between_openclaw_and_hermes() {
+fn tavily_example_separates_openclaw_and_hermes_executable_scopes() {
     let document =
         Document::parse(include_bytes!("../../../examples/tavily-web-search.yaml").as_slice())
             .unwrap();
@@ -500,7 +530,7 @@ fn tavily_example_shares_one_registration_between_openclaw_and_hermes() {
                 .get("provider_type")
                 .is_some_and(|kind| kind == "tavily"))
             .count(),
-        1
+        2
     );
     for row in rows.iter().filter(|row| row.kind == "sandbox") {
         let providers: Vec<String> =
@@ -583,8 +613,9 @@ fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
     }
     let mut value = input();
     value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
-    let mut policy =
-        openshell_policy::sandbox_policy_to_json_value(&nemoclaw_sdk::openshell::policy()).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    let mut policy = manifest["policy"].clone();
     policy["network_policies"] = json!({"custom-search": {
             "name":"custom-search",
             "endpoints":[{"host":"search.example.com","port":443}],

@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 pub(crate) enum CommandResult {
     Export(Box<Document>),
     Authored(Option<std::path::PathBuf>),
-    Operation(OperationResult),
+    Operation(Box<OperationResult>),
 }
 
 pub(crate) async fn run<R: AsyncRead + Unpin>(
@@ -95,7 +95,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         Command::Destroy { .. } => deployment.destroy(cancel).await?,
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
     };
-    Ok(CommandResult::Operation(result))
+    Ok(CommandResult::Operation(Box::new(result)))
 }
 
 #[cfg(test)]

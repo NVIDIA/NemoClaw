@@ -29,6 +29,7 @@ spec:
       # Replace this example digest with an image adapted for the gateway's UID/GID 10001.
       # The openclaw-kubernetes build target supplies the required runtime identity.
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes
@@ -41,6 +42,7 @@ spec:
         inferenceRef: chat
     - name: researcher
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes
@@ -53,6 +55,7 @@ spec:
         inferenceRef: chat
     - name: reviewer
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes

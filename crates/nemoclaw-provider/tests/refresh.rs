@@ -439,6 +439,47 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
 }
 
 #[tokio::test]
+async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "sandbox",
+            &["name", "workspace", "owner", "generation"],
+            &[],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let mut prior = state(row());
+    prior.insert("name".into(), Value::Value("reviewer".into()));
+    prior.insert(
+        "workspace".into(),
+        Value::Value("PRIVATE_OLD_WORKSPACE".into()),
+    );
+    let mut changed = prior.clone();
+    changed.insert(
+        "workspace".into(),
+        Value::Value("PRIVATE_NEW_WORKSPACE".into()),
+    );
+    let mut diagnostics = Diagnostics::default();
+    assert!(
+        resource
+            .plan_update(
+                &mut diagnostics,
+                prior,
+                changed.clone(),
+                changed,
+                Value::Null,
+                Value::Null
+            )
+            .await
+            .is_none()
+    );
+    let text = format!("{diagnostics:?}");
+    assert!(text.contains("sandbox/reviewer"), "{text}");
+    assert!(text.contains("changed fields: workspace"), "{text}");
+    assert!(!text.contains("PRIVATE_"), "{text}");
+}
+
+#[tokio::test]
 async fn removing_credential_reference_plans_unauthenticated_replacement() {
     let resource = ResourceAdapter::new(
         Definition::new(
@@ -470,4 +511,39 @@ async fn removing_credential_reference_plans_unauthenticated_replacement() {
     assert!(diagnostics.errors.is_empty());
     assert_eq!(planned["credential_env"], Value::Value(String::new()));
     assert_eq!(replacements.len(), 1);
+}
+
+#[tokio::test]
+async fn external_ollama_observation_names_the_authored_upstream_without_url_credentials() {
+    for upstream in [
+        "http://127.0.0.1:11434/v1",
+        "http://[::1]:11434/v1",
+        "http://user:PRIVATE_URL@127.0.0.1:11434/v1",
+    ] {
+        let resource = ResourceAdapter::new(
+            Definition::new(
+                "ollama_external_model",
+                &["name", "owner", "generation", "upstream"],
+                &[],
+            ),
+            Arc::new(Fixture(Err(ObservationError::Incomplete))),
+        );
+        let mut values = row();
+        values.insert(
+            "name".into(),
+            "nc-1234567890abcdef-ollama-proxy-local".into(),
+        );
+        values.insert("upstream".into(), upstream.into());
+        let mut diagnostics = Diagnostics::default();
+        resource
+            .read(&mut diagnostics, state(values), Value::Null, Value::Null)
+            .await;
+        let text = format!("{diagnostics:?}");
+        assert!(text.contains("services.local.upstream"), "{text}");
+        assert!(text.contains("observation is incomplete"), "{text}");
+        if !upstream.contains("PRIVATE_") {
+            assert!(text.contains(upstream), "{text}");
+        }
+        assert!(!text.contains("PRIVATE_"), "{text}");
+    }
 }

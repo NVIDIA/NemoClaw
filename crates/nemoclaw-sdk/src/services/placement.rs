@@ -61,7 +61,7 @@ impl ServicePlacement {
             "explicit service placement requires SSH Docker",
         )?;
         require(
-            crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
+            crate::config::validate_engine_endpoint(&self.engine).is_ok(),
             "invalid service engine",
         )?;
 

@@ -1,15 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::openshell::{EnvironmentSecrets, OpenShell};
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
+use crate::{docker::Connections, services::BackendRegistry};
 use async_trait::async_trait;
-use nemoclaw_sdk::{
-    ObservationError,
-    config::{Credential, Gateway, TLS},
-    docker::Connections,
-    openshell::{EnvironmentSecrets, OpenShell},
-    services::BackendRegistry,
-};
+use nemoclaw_sdk::{ObservationError, config::Credential, config::Gateway, config::TLS};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -140,8 +136,9 @@ impl Provider for NemoClawProvider {
             ),
             (
                 "target_hardware".into(),
-                Box::new(crate::hardware::HardwareDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
+                Box::new(crate::hardware_data::HardwareDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
             ),
             (
                 "engine_capabilities".into(),
@@ -160,6 +157,12 @@ impl Provider for NemoClawProvider {
             (
                 "sandbox_readiness".into(),
                 Box::new(crate::sandbox_readiness::SandboxReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "runtime_image".into(),
+                Box::new(crate::runtime_image::RuntimeImageDataSource(
                     self.backend.clone(),
                 )) as Box<dyn DynamicDataSource>,
             ),
@@ -356,6 +359,7 @@ impl Provider for NemoClawProvider {
                     "endpoint",
                     "provider_type",
                     "authenticated",
+                    "binaries_json",
                 ],
                 &[],
             ),
@@ -384,6 +388,7 @@ impl Provider for NemoClawProvider {
                     "credential_env",
                     "provider_type",
                     "credential_source",
+                    "profile_name",
                 ],
                 // Endpoint and authentication-mode changes also replace the
                 // imported profile. Delete the registration first so the API
@@ -401,8 +406,7 @@ impl Provider for NemoClawProvider {
                     "agent_name",
                     "agent_runtime",
                     "policy_json",
-                    "proxy_host",
-                    "proxy_port",
+                    "runtime_json",
                     "provider_names_json",
                 ],
                 &[],
@@ -633,3 +637,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "gateway_tests.rs"]
+mod gateway_tests;

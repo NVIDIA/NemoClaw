@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, targets},
-    config::{Document, Network, NetworkPolicy, Proxy, schema::input_schema},
+    config::{Document, Network, NetworkPolicy, schema::input_schema},
 };
 use serde_json::{Value, json};
 
@@ -15,9 +15,8 @@ fn input() -> Value {
             "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
             "landlock": {"compatibility": "best_effort"},
             "process": {"run_as_user": "1000", "run_as_group": "1000"},
-            "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
-        }},
-        "proxy": {"host": "10.200.0.1", "port": 3129}
+            "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
+        }}
     });
     value
 }
@@ -25,7 +24,21 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(serde_json::to_vec(value).unwrap().as_slice())
 }
 #[test]
-fn explicit_policy_and_proxy_survive_yaml_and_compilation() {
+fn sandbox_proxy_override_is_rejected_before_deployment() {
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["network"]["proxy"] = json!({"host": "10.200.0.1", "port": 3129});
+    assert!(
+        parse(&value).is_err(),
+        "sandbox proxy overrides must not replace OpenShell's policy proxy"
+    );
+    assert!(
+        !jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+}
+#[test]
+fn explicit_policy_survives_yaml_and_compilation() {
     let value = input();
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(
@@ -48,22 +61,14 @@ fn explicit_policy_and_proxy_survive_yaml_and_compilation() {
         .values;
     let policy: Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
     assert_eq!(
-        policy["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["method"],
+        policy["explicit"]["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["method"],
         "GET"
     );
-    assert_eq!(sandbox["proxy_host"], "10.200.0.1");
-    assert_eq!(sandbox["proxy_port"], "3129");
 }
 #[test]
 fn conflicting_unknown_and_invalid_network_settings_are_rejected() {
     for (path, replacement) in [
         ("/spec/sandboxes/0/network/tier", json!("isolated")),
-        (
-            "/spec/sandboxes/0/network/proxy/host",
-            json!("user:secret@proxy"),
-        ),
-        ("/spec/sandboxes/0/network/proxy/port", json!(0)),
-        ("/spec/sandboxes/0/network/proxy/port", json!(65536)),
         (
             "/spec/sandboxes/0/network/policy/explicit/version",
             json!(0),
@@ -106,10 +111,10 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
     let endpoints = [
         json!({"host": "docs.example.com", "ports": [80,443]}),
         json!({"allowed_ips": ["10.50.0.0/24"], "port": 8443}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "access": "read-only"}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "tls": "terminate", "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "json-rpc", "tls": "terminate", "json_rpc": {"max_body_bytes": 65536}, "rules": [{"allow": {"method": "ping"}}]}),
-        json!({"host": "docs.example.com", "port": 443, "protocol": "mcp", "tls": "terminate", "mcp": {"strict_tool_names": true}, "rules": [{"allow": {"method": "tools/call", "params": {"name": "read_*"}}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "rest", "access": "read-only"}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "json-rpc", "json_rpc": {"max_body_bytes": 65536}, "rules": [{"allow": {"method": "ping"}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "mcp", "mcp": {"strict_tool_names": true}, "rules": [{"allow": {"method": "tools/call", "params": {"name": "read_*"}}}]}),
     ];
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for endpoint in endpoints {
@@ -120,7 +125,7 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
         let document = parse(&value).unwrap_or_else(|e| panic!("{endpoint}: {e}"));
         let proto = document.spec.sandboxes[0].network.policy_proto().unwrap();
         assert!(
-            nemoclaw_sdk::openshell::policy_json(&proto).is_ok(),
+            nemoclaw_sdk::config::policy_json(&proto).is_ok(),
             "observation must retain {endpoint}"
         );
     }
@@ -128,7 +133,7 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
     value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"] = json!({});
     let document = parse(&value).unwrap();
     assert!(
-        nemoclaw_sdk::openshell::policy_json(
+        nemoclaw_sdk::config::policy_json(
             &document.spec.sandboxes[0].network.policy_proto().unwrap()
         )
         .is_ok()
@@ -160,120 +165,21 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
 }
 
 #[test]
-fn explicit_filesystem_policy_must_allow_the_selected_runtime() {
-    for (harness, extra) in [
-        ("openclaw", "/app"),
-        ("hermes", "/opt/hermes"),
-        ("pi", "/opt/fabric-source"),
-        ("deepagents", "/opt/fabric"),
-    ] {
-        let mut value = input();
-        value["spec"]["sandboxes"][0]["harness"] = json!({"kind": harness});
-        let fs = "/spec/sandboxes/0/network/policy/explicit/filesystem_policy";
-        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr"]);
-        assert!(
-            parse(&value)
-                .unwrap_err()
-                .to_string()
-                .contains("/opt/fabric")
-        );
-        value.pointer_mut(fs).unwrap()["read_only"] =
-            json!(["/usr", "/opt/fabric", "/opt/nemoclaw", extra]);
-        parse(&value).unwrap();
-        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr", "/opt/fabric", extra]);
-        assert!(
-            parse(&value)
-                .unwrap_err()
-                .to_string()
-                .contains("/opt/nemoclaw")
-        );
-    }
-}
-
-#[test]
-fn runtime_grants_accept_parents_and_writable_paths_without_rewriting_policy() {
+fn document_validation_preserves_filesystem_intent_until_image_discovery() {
     for grants in [
+        json!(["/usr"]),
+        json!(["/srv/runtime"]),
         json!(["/opt", "/app"]),
-        json!(["/opt/fabric", "/opt/nemoclaw", "/app/"]),
-    ] {
-        let mut value = input();
-        let fs = value
-            .pointer_mut("/spec/sandboxes/0/network/policy/explicit/filesystem_policy")
-            .unwrap();
-        fs["read_only"] = json!(["/usr"]);
-        fs["read_write"] = grants;
-        let document = parse(&value).unwrap();
-        let expected = value["spec"]["sandboxes"][0]["network"]["policy"].clone();
-        assert_eq!(
-            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
-            expected
-        );
-    }
-    for grants in [
-        json!(["/op", "/app"]),
-        json!(["/opt/fabric-source", "/opt/nemoclaw", "/app"]),
-        json!(["/opt/../unrelated", "/app"]),
     ] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]["read_only"] =
             grants;
-        assert!(parse(&value).is_err());
+        let document = parse(&value).unwrap();
+        assert_eq!(
+            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
+            value["spec"]["sandboxes"][0]["network"]["policy"]
+        );
     }
-}
-
-#[test]
-fn shared_harness_policy_is_checked_but_omitted_filesystem_grants_keep_defaults() {
-    let mut value = input();
-    value["spec"]["harnesses"] = json!({"shared": {"kind": "openclaw"}});
-    value["spec"]["sandboxes"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("harness");
-    value["spec"]["sandboxes"][0]["harnessRef"] = json!("shared");
-    let policy = &mut value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"];
-    policy["filesystem_policy"]["read_only"] = json!(["/usr", "/opt"]);
-    parse(&value).unwrap();
-    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]
-        .as_object_mut()
-        .unwrap()
-        .remove("filesystem_policy");
-    parse(&value).unwrap();
-}
-
-#[tokio::test]
-async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state() {
-    use nemoclaw_sdk::{CancellationToken, Deployment};
-    let mut document = parse(&input()).unwrap();
-    let mut second = document.spec.sandboxes[0].clone();
-    second.name = "blocked".into();
-    let NetworkPolicy::Explicit(policy) = &mut second.network.policy else {
-        panic!("expected explicit policy");
-    };
-    let filesystem = policy.filesystem_policy.as_mut().unwrap();
-    filesystem.read_only = Some(vec!["/usr".into()]);
-    filesystem.include_workdir = Some(true);
-    document.spec.sandboxes.push(second);
-    let directory = tempfile::tempdir().unwrap();
-    let state = directory.path().join("state");
-    let deployment = Deployment::new(&state, &directory.path().join("missing-bundle"));
-    let cancel = CancellationToken::new();
-    assert!(
-        deployment
-            .plan(&document, &cancel)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("/opt/fabric")
-    );
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("/opt/fabric")
-    );
-    assert!(!state.exists());
 }
 
 #[test]
@@ -322,13 +228,20 @@ fn default_network_is_a_valid_isolated_policy() {
     let default = Network::default();
     default.validate().unwrap();
     assert_eq!(default.policy, NetworkPolicy::Isolated);
+    assert!(
+        default
+            .policy_proto()
+            .unwrap_err()
+            .to_string()
+            .contains("image runtime metadata")
+    );
     for value in [json!({}), json!({"tier": ""}), json!({"tier": "isolated"})] {
         assert_eq!(serde_json::from_value::<Network>(value).unwrap(), default);
     }
 }
 
 #[test]
-fn policy_choice_and_proxy_are_independent_and_keep_the_export_shape() {
+fn policy_choice_preserves_the_export_shape() {
     let explicit_input = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
     let explicit = serde_json::from_value(explicit_input["explicit"].clone()).unwrap();
     for (policy, expected) in [
@@ -338,36 +251,38 @@ fn policy_choice_and_proxy_are_independent_and_keep_the_export_shape() {
             json!({"policy": explicit_input}),
         ),
     ] {
-        for proxy in [
-            None,
-            Some(Proxy {
-                host: "proxy.example.com".into(),
-                port: 3128,
-            }),
-        ] {
-            let network = Network {
-                policy: policy.clone(),
-                proxy: proxy.clone(),
-            };
-            network.validate().unwrap();
-            let mut expected = expected.clone();
-            if let Some(proxy) = &proxy {
-                expected["proxy"] = serde_json::to_value(proxy).unwrap();
-            }
-            assert_eq!(serde_json::to_value(&network).unwrap(), expected);
-            assert_eq!(
-                serde_json::from_value::<Network>(expected).unwrap(),
-                network
-            );
-            assert_eq!(
-                network.policy_proto().unwrap(),
-                Network {
-                    policy: policy.clone(),
-                    proxy: None
-                }
-                .policy_proto()
-                .unwrap()
-            );
-        }
+        let network = Network { policy };
+        network.validate().unwrap();
+        assert_eq!(serde_json::to_value(&network).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_value::<Network>(expected).unwrap(),
+            network
+        );
+    }
+}
+
+#[test]
+fn removed_tls_modes_are_rejected_and_automatic_tls_round_trips() {
+    let mut value = input();
+    let endpoint = "/spec/sandboxes/0/network/policy/explicit/network_policies/docs/endpoints/0";
+    value
+        .pointer_mut(endpoint)
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("tls");
+    let document = parse(&value).expect("omitted TLS selects automatic handling");
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for removed in ["terminate", "passthrough"] {
+        value.pointer_mut(endpoint).unwrap()["tls"] = json!(removed);
+        assert!(
+            parse(&value).is_err(),
+            "must reject removed TLS mode {removed}"
+        );
+        assert!(!validator.is_valid(&value), "schema must reject {removed}");
     }
 }

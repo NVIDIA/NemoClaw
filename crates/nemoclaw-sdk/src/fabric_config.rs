@@ -40,10 +40,10 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         ));
     }
     for route in &selection.inference.routes {
-        let provider = document.route_provider(route, &selection)?;
+        let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
-        let profile = crate::openshell::inference_profile(
+        let profile = crate::config::inference_profile(
             &provider.key,
             &connection.endpoint,
             definition.provider,

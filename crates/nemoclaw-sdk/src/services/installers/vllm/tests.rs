@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{Service, arguments};
-use crate::{
-    config::{Document, ServiceDefinition},
-    hardware::{Capacity, GIB},
-};
+use crate::config::{Document, ServiceDefinition};
+use nemoclaw_runtime::hardware::{Capacity, GIB};
 
 fn service() -> Service {
     let mut document =

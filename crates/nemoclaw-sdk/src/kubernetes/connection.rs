@@ -3,10 +3,9 @@
 
 use super::{CA_ENV, CERT_ENV, GATEWAY_KIND, KEY_ENV, Spec, TOKEN_ENV, runner};
 use crate::{
-    CancellationToken, Error, ObservationError,
+    CancellationToken, Error, ObservationError, Secrets,
     compile::Generations,
     config::{Credential, Document, ExternalGateway, Gateway, TLS},
-    openshell::{OpenShell, Secrets},
 };
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use std::{collections::BTreeMap, path::Path, process::Stdio, sync::Arc, time::Duration};
@@ -26,22 +25,25 @@ impl Connection {
     pub fn environment(&self) -> BTreeMap<String, String> {
         self.environment.clone()
     }
-    /// Create an authenticated client without changing process-global secrets.
-    /// Keep this connection guard alive while using the client.
-    pub fn client(&self, secrets: Arc<dyn Secrets>) -> Result<OpenShell, ObservationError> {
-        OpenShell::connect(
-            &client_gateway(&self.endpoint),
-            Arc::new(ClientSecrets {
-                environment: self.environment.clone(),
-                fallback: secrets,
-            }),
-        )
+    /// Connection settings for the command-scoped gateway tunnel.
+    /// Keep this guard alive while using the gateway.
+    pub fn gateway(&self) -> Gateway {
+        client_gateway(&self.endpoint)
+    }
+
+    /// Resolve this connection's credentials without process-global mutation.
+    pub fn secrets(&self, fallback: Arc<dyn Secrets>) -> Arc<dyn Secrets> {
+        Arc::new(ClientSecrets {
+            environment: self.environment.clone(),
+            fallback,
+        })
     }
 }
 
 fn client_gateway(endpoint: &str) -> Gateway {
     let reference = |name: &str| Credential { env: name.into() };
     Gateway::External(ExternalGateway {
+        engine: String::new(),
         endpoint: endpoint.into(),
         credential: Some(reference(TOKEN_ENV)),
         tls: Some(TLS {

@@ -8,7 +8,7 @@ use nemoclaw_authoring::{
 use nemoclaw_sdk::{
     config::{ComputeDriver, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
-    fabric_catalog::FabricCatalog,
+    fabric_catalog::{BridgeCapabilities, FabricCatalog},
 };
 
 fn draft() -> Draft {
@@ -20,6 +20,22 @@ fn draft() -> Draft {
 }
 
 fn evidence(draft: &Draft) -> DiscoveryEvidence {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
     DiscoveryEvidence {
         key: draft.discovery_key().unwrap(),
         engine: Some(EngineObservation {
@@ -37,7 +53,7 @@ fn evidence(draft: &Draft) -> DiscoveryEvidence {
             reason: None,
             source: "engine_image_inspect".into(),
             image_id: Some("sha256:observed".into()),
-            catalog: Some(FabricCatalog::bundled()),
+            catalog: Some(catalog),
             image: nemoclaw_sdk::fabric_capabilities::ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),
@@ -243,4 +259,108 @@ fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
         observed.assessment(&draft).unwrap().status,
         CompatibilityStatus::Conflict
     );
+}
+
+fn external_draft(engine: &str) -> Draft {
+    let mut document = draft().document().clone();
+    document.spec.gateway = serde_json::from_value(serde_json::json!({
+        "management": "external",
+        "endpoint": "https://gateway.example:8080",
+        "engine": engine,
+    }))
+    .unwrap();
+    // The image store need not run the gateway's selected compute driver.
+    document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+    Draft::from_document(document).unwrap()
+}
+
+#[test]
+fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
+    let draft = external_draft("ssh://images@example.com");
+    assert_eq!(
+        draft.discovery_key().unwrap().engine,
+        "ssh://images@example.com"
+    );
+    let observed = DiscoveryEvidence {
+        key: draft.discovery_key().unwrap(),
+        engine: None,
+        fabric: None,
+    };
+    let assessment = observed.assessment(&draft).unwrap();
+    assert_eq!(assessment.pending, vec![DiscoveryQuery::Fabric]);
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+
+    let mut observed = evidence(&draft);
+    // A managed-gateway probe against the image store cannot disqualify an
+    // external gateway, or supply its execution platform.
+    let engine = observed.engine.as_mut().unwrap();
+    engine.status = ObservationStatus::Unavailable;
+    engine.architecture = Some("amd64".into());
+    assert_eq!(
+        observed.assessment(&draft).unwrap().status,
+        CompatibilityStatus::Compatible
+    );
+
+    let changed = external_draft("ssh://different-images@example.com");
+    assert_eq!(
+        observed.assessment(&changed).unwrap().pending,
+        vec![DiscoveryQuery::Fabric]
+    );
+    observed.retarget(changed.discovery_key().unwrap());
+    assert!(observed.engine.is_none());
+    assert!(observed.fabric.is_none());
+}
+
+#[test]
+fn external_gateway_without_an_image_engine_stays_unverified_without_a_query() {
+    let draft = external_draft("");
+    let observed = DiscoveryEvidence {
+        key: draft.discovery_key().unwrap(),
+        engine: None,
+        fabric: None,
+    };
+    let assessment = observed.assessment(&draft).unwrap();
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+    assert!(assessment.pending.is_empty());
+    assert!(
+        assessment
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("spec.gateway.engine"))
+    );
+}
+
+#[test]
+fn changing_gateway_management_rechecks_engine_but_retains_image_metadata() {
+    let managed = draft();
+    let mut document = managed.document().clone();
+    document.spec.gateway = serde_json::from_value(serde_json::json!({
+        "management": "external",
+        "endpoint": "https://gateway.example:8080",
+        "engine": managed.discovery_key().unwrap().engine,
+    }))
+    .unwrap();
+    let external = Draft::from_document(document).unwrap();
+    let mut facts = nemoclaw_authoring::AuthoringFacts {
+        hardware: Some(nemoclaw_authoring::HardwareEvidence {
+            engine: managed.discovery_key().unwrap().engine,
+            observation: nemoclaw_sdk::hardware_discovery::HardwareObservation::unknown(),
+        }),
+        ..Default::default()
+    };
+    facts
+        .retarget(&external, &Capabilities::available())
+        .unwrap();
+    assert!(
+        facts.hardware.is_none(),
+        "image-store hardware is not gateway evidence"
+    );
+    let mut observed = evidence(&external);
+    assert_eq!(
+        observed.assessment(&managed).unwrap().pending,
+        vec![DiscoveryQuery::Engine]
+    );
+    observed.retarget(managed.discovery_key().unwrap());
+    assert!(observed.engine.is_none());
+    assert!(observed.fabric.is_some());
 }

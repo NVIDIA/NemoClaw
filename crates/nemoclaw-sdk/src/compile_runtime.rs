@@ -187,6 +187,17 @@ pub(crate) fn compiled_runtime(
 ) -> Result<(Value, Vec<Target>), Error> {
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
+    if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
+        && document.spec.sandboxes[0].runtime.provider == ComputeDriver::Docker
+    {
+        let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+        readiness["managed_spec"] = json!(
+            gateway.values["spec"]
+                .replace("${", "$${")
+                .replace("%{", "%%{")
+        );
+        readiness["container_id"] = json!("${docker_container.managed_gateway_runtime.id}");
+    }
     for target in targets
         .iter()
         .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))

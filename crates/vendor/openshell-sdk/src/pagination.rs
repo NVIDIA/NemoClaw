@@ -22,7 +22,9 @@ pub struct Page<T> {
 /// A lazy, single-pass iterator over response pages.
 ///
 /// Constructed by curated `list_*` methods. No RPC is issued until
-/// [`Pager::next_page`] is called, and each call fetches at most one page.
+/// [`Pager::next_page`] is called, and each call fetches one logical page.
+/// A refreshed OIDC credential may retry that page once after an
+/// `Unauthenticated` response.
 pub struct Pager<T> {
     fetch: PageFetcher<T>,
     next_page_token: Option<String>,

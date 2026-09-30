@@ -32,7 +32,7 @@ python3 tools/kubernetes/e2e.py
 
 If the key is already exported, run only the second command.
 The runner creates a private directory under `$HOME/.local/state/nemoclaw/k8s-e2e-*` and prints its path.
-It generates `deployment.yaml` from the managed example, selects an available loopback port, and uses the cluster's explicit private kubeconfig.
+It generates `deployment.yaml` from the managed example, exports digest-verified image metadata, selects an available loopback port, and uses the cluster's explicit private kubeconfig.
 No bundle, image, context, state-directory, or test configuration exports are needed.
 The runner uses the inference key for the direct check and passes it to the compiled lifecycle test; build tools and cluster setup do not receive it.
 Generated manifests and retry commands contain environment references, never the key value.
@@ -71,7 +71,7 @@ The inference-only retry does not perform that update.
 If the direct check passes but a fresh deployment's agent invocation fails, retain that deployment for investigation of the sandbox credential and runtime path; do not assume the key is invalid.
 The failed cluster remains until its printed ownership-checked cleanup command is run.
 
-The [Linux AMD64 Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful run after integration with the current Fabric runtime.
+The [Linux AMD64 Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful run at its recorded Fabric revision; it does not qualify later source changes.
 Rebuild the bundle and agent image together when testing another revision.
 
 ## Test the Managed YAML Path
@@ -94,6 +94,7 @@ docker image inspect nc-kubernetes-dev:openclaw-kubernetes \
 ```
 
 On Linux AMD64, use `--platform linux/amd64` instead.
+Export [image metadata](../kubernetes.md#prepare-image-metadata) for that exact reference and set `NEMOCLAW_AGENT_IMAGE_METADATA` to its absolute path before planning.
 Keep the printed repository digest for the manifest; the image store must retain repository digests as described in the [agent image procedure](../build.md#build-agent-images).
 Create the cluster and load that image from the repository root:
 
@@ -214,6 +215,7 @@ docker image inspect nc-kubernetes-dev:openclaw-kubernetes --format '{{index .Re
 ```
 
 Use the printed immutable reference in the configuration command below.
+Export [image metadata](../kubernetes.md#prepare-image-metadata) for that reference and set `NEMOCLAW_AGENT_IMAGE_METADATA` before planning the generated configuration.
 Local image loading does not publish an image.
 The optional CPU fixture downloads the official [Qwen3 4B Instruct 2507 Q4_K_M model](https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M) into its PVC and grants serving ingress only after its manifest matches the full SHA-256 pin in [model.py](../../tools/kubernetes/model.py).
 It requests 2 CPUs and `8Gi` memory, with limits of 8 CPUs and `16Gi`, a `6Gi` model PVC, and a 32,768-token context matching the OpenClaw adapter.

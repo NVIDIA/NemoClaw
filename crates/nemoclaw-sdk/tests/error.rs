@@ -5,9 +5,16 @@ use std::error::Error as _;
 
 #[test]
 fn wrapped_sdk_errors_preserve_their_typed_sources_and_messages() {
-    let configuration = Error::from(ConfigError::new("invalid configuration"));
-    assert_eq!(configuration.to_string(), "invalid configuration");
-    assert!(configuration.source().unwrap().is::<ConfigError>());
+    let diagnostic = nemoclaw_runtime::config::ConfigError::new("invalid configuration");
+    for configuration in [
+        Error::from(diagnostic.clone()),
+        Error::from(nemoclaw_runtime::Error::Configuration(diagnostic)),
+    ] {
+        assert_eq!(configuration.to_string(), "invalid configuration");
+        let source = configuration.source().unwrap();
+        assert!(source.is::<ConfigError>());
+        assert!(source.is::<nemoclaw_runtime::config::ConfigError>());
+    }
     let observation = Error::from(ObservationError::Incomplete);
     assert_eq!(
         observation.to_string(),

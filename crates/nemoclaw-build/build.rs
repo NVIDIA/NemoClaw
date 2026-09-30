@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[cfg(feature = "sdk")]
 #[path = "src/source.rs"]
 mod source;
 
+#[cfg(feature = "sdk")]
 fn main() {
     let root =
         std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
@@ -15,3 +17,6 @@ fn main() {
         source::source_version(&files)
     );
 }
+
+#[cfg(not(feature = "sdk"))]
+fn main() {}

@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 
 use nemoclaw_sdk::{
     compile::{Generations, compile, runtime_targets},
@@ -42,7 +44,7 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_provider_profile"]["inference_local"]["authenticated"],
+        provider_scope::resource(&graph["resource"]["nemoclaw_provider_profile"], "local")["authenticated"],
         "false"
     );
     assert_eq!(
@@ -72,10 +74,10 @@ fn service_references_reject_missing_names_and_legacy_inline_installers() {
 
 #[test]
 fn removed_ollama_backends_cannot_resolve_saved_resource_rows() {
-    let connections = nemoclaw_sdk::docker::Connections::default();
-    let registry = nemoclaw_sdk::services::BackendRegistry::new(&connections);
+    let connections = nemoclaw_provider::docker::Connections::default();
+    let registry = nemoclaw_provider::services::BackendRegistry::new(&connections);
     for kind in ["ollama", "ollama_storage", "ollama_model"] {
-        assert!(!nemoclaw_sdk::services::installers::ollama::ProxyBackend::supports(kind));
+        assert!(!nemoclaw_provider::services::installers::ollama::ProxyBackend::supports(kind));
         assert!(
             registry
                 .resolve(kind, &Default::default())
@@ -109,8 +111,8 @@ fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
 #[tokio::test]
 async fn resolved_backend_can_be_used_directly_and_preserves_explicit_destroy_guard() {
     use nemoclaw_sdk::{ObservationError, backend::Backend};
-    let connections = nemoclaw_sdk::docker::Connections::default();
-    let registry = nemoclaw_sdk::services::BackendRegistry::new(&connections);
+    let connections = nemoclaw_provider::docker::Connections::default();
+    let registry = nemoclaw_provider::services::BackendRegistry::new(&connections);
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("engine.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();

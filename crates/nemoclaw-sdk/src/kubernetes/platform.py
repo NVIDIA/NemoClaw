@@ -134,6 +134,8 @@ class Platform:
         self.name = self.spec["name"]
         self.settings = self.spec["settings"]
         self.config = self.settings["kubernetes"]
+        if self.config.get("distribution", "kubernetes") not in ("kubernetes", "openshift"):
+            raise Error("configuration")
         self.namespace_name = self.config["namespace"]
         self.context = self.config["context"]
         self.state = Path(request["stateDirectory"])
@@ -330,7 +332,73 @@ class Platform:
         binding = self.cluster_binding()
         if self.receipt and binding != self.receipt["binding"]:
             raise Error("binding")
+        if self.is_openshift:
+            groups = json.loads(self.kubectl("get", "--raw", "/apis")).get("groups", [])
+            versions = {
+                version.get("groupVersion")
+                for group in groups
+                for version in group.get("versions", [])
+            }
+            if not {"security.openshift.io/v1", "project.openshift.io/v1"} <= versions:
+                raise Error("prerequisite")
+            if (self.receipt or {}).get("namespaceUid"):
+                # Revalidate the bound allocation before each dependent write,
+                # including after long-running prerequisite and network checks.
+                self.namespace()
         return binding
+
+    @property
+    def is_openshift(self):
+        return self.config.get("distribution", "kubernetes") == "openshift"
+
+    @staticmethod
+    def allocation_start(value):
+        # Use the namespace's allocation, never a privileged SCC or fixed-UID fallback.
+        # Keep the accepted form bounded to the standard start/count annotation.
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[1-9][0-9]{0,9}/[1-9][0-9]{0,9}", value
+        ):
+            raise Error("prerequisite")
+        start, count = map(int, value.split("/"))
+        if start + count > 2**32 - 1:
+            raise Error("prerequisite")
+        return start
+
+    def namespace_identity(self, namespace, ensure=False):
+        if not self.is_openshift:
+            return
+        annotations = namespace["metadata"].get("annotations", {})
+        uid_range = annotations.get("openshift.io/sa.scc.uid-range")
+        group_range = annotations.get("openshift.io/sa.scc.supplemental-groups", uid_range)
+        observed = {
+            "uidRange": uid_range,
+            "groupRange": group_range,
+            "uid": self.allocation_start(uid_range),
+            "gid": self.allocation_start(group_range),
+        }
+        retained = self.receipt.get("openshiftIdentity")
+        if retained is not None and retained != observed:
+            raise Error("binding")
+        if retained is None and self.receipt.get("storageReady"):
+            raise Error("binding")
+        if ensure and retained is None:
+            self.receipt["openshiftIdentity"] = observed
+            self.save()
+
+    def pod_security_context(self):
+        uid = gid = 10001
+        if self.is_openshift:
+            observed = (self.receipt or {}).get("openshiftIdentity")
+            if not observed:
+                raise Error("prerequisite")
+            uid, gid = observed["uid"], observed["gid"]
+        return {
+            "runAsNonRoot": True,
+            "runAsUser": uid,
+            "runAsGroup": gid,
+            "fsGroup": gid,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }
 
     def labels(self):
         return {OWNER: self.spec["owner"], GENERATION: self.receipt["generations"][STORAGE]}
@@ -352,6 +420,7 @@ class Platform:
                 )
             ):
                 raise Error("binding")
+            self.namespace_identity(current, ensure)
             return current
         if current:
             if not self.receipt.get("namespacePending") or any(
@@ -377,6 +446,26 @@ class Platform:
                 raise Error("incomplete")
         else:
             return None
+        if self.is_openshift and ensure:
+            deadline = time.monotonic() + 60
+            namespace_uid = current["metadata"]["uid"]
+            while (
+                not current["metadata"].get("annotations", {}).get("openshift.io/sa.scc.uid-range")
+            ):
+                if time.monotonic() > deadline:
+                    raise Error("incomplete")
+                time.sleep(0.5)
+                current = self.get("Namespace", self.namespace_name)
+                if (
+                    not current
+                    or current["metadata"].get("uid") != namespace_uid
+                    or any(
+                        current["metadata"].get("labels", {}).get(key) != value
+                        for key, value in self.labels().items()
+                    )
+                ):
+                    raise Error("binding")
+        self.namespace_identity(current, ensure)
         if not ensure:
             return current
         self.receipt["namespaceUid"] = current["metadata"]["uid"]
@@ -629,12 +718,7 @@ class Platform:
                         "automountServiceAccountToken": False,
                         "restartPolicy": "Never",
                         "terminationGracePeriodSeconds": 1,
-                        "securityContext": {
-                            "runAsNonRoot": True,
-                            "runAsUser": 10001,
-                            "runAsGroup": 10001,
-                            "seccompProfile": {"type": "RuntimeDefault"},
-                        },
+                        "securityContext": self.pod_security_context(),
                         "containers": [container],
                     },
                 }
@@ -839,18 +923,17 @@ class Platform:
                 raise Error("configuration")
             return {
                 "repository": repository,
-                "tag": "pinned@" + sha,
+                "digest": sha,
                 "pullPolicy": "if_not_present" if supervisor else "IfNotPresent",
             }
 
-        return {
+        values = {
             "fullnameOverride": self.name,
-            "image": image("gateway"),
+            "global": {"image": {"registry": ""}},
+            "gateway": {"image": image("gateway")},
             "sandboxRuntime": {"image": image("sandboxRuntime")},
-            "supervisor": {
-                "image": image("supervisor", True),
-                "sandboxRuntime": {"networkPolicyEnforced": True},
-            },
+            "supervisor": {"image": image("supervisor", True)},
+            "sandbox": {"image": image("sandboxRuntime", True)},
             "server": {
                 "telemetryEnabled": False,
                 "disableTls": False,
@@ -863,8 +946,6 @@ class Platform:
                 },
                 "sandboxJwt": {"signingSecretName": self.name + "-jwt-keys"},
                 "credentialStorage": {"existingSecret": self.name + "-kek"},
-                "sandboxImage": self.pins["versions"]["images"]["sandboxRuntime"],
-                "sandboxImagePullPolicy": "if_not_present",
                 "workspaceDefaultStorageSize": "2Gi",
                 "drivers": {"kubernetes": {"workspaceMode": "shared"}},
             },
@@ -874,6 +955,20 @@ class Platform:
                 "limits": {"cpu": "1", "memory": "1Gi"},
             },
         }
+        if self.is_openshift:
+            context = self.pod_security_context()
+            values["podSecurityContext"] = {
+                "fsGroup": context["fsGroup"],
+                "seccompProfile": context["seccompProfile"],
+            }
+            values["securityContext"] = {
+                "runAsNonRoot": True,
+                "runAsUser": context["runAsUser"],
+                "runAsGroup": context["runAsGroup"],
+                "allowPrivilegeEscalation": False,
+                "capabilities": {"drop": ["ALL"]},
+            }
+        return values
 
     def chart(self):
         data = self.artifact("openshell")

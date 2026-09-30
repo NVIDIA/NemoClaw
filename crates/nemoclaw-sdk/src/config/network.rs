@@ -7,21 +7,19 @@
 // 2026-09-19: removed the main-branch Landlock spelling translation and the
 // redundant external-proxy ownership annotation.
 // 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
-// 2026-09-23: obtain protocol types through the pinned OpenShell SDK's raw API.
+// 2026-09-28: use owner policy types independently of the transport client.
 use super::ConfigError;
-use openshell_sdk::raw::proto;
+use openshell_core::proto;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Sandbox policy selection and optional agent HTTP proxy.
+/// Sandbox policy selection.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "NetworkInput", into = "NetworkInput")]
 #[schemars(with = "NetworkInput")]
 pub struct Network {
     /// Isolated preset or a complete authored policy; the two cannot coexist.
     pub policy: NetworkPolicy,
-    /// Existing HTTP proxy used by the agent, independent of policy selection.
-    pub proxy: Option<Proxy>,
 }
 
 /// Sandbox policy source. Explicit policies replace the isolated preset completely.
@@ -39,7 +37,7 @@ pub enum NetworkPolicy {
 #[derive(Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default, rename = "Network")]
 #[serde(default, deny_unknown_fields)]
-/// Sandbox policy selection and optional agent HTTP proxy.
+/// Sandbox policy selection.
 struct NetworkInput {
     #[serde(rename = "tier")]
     #[schemars(default)]
@@ -50,10 +48,6 @@ struct NetworkInput {
     #[schemars(default, with = "ExplicitPolicySelection")]
     /// Complete authored OpenShell policy, replacing the isolated preset.
     policy: Option<ExplicitPolicySelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Proxy")]
-    /// HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking.
-    proxy: Option<Proxy>,
 }
 
 impl TryFrom<NetworkInput> for Network {
@@ -69,10 +63,7 @@ impl TryFrom<NetworkInput> for Network {
                 ));
             }
         };
-        Ok(Self {
-            policy,
-            proxy: input.proxy,
-        })
+        Ok(Self { policy })
     }
 }
 
@@ -84,11 +75,7 @@ impl From<Network> for NetworkInput {
                 (String::new(), Some(ExplicitPolicySelection { explicit }))
             }
         };
-        Self {
-            tier,
-            policy,
-            proxy: network.proxy,
-        }
+        Self { tier, policy }
     }
 }
 
@@ -98,16 +85,6 @@ impl From<Network> for NetworkInput {
 struct ExplicitPolicySelection {
     /// Complete sandbox policy in OpenShell YAML field names.
     explicit: ExplicitPolicy,
-}
-
-/// Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Proxy {
-    /// Proxy hostname or IPv4 address, without scheme, path, or credentials.
-    pub host: String,
-    /// Proxy TCP port, from 1 through 65535.
-    pub port: u16,
 }
 
 /// Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
@@ -216,7 +193,7 @@ pub struct PolicyEndpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub protocol: Option<String>,
-    /// terminate, passthrough, or skip, subject to protocol validation.
+    /// Omit for automatic TLS handling, or use skip for a raw tunnel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub tls: Option<String>,
@@ -342,44 +319,7 @@ pub struct PolicyMcp {
     pub allow_all_known_mcp_methods: Option<bool>,
 }
 
-impl Proxy {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        super::schema::validate_definition("Proxy", self)
-    }
-}
 impl Network {
-    pub(crate) fn validate_runtime_access(&self) -> Result<(), ConfigError> {
-        let NetworkPolicy::Explicit(policy) = &self.policy else {
-            return Ok(());
-        };
-        let Some(filesystem) = &policy.filesystem_policy else {
-            return Ok(());
-        };
-        for (required, diagnostic) in crate::openshell::runtime_read_requirements() {
-            let covered = filesystem
-                .read_only
-                .iter()
-                .flatten()
-                .chain(filesystem.read_write.iter().flatten())
-                .any(|grant| {
-                    // Sandbox paths are POSIX paths even on a Windows client. Do not
-                    // resolve symlinks against the client filesystem or infer '..'.
-                    if !grant.starts_with('/') || grant.split('/').any(|part| part == "..") {
-                        return false;
-                    }
-                    let mut required = required.split('/').filter(|part| !part.is_empty());
-                    grant
-                        .split('/')
-                        .filter(|part| !part.is_empty() && *part != ".")
-                        .all(|part| required.next() == Some(part))
-                });
-            if !covered {
-                return Err(ConfigError::new(diagnostic));
-            }
-        }
-        Ok(())
-    }
-
     pub fn validate(&self) -> Result<(), ConfigError> {
         super::schema::validate_definition("Network", self)?;
         if let NetworkPolicy::Explicit(policy) = &self.policy {
@@ -389,13 +329,15 @@ impl Network {
     }
     pub fn policy_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
         match &self.policy {
-            NetworkPolicy::Isolated => Ok(crate::openshell::policy()),
+            NetworkPolicy::Isolated => Err(ConfigError::new(
+                "isolated policy requires the selected image runtime metadata",
+            )),
             NetworkPolicy::Explicit(policy) => policy.to_proto(),
         }
     }
 }
 pub(crate) const POLICY_PROTOCOLS: &[&str] = &["rest", "websocket", "json-rpc", "mcp"];
-pub(crate) const POLICY_TLS: &[&str] = &["terminate", "passthrough", "skip"];
+pub(crate) const POLICY_TLS: &[&str] = &["skip"];
 pub(crate) const POLICY_ENFORCEMENT: &[&str] = &["enforce", "audit"];
 pub(crate) const POLICY_ACCESS: &[&str] = &["full", "read-only"];
 pub(crate) const POLICY_BODY_MAX: u32 = 1_048_576;

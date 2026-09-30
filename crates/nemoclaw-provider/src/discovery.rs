@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::engine_observation::{observe_engine, observe_fabric};
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
 use nemoclaw_sdk::{
-    discovery::{DiscoveryRequest, ObservationStatus, observe_engine, observe_fabric},
-    docker::Engine,
-    fabric_capabilities::{FabricRequirements, Support, assess_image},
+    discovery::DiscoveryRequest, discovery::ObservationStatus,
+    fabric_capabilities::FabricRequirements, fabric_capabilities::Support,
+    fabric_capabilities::assess_image,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -29,6 +30,8 @@ pub(crate) struct DiscoveryState {
     #[serde(default)]
     image: Value<String>,
     #[serde(default)]
+    metadata_env: Value<String>,
+    #[serde(default)]
     requirements_json: Value<String>,
     #[serde(default)]
     architecture: Value<String>,
@@ -36,6 +39,10 @@ pub(crate) struct DiscoveryState {
     operating_system: Value<String>,
     #[serde(default)]
     compatibility_status: Value<String>,
+    #[serde(default)]
+    runtime_json: Value<String>,
+    #[serde(default)]
+    binaries_json: Value<String>,
     observation_json: Value<String>,
     available: Value<bool>,
     status: Value<String>,
@@ -52,14 +59,17 @@ fn known(value: &Value<String>) -> Option<&str> {
 impl Serialize for DiscoveryState {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut state = serializer.serialize_map(Some(if self.fabric { 9 } else { 5 }))?;
+        let mut state = serializer.serialize_map(Some(if self.fabric { 12 } else { 5 }))?;
         state.serialize_entry("engine", &self.engine)?;
         if self.fabric {
             state.serialize_entry("image", &self.image)?;
+            state.serialize_entry("metadata_env", &self.metadata_env)?;
             state.serialize_entry("requirements_json", &self.requirements_json)?;
             state.serialize_entry("architecture", &self.architecture)?;
             state.serialize_entry("operating_system", &self.operating_system)?;
             state.serialize_entry("compatibility_status", &self.compatibility_status)?;
+            state.serialize_entry("runtime_json", &self.runtime_json)?;
+            state.serialize_entry("binaries_json", &self.binaries_json)?;
         } else {
             state.serialize_entry("compute_driver", &self.compute_driver)?;
         }
@@ -73,7 +83,10 @@ impl DiscoveryDataSource {
     fn valid(&self, config: &DiscoveryState) -> bool {
         let engine_valid = match &config.engine {
             Value::Unknown => true,
-            Value::Value(engine) => Engine::validate_endpoint(engine).is_ok(),
+            Value::Value(engine) => {
+                (self.fabric && engine.is_empty())
+                    || crate::config::validate_engine_endpoint(engine).is_ok()
+            }
             Value::Null => false,
         };
         let selection_valid = if self.fabric {
@@ -95,7 +108,19 @@ impl DiscoveryDataSource {
             Value::Value(_) => false,
             _ => true,
         };
-        engine_valid && selection_valid && requirements_valid
+        let metadata_valid = match &config.metadata_env {
+            Value::Null => true,
+            Value::Unknown => self.fabric,
+            Value::Value(name) => {
+                self.fabric
+                    && (matches!(&config.engine, Value::Unknown)
+                        || matches!(&config.engine, Value::Value(engine) if engine.is_empty()))
+                    && regex::Regex::new(r"^[A-Z_][A-Z0-9_]*$")
+                        .expect("constant environment name pattern")
+                        .is_match(name)
+            }
+        };
+        engine_valid && selection_valid && requirements_valid && metadata_valid
     }
 }
 #[async_trait]
@@ -142,6 +167,11 @@ impl DataSource for DiscoveryDataSource {
                     self.fabric
                         .then_some([
                             (
+                                "metadata_env",
+                                AttributeType::String,
+                                AttributeConstraint::Optional,
+                            ),
+                            (
                                 "requirements_json",
                                 AttributeType::String,
                                 AttributeConstraint::Optional,
@@ -155,6 +185,16 @@ impl DataSource for DiscoveryDataSource {
                                 "operating_system",
                                 AttributeType::String,
                                 AttributeConstraint::Optional,
+                            ),
+                            (
+                                "runtime_json",
+                                AttributeType::String,
+                                AttributeConstraint::Computed,
+                            ),
+                            (
+                                "binaries_json",
+                                AttributeType::String,
+                                AttributeConstraint::Computed,
                             ),
                             (
                                 "compatibility_status",
@@ -205,6 +245,8 @@ impl DataSource for DiscoveryDataSource {
             config.status = Value::Unknown;
             if self.fabric {
                 config.compatibility_status = Value::Unknown;
+                config.runtime_json = Value::Unknown;
+                config.binaries_json = Value::Unknown;
             }
             return Some(config);
         };
@@ -214,9 +256,12 @@ impl DataSource for DiscoveryDataSource {
                 config.available = Value::Unknown;
                 config.status = Value::Unknown;
                 config.compatibility_status = Value::Unknown;
+                config.runtime_json = Value::Unknown;
+                config.binaries_json = Value::Unknown;
                 return Some(config);
             };
             if [
+                &config.metadata_env,
                 &config.requirements_json,
                 &config.architecture,
                 &config.operating_system,
@@ -228,11 +273,41 @@ impl DataSource for DiscoveryDataSource {
                 config.available = Value::Unknown;
                 config.status = Value::Unknown;
                 config.compatibility_status = Value::Unknown;
+                config.runtime_json = Value::Unknown;
+                config.binaries_json = Value::Unknown;
                 return Some(config);
             }
-            let mut observation = observe_fabric(self.backend.connections(), engine, image).await;
+            config.runtime_json = Value::Value(String::new());
+            config.binaries_json = Value::Value("[]".into());
+            let mut observation = if let Value::Value(name) = &config.metadata_env {
+                nemoclaw_sdk::image_metadata::observe(
+                    &nemoclaw_sdk::EnvironmentSecrets,
+                    name,
+                    image,
+                )
+            } else {
+                observe_fabric(self.backend.connections(), engine, image).await
+            };
             if let Value::Value(json) = &config.requirements_json {
                 let requirements: FabricRequirements = serde_json::from_str(json).ok()?;
+                if let Some(runtime) = observation
+                    .catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.runtime.as_ref())
+                {
+                    let adapter_id = requirements.configuration["harness"]["adapter_id"]
+                        .as_str()
+                        .unwrap_or("");
+                    if runtime.binaries.contains_key(adapter_id) {
+                        let binding = nemoclaw_sdk::image_runtime::RuntimeBinding {
+                            runtime: runtime.clone(),
+                            adapter_id: adapter_id.into(),
+                        };
+                        config.runtime_json = Value::Value(serde_json::to_string(&binding).ok()?);
+                        config.binaries_json =
+                            Value::Value(serde_json::to_string(binding.binaries()).ok()?);
+                    }
+                }
                 observation.compatibility = Some(assess_image(
                     observation.catalog.as_ref(),
                     &requirements,
@@ -261,6 +336,8 @@ impl DataSource for DiscoveryDataSource {
                 config.available = Value::Unknown;
                 config.status = Value::Unknown;
                 config.compatibility_status = Value::Unknown;
+                config.runtime_json = Value::Unknown;
+                config.binaries_json = Value::Unknown;
                 return Some(config);
             };
             let observation = observe_engine(
@@ -298,8 +375,7 @@ impl DataSource for DiscoveryDataSource {
 }
 
 #[cfg(all(test, unix))]
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use crate::docker::fixture as transport;
 
 #[cfg(test)]
 mod tests {
@@ -311,10 +387,13 @@ mod tests {
             engine: Value::Value("unix:///does-not-exist/nemoclaw.sock".into()),
             compute_driver: Value::Value("docker".into()),
             image: Value::Null,
+            metadata_env: Value::Null,
             requirements_json: Value::Null,
             architecture: Value::Null,
             operating_system: Value::Null,
             compatibility_status: Value::Null,
+            runtime_json: Value::Null,
+            binaries_json: Value::Null,
             observation_json: Value::Null,
             available: Value::Null,
             status: Value::Null,
@@ -360,6 +439,66 @@ mod tests {
         assert!(source.validate(&mut diagnostics, invalid).await.is_none());
         assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
     }
+
+    #[tokio::test]
+    async fn missing_cluster_metadata_is_rejected_before_discovery() {
+        let source = DiscoveryDataSource {
+            backend: Arc::new(ConfiguredBackend::default()),
+            fabric: true,
+        };
+        let missing_metadata = || {
+            let mut config = engine_config();
+            config.engine = Value::Value(String::new());
+            config.image = Value::Value(format!("registry/agent@sha256:{}", "a".repeat(64)));
+            config.metadata_env = Value::Value(String::new());
+            config
+        };
+        let mut validation = Diagnostics::default();
+        assert!(
+            source
+                .validate(&mut validation, missing_metadata())
+                .await
+                .is_none()
+        );
+        assert!(!validation.errors.is_empty());
+        let mut read = Diagnostics::default();
+        assert!(
+            source
+                .read(&mut read, missing_metadata(), ValueEmpty::default())
+                .await
+                .is_none()
+        );
+        assert!(!read.errors.is_empty());
+        assert!(!format!("{read:?}").contains("/does-not-exist"));
+    }
+
+    #[tokio::test]
+    async fn metadata_discovery_never_falls_back_to_a_container_engine() {
+        let source = DiscoveryDataSource {
+            backend: Arc::new(ConfiguredBackend::default()),
+            fabric: true,
+        };
+        let mut config = engine_config();
+        config.image = Value::Value(format!("registry/agent@sha256:{}", "a".repeat(64)));
+        config.metadata_env = Value::Value("NEMOCLAW_TEST_UNSET_METADATA_77A856B9".into());
+        assert!(
+            !source.valid(&config),
+            "an engine and metadata reference are mutually exclusive"
+        );
+        config.engine = Value::Value(String::new());
+        let mut diagnostics = Diagnostics::default();
+        let output = source
+            .read(&mut diagnostics, config, ValueEmpty::default())
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        assert_eq!(known(&output.runtime_json), Some(""));
+        let observation: serde_json::Value =
+            serde_json::from_str(known(&output.observation_json).unwrap()).unwrap();
+        assert_eq!(observation["source"], "verified_oci_metadata");
+        assert_eq!(observation["status"], "unknown");
+        assert!(!observation.to_string().contains("/does-not-exist"));
+    }
     #[test]
     fn fabric_requirements_and_platform_inputs_do_not_leak_into_engine_schema() {
         let mut diagnostics = Diagnostics::default();
@@ -374,6 +513,7 @@ mod tests {
         let fabric = fabric.schema(&mut diagnostics).unwrap();
         let engine = engine.schema(&mut diagnostics).unwrap();
         for field in [
+            "metadata_env",
             "requirements_json",
             "architecture",
             "operating_system",
@@ -393,11 +533,33 @@ mod tests {
     #[tokio::test]
     async fn selected_image_checks_fabric_plan_platform_and_missing_metadata_without_starting_containers()
      {
-        use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
+        use nemoclaw_sdk::fabric_catalog::{
+            BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL,
+        };
         let mut catalog = FabricCatalog::bundled();
+        catalog.bridge = Some(BridgeCapabilities {
+            interface_version: 1,
+            operations: [
+                "validate",
+                "prepare",
+                "configure",
+                "check",
+                "invoke",
+                "serve",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            health_checks: Vec::new(),
+        });
         catalog
             .adapters
             .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.langchain.deepagents");
+        let mut runtime: serde_json::Value =
+            serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["binaries"] = serde_json::json!({"nvidia.fabric.langchain.deepagents":["/srv/python3.99","/srv/bun"]});
+        catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         let label = serde_json::to_string(&catalog).unwrap();
         let digest = format!("registry/agent@sha256:{}", "a".repeat(64));
         let served_digest = digest.clone();
@@ -452,6 +614,24 @@ mod tests {
             let observation: serde_json::Value =
                 serde_json::from_str(known(&output.observation_json).unwrap()).unwrap();
             assert_eq!(observation["compatibility"]["status"], expected);
+            if image == "missing:image" {
+                assert_eq!(known(&output.runtime_json), Some(""));
+                assert_eq!(known(&output.binaries_json), Some("[]"));
+            } else {
+                let retained = nemoclaw_sdk::image_runtime::RuntimeBinding::from_json(
+                    known(&output.runtime_json).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    retained.command("status", &[]),
+                    ["/srv/python3.99", "-I", "/srv/bridge.py", "status"]
+                );
+                assert_eq!(
+                    serde_json::from_str::<Vec<String>>(known(&output.binaries_json).unwrap())
+                        .unwrap(),
+                    ["/srv/python3.99", "/srv/bun"]
+                );
+            }
         }
     }
     #[test]

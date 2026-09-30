@@ -146,7 +146,72 @@ fn fields(output: &mut String, name: &str, schema: &Value) -> Result<(), String>
         .unwrap();
     }
     output.push('\n');
+    conditional_fields(output, schema);
     Ok(())
+}
+
+// Presence-conditioned scalar bounds live on the containing object, not on its
+// individual properties. Render these beside the field table from the same rules.
+fn conditional_fields(output: &mut String, schema: &Value) {
+    fn properties(schema: &Value) -> Option<String> {
+        let object = schema.as_object()?;
+        if object.len() != 1 {
+            return None;
+        }
+        let properties = object.get("properties")?.as_object()?;
+        let mut fields = Vec::new();
+        for (name, rule) in properties {
+            let rule = constraints(rule);
+            if rule.is_empty() {
+                return None;
+            }
+            fields.push(format!("`{name}`: {rule}"));
+        }
+        Some(fields.join("; "))
+    }
+    for rule in schema["allOf"].as_array().into_iter().flatten() {
+        let Some(condition) = rule["if"]
+            .as_object()
+            .filter(|condition| condition.len() == 1)
+        else {
+            continue;
+        };
+        let Some(required) = condition.get("required").and_then(Value::as_array) else {
+            continue;
+        };
+        let Some(fields) = required
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        if fields.is_empty() {
+            continue;
+        }
+        let Some(then) = properties(&rule["then"]) else {
+            continue;
+        };
+        let otherwise = if rule.get("else").is_some() {
+            let Some(otherwise) = properties(&rule["else"]) else {
+                continue;
+            };
+            format!(" Otherwise: {otherwise}.")
+        } else {
+            String::new()
+        };
+        let names = fields
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let presence = if fields.len() == 1 {
+            "is present"
+        } else {
+            "are present"
+        };
+        writeln!(output, "When {names} {presence}: {then}.{otherwise}\n").unwrap();
+    }
 }
 
 fn guide(name: &str) -> &'static str {
@@ -155,10 +220,10 @@ fn guide(name: &str) -> &'static str {
         | "NetworkReference" | "ExternalNetwork" => {
             "[Resource ownership](../usage.md#resource-ownership)"
         }
-        "Network" | "Proxy" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
-            "[Sandbox policy and proxy](../sandbox-network.md)"
+        "Network" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
+            "[Sandbox policy](../sandbox-network.md)"
         }
-        name if name.starts_with("Policy") => "[Sandbox policy and proxy](../sandbox-network.md)",
+        name if name.starts_with("Policy") => "[Sandbox policy](../sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",

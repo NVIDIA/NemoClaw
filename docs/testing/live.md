@@ -202,7 +202,8 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
     selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
-It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+It checks initial apply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+It sends no agent requests; use the [Fabric test](#spark-and-fabric) for explicit invocation.
 Explicit recovery must preserve durable storage bindings and the model manifest; the Docker provider may replace inference compute.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
@@ -227,7 +228,7 @@ Select it explicitly; do not run live tests as an ignored-test aggregate.
 ## Hosted NVIDIA Hermes Parity
 
 The [hosted Hermes test](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) compares an exact-hash historical export with separately authored v1 YAML through a test-only projection.
-It checks expected plan and apply results, the explicit unsupported text-probe contract, unchanged apply with stable resource identities, export/reapply, and destroy.
+It checks expected plan and apply results, unchanged apply with stable resource identities, export/reapply, and destroy without requesting a model response.
 It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, the immutable Hermes image, and the declared NVIDIA credential.
 Select `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` explicitly; the test writes no separate report.
 This scenario does not qualify Relay or Switchyard.
@@ -274,3 +275,67 @@ The test checks read-only planning, unchanged apply, stopped/deleted process rec
 It also replaces the listen port inside the runtime-stage test and temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
 That internal replacement test does not authorize retargeting an established public deployment endpoint; the SDK still rejects that operation.
 The gateway image remains pinned by the SDK.
+
+## Docker Gateway Isolation
+
+The provider's `pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes` test runs two managed Docker gateways against the SDK's pinned OpenShell images on a native Linux host.
+Prepare two owned deployment documents with distinct fresh UUIDs, unused loopback ports, and unused private `/24` subnets on the same local Docker engine.
+Both documents must select managed gateways, Docker sandboxes, external inference, and no managed services.
+The test refuses existing gateway containers, initializers, volumes, or networks at either identity.
+
+The engine must already contain the gateway, supervisor, and sandbox runtime images from [versions.json](../../versions.json), plus the immutable sandbox image selected below.
+That sandbox image must provide `/bin/sh`, `/bin/sleep`, and `/bin/cat`, and permit a file under `/tmp` through OpenShell's default policy.
+The test uses the documents' gateway settings and creates its own `isolation-check` sandbox in each gateway's default workspace.
+It attaches no inference providers and requests no model response.
+
+Successful completion removes both owned sandboxes and gateway processes, but retains gateway storage, including signing and encryption keys, plus its initializer and bridge.
+The test calls the provider and SDK directly and creates no OpenTofu state directory.
+Keep the input documents to identify the retained resources.
+Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
+A verified manual cleanup procedure remains [TBD](../state.md#deletion-and-retention).
+
+From the repository root, with absolute document paths and the local sandbox image's actual digest:
+
+```sh
+NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/first-owned-deployment.yaml \
+NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT=/absolute/path/to/second-owned-deployment.yaml \
+NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
+  cargo test -p nemoclaw-provider --test managed_gateway_live \
+    pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes -- --ignored --exact --nocapture
+```
+
+Both sandboxes must reach Ready and execute commands through the real supervisor callback.
+Starting and restarting the second gateway must preserve the first sandbox's identity, readiness, and test file.
+Failures also retain resources for diagnosis; the test prints the owned gateway names and endpoints.
+Inspect those resources with the original documents before choosing cleanup or a separate fresh run; rerunning the same inputs is refused.
+Use the separate [gateway recovery test](#docker-gateway-recovery) to qualify the bundled OpenTofu path.
+This test does not qualify imported provider profiles, Fabric readiness, or agent replies.
+
+## Provider Profile Revisions
+
+The provider's `profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart` test requires one fresh owned managed Docker deployment document and the pinned local images described under [gateway isolation](#docker-gateway-isolation).
+Use a sandbox image that also provides `/usr/local/bin/python3` and `/usr/local/bin/node`, which the imported inference profiles authorize.
+The test creates its own workspace, five provider profiles and registrations, and a `/bin/sleep` sandbox.
+It covers authenticated OpenAI and Anthropic profiles, an unauthenticated OpenAI profile, and Brave and Tavily search profiles.
+
+The test uses synthetic credentials held in memory and registered with its gateway; it makes no inference or search requests.
+To read the sandbox-only provider environment RPC, it reads that sandbox's issued token from its own gateway container into memory without logging or writing a copy.
+A successful run deletes the sandbox, provider registrations, profiles, and gateway process, retaining the workspace, gateway storage, initializer, and bridge.
+Retained gateway storage contains signing and encryption keys.
+The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
+Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
+The [manual retained-storage cleanup procedure](../state.md#deletion-and-retention) remains **TBD**.
+
+From the repository root, with an absolute document path and the local sandbox image's actual digest:
+
+```sh
+NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/owned-deployment.yaml \
+NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE=repository@sha256:REPLACE_WITH_LOCAL_IMAGE_DIGEST \
+  cargo test -p nemoclaw-provider --test managed_gateway_live \
+    profile_revision::imported_profile_revisions_survive_repeated_reads_and_gateway_restart -- --ignored --exact --nocapture
+```
+
+The sandbox must reach Ready with all five providers attached.
+All 64 environment reads before restart and all 64 afterward must return the same revision.
+Unchanged profile reconciliation must preserve identities, and the sandbox must retain its identity and Ready phase after the gateway restarts.
+This test qualifies profile stability and observation against the pinned gateway; it does not run a Fabric adapter or request an agent reply.

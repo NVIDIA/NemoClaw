@@ -12,3 +12,7 @@ beside OpenClaw and links its plugin SDK dependency to the pinned runtime.
 The package archive omits a license file; the image retains the MIT license
 from https://github.com/openclaw/openclaw/blob/v2026.9.4/LICENSE
 beside the plugin as `LICENSE`.
+
+2026-09-29: install the unchanged archive with OpenClaw’s native plugin installer.
+OpenClaw owns extraction and peer dependency linking; the image packages its output in the native bundled-plugin directory.
+Runtime configuration selects plugin IDs without explicit load paths.

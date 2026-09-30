@@ -69,14 +69,23 @@ nemoclaw apply -o json --progress off --state-dir .local/deployment deployment.y
 nemoclaw plan --destroy -o json --progress off --state-dir .local/deployment
 ```
 
-Text plans identify resource actions, retained resources, and deferred work.
+Text plans identify resource actions, retained resources, deferred work, and unverified checks.
 Friendly labels replace known internal addresses; verbose output includes those addresses, and unknown resources keep their native identity.
+Scoped and route-inline inference registrations include their authored provider name and definition path in result text.
+Search-provider labels name the integration type; use verbose output to distinguish registrations with different credential references.
 Normal output groups image bindings by action sequence; verbose output lists each binding.
 Deferred work produces a prominent incomplete-plan result even when the known change list is empty.
+When the managed gateway prevents planning the deployment stage, the preview lists that stage's known resources separately under “Resources awaiting a complete plan.”
+This includes Ollama proxy, upstream-model, and credential-storage resources; their actions remain unplanned.
 A plan with deferred work returns 0 because the preview succeeded; scripts must also check `complete` before treating it as a complete plan.
-Unresolved engine, hardware, image, or endpoint discovery appears as deferred work; a known engine or image/adapter incompatibility rejects planning.
+Unresolved engine, hardware, image, or gateway prerequisites and missing credential references appear as deferred work; a known engine or image/adapter incompatibility rejects planning.
+Unavailable or unverified model catalogs and service readiness scheduled for apply appear under `unverified`, without making the resource plan incomplete.
+`complete: true` means resource planning has no deferred work; it does not establish service readiness or working inference.
 Failures refreshing managed-resource identity or required gateway observations still return a nonzero exit code.
-Text output summarizes resource reuse and drift, advertised models, and credential-reference availability; `--verbose` adds observation statuses.
+Text output partitions established resources into unchanged plans and planned changes, and reports new resources separately.
+Refresh differences have a separate count: they can include computed metadata even when no resource action is planned.
+An observed stopped Fabric runtime has an explicit note that apply restarts it; this is not a model-response or health check.
+Text output also summarizes advertised models and credential-reference availability; `--verbose` adds observation statuses.
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes and reported Fabric health.
@@ -115,15 +124,25 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
 | `complete` | Whether a planned result has no deferred work; inspect this alongside the exit code |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
-| `deferred` | Checks or changes deferred by planning; omitted when empty |
+| `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
+| `deferred` | Unresolved planning prerequisites or resource stages; omitted when empty |
+| `deferredResources` | Known addresses in a stage awaiting its complete plan; no actions are implied; omitted when empty |
+| `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
+| `unverified` | Supplemental catalog or apply-time service-readiness checks; does not change `complete`; omitted when empty |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
-| `health` | Apply observations for the hosted Fabric runtime; includes explicit unsupported results; omitted for other operations |
+| `health` | Apply health responses from the packaged Fabric bridge; currently unsupported; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
-The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`; Fabric failures include `error.health`.
+The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
 When available, `remainingState` describes the known effects and `help` supplies a next step.
+Apply and destroy failures before a mutating subprocess launches report “No runtime resources changed.”
+Local planning state may still have been written.
+Once a mutating subprocess launches, later failures report retained resources when known or keep the uncertainty warning, even with progress disabled; the warning does not assert that changes completed.
+Provider-generated replacement refusals name the retained resource and changed provider fields without printing their values.
+External Ollama model failures identify the service's upstream field and its validated local endpoint.
 Diagnostics identify the operation, cause, and confirmed retention where available; they do not imply rollback or cleanup when resource state is unknown.
+Short protected values cause child error details and resource/download progress to be withheld; see [diagnostic disclosure](../security.md#diagnostic-disclosure).
 On Unix, SIGINT and SIGTERM cancel ongoing work, including credential prompts.
 Interruption preserves the recorded recovery boundary; follow [recovery](../usage.md#updates-and-recovery) before retrying.
 

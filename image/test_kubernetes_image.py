@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run inside the agent image as the pinned Kubernetes driver's identity."""
 
+import json
 import os
 import pwd
 import shutil
@@ -13,7 +14,7 @@ from pathlib import Path
 
 class KubernetesAgentImage(unittest.TestCase):
     def test_runtime_python_sources_are_readable_by_sandbox_identity(self):
-        for name in ("fabric.py", "health.py", "catalog.py"):
+        for name in ("fabric.py", "bridge_contract.py", "catalog.py", "runtime_metadata.py"):
             path = Path("/opt/nemoclaw") / name
             compile(path.read_text(), str(path), "exec")
 
@@ -27,6 +28,24 @@ class KubernetesAgentImage(unittest.TestCase):
         self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))
         user = pwd.getpwnam("node")
         self.assertEqual((user.pw_uid, user.pw_gid), (10001, 10001))
+
+    def test_image_runtime_metadata_matches_the_nonroot_process_identity(self):
+        runtime = json.loads(Path("/opt/nemoclaw/runtime.json").read_text())
+        self.assertEqual(
+            runtime["policy"]["process"],
+            {"run_as_user": str(os.getuid()), "run_as_group": str(os.getgid())},
+        )
+        self.assertTrue(os.access(runtime["command"][0], os.X_OK))
+
+    def test_native_plugins_are_readable_by_the_changed_sandbox_identity(self):
+        for plugin in ("brave", "tavily"):
+            directory = Path("/app/dist/extensions") / plugin
+            self.assertTrue(directory.is_dir())
+            paths = [directory, *directory.rglob("*")]
+            for path in paths:
+                self.assertTrue(os.access(path, os.R_OK), str(path))
+                if path.is_dir():
+                    self.assertTrue(os.access(path, os.X_OK), str(path))
 
     def test_nonroot_workspace_seed_preserves_private_permissions(self):
         source = Path("/sandbox")

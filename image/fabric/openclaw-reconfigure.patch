@@ -1,0 +1,62 @@
+--- a/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py
++++ b/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py
+@@ -19,6 +19,16 @@
+ )
+ from nemo_fabric_adapters.common import lifecycle
+ from nemo_fabric_adapters.common.credentials import token
++from nemo_fabric_adapters.openclaw.configuration import reconcile_configuration
++
++
++def signal_process(process, sig):
++    try:
++        os.killpg(process.pid, sig)
++    except PermissionError:
++        # OpenShell denies group signals. Its broker permits this owned child
++        # to receive a process-directed signal without relaxing the sandbox.
++        process.send_signal(sig)
+ 
+ 
+ def native_configuration(config, workspace):
+@@ -191,19 +201,7 @@
+             raise RuntimeError("retained channel state is already in use") from None
+         try:
+             path = self.home / "openclaw.json"
+-            if path.exists() and not configuration_matches(
+-                json.loads(path.read_text()), self.native
+-            ):
+-                raise RuntimeError(
+-                    "native configuration conflicts with Fabric-owned settings"
+-                )
+-            if not path.exists():
+-                with open(
+-                    path, "x", opener=lambda p, flags: os.open(p, flags, 0o600)
+-                ) as output:
+-                    json.dump(self.native, output)
+-                    output.flush()
+-                    os.fsync(output.fileno())
++            reconcile_configuration(self.home, self.native)
+             self.env = dict(
+                 os.environ,
+                 OPENCLAW_HOME=str(self.home.parent),
+@@ -263,7 +261,7 @@
+             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout + 5)
+         except BaseException:
+             if process.returncode is None:
+-                os.killpg(process.pid, signal.SIGKILL)
++                signal_process(process, signal.SIGKILL)
+             await process.wait()
+             raise
+         if process.returncode:
+@@ -370,10 +368,10 @@
+     async def stop_gateway(self):
+         if self.process is not None and self.process.returncode is None:
+             try:
+-                os.killpg(self.process.pid, signal.SIGTERM)
++                signal_process(self.process, signal.SIGTERM)
+                 await asyncio.wait_for(self.process.wait(), 10)
+             except TimeoutError:
+-                os.killpg(self.process.pid, signal.SIGKILL)
++                signal_process(self.process, signal.SIGKILL)
+                 await self.process.wait()
+             except ProcessLookupError:
+                 await self.process.wait()

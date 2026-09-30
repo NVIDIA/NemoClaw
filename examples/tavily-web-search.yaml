@@ -33,8 +33,6 @@ spec:
         settings:
           native_config:
             plugins:
-              load:
-                paths: [/opt/nemoclaw/plugins/tavily]
               allow: [tavily]
               entries:
                 tavily:

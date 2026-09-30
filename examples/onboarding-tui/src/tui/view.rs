@@ -4,6 +4,7 @@
 use super::{
     app::{Step, Wizard},
     labels,
+    logo::BrandImage,
 };
 use ratatui::{
     Frame,
@@ -37,7 +38,12 @@ const TEXTURE_GRADIENT: [Color; 7] = [
 ];
 
 impl Wizard {
+    #[cfg(test)]
     pub(crate) fn render(&self, frame: &mut Frame<'_>) {
+        self.render_with_brand(frame, None);
+    }
+
+    pub(crate) fn render_with_brand(&self, frame: &mut Frame<'_>, brand: Option<BrandImage>) {
         let area = frame.area();
         frame.render_widget(
             Block::new().style(Style::new().bg(Color::Rgb(5, 10, 7))),
@@ -68,7 +74,7 @@ impl Wizard {
             Constraint::Length(if self.can_offer_delegation() { 3 } else { 2 }),
         ])
         .split(body);
-        self.render_logo(frame, rows[0]);
+        self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
         self.render_question(frame, rows[1]);
         if let Some(status) = &self.target_status {
             frame.render_widget(
@@ -81,7 +87,7 @@ impl Wizard {
         self.render_footer(frame, rows[3]);
     }
 
-    fn render_logo(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_logo(&self, frame: &mut Frame<'_>, area: Rect, brand: Option<BrandImage>) {
         let rows = [
             "███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗",
             "████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║",
@@ -92,7 +98,17 @@ impl Wizard {
         ];
         let mut lines = vec![Line::from("")];
         lines.extend(rows.into_iter().enumerate().map(|(index, row)| {
-            Line::from(Span::styled(row, Style::new().fg(LOGO_GRADIENT[index])))
+            let mut spans = Vec::new();
+            if let Some(brand) = brand {
+                if (2..=3).contains(&index) {
+                    spans.push(brand.placeholder(index - 2));
+                } else {
+                    spans.push(Span::raw("      "));
+                }
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(row, Style::new().fg(LOGO_GRADIENT[index])));
+            Line::from(spans)
         }));
         lines.push(texture_line(area.width as usize));
         frame.render_widget(Paragraph::new(Text::from(lines)), area);

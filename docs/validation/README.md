@@ -31,15 +31,34 @@ The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-li
 The [single-command Kubernetes validation](kubernetes-script-linux-amd64.md) records automatic builds, fresh kind setup, the three-agent lifecycle, and ownership-checked cluster cleanup.
 The [inference authentication preflight](kubernetes-inference-preflight-linux-amd64.md) records the direct host check that now runs before local setup.
 The [v1 integration checks](kubernetes-v1-integration-linux-amd64.md) record regression and real OpenTofu fixture results after adopting upstream Fabric ownership.
+The [OpenShift offline validation](openshift-offline.md) records profile checks and the remaining live qualification requirements.
 The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-amd64.md) records a fresh Linux AMD64 run with three hosted agent responses, export/reapply, destroy, and owned-cluster cleanup.
 
 | Behavior | Tests and Results |
 |---|---|
+| Relocated image launch, separate executable grants, unchanged apply, export, and teardown | [Linux ARM64 runtime consumer qualification](image-runtime-consumers-linux-arm64.md) |
+| Image-owned runtime metadata, executable resolution, and SDK catalog validation | [Linux ARM64 metadata qualification](image-runtime-metadata-linux-arm64.md) |
+| Failure-state boundaries, authored resource identities, restart guidance, and deferred proxy previews | [Linux ARM64 CLI results](cli-results-linux-arm64.md) |
+| Document validation paths, safe source positions, strict YAML tags, and conditional memory bounds | [Linux ARM64 configuration diagnostics](configuration-diagnostics-linux-arm64.md) |
+| Named OpenShell startup reasons, safe explanations, and failed-first-apply teardown | [Linux ARM64 sandbox startup qualification](sandbox-startup-linux-arm64.md) |
+| Fabric runtime error codes, named sandbox failures, and retained-state recovery | [Linux ARM64 runtime failure qualification](fabric-runtime-failure-linux-arm64.md) |
+| Named Fabric compatibility rejections, safe field details, and Pi model-token overrides | [Linux ARM64 compatibility diagnostics](fabric-compatibility-linux-arm64.md) |
+| Managed Docker gateway exit diagnostics, bounded readiness, and recovery | [Linux ARM64 gateway startup qualification](gateway-startup-linux-arm64.md) |
+| Runtime policy rejection, safe sandbox diagnostics, retained bindings, recovery, and destroy | [Linux ARM64 policy rejection qualification](policy-rejection-linux-arm64.md) |
+| Runtime-image version checks, pre-mutation rejection, and image-only failure cleanup | [Linux ARM64 compatibility fixtures](runtime-image-compatibility-linux-arm64.md) |
+| Complete resource plans, unverified catalogs/readiness, and retained apply gates | [Linux ARM64 completeness fixtures](plan-completeness-linux-arm64.md) |
+| Brave and Tavily export, authored integration scopes, shared registrations, and drift refusal | [Linux ARM64 search export fixtures](web-search-export-linux-arm64.md) |
+| Short and colliding credentials, bounded diagnostics, and CLI failure recovery | [Linux ARM64 redaction fixtures](credential-redaction-linux-arm64.md) |
+| OpenClaw model/settings updates, retained files, safe failure reporting, and explicit retry | [Linux ARM64 OpenClaw qualification](openclaw-reconfiguration-linux-arm64.md) |
+| Refused sandbox removal, image and policy changes preserve intent, export, and direct destroy | [Linux ARM64 refusal qualification](refused-apply-linux-arm64.md) |
 | Real gateway startup, capability readiness dependency, workspace creation, and bound-state recovery limit | [Linux ARM64 manual readiness test](gateway-readiness-linux-arm64.md) |
 | Deferred provider configuration and the bound-gateway recovery boundary | [Linux ARM64 bootstrap qualification](openshell-deferred-configuration-linux-arm64.md) |
 | Independent OpenShell HCL composition, lifecycle guards, recovery, and bootstrap limits | [Linux ARM64 provider qualification](openshell-provider-composition-linux-arm64.md) |
 | Independent Docker cache recovery and retained credential guards without SDK orchestration | [Linux ARM64 resource composition](docker-cache-credentials-linux-arm64.md) |
 | Docker gateway process recovery, independent credential identity, and retained namespace | [Linux ARM64 gateway lifecycle](docker-gateway-linux-arm64.md) |
+| OpenShell v0.1.2 managed Docker startup, supervisor callbacks, and isolation between gateways | [Linux ARM64 migration qualification](managed-docker-openshell-v012-linux-arm64.md) |
+| Stable imported provider revisions, sandbox readiness, and bundled Pi apply/export/destroy | [Linux ARM64 profile qualification](provider-profile-revisions-linux-arm64.md) |
+| Failed-first-apply teardown and corrected agent configuration with saved identities | [Linux ARM64 recovery qualification](failed-first-apply-linux-arm64.md) |
 | Docker-provider service compute, image replacement, recovery, and retained data | [Linux ARM64 lifecycle fixtures](docker-provider-linux-arm64.md) |
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |
 | Strict schema, defaults, resource addresses, digests and agent launch contracts | Checked-in fixtures in `crates/nemoclaw-sdk/tests/fixtures` and behavioral tests for maintained YAML examples |
@@ -49,6 +68,7 @@ The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-
 | Single DGX Station GB300, shared Qwen3-4B service, separate OpenClaw and Pi responses, no-op, export/reapply, and retained-storage destroy | [Station shared-model lifecycle](dgx-station-shared-model-linux-arm64.md) |
 | Model-specific runtime sources, licenses, and repeatable local artifact build | [Final runtime reproduction](rust-runtime-memory-fix-linux-arm64.json) |
 | Fabric native harness protocols and native OpenClaw settings | [Ten-harness SDK fixtures](rust-native-platforms.json), [seven native harness fixtures](rust-fabric-adapters-linux-arm64.json), [native OpenClaw](rust-native-openclaw-linux-arm64.json) |
+| Pinned Ollama version and synthetic cache inventory; bundled Hub downloader write limits | [Linux ARM64 model-cache qualification](model-cache-linux-arm64.md) |
 | Managed Ollama initial apply, no-op, export/reapply | [Real Docker/Ollama lifecycle](rust-ollama-linux-arm64.json) |
 | Ollama stopped-service recovery, independent retained storage, interrupted destroy and reapply | [Real provider/OpenTofu with deterministic fixtures](rust-ollama-recovery-linux-arm64.json) |
 | Deep Agents, Hermes and Fabric OpenClaw native responses, stable hosted runtime, no-op, export/reapply and teardown | [Live Fabric qualification](rust-fabric-live-linux-arm64.json) |

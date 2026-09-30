@@ -4,10 +4,11 @@
 # Run the Kubernetes Backend
 
 Select `runtime.provider: kubernetes` to deploy agents on an explicitly selected Kubernetes cluster.
+For the OpenShift profile, follow [OpenShift deployment](openshift.md).
 Use a managed development gateway to provision the platform and agents with one YAML and `nemoclaw apply`, or supply an existing external OpenShell gateway.
 Both paths use the SDK’s plan, apply, export, recovery, and destroy lifecycle and have no kind dependency.
 The [branch scope decision](design/scope.md#kubernetes-development-branch) separates this deployment path from the optional [local kind test fixture](testing/kubernetes-kind.md).
-The [Fabric lifecycle validation](validation/kubernetes-fabric-live-linux-amd64.md) records the managed path on Linux AMD64 kind after integration with the current Fabric runtime.
+The [Fabric lifecycle validation](validation/kubernetes-fabric-live-linux-amd64.md) records the managed path on Linux AMD64 kind after integration with the Fabric runtime at the recorded revision.
 That result covers its named revision and environment; it does not qualify other cluster environments.
 
 ## Ownership and Boundaries
@@ -44,7 +45,7 @@ The managed development path provisions its gateway, authentication, and optiona
 - Gateway trust, a valid OpenShell bearer token, and client certificate files for the mutual TLS connection shown in the examples.
 - Immutable agent images available to the target Linux nodes and compatible with their architecture, kernel isolation features, the gateway's runtime UID/GID, and the cluster's admission policy.
 
-Check the pinned OpenShell [cluster runtime requirements](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/docs/kubernetes/sandbox-runtime.mdx#check-cluster-requirements).
+Check the pinned OpenShell [cluster runtime requirements](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/docs/kubernetes/sandbox-runtime.mdx#check-cluster-requirements).
 They include unprivileged nested seccomp user notification, usable Landlock, Pod scheduling gates, and the safe `net.ipv4.ip_unprivileged_port_start=0` sysctl.
 The platform owner must control sandbox namespaces and OpenShell role labels to preserve network isolation.
 
@@ -55,6 +56,42 @@ The platform owner provides any registry pull credentials separately from gatewa
 Custom OpenShell installation, ingress, storage, and identity-provider configuration remain platform responsibilities when using an external gateway.
 The external gateway owner configures and retains its credential encryption key and backing storage.
 The managed development path creates its own retained encryption key and binds its gateway PVC identity.
+
+## Prepare Image Metadata
+
+Both managed and external cluster gateways require image-owned Fabric runtime metadata at plan and apply time.
+Build the image with `image/build_fabric.py`; direct Docker Bake builds do not attach the required installed catalog.
+From the repository root on the image build host, export metadata for the exact immutable reference:
+
+```sh
+python3 image/export_metadata.py \
+  --image "$NC_AGENT_IMAGE" \
+  --output /absolute/private/path/image-metadata.json
+```
+
+The exporter reads the local Docker image store without pulling or publishing images.
+It requires the original OCI manifest bytes, retained by a containerd image store; legacy Docker save archives without those bytes are rejected.
+For an existing OCI archive, add `--archive /absolute/path/image.tar --platform linux/amd64` (or `linux/arm64`) to export without contacting Docker.
+The artifact contains the original index when present, the selected Linux manifest, and its image configuration, including labels and image environment defaults.
+An index may contain one Linux platform plus attestations; indexes with multiple Linux platform manifests are rejected so discovery cannot select a different runtime from the deployed image.
+It excludes filesystem layers but is not a secrets sanitizer; never build credentials into image metadata.
+Keep the artifact with the matching image and transfer it through the customer's artifact process.
+Publishing or loading the image for cluster nodes remains a separate operation.
+
+On the deployment client, set the reference in each sandbox:
+
+```yaml
+image:
+  ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+```
+
+Set `NEMOCLAW_AGENT_IMAGE_METADATA` to the absolute path of that file.
+The SDK verifies its digest chain against `image.ref` before using the installed catalog; a missing, altered, mismatched, or oversized artifact fails discovery.
+Deployment does not inspect a Docker socket or contact an image registry for metadata.
+Choose an image platform matching the cluster nodes; metadata validation alone does not establish node compatibility.
+Destroy uses retained resource bindings and does not require this artifact or its environment variable.
+Older intent without `image.metadata` remains readable for teardown and export; planning a deployment requires the artifact.
 
 ## Provision a Managed Development Gateway
 
@@ -101,6 +138,7 @@ From the directory containing your private `deployment.yaml`, supply the same ho
 
 ```sh
 export NEMOCLAW_CLUSTER_KUBECONFIG=/absolute/private/path/kubeconfig
+export NEMOCLAW_AGENT_IMAGE_METADATA=/absolute/private/path/image-metadata.json
 # Populate NVIDIA_INFERENCE_API_KEY privately through your shell or secret manager.
 nemoclaw plan --state-dir ./state deployment.yaml
 nemoclaw apply --state-dir ./state deployment.yaml
@@ -132,7 +170,7 @@ It does not qualify an Apple silicon client or other clusters.
 ## Use an Existing Gateway
 
 Start with the [external-gateway example](../examples/kubernetes/external-gateway.yaml).
-Supply a fresh deployment UID, the exact gateway endpoint, credential references, a cluster-accessible immutable agent image, and an inference endpoint reachable from inside the sandbox.
+Supply a fresh deployment UID, the exact gateway endpoint, credential references, a cluster-accessible immutable agent image, its [metadata artifact](#prepare-image-metadata), and an inference endpoint reachable from inside the sandbox.
 The gateway and its Agent Sandbox prerequisite must already be installed by the platform owner.
 An HTTPS gateway preserves certificate verification and uses separate bearer and mTLS references.
 The bearer token authenticates the user; a client TLS certificate alone is insufficient.
@@ -201,7 +239,7 @@ Before applying, replace the image placeholder in every sandbox and supply one f
 Use one SDK state directory for all three sandboxes in that deployment.
 Before the first apply, choose the agent count by adding or removing complete `spec.sandboxes` entries; keep sandbox names unique and retain the selected network policy on each entry.
 The examples are checked by the schema and parser.
-The [three-agent live validation](validation/kubernetes-managed-three-agents-linux-amd64.md) records managed provisioning, a real hosted response from every agent, export, unchanged reapply, and destroy before integration with the current Fabric runtime.
+The [three-agent live validation](validation/kubernetes-managed-three-agents-linux-amd64.md) records managed provisioning, a real hosted response from every agent, export, unchanged reapply, and destroy before integration with the Fabric runtime at the recorded revision.
 
 ### Reuse the Docker Hosted NVIDIA Profile
 

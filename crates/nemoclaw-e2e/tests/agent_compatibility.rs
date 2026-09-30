@@ -1,18 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::openshell::{command, environment, policy, policy_matches};
+use nemoclaw_e2e::image_runtime::{binding, policy};
+use nemoclaw_provider::openshell::policy_json;
+fn policy_matches(actual: &openshell_core::proto::SandboxPolicy) -> bool {
+    policy_json(actual).ok() == policy_json(&policy()).ok()
+}
 
 #[test]
 fn fabric_launch_preserves_caller_identity_without_selecting_or_invoking_an_adapter() {
-    let launch = command("fabric");
-    assert_eq!(launch.last().map(String::as_str), Some("serve"));
+    let binding = binding("fixture");
+    let launch = binding.command("serve", &["--agent", "researcher"]);
+    assert!(launch.ends_with(&["serve".into(), "--agent".into(), "researcher".into()]));
     assert!(
         !launch
             .iter()
             .any(|arg| matches!(arg.as_str(), "invoke" | "probe" | "--message"))
     );
     for name in ["researcher", "writer"] {
-        let env = environment(name, "fabric");
+        let env = binding.environment(name);
         assert_eq!(env["NEMOCLAW_AGENT_NAME"], name);
         assert_eq!(env["NEMOCLAW_ANONYMOUS_API_KEY"], "unused");
         for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
@@ -21,8 +26,6 @@ fn fabric_launch_preserves_caller_identity_without_selecting_or_invoking_an_adap
         assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
         assert!(!env.contains_key("MSWEA_COST_TRACKING"));
     }
-    assert!(command("").is_empty());
-    assert!(environment("main", "").is_empty());
 }
 
 #[test]

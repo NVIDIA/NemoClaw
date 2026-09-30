@@ -10,16 +10,16 @@ mod plan;
 mod reporting;
 pub use reporting::{
     DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, ResourceInventoryEntry,
+    ResourceSource,
 };
 mod runtime;
 mod timing;
 use crate::{
-    CancellationToken, Error,
+    CancellationToken, EnvironmentSecrets, Error, Secrets,
     backend::Row,
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
-    openshell::{EnvironmentSecrets, Secrets},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -36,6 +36,9 @@ pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
+    /// A mutating OpenTofu subprocess has launched. Emitted synchronously once
+    /// per launch, before child output; this does not prove any change completed.
+    MutationStarted,
     Download(crate::DownloadProgress),
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
@@ -77,13 +80,32 @@ pub struct Change {
     pub resource: String,
     pub actions: Vec<String>,
 }
+/// Gateway and workspace selectors from validated intent, not proof of access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentConnection {
+    pub gateway_endpoint: String,
+    pub workspace: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationResult {
     pub outcome: Outcome,
     pub changes: Vec<Change>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<DeploymentConnection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
+    /// Known graph resources in a stage whose OpenTofu plan is not yet available.
+    /// These are not planned actions and do not contribute to `changes`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_resources: Vec<String>,
+    /// Authored definition paths for opaque, scoped provider registrations.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resource_sources: BTreeMap<String, ResourceSource>,
+    /// Supplemental checks that do not make a resource plan incomplete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unverified: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,7 +118,11 @@ impl OperationResult {
         Self {
             outcome: Outcome::Planned,
             changes,
+            connection: None,
             deferred: Vec::new(),
+            deferred_resources: Vec::new(),
+            resource_sources: BTreeMap::new(),
+            unverified: Vec::new(),
             retained: Vec::new(),
             health: Vec::new(),
             discovery: DiscoveryReport::default(),
@@ -244,17 +270,49 @@ impl Deployment {
                 );
             }
         }
+        let bindings = if (record.pending() && !record.runtime_pending())
+            || record.digest != document.digest()
+        {
+            self.state_bindings(
+                &bundle,
+                &store,
+                &record.document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?
+        } else {
+            BTreeMap::new()
+        };
+        record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
+        record.validate_bound_sandboxes(&document, &bindings)?;
+        let connection = Some(DeploymentConnection {
+            gateway_endpoint: document.spec.gateway.endpoint().into(),
+            workspace: document.workspace(),
+        });
         let (runtime_changes, deferred, runtime_discovery, mut discovery) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
         if deferred {
             let mut result = OperationResult::planned(runtime_changes);
+            result.describe_sources(&document)?;
+            result.deferred_resources = compile::targets(&document, &record.generations)?
+                .into_iter()
+                .filter(|target| !target.address.starts_with("data."))
+                .map(|target| target.address)
+                .collect();
+            result.deferred_resources.sort();
+            result.connection = connection;
             result.deferred = runtime_discovery;
             discovery.credentials =
                 crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
             append_credential_deferrals(&mut result.deferred, &discovery.credentials);
             discovery.gateway_target(&document);
+            result.unverified = discovery.unverified();
+            result.unverified.sort();
+            result.unverified.dedup();
             result.discovery = discovery;
             result
                 .deferred
@@ -298,6 +356,8 @@ impl Deployment {
         let mut changes = runtime_changes;
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
+        result.describe_sources(&document)?;
+        result.connection = connection;
         if !apply {
             let retained = compile::compile_teardown(
                 &document,
@@ -323,6 +383,9 @@ impl Deployment {
             };
             append_credential_deferrals(&mut result.deferred, &discovery.credentials);
             discovery.gateway_target(&document);
+            result.unverified = discovery.unverified();
+            result.unverified.sort();
+            result.unverified.dedup();
             result.discovery = discovery;
             result.deferred.sort();
             result.deferred.dedup();
@@ -460,6 +523,7 @@ impl Deployment {
             format!("provider_installation {{\n filesystem_mirror {{ path = {quoted} }}\n}}\n")
                 .as_bytes(),
         )
+        .map_err(Into::into)
     }
     async fn tofu(
         &self,

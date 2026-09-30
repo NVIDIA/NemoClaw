@@ -5,20 +5,24 @@ use crate::config::ComputeDriver;
 
 fn assert_kubernetes_rejected_by_managed_entrypoints(mut spec: Spec) {
     spec.validate().unwrap();
-    spec.compute_driver = ComputeDriver::Kubernetes;
-    assert!(matches!(
-        spec.validate(),
-        Err(Error::Conflict("unsupported managed compute driver"))
-    ));
-    assert!(spec.json().is_err());
-    assert!(spec.container("/owned-data").is_err());
-    assert!(spec.runtime_configuration().is_err());
+    for driver in [ComputeDriver::Kubernetes, ComputeDriver::OpenShift] {
+        spec.compute_driver = driver;
+        assert!(matches!(
+            spec.validate(),
+            Err(Error::Conflict("unsupported managed compute driver"))
+        ));
+        assert!(spec.json().is_err());
+        assert!(spec.container("/owned-data").is_err());
+        assert!(spec.runtime_configuration().is_err());
+    }
 }
 
 #[test]
 fn kubernetes_cannot_select_a_managed_gateway() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     assert!(spec.process.is_none());
     assert_kubernetes_rejected_by_managed_entrypoints(spec);
@@ -26,8 +30,10 @@ fn kubernetes_cannot_select_a_managed_gateway() {
 
 #[test]
 fn kubernetes_cannot_select_a_managed_service_process() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
     assert!(spec.process.is_some());
     assert_kubernetes_rejected_by_managed_entrypoints(spec);
@@ -35,8 +41,10 @@ fn kubernetes_cannot_select_a_managed_service_process() {
 
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let mut spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let before = serde_json::to_value(spec.container("/owned").unwrap()).unwrap();
@@ -56,9 +64,11 @@ fn image_pull_policy_does_not_change_container_configuration() {
     }
 }
 #[test]
-fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+fn gateway_configuration_preserves_driver_namespace_images_and_signing_paths() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let data_path = "/owned data/quoted\"directory";
     let config: toml::Value = toml::from_str(&spec.gateway_config(data_path)).unwrap();
@@ -69,10 +79,7 @@ fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
         Some("docker")
     );
     let driver = &openshell["drivers"]["docker"];
-    assert_eq!(
-        driver["network_name"].as_str(),
-        Some(spec.network().as_str())
-    );
+    assert_eq!(driver["sandbox_label"].as_str(), Some(spec.name.as_str()));
     assert_eq!(
         driver["sandbox_runtime_image"].as_str(),
         Some(SANDBOX_RUNTIME_IMAGE)
@@ -93,8 +100,10 @@ fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
 }
 #[test]
 fn invalid_placement_network_does_not_panic() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut value: serde_json::Value =
         serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
     value["process"]["engine"] = json!("ssh://host");
@@ -104,8 +113,10 @@ fn invalid_placement_network_does_not_panic() {
 }
 #[test]
 fn runtime_configuration_handles_a_gateway_without_panicking() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     assert!(spec.process.is_none());
     assert!(matches!(
@@ -116,8 +127,10 @@ fn runtime_configuration_handles_a_gateway_without_panicking() {
 
 #[test]
 fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
     let expected = spec.process.as_ref().unwrap().configuration.clone();
     assert_eq!(spec.runtime_configuration().unwrap(), expected);
@@ -130,8 +143,10 @@ fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
 
 #[test]
 fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let restored: Spec = serde_json::from_str(&spec.json().unwrap()).unwrap();
@@ -170,8 +185,10 @@ fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
 
 #[test]
 fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let launch = spec.container("/owned-data").unwrap();
@@ -298,33 +315,60 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+fn managed_gateway_uses_driver_default_host_callback_without_legacy_docker_fields() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
-        let configuration = spec.gateway_config("/owned-data");
+        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned-data")).unwrap();
+        let driver = &config["openshell"]["drivers"][spec.compute_driver.as_str()];
         if spec.compute_driver == ComputeDriver::Docker {
-            assert!(
-                !configuration.contains("grpc_endpoint ="),
-                "Docker must derive the supervisor callback from its managed bridge"
-            );
-            assert!(configuration.contains(&format!(
-                "host_gateway_ip = {:?}",
-                spec.gateway_address().unwrap()
-            )));
+            assert!(driver.get("host_gateway_ip").is_none());
+            assert!(driver.get("network_name").is_none());
+            // The driver derives loopback and the actual listen port at startup.
+            // Storage uses a normalized port and must not freeze that callback.
+            assert!(driver.get("grpc_endpoint").is_none());
         } else {
-            assert!(
-                configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint))
+            assert_eq!(
+                driver["grpc_endpoint"].as_str(),
+                Some(spec.gateway.endpoint.as_str())
             );
         }
     }
 }
 
 #[test]
+fn managed_docker_gateway_namespaces_are_stable_and_distinct() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let first: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let namespace = |spec: &Spec| {
+        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
+        config["openshell"]["drivers"]["docker"]["sandbox_label"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let mut replacement = first.clone();
+    replacement.gateway.endpoint = "http://127.0.0.1:19002".into();
+    assert_eq!(namespace(&first), namespace(&replacement));
+    let mut second = first.clone();
+    second.name = "nc-0123456789abcdef-gateway".into();
+    second.owner = "12345678-1234-1234-1234-123456789abc".into();
+    assert_ne!(namespace(&first), namespace(&second));
+    assert_ne!(namespace(&first), "default");
+}
+
+#[test]
 fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let valid: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     for field in ["owner", "generation", "layout", "kind", "name"] {
         let mut spec = valid.clone();
@@ -345,8 +389,10 @@ fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
 
 #[test]
 fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     spec.compute_driver = ComputeDriver::Podman;
     let network = "a".repeat(64);
@@ -368,8 +414,10 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
 
 #[test]
 fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
     for fixture in fixtures {
         let current: serde_json::Value =
             serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();

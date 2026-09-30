@@ -82,6 +82,10 @@ class ModelTests(unittest.TestCase):
     def test_generated_configuration_uses_only_explicit_kubernetes_and_private_inference(self):
         config = model.configuration("nc-test@sha256:" + "a" * 64, "10.96.1.2", "openclaw")
         self.assertEqual(config["spec"]["sandboxes"][0]["runtime"]["provider"], "kubernetes")
+        self.assertEqual(
+            config["spec"]["sandboxes"][0]["image"]["metadata"],
+            {"env": "NEMOCLAW_AGENT_IMAGE_METADATA"},
+        )
         self.assertEqual(config["spec"]["gateway"]["management"], "external")
         self.assertEqual(
             config["spec"]["inferenceProviders"][0]["endpoint"], "http://10.96.1.2:11434/v1"

@@ -27,7 +27,7 @@ Complete the [build prerequisites](build.md).
 From the repository root:
 
 1. Add a parser/schema test for the accepted or rejected input in [config_schema.rs](../crates/nemoclaw-sdk/tests/config_schema.rs).
-2. Change the [configuration types](../crates/nemoclaw-sdk/src/config/types.rs), [service configuration types](../crates/nemoclaw-sdk/src/services/installers/vllm/config.rs), [inline recipe types](../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/inline.rs), or their shared constraints.
+2. Change the [configuration types](../crates/nemoclaw-sdk/src/config/types.rs), [service configuration types](../crates/nemoclaw-sdk/src/services/installers/vllm/config.rs), [inline recipe types](../crates/nemoclaw-runtime/src/vllm/recipes/inline.rs), or their shared constraints.
 3. Describe the field beside its Rust declaration, including units and conditional behavior.
 4. If needed, update the [conditional schema rules](../crates/nemoclaw-sdk/src/config/schema/validation.rs).
 5. Regenerate the artifacts:
@@ -85,7 +85,12 @@ The pinned OpenShell validator continues to own its policy semantics.
 For a semantic check outside the schema, document the distinction in the generated reference and test both acceptance boundaries.
 
 `Document::parse` owns YAML syntax restrictions and invokes both validation stages.
-Schema diagnostics identify trusted contract paths and constraints without echoing input values, unknown properties, or user-supplied map keys.
+Schema diagnostics identify document fields, array indices, and constraints without echoing rejected values or unknown properties.
+Valid names in the declared service, harness, inference, and integration collections identify the failing definition; other map keys appear as `[entry]`.
+Parsing a document also reports the source line and column for schema failures and YAML syntax errors.
+The parser rejects all explicit YAML tags, including core tags such as `!!binary` and `!!str`; quoted strings containing tag text remain ordinary values.
+The reference generator renders presence-conditioned scalar bounds beside the containing field table, including the conditional `kvCacheGiB` limits.
+Keep other conditional behavior in the owning Rust field descriptions when the generator cannot express its schema shape.
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
 The [reference's validation limits](reference/configuration.md#validation-beyond-the-schema) list those boundaries.
 

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
-    openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
 use std::{

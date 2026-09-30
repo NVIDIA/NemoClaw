@@ -19,6 +19,7 @@ mod evidence;
 mod facts;
 mod graph;
 mod guided;
+mod journey;
 mod projection;
 
 pub use answers::{
@@ -35,6 +36,7 @@ pub use evidence::{
 pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
+pub use journey::{PartialTemplate, TargetFacts, TargetStatus};
 pub use projection::Session;
 
 mod settings;

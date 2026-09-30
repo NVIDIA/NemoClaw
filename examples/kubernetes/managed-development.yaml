@@ -36,6 +36,7 @@ spec:
       harness:
         kind: nvidia.fabric.openclaw
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes
@@ -70,6 +71,7 @@ spec:
       harness:
         kind: nvidia.fabric.openclaw
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes
@@ -104,6 +106,7 @@ spec:
       harness:
         kind: nvidia.fabric.openclaw
       image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: kubernetes

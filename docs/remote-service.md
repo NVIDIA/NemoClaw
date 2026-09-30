@@ -18,7 +18,7 @@ It uses private HTTP; enable [managed bearer authentication](inference.md#authen
 Omission preserves unauthenticated serving.
 
 The remote host must satisfy its service's hardware contract and provide Docker with NVIDIA container GPU access.
-The runtime image performs hardware and memory observation inside the container; normal deployment does not require the SDK's Python SSH capacity collector.
+The runtime image performs hardware and memory observation inside the container; normal deployment does not require the provider's optional Python SSH capacity collector.
 The existing example uses Linux ARM64 DGX Spark; [the Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
 Docker resolves named cache and credential mounts in the selected daemon's storage namespace; it never substitutes the client host's storage path.

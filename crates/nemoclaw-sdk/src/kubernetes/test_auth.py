@@ -25,6 +25,13 @@ class AuthTests(unittest.TestCase):
             receipt={},
             save=lambda: None,
             write=self.write,
+            pod_security_context=lambda: {
+                "runAsNonRoot": True,
+                "runAsUser": 10001,
+                "runAsGroup": 10001,
+                "fsGroup": 10001,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
         )
         self.auth = auth.DevelopmentAuth(self.owner)
 

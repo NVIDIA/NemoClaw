@@ -10,7 +10,13 @@ The [accepted scope](scope.md) defines its requirements.
 
 Model artifacts, hardware capacity, and process lifetime change independently.
 Keeping their owners separate lets fixture processes exercise supervision without a model or GPU.
-The runtime builds one `nemoclaw-runtime` executable with these boundaries:
+The `nemoclaw-runtime` crate owns the serving contract and builds one supervisor executable.
+Its library defines model and recipe settings, hardware requirements, defaults, validation, and schema fragments.
+The SDK consumes that contract with execution disabled and adds deployment fields such as image, container, placement, and publication.
+Those deployment fields are excluded from runtime JSON; the supervisor validates the serving contract before starting work.
+The runtime does not depend on the SDK, provider, OpenShell, Fabric, or Docker transport.
+
+The executable has these boundaries:
 
 | Concern | Owner |
 |---|---|
@@ -46,7 +52,7 @@ stateDiagram-v2
 ```
 
 The loading deadline is separate from download and preparation limits.
-The [supervisor](../../crates/nemoclaw-sdk/src/services/runtime/supervisor.rs) distinguishes pressure, observation failures, closed sample streams, and operator trips so recovery addresses the cause.
+The [supervisor](../../crates/nemoclaw-runtime/src/execution/supervisor.rs) distinguishes pressure, observation failures, closed sample streams, and operator trips so recovery addresses the cause.
 A protective stop retains data and bindings and must not trigger an automatic restart loop that repeats the same memory demand.
 Explicit apply may restart or replace disposable compute; the runtime rechecks capacity before serving.
 See [runtime recovery](../models.md#diagnose-and-recover-a-stopped-runtime) for operator steps.
@@ -74,6 +80,21 @@ At startup, the runtime resolves a checksummed snapshot and retains resumable do
 Orchestration consumes runtime status instead of repeating artifact verification.
 Authentication or transport failures, incomplete inventories, and changed artifacts are errors, never absence.
 See [retained model files](../models.md#retained-model-files) for format compatibility.
+
+The shared downloader remains in `nemoclaw-runtime` because the evaluated owner clients do not preserve all of these guarantees.
+The [pinned ARM64 vLLM image](../../runtimes/vllm/Dockerfile) contains `huggingface_hub` 1.28.0.
+Its [download API](https://github.com/huggingface/huggingface_hub/blob/v1.28.0/src/huggingface_hub/file_download.py) accepts a commit revision and resumes transfers, but its HTTP path checks the expected size after writing and resolves local cache paths through symlinks.
+Verification after that download would not preserve NemoClaw's bounded writes and cache-path checks.
+The retained implementation also bounds metadata reads, verifies checksums, preserves partial transfers, and treats authentication failures as errors.
+
+The [Ollama 0.34.0 pull implementation](https://github.com/ollama/ollama/blob/d8ab4b4f0ca24b51d3a46b3bf4f462e58ce66b1f/server/images.go) fetches a tag without accepting an expected manifest digest.
+The retained downloader targets the private cache layout of the [pinned Ollama 0.34.0 image](../../runtimes/ollama/Dockerfile).
+Before loading, its [inventory check](../../crates/nemoclaw-runtime/src/ollama/runtime/observation.rs) requires the running Ollama to report the authored model name and digest.
+A missing model or mismatched digest stops startup; the runtime does not repair the cache by pulling a mutable tag.
+Custom images must satisfy this same behavioral contract; a version string alone does not establish compatibility.
+The [cache qualification](../validation/model-cache-linux-arm64.md) verifies that this image reads NemoClaw's synthetic cache with the exact expected name, digest, and size.
+It also demonstrates that the pinned Hub client writes beyond the expected size before rejecting an oversized response.
+These checks use no GPU or inference; they do not establish model compatibility.
 
 Model-specific preparation belongs in an [inline recipe](recipes.md).
 Ordinary models must not inherit another model's memory estimates, parsers, tuning, or preparation tools.

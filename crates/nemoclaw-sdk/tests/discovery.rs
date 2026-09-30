@@ -3,10 +3,11 @@
 #![cfg(unix)]
 #[path = "../../test-support/docker.rs"]
 mod transport;
+use nemoclaw_provider::{
+    docker::Connections, engine_observation::observe_engine, engine_observation::observe_fabric,
+};
 use nemoclaw_sdk::{
-    config::ComputeDriver,
-    discovery::{DiscoveryRequest, ObservationStatus, observe_engine, observe_fabric},
-    docker::Connections,
+    config::ComputeDriver, discovery::DiscoveryRequest, discovery::ObservationStatus,
 };
 use serde_json::json;
 
@@ -175,7 +176,11 @@ fn external_gateway_discovery_never_substitutes_the_client_engine_for_a_service_
         "ssh://operator@192.168.1.50"
     );
     assert!(graph["data"].get("nemoclaw_engine_capabilities").is_none());
-    assert!(graph["data"].get("nemoclaw_fabric_capabilities").is_none());
+    assert_eq!(
+        graph["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"]["engine"],
+        ""
+    );
+    assert!(graph["data"].get("nemoclaw_engine_capabilities").is_none());
     assert_eq!(
         graph["data"]["nemoclaw_target_hardware"]
             .as_object()

@@ -109,7 +109,7 @@ pub(super) fn command_environment() -> BTreeMap<String, String> {
         .collect()
 }
 
-pub(super) async fn invoke(
+pub async fn invoke(
     action: &str,
     spec: &Spec,
     directory: &Path,

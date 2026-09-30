@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "sdk")]
 use std::{fs, path::Path, process::Command};
 
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";

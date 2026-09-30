@@ -11,3 +11,7 @@ Archive SHA-256: `9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29
 NemoClaw installs the published package beside OpenClaw and links its plugin SDK dependency to the pinned runtime.
 The package archive omits an OpenClaw license file; the image retains the [upstream MIT license](https://github.com/openclaw/openclaw/blob/v2026.9.4/LICENSE) beside the plugin as `LICENSE`.
 The bundled TypeBox dependency retains its upstream license in `node_modules/typebox/license`.
+
+2026-09-29: install the unchanged archive with OpenClaw’s native plugin installer.
+OpenClaw owns extraction and peer dependency linking; the image packages its output in the native bundled-plugin directory.
+Runtime configuration selects plugin IDs without explicit load paths.

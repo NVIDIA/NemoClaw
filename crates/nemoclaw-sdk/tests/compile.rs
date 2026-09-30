@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 
 use nemoclaw_sdk::{compile::compile, config::Document};
 use std::collections::BTreeMap;
@@ -175,8 +177,8 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     }
     let resources = &graph["resource"];
     let workspace = &resources["nemoclaw_workspace"]["deployment"];
-    let provider = &resources["nemoclaw_provider"]["inference_remote"];
-    let profile = &resources["nemoclaw_provider_profile"]["inference_remote"];
+    let provider = &provider_scope::resource(&resources["nemoclaw_provider"], "remote");
+    let profile = &provider_scope::resource(&resources["nemoclaw_provider_profile"], "remote");
     let sandbox = &resources["nemoclaw_sandbox"]["worker"];
     assert_eq!(workspace["name"], document.workspace());
     for (resource, generation) in [
@@ -200,13 +202,21 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         provider["depends_on"]
             .as_array()
             .unwrap()
-            .contains(&json!("nemoclaw_provider_profile.inference_remote"))
+            .contains(&json!(provider_scope::address(
+                &resources["nemoclaw_provider_profile"],
+                "provider_profile",
+                "remote"
+            )))
     );
     assert!(
         sandbox["depends_on"]
             .as_array()
             .unwrap()
-            .contains(&json!("nemoclaw_provider.inference_remote"))
+            .contains(&json!(provider_scope::address(
+                &resources["nemoclaw_provider"],
+                "provider",
+                "remote"
+            )))
     );
     for resource in [provider, profile, sandbox] {
         assert_eq!(
@@ -314,4 +324,60 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
         graph["resource"]["nemoclaw_sandbox"]["assistant"]["agent_runtime"],
         "fabric"
     );
+}
+
+#[test]
+fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes() {
+    use nemoclaw_sdk::compile::targets;
+    let document =
+        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let before = targets(&document, &generations).unwrap();
+    let original = before
+        .iter()
+        .find(|target| target.kind == "provider")
+        .unwrap();
+    let mut changed = document.clone();
+    let mut second = changed.spec.sandboxes[0].clone();
+    second.name = "second".into();
+    second.image.ref_ = format!("fixture/other@sha256:{}", "b".repeat(64));
+    changed.spec.sandboxes.push(second);
+    let after = targets(&changed, &generations).unwrap();
+    assert!(after.contains(original));
+    assert_eq!(
+        after
+            .iter()
+            .filter(|target| target.kind == "provider")
+            .count(),
+        2
+    );
+    assert_eq!(
+        changed.selected_inference_providers().unwrap().len(),
+        1,
+        "authored provider selection is independent of registration count"
+    );
+    assert_eq!(changed.inference_provider_mut().unwrap().name, "local");
+    let graph = compile(&changed, &generations, "0.1.0").unwrap();
+    for name in ["assistant", "second"] {
+        assert!(
+            graph["resource"]["nemoclaw_sandbox"][name]["runtime_json"]
+                .as_str()
+                .unwrap()
+                .contains("nemoclaw_fabric_capabilities")
+        );
+    }
+    for profile in graph["resource"]["nemoclaw_provider_profile"]
+        .as_object()
+        .unwrap()
+        .values()
+    {
+        assert!(
+            profile["binaries_json"]
+                .as_str()
+                .unwrap()
+                .contains("nemoclaw_fabric_capabilities")
+        );
+    }
 }

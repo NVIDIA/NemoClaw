@@ -11,12 +11,20 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
-    #[error("Fabric readiness could not be established; resources retained")]
-    Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
     #[error(
-        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
+        "ordinary apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
+    )]
+    SandboxChangeRefused {
+        sandbox: String,
+        action: &'static str,
+    },
+    #[error("gateway is incompatible with this configuration: {0}")]
+    GatewayIncompatible(String),
+    #[error(
+        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}{guidance}; resources retained",
+        guidance = sandbox_startup_guidance(.reason)
     )]
     SandboxStartup {
         phase: &'static str,
@@ -40,7 +48,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn into_observation(self) -> crate::ObservationError {
+    pub fn into_observation(self) -> crate::ObservationError {
         match self {
             Self::Observation(error) => error,
             Self::SandboxStartup {
@@ -54,5 +62,51 @@ impl Error {
             },
             _ => crate::ObservationError::Query,
         }
+    }
+}
+
+impl From<nemoclaw_runtime::Error> for Error {
+    fn from(error: nemoclaw_runtime::Error) -> Self {
+        match error {
+            nemoclaw_runtime::Error::Configuration(e) => Self::Configuration(e),
+            nemoclaw_runtime::Error::Hardware(e) => {
+                Self::Observation(crate::ObservationError::Hardware(e))
+            }
+            nemoclaw_runtime::Error::State(e) => Self::State(e),
+            nemoclaw_runtime::Error::Conflict(e) => Self::Conflict(e),
+            nemoclaw_runtime::Error::Protection(diagnostic) => Self::Execution {
+                operation: "memory protection".into(),
+                diagnostic,
+                postcondition_failures: None,
+            },
+            nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
+            nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,
+            nemoclaw_runtime::Error::Observation(e) => Self::Observation(match e {
+                nemoclaw_runtime::ObservationError::Authentication => {
+                    crate::ObservationError::Authentication
+                }
+                nemoclaw_runtime::ObservationError::Permission => {
+                    crate::ObservationError::Permission
+                }
+                nemoclaw_runtime::ObservationError::Query => crate::ObservationError::Query,
+                nemoclaw_runtime::ObservationError::Incomplete => {
+                    crate::ObservationError::Incomplete
+                }
+                nemoclaw_runtime::ObservationError::Transport => crate::ObservationError::Transport,
+            }),
+        }
+    }
+}
+
+/// Explain only recognized reason codes; gateway message text may contain secrets.
+pub(crate) fn sandbox_startup_guidance(reason: &str) -> &'static str {
+    match reason {
+        "IdentityResolutionFailed" => {
+            "; workload user or group could not be resolved in the pinned image; check policy.process.run_as_user and run_as_group"
+        }
+        "ControlSupervisorStartFailed" => {
+            "; control supervisor could not start; check the sandbox policy and attached providers"
+        }
+        _ => "",
     }
 }

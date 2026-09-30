@@ -10,12 +10,17 @@ use nemoclaw_sdk::{Error, OperationResult, Outcome};
 use std::{
     io::IsTerminal,
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-/// Presentation context only: operation facts remain owned by the SDK.
+/// Presentation context and mutation facts reported by the SDK.
 pub(crate) struct RenderContext {
     operation: &'static str,
+    mutation_started: Arc<AtomicBool>,
     state_dir: PathBuf,
     input: Option<PathBuf>,
     verbose: bool,
@@ -36,6 +41,7 @@ impl RenderContext {
         };
         Self {
             operation,
+            mutation_started: Arc::new(AtomicBool::new(false)),
             input,
             state_dir: cli.state_dir.clone(),
             verbose: cli.verbose,
@@ -49,6 +55,21 @@ impl RenderContext {
                     && !matches!(cli.progress, crate::args::ProgressMode::Plain),
             ),
         }
+    }
+
+    pub(crate) fn progress(
+        &self,
+        display: Arc<dyn Fn(nemoclaw_sdk::Progress) + Send + Sync>,
+    ) -> Arc<dyn Fn(nemoclaw_sdk::Progress) + Send + Sync> {
+        let mutation_started = self.mutation_started.clone();
+        Arc::new(move |event| {
+            // Record synchronously even when progress rendering is disabled or
+            // its display channel is closed. Later stages never reset this fact.
+            if event == nemoclaw_sdk::Progress::MutationStarted {
+                mutation_started.store(true, Ordering::Relaxed);
+            }
+            display(event);
+        })
     }
 
     pub(crate) fn header(&self) -> String {
@@ -129,7 +150,33 @@ pub(crate) fn resource_label(address: &str) -> String {
         "nemoclaw_gateway_storage.runtime" => "gateway storage".to_owned(),
         "nemoclaw_workspace.deployment" => "OpenShell workspace".to_owned(),
         _ => {
+            // Search registration hashes distinguish credentials in state. The
+            // default label names the integration; verbose retains its address.
+            if address.starts_with("nemoclaw_provider.web_search_tavily_") {
+                return "web search provider/tavily".into();
+            }
+            if let Some(name) = address
+                .strip_prefix("nemoclaw_inference_storage.inference_")
+                .and_then(|name| name.strip_suffix("_auth"))
+            {
+                return terminal_text(&format!("inference credentials/{name}"));
+            }
             let mappings = [
+                ("nemoclaw_agent_configuration.", "agent runtime/"),
+                (
+                    "nemoclaw_provider_profile.web_search_",
+                    "web search profile/",
+                ),
+                ("nemoclaw_ollama_external_model.", "external Ollama model/"),
+                ("nemoclaw_ollama_proxy_storage.", "proxy credentials/"),
+                ("docker_container.ollama_proxy_", "ollama proxy/"),
+                ("docker_container.ollama_service_", "ollama/"),
+                ("docker_volume.ollama_service_storage_", "model cache/"),
+                ("nemoclaw_ollama_service_storage.", "ollama credentials/"),
+                (
+                    "nemoclaw_inference_storage.inference_",
+                    "inference credentials/",
+                ),
                 (
                     "docker_container.inference_service_inference_",
                     "inference/",
@@ -177,6 +224,23 @@ fn styled_action(actions: &[String], palette: Palette) -> String {
     palette.paint(&action_label(actions), tone)
 }
 
+fn result_resource_label(result: &OperationResult, address: &str) -> String {
+    if let Some(source) = result.resource_sources.get(address) {
+        let kind = if address.starts_with("nemoclaw_provider_profile.") {
+            "provider profile"
+        } else {
+            "provider"
+        };
+        format!(
+            "{kind}/{} at {}",
+            terminal_text(&source.name),
+            terminal_text(&source.path)
+        )
+    } else {
+        resource_label(address)
+    }
+}
+
 fn operation(result: &OperationResult, context: &RenderContext) -> String {
     let planned = result.outcome == Outcome::Planned;
     let mut output = if planned {
@@ -221,6 +285,13 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some((heading, rest)) = output.split_once('\n') {
         output = format!("{}\n{rest}", context.output_palette.paint(heading, tone));
     }
+    if let Some(connection) = &result.connection {
+        output.push_str(&format!(
+            "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
+            terminal_text(&connection.gateway_endpoint),
+            terminal_text(&connection.workspace),
+        ));
+    }
     if !result.changes.is_empty() {
         output.push_str(if planned {
             "\nPlanned actions:\n"
@@ -234,10 +305,17 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                 continue;
             }
             let action = styled_action(&change.actions, context.output_palette);
-            let label = resource_label(&change.resource);
+            let label = result_resource_label(result, &change.resource);
             output.push_str(&format!("  {action}  {label}\n"));
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
+            }
+            if planned
+                && result.discovery.resources.iter().any(|resource| {
+                    resource.address == change.resource && resource.agent_running == Some(false)
+                })
+            {
+                output.push_str("    Agent runtime is not running; apply restarts it.\n");
             }
             if change.resource.starts_with("nemoclaw_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
@@ -272,19 +350,43 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             ));
         }
     }
+    if !result.deferred_resources.is_empty() {
+        output.push_str("\nResources awaiting a complete plan:\n");
+        let mut images = 0;
+        for address in &result.deferred_resources {
+            if !context.verbose && address.starts_with("docker_image.") {
+                images += 1;
+                continue;
+            }
+            output.push_str(&format!("  {}\n", result_resource_label(result, address)));
+            if context.verbose {
+                output.push_str(&format!("    {}\n", terminal_text(address)));
+            }
+        }
+        if images > 0 {
+            output.push_str(&format!(
+                "  {images} image binding{}\n",
+                if images == 1 { "" } else { "s" }
+            ));
+        }
+    }
     if planned && !result.discovery.is_empty() {
         output.push_str("\nDiscovery:\n");
         if !result.discovery.resources.is_empty() {
             let resources = &result.discovery.resources;
+            let established = resources.iter().filter(|resource| resource.existed).count();
+            let unchanged = resources
+                .iter()
+                .filter(|resource| resource.existed && resource.planned_actions == ["no-op"])
+                .count();
             output.push_str(&format!(
-                "  Resources: {} established; {} unchanged; {} with drift.\n",
-                resources.iter().filter(|resource| resource.existed).count(),
-                resources
-                    .iter()
-                    .filter(|resource| resource.reuse_planned)
-                    .count(),
-                resources.iter().filter(|resource| resource.drifted).count()
+                "  Resources: {established} established ({unchanged} unchanged, {} with planned changes); {} new.\n",
+                established - unchanged, resources.len() - established,
             ));
+            let refreshed = resources.iter().filter(|resource| resource.drifted).count();
+            if refreshed > 0 {
+                output.push_str(&format!("  Refresh differences: {refreshed} resource{}; may include computed metadata.\n", if refreshed == 1 { "" } else { "s" }));
+            }
         }
         let catalogs: Vec<_> = result
             .discovery
@@ -329,6 +431,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                     Observation::Hardware(value) => Some(value.status),
                     Observation::Fabric(value) => Some(value.status),
                     Observation::Inference(value) => Some(value.status),
+                    Observation::RuntimeImage(value) => Some(value.status),
                     Observation::Gateway(value) => Some(value.status),
                     Observation::Service { ready, .. } => ready.map(|value| {
                         if value {
@@ -385,23 +488,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
     }
+    if !result.unverified.is_empty() {
+        output.push_str("\nUnverified checks:\n");
+        for reason in &result.unverified {
+            output.push_str(&format!("  {}\n", terminal_text(reason)));
+        }
+    }
     for health in &result.health {
         let runtime = &health.health;
-        let status = if !runtime.supported {
-            "unsupported"
-        } else if runtime.allows_apply_completion() {
-            "ready at completion"
-        } else {
-            "readiness unknown or not ready"
-        };
-        let status = context.output_palette.paint(
-            status,
-            if runtime.supported && runtime.allows_apply_completion() {
-                Tone::Success
-            } else {
-                Tone::Warning
-            },
-        );
+        let status = context.output_palette.paint("unsupported", Tone::Warning);
         output.push_str(&format!(
             "\nFabric health · sandbox/{}: {status}",
             terminal_text(&health.sandbox)
@@ -481,13 +576,11 @@ pub(crate) fn render_error(
     if let Some(input) = &context.input {
         details["input"] = serde_json::json!(input);
     }
-    let preflight_error = error_in_chain::<nemoclaw_sdk::config::ConfigError>(error).is_some()
-        || error_in_chain::<crate::credentials::FulfillmentError>(error).is_some();
     let remaining = match sdk {
-        _ if preflight_error => "No runtime resources changed.",
-        Some(Error::Health { health }) => {
-            details["error"]["health"] = serde_json::json!(health);
-            "Resources retained; Fabric readiness could not be established."
+        _ if !context.mutation_started.load(Ordering::Relaxed)
+            && matches!(context.operation, "Apply" | "Destroy") =>
+        {
+            "No runtime resources changed."
         }
         Some(Error::SandboxStartup { .. }) => "Resources retained; sandbox startup failed.",
         _ if matches!(context.operation, "Apply" | "Destroy") => {
@@ -499,12 +592,12 @@ pub(crate) fn render_error(
         details["remainingState"] = serde_json::json!(remaining);
     }
     let help = match sdk {
+        Some(Error::SandboxChangeRefused { .. }) => Some(
+            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.",
+        ),
         Some(Error::SandboxStartup { .. }) => Some(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         ),
-        Some(Error::Health { .. }) => {
-            Some("Inspect the reported Fabric health reason before retrying.")
-        }
         _ => None,
     };
     if let Some(help) = help {
@@ -540,9 +633,6 @@ pub(crate) fn render_error(
                 "State: {}\n\n{message}\n",
                 terminal_text(&context.state_dir.display().to_string())
             ));
-            if let Some(Error::Health { health }) = sdk {
-                output.push_str(&health_diagnostic(health));
-            }
             if !remaining.is_empty() {
                 output.push_str(&format!("\n{remaining}\n"));
             }
@@ -552,43 +642,6 @@ pub(crate) fn render_error(
             output
         }
     }
-}
-
-fn health_diagnostic(health: &nemoclaw_sdk::SandboxHealth) -> String {
-    let report = health.health.report.as_ref();
-    let reason = health
-        .health
-        .reason_code
-        .as_deref()
-        .or_else(|| report.and_then(|report| report["reason_code"].as_str()))
-        .unwrap_or("readiness not established");
-    let mut output = format!(
-        "Sandbox/{}: {}\n",
-        terminal_text(&health.sandbox),
-        terminal_text(reason)
-    );
-    if let Some(checks) = report.and_then(|report| report["checks"].as_array()) {
-        let relevant: Vec<_> = checks
-            .iter()
-            .filter(|check| check["status"] != "ok")
-            .collect();
-        for check in relevant.iter().take(10) {
-            let field = |key| terminal_text(check[key].as_str().unwrap_or("unknown"));
-            output.push_str(&format!(
-                "  {}: {} ({})\n",
-                field("name"),
-                field("status"),
-                field("reason_code")
-            ));
-        }
-        if relevant.len() > 10 {
-            output.push_str(&format!(
-                "  {} additional checks; use JSON output for the full report.\n",
-                relevant.len() - 10
-            ));
-        }
-    }
-    output
 }
 
 #[cfg(test)]
@@ -605,6 +658,33 @@ mod tests {
             &RenderContext::new(&cli),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn connection_output_identifies_the_gateway_and_workspace_without_claiming_access() {
+        for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
+            let connection = json!({
+                "gatewayEndpoint": "https://gateway.example:443",
+                "workspace": "nc-1234567890abcdef"
+            });
+            let result = json!({"outcome": outcome, "changes": [], "connection": connection});
+            let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
+            assert!(
+                text.contains("OpenShell gateway: https://gateway.example:443\n"),
+                "{text}"
+            );
+            assert!(
+                text.contains("OpenShell workspace: nc-1234567890abcdef\n"),
+                "{text}"
+            );
+            assert!(!text.contains("access verified"));
+            let machine: Value = serde_json::from_str(&render(
+                &["nemoclaw", command, "deployment.yaml", "-o", "json"],
+                result,
+            ))
+            .unwrap();
+            assert_eq!(machine["connection"], connection);
+        }
     }
 
     #[test]
@@ -641,6 +721,57 @@ mod tests {
     }
 
     #[test]
+    fn resource_results_name_authored_sources_and_separate_deferred_work() {
+        let result = json!({"outcome":"planned", "changes":[
+            {"resource":"nemoclaw_agent_configuration.host", "actions":["update"]},
+            {"resource":"nemoclaw_provider.inference_local-1234", "actions":["update"]},
+            {"resource":"nemoclaw_provider.web_search_tavily_1234", "actions":["create"]},
+            {"resource":"nemoclaw_provider_profile.web_search_tavily", "actions":["create"]},
+            {"resource":"nemoclaw_inference_storage.inference_tiny_auth", "actions":["create"]}
+        ], "resourceSources": {
+            "nemoclaw_provider.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
+        }, "deferred":["Gateway is required"], "deferredResources":[
+            "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "nemoclaw_ollama_proxy_storage.local", "docker_image.image_1234"
+        ], "discovery":{"resources":[
+            {"address":"nemoclaw_agent_configuration.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
+            {"address":"nemoclaw_provider.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
+            {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
+        ]}});
+        let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
+        for expected in [
+            "agent runtime/host",
+            "provider/responses at spec.sandboxes[host].inferenceProviders[responses]",
+            "web search provider/tavily",
+            "web search profile/tavily",
+            "inference credentials/tiny",
+            "ollama proxy/local",
+            "external Ollama model/local",
+            "proxy credentials/local",
+            "Agent runtime is not running; apply restarts it.",
+            "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",
+            "Refresh differences: 2 resources; may include computed metadata.",
+            "Resources awaiting a complete plan:",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        assert!(!text.contains("1234"), "{text}");
+        assert!(!text.contains("3 unchanged"));
+        let verbose = render(
+            &["nemoclaw", "plan", "spark.yaml", "--verbose"],
+            result.clone(),
+        );
+        assert!(verbose.contains("nemoclaw_provider.inference_local-1234"));
+        let json: Value = serde_json::from_str(&render(
+            &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
+            result.clone(),
+        ))
+        .unwrap();
+        assert_eq!(json["deferredResources"], result["deferredResources"]);
+        assert_eq!(json["resourceSources"], result["resourceSources"]);
+        assert_eq!(json["discovery"]["resources"][0]["agentRunning"], false);
+    }
+
+    #[test]
     fn creation_labels_do_not_imply_sandbox_deletion_or_retention() {
         let result = json!({"outcome":"planned","changes":[
             {"resource":"nemoclaw_workspace.deployment","actions":["create"]},
@@ -662,7 +793,7 @@ mod tests {
         }});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
         assert!(
-            text.contains("Resources: 1 established; 1 unchanged; 0 with drift"),
+            text.contains("Resources: 1 established (1 unchanged, 0 with planned changes); 0 new."),
             "{text}"
         );
         assert!(
@@ -680,6 +811,35 @@ mod tests {
             json["discovery"]["observations"]["endpoint_0"]["observation"]["api_verified"],
             false
         );
+    }
+
+    #[test]
+    fn unverified_checks_remain_visible_without_making_a_resource_plan_incomplete() {
+        let result = json!({"outcome":"planned","changes":[],"unverified":["Service readiness is checked during apply.","Catalog unavailable\u{1b}[2J"]});
+        let text = render(&["nemoclaw", "plan", "model.yaml"], result.clone());
+        assert!(text.contains("No resource changes planned."), "{text}");
+        assert!(text.contains("Unverified checks:"), "{text}");
+        assert!(text.contains("Service readiness is checked during apply."));
+        assert!(!text.contains("Plan incomplete"));
+        assert!(!text.contains('\u{1b}'));
+        let output: Value = serde_json::from_str(&render(
+            &["nemoclaw", "plan", "model.yaml", "-o", "json"],
+            result.clone(),
+        ))
+        .unwrap();
+        assert_eq!(output["complete"], true);
+        assert_eq!(output["unverified"], result["unverified"]);
+        let mut blocked = result;
+        blocked["deferred"] = json!(["Gateway inventory unavailable"]);
+        let text = render(&["nemoclaw", "plan", "model.yaml"], blocked.clone());
+        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("Unverified checks:"));
+        let output: Value = serde_json::from_str(&render(
+            &["nemoclaw", "plan", "model.yaml", "-o", "json"],
+            blocked,
+        ))
+        .unwrap();
+        assert_eq!(output["complete"], false);
     }
 
     #[test]
@@ -784,6 +944,7 @@ mod tests {
     fn failures_share_honest_state_and_interruption_does_not_suggest_apply() {
         let cli = Cli::try_parse_from(["nemoclaw", "destroy"]).unwrap();
         let context = RenderContext::new(&cli);
+        context.progress(Arc::new(|_| {}))(nemoclaw_sdk::Progress::MutationStarted);
         let text = render_error(&Error::Cancelled, OutputFormat::Text, &context);
         assert!(text.contains("Destroy interrupted"));
         assert!(text.contains("Changes may already have been made"));
@@ -803,51 +964,70 @@ mod tests {
     }
 
     #[test]
-    fn health_failures_keep_reason_and_resource_in_both_formats() {
+    fn rejected_health_uses_ordinary_failure_output_and_preserves_state_warning() {
         let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
         let context = RenderContext::new(&cli);
-        let error = Error::Health {
-            health: Box::new(
-                serde_json::from_value(json!({
-                    "sandbox":"assistant", "agents":[], "supported":true,
-                    "report":null, "reason_code":"fabric_health_timeout"
-                }))
-                .unwrap(),
-            ),
-        };
+        context.progress(Arc::new(|_| {}))(nemoclaw_sdk::Progress::MutationStarted);
+        let error = Error::Conflict("invalid Fabric health response; resources retained");
         let text = render_error(&error, OutputFormat::Text, &context);
         for expected in [
             "Apply failed",
             "Input: spark.yaml",
-            "Sandbox/assistant",
-            "fabric_health_timeout",
-            "Resources retained",
+            "invalid Fabric health response",
+            "preserve the deployment state directory",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
         let json: Value =
             serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
-        assert_eq!(
-            json["error"]["health"]["reason_code"],
-            "fabric_health_timeout"
-        );
         assert_eq!(json["outcome"], "failed");
+        assert_eq!(json["error"], json!({"message": error.to_string()}));
+        assert!(json.get("help").is_none());
+        assert_eq!(
+            json["remainingState"],
+            "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
+        );
     }
 
     #[test]
-    fn supported_health_failure_exposes_report_reason_and_failed_checks() {
+    fn sandbox_refusal_reports_unchanged_resources_and_retained_configuration() {
         let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
-        let error = Error::Health { health: Box::new(serde_json::from_value(json!({
-            "sandbox":"assistant", "agents":[], "supported":true, "reason_code":null,
-            "report": {"reason_code":"adapter_not_ready", "readiness":"not_ready", "checks":[
-                {"name":"adapter", "status":"failed", "reason_code":"connection_refused"},
-                {"name":"runtime", "status":"ok", "reason_code":"responsive"}
-            ]}
-        })).unwrap()) };
-        let text = render_error(&error, OutputFormat::Text, &RenderContext::new(&cli));
-        assert!(text.contains("adapter_not_ready"));
-        assert!(text.contains("adapter: failed (connection_refused)"));
-        assert!(!text.contains("runtime: ok"));
+        let context = RenderContext::new(&cli);
+        let error = Error::SandboxChangeRefused {
+            sandbox: "reviewer".into(),
+            action: "remove",
+        };
+        let text = render_error(&error, OutputFormat::Text, &context);
+        assert!(text.contains("ordinary apply cannot remove sandbox 'reviewer'"));
+        assert!(text.contains("No runtime resources changed."));
+        assert!(text.contains("fresh UID and state directory"));
+        assert!(!text.contains("Changes may already have been made"));
+        let json: Value =
+            serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
+        assert_eq!(json["outcome"], "failed");
+        assert_eq!(json["remainingState"], "No runtime resources changed.");
+        assert!(
+            json["help"]
+                .as_str()
+                .unwrap()
+                .contains("docs/usage.md#choose-the-change-path")
+        );
+    }
+
+    #[test]
+    fn later_preflight_failure_does_not_erase_prior_mutations() {
+        let cli =
+            Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml", "--progress", "off"]).unwrap();
+        let context = RenderContext::new(&cli);
+        let error = nemoclaw_sdk::config::ConfigError::new("later-stage validation failed");
+        let observe = context.progress(Arc::new(|_| {}));
+        observe(nemoclaw_sdk::Progress::MutationStarted);
+        observe(nemoclaw_sdk::Progress::Planning);
+        for format in [OutputFormat::Text, OutputFormat::Json] {
+            let report = render_error(&error, format, &context);
+            assert!(report.contains("Changes may already have been made"));
+            assert!(!report.contains("No runtime resources changed"));
+        }
     }
 
     #[test]

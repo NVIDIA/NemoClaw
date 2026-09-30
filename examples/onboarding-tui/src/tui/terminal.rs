@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::app::{Input, Wizard};
+use super::{
+    app::{Input, Wizard},
+    logo::BrandImage,
+};
 use nemoclaw_authoring::{
     AuthoringFacts, Capabilities, CompatibilityStatus, DiscoveryEvidence, Draft, EndpointEvidence,
     GatewayEvidence, HardwareEvidence,
@@ -14,7 +17,9 @@ use nemoclaw_sdk::{
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{collections::VecDeque, io, time::Duration};
 
-struct TerminalGuard;
+struct TerminalGuard {
+    brand: Option<BrandImage>,
+}
 
 impl TerminalGuard {
     fn enter() -> io::Result<Self> {
@@ -27,12 +32,15 @@ impl TerminalGuard {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(error);
         }
-        Ok(Self)
+        Ok(Self { brand: None })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if let Some(brand) = self.brand {
+            let _ = brand.delete(&mut io::stderr());
+        }
         let _ = crossterm::execute!(
             io::stderr(),
             crossterm::terminal::LeaveAlternateScreen,
@@ -48,8 +56,11 @@ pub(crate) async fn run(
     cancel: &CancellationToken,
     bundle: Option<&std::path::Path>,
 ) -> Result<Option<Draft>, Box<dyn std::error::Error>> {
-    let _guard = TerminalGuard::enter()?;
+    let mut guard = TerminalGuard::enter()?;
     let area = terminal_area();
+    let brand =
+        BrandImage::detect(area.width).filter(|brand| brand.transmit(&mut io::stderr()).is_ok());
+    guard.brand = brand;
     let mut terminal = Terminal::with_options(
         CrosstermBackend::new(io::stderr()),
         TerminalOptions {
@@ -82,7 +93,7 @@ pub(crate) async fn run(
         let is_review = wizard.step == super::app::Step::Review;
         if last_inputs.as_ref() != Some(&inputs) || (is_review && !was_review) {
             wizard.target_status = Some("Checking available choices…".into());
-            terminal.draw(|frame| wizard.render(frame))?;
+            terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
             let discovery_cancel = cancel.child_token();
             let future = check_discovery(
                 discovery.as_mut(),
@@ -123,7 +134,7 @@ pub(crate) async fn run(
             last_inputs = Some(inputs);
         }
         was_review = is_review;
-        terminal.draw(|frame| wizard.render(frame))?;
+        terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
         if wizard.accepted() {
             return Ok(Some(wizard.draft().clone()));
         }
@@ -175,7 +186,7 @@ pub(crate) async fn run(
         if input == Input::DelegateRemaining && wizard.can_offer_delegation() {
             wizard.facts.credentials = nemoclaw_sdk::inference_discovery::observe_credentials(
                 wizard.draft().document(),
-                &nemoclaw_sdk::openshell::EnvironmentSecrets,
+                &nemoclaw_sdk::EnvironmentSecrets,
             )?;
         }
         wizard.handle(input);
@@ -280,7 +291,7 @@ pub(super) async fn check_discovery(
     // Credential availability stays a direct read and never enters OpenTofu state.
     facts.credentials = nemoclaw_sdk::inference_discovery::observe_credentials(
         draft.document(),
-        &nemoclaw_sdk::openshell::EnvironmentSecrets,
+        &nemoclaw_sdk::EnvironmentSecrets,
     )?;
     let Some(session) = session else {
         return Ok((evidence, facts));
@@ -354,7 +365,7 @@ fn discovery_queries(
 ) -> Vec<DiscoveryQuery> {
     let key = &evidence.key;
     let mut queries = Vec::new();
-    if !key.engine.is_empty() && evidence.engine.is_none() {
+    if key.managed_gateway && !key.engine.is_empty() && evidence.engine.is_none() {
         queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
             engine: key.engine.clone(),
             compute_driver: key.compute_driver,
@@ -366,7 +377,7 @@ fn discovery_queries(
             image: key.image.clone(),
         });
     }
-    if !key.engine.is_empty() && facts.hardware.is_none() {
+    if key.managed_gateway && !key.engine.is_empty() && facts.hardware.is_none() {
         queries.push(DiscoveryQuery::Hardware {
             engine: key.engine.clone(),
         });
@@ -419,6 +430,35 @@ mod target_tests {
                 .iter()
                 .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
             "unresolved engine must not target the local daemon: {queries:?}"
+        );
+    }
+
+    #[test]
+    fn external_gateway_queries_its_image_store_without_gateway_or_hardware_probes() {
+        let mut document = draft().document().clone();
+        document.spec.gateway = serde_json::from_value(serde_json::json!({
+            "management": "external",
+            "endpoint": "https://gateway.example:8080",
+            "engine": "ssh://images@example.com",
+        }))
+        .unwrap();
+        document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
+        let draft = Draft::from_document(document).unwrap();
+        let evidence = DiscoveryEvidence {
+            key: draft.discovery_key().unwrap(),
+            engine: None,
+            fabric: None,
+        };
+        let request = draft.inference_request(&Capabilities::available()).unwrap();
+        assert_eq!(
+            discovery_queries(&evidence, &AuthoringFacts::default(), request.clone()),
+            vec![
+                DiscoveryQuery::Fabric {
+                    engine: "ssh://images@example.com".into(),
+                    image: evidence.key.image.clone(),
+                },
+                DiscoveryQuery::Inference(request),
+            ]
         );
     }
 

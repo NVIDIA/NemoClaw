@@ -12,6 +12,7 @@ pub(super) fn runtime(choice: RuntimeChoice) -> &'static str {
         RuntimeChoice::Docker => "Docker",
         RuntimeChoice::Podman => "Podman",
         RuntimeChoice::Kubernetes => "Kubernetes",
+        RuntimeChoice::OpenShift => "OpenShift",
     }
 }
 

@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_runtime::{hardware::Capacity, hardware::GIB, vllm::hardware_capacity};
 use nemoclaw_sdk::{
-    config::{Document, ServiceDefinition},
-    hardware::{Capacity, GIB},
-    services::installers::vllm::{Service, hardware_capacity},
+    config::Document, config::ServiceDefinition, services::installers::vllm::Service,
 };
 fn service() -> Service {
     let mut document =

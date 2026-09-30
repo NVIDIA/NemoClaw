@@ -36,7 +36,7 @@ flowchart LR
 Failure or cancellation retains unpublished staging data.
 An existing published preparation must pass manifest and file-metadata checks before reuse; invalid data stops startup.
 The final directory and manifest are the result, with no separate completion flag.
-The [preparation lifecycle](../../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/preparation.rs) implements these checks.
+The [preparation lifecycle](../../crates/nemoclaw-runtime/src/vllm/recipes/preparation.rs) implements these checks.
 
 Cache import offers old files as candidates to the current verifier; it does not inherit trust from an old manifest.
 The entire declaration participates in the preparation key, so even a serving-only edit selects a new preparation identity.

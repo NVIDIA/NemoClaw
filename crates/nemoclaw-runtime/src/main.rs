@@ -3,7 +3,7 @@
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    use nemoclaw_sdk::{CancellationToken, Error};
+    use nemoclaw_runtime::{CancellationToken, Error};
     let cancel = CancellationToken::new();
     let trip = CancellationToken::new();
     let signals=async {
@@ -17,7 +17,7 @@ async fn main() -> std::process::ExitCode {
     }.await;
     let result = async {
         let _signals = signals?;
-        nemoclaw_sdk::services::run_runtime(&cancel, &trip).await
+        nemoclaw_runtime::run(&cancel, &trip).await
     }
     .await;
     if let Err(error) = result {

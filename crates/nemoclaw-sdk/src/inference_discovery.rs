@@ -5,10 +5,9 @@
 //! Protocols: https://platform.openai.com/docs/api-reference/models/list and
 //! https://platform.claude.com/docs/en/api/models/list.
 use crate::{
-    Error, ObservationError,
+    Error, ObservationError, Secrets,
     config::{Credential, Document, InferenceApi},
     discovery::ObservationStatus,
-    openshell::Secrets,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};

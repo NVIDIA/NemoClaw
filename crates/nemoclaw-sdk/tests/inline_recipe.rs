@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_runtime::Error;
 use nemoclaw_sdk::{
     config::{Document, ServiceDefinition},
     services::installers::vllm::Service,
@@ -48,10 +49,11 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
 
 #[tokio::test]
 async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
-    use nemoclaw_sdk::{
-        CancellationToken, Error,
-        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
+    use nemoclaw_runtime::{
+        vllm::recipes::preparation, vllm::recipes::preparation::Action,
+        vllm::recipes::preparation::Request, vllm::recipes::preparation::Runner,
     };
+    use nemoclaw_sdk::CancellationToken;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Fixture {
         fail: AtomicBool,
@@ -138,10 +140,11 @@ fn preparation_keys_track_model_and_tool_identity() {
 
 #[tokio::test]
 async fn failed_verification_never_publishes_an_output_manifest() {
-    use nemoclaw_sdk::{
-        CancellationToken, Error,
-        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
+    use nemoclaw_runtime::{
+        vllm::recipes::preparation, vllm::recipes::preparation::Action,
+        vllm::recipes::preparation::Request, vllm::recipes::preparation::Runner,
     };
+    use nemoclaw_sdk::CancellationToken;
     struct InvalidVerification(Vec<u8>);
     #[async_trait::async_trait]
     impl Runner for InvalidVerification {
@@ -218,10 +221,11 @@ fn model_specific_backend_names_are_rejected() {
 
 #[tokio::test]
 async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
-    use nemoclaw_sdk::{
-        CancellationToken, Error,
-        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
+    use nemoclaw_runtime::{
+        vllm::recipes::preparation, vllm::recipes::preparation::Action,
+        vllm::recipes::preparation::Request, vllm::recipes::preparation::Runner,
     };
+    use nemoclaw_sdk::CancellationToken;
     struct NoTools;
     #[async_trait::async_trait]
     impl Runner for NoTools {

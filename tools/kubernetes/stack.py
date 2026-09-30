@@ -121,16 +121,17 @@ def chart_values():
 
     def image(key):
         repository, digest = pins["images"][key].split("@", 1)
-        # Upstream accepts repository:tag; an OCI tag@digest selects the digest.
-        return {"repository": repository, "tag": "pinned@" + digest, "pullPolicy": "IfNotPresent"}
+        return {"repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"}
 
     supervisor = image("supervisor")
     supervisor["pullPolicy"] = "if_not_present"
     return {
         "fullnameOverride": RELEASE,
-        "image": image("gateway"),
+        "global": {"image": {"registry": ""}},
+        "gateway": {"image": image("gateway")},
         "sandboxRuntime": {"image": image("sandboxRuntime")},
-        "supervisor": {"image": supervisor, "sandboxRuntime": {"networkPolicyEnforced": True}},
+        "supervisor": {"image": supervisor},
+        "sandbox": {"image": image("sandboxRuntime")},
         "server": {
             "telemetryEnabled": False,
             "disableTls": False,
@@ -138,8 +139,6 @@ def chart_values():
             "oidc": OIDC_VALUES,
             "tls": {"enableMtls": True},
             "credentialStorage": {"existingSecret": "nemoclaw-kek"},
-            "sandboxImage": pins["images"]["sandboxRuntime"],
-            "sandboxImagePullPolicy": "if_not_present",
             "workspaceDefaultStorageSize": "2Gi",
             "drivers": {"kubernetes": {"workspaceMode": "shared"}},
         },

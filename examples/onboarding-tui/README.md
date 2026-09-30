@@ -22,6 +22,8 @@ nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
 Omit the template to use the built-in defaults.
+Those defaults come from a partial template in this example. It leaves the six original guided
+fields open and supplies preset values for the rest of the document.
 The template's choices are preselected; Enter accepts an answer.
 The questionnaire chooses an unresolved question whose dependencies are resolved, preferring questions that constrain more remaining choices.
 It skips inactive fields and choices with only one supported answer.
@@ -34,7 +36,7 @@ After accepting a harness, **Ctrl+D** requests delegation of the remaining sugge
 When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
 With one route this reaches review; with multiple routes the questionnaire still offers the other routes.
 Fabric validates the proposed public configuration against the observed canonical descriptors; missing contracts leave compatibility unverified and prevent delegation.
-The authoring library checks the suggestions together: engine and image compatibility must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
+The authoring library checks the suggestions together: image compatibility and any managed-gateway engine prerequisites must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
 A required adapter setting without a suggested value prevents delegation until answered.
 This shortcut preserves accepted answers and uses the current suggestions; it does not search for another engine, provider, image, or model.
 If you have edited the current answer, press Enter to accept it before delegating.
@@ -55,6 +57,24 @@ The standalone example uses the same questionnaire:
 cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
+### Watch and replay the built-in guided scenario
+
+This local scenario needs Python 3 and tmux.
+It creates a tmux session, a temporary YAML file, and a screen transcript; it does not contact a deployment target or apply resources.
+From the repository root, build the example and start the replay:
+
+```sh
+cargo build -p nemoclaw-onboarding
+python3 examples/onboarding-tui/scripts/replay_guided.py --wait-for-viewer --keep-session --delay 2
+```
+
+The driver prints a `tmux attach-session -r` command.
+Run it in another terminal to watch; replay waits for that viewer before answering.
+It checks each expected screen, saves YAML to a new temporary path, checks selected fields, and writes a JSONL screen transcript beside the YAML.
+Omit `--wait-for-viewer` and use `--delay 0` for a fast unattended replay.
+The scenario uses the built-in partial template without a discovery bundle, so target compatibility remains unverified.
+If a question changes, replay stops and prints the unexpected screen; inspect the transcript and rerun with new output paths after updating the expected steps.
+
 Both entrypoints treat input YAML only as defaults for a new deployment.
 There is no mode for editing an existing deployment or retaining the template's UID.
 Both entrypoints accept the single-sandbox deployment examples as templates, including existing managed inference services and multiple model routes.
@@ -74,7 +94,13 @@ The CLI uses its installed verified bundle for discovery, or a bundle selected w
 nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the engine, hardware advertisements, selected Fabric image, and inference model catalog.
+With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
+For a managed gateway, it also checks engine prerequisites and hardware advertisements.
+For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
+Onboarding uses that engine only to inspect the image; the image store's compute driver and hardware do not describe the external gateway.
+Changing the image engine discards the previous image observation.
+Omitting it leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
+Image compatibility does not verify the external gateway's execution platform or readiness.
 Independent requests share a plan, and duplicate requests are read once.
 It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes the relevant observations when entering review.
 Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
@@ -156,7 +182,11 @@ Inference service presets describe provider transports, without tying a service 
 An Anthropic-compatible endpoint uses the Anthropic protocol; the selected Fabric descriptor determines adapter compatibility.
 
 Provider presets supply endpoint, model, and credential-reference suggestions.
-They do not restrict existing provider names, endpoint URLs, or credential environment-variable references.
+NemoClaw owns these editable onboarding suggestions, including API base paths and model choices.
+OpenShell v0.1.2 supplies [example egress-policy profiles](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-providers/src/example_profiles.rs) for explicit import; it does not expose a built-in provider-defaults catalog.
+Those examples omit some providers and API base paths used here.
+NVIDIA's suggested credential reference follows the upstream `NVIDIA_API_KEY` name.
+The suggestions do not restrict existing provider names, endpoint URLs, or credential environment-variable references.
 Loading a template retains those values as defaults, and changing its model keeps the connection intact.
 An explicitly authored engine endpoint is also preserved through guided edits.
 Anonymous endpoints retain the absence of a credential reference; the SDK schema determines when an endpoint cannot carry one.

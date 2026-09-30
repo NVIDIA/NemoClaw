@@ -34,8 +34,6 @@ spec:
         settings:
           native_config:
             plugins:
-              load:
-                paths: [/opt/nemoclaw/plugins/brave]
               allow: [brave]
               entries:
                 brave:
@@ -66,8 +64,6 @@ spec:
         settings:
           native_config:
             plugins:
-              load:
-                paths: [/opt/nemoclaw/plugins/brave]
               allow: [brave]
               entries:
                 brave:

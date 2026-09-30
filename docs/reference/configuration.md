@@ -17,9 +17,9 @@ Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
 
-- Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
+- Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, Agent Sandbox prerequisite management, and development authentication profile. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; every sandbox selects kubernetes. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
+- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, Agent Sandbox prerequisite management, and development authentication profile. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; every sandbox selects kubernetes, or openshift with distribution: openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -192,6 +192,7 @@ Paths:
 - `spec.integrations.{key}.credential`
 - `spec.sandboxes[].agent.inference.routes[].provider.credential`
 - `spec.sandboxes[].agent.integrations.{key}.credential`
+- `spec.sandboxes[].image.metadata`
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
@@ -221,7 +222,7 @@ Paths:
 
 Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -239,7 +240,7 @@ Paths:
 
 Select an explicit policy; no isolated defaults are merged into it.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -332,6 +333,7 @@ An existing gateway managed outside this deployment.
 |---|---|---|---|---|
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
+| `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
@@ -380,7 +382,8 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes requires an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes requires an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `metadata` | [Credential](#credential) | No | — | Kubernetes and OpenShift deployment planning requires an environment reference to an absolute local OCI metadata bundle path; omission permits reading legacy intent for teardown. Its index, manifest, configuration, and Fabric catalog are verified against ref before use. No image layers or credential values belong in the bundle. Docker and Podman inspect their selected engine instead. |
+| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 
 ## ImagePullPolicy
 
@@ -545,6 +548,7 @@ Paths:
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | Explicit generated development authentication profile; this is not a production identity service. |
 | `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `distribution` | string | No | — | Platform profile. OpenShift requires explicit platform-owned security prerequisites; it uses OpenShell's Kubernetes driver. Constraints: `"kubernetes"` or `"openshift"`. |
 | `kubeconfig` | [Credential](#credential) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
 | `prerequisites` | [KubernetesPrerequisites](#kubernetesprerequisites) | Yes | — | Explicit prerequisite ownership. Managed installation may create cluster-wide resources when the pinned prerequisite is absent. |
@@ -586,6 +590,8 @@ Paths:
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
+When `gpuMemoryUtilization` is present: `gpuMemoryGiB`: `0`; `kvCacheGiB`: `0`. Otherwise: `kvCacheGiB`: `0` or minimum 4; maximum 12.
+
 ## Metadata
 
 Deployment identity persists across apply, export, recovery, and destroy.
@@ -618,9 +624,9 @@ Paths:
 
 ## Network
 
-Sandbox policy selection and optional agent HTTP proxy.
+Sandbox policy selection.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -629,7 +635,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
-| `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
 ## OllamaMemory
@@ -706,7 +711,7 @@ Paths:
 
 One allowed application-protocol action.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -720,7 +725,7 @@ Paths:
 
 Alternative values for a policy matcher.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -737,7 +742,7 @@ Paths:
 
 Executable identity for an egress grant.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -751,7 +756,7 @@ Paths:
 
 TCP destination and optional application-protocol policy. Invalid or conflicting combinations are rejected by OpenShell.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -773,14 +778,14 @@ Paths:
 | `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
 | `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
-| `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
+| `tls` | string | No | — | Omit for automatic TLS handling, or use skip for a raw tunnel. Constraints: `"skip"`. |
 | `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
 
 ## PolicyFilesystem
 
 Filesystem access grants inside the sandbox.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -796,7 +801,7 @@ Paths:
 
 JSON-RPC request inspection bounds.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -810,7 +815,7 @@ Paths:
 
 Landlock compatibility; hard_requirement refuses unavailable enforcement.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -824,7 +829,7 @@ Paths:
 
 Request method/path or MCP tool selector; protocol-specific combinations are validated by OpenShell.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -842,7 +847,7 @@ Paths:
 
 MCP request inspection and tool-name restrictions.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -859,7 +864,7 @@ Paths:
 
 Process identity resolved inside the sandbox image.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -874,7 +879,7 @@ Paths:
 
 Named endpoint grants restricted to declared executable paths.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -890,7 +895,7 @@ Paths:
 
 A literal glob or a nonempty list of alternative globs.
 
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
+Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
@@ -900,21 +905,6 @@ Paths:
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
-
-## Proxy
-
-Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
-
-Guide: [Sandbox policy and proxy](../sandbox-network.md).
-
-Paths:
-
-- `spec.sandboxes[].network.proxy`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
-| `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## Resources
 
@@ -963,7 +953,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional native tuning, and optional legacy model metadata. |
+| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, shared limits, and optional native settings. |
 | `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -979,7 +969,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `provider` | string | No | `"docker"` | Docker, Podman, or Kubernetes driver. Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints. A managed service with Podman requires explicit service placement. Constraints: `""` or `"docker"` or `"podman"` or `"kubernetes"`. Omitted or empty selects the default. |
+| `provider` | string | No | `"docker"` | Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"` or `"kubernetes"` or `"openshift"`. |
 
 ## Sandbox
 

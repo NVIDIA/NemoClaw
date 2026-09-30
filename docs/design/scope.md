@@ -87,3 +87,18 @@ The SDK owns OpenShell resources in both paths and the provisioning resources it
 In the external-gateway path, the platform installer owns the Kubernetes prerequisites and retains them after SDK destroy.
 This decision does not create a maintained OpenShell fork, a NemoClaw Kubernetes operator, or production and compatibility claims.
 See the [Kubernetes procedure](../kubernetes.md) for credential custody and retained state, and the [kind test guide](../testing/kubernetes-kind.md) for local setup and explicit cluster cleanup.
+
+On 2026-09-30, the user requested OpenShift alongside Kubernetes in this development branch and selected offline validation because no OpenShift test cluster is available.
+The authored `runtime.provider: openshift` selects an OpenShift profile of the upstream Kubernetes driver; it does not introduce an OpenShell driver or fork.
+Managed deployments declare `gateway.kubernetes.distribution: openshift`, verify OpenShift APIs, and bind the namespace-assigned UID/GID allocation before provisioning workloads.
+Keep mutual TLS, bearer authentication, capability removal, non-root execution, and the existing command-scoped tunnel.
+Do not grant a privileged or anyuid SCC, change cluster security policy, install ingress, or create a Route as part of this profile.
+Preserve externally owned prerequisites and require supported namespace allocation and kernel isolation capabilities; missing or changed inputs fail closed.
+This request permits source changes, generated schema, examples, and deterministic tests; it does not establish live OpenShift compatibility.
+
+Integration with current v1 requires image-owned Fabric runtime metadata before sandbox creation.
+Kubernetes and OpenShift deployments may obtain this metadata from a bounded local OCI metadata bundle referenced by `image.metadata.env`, without inspecting a Docker engine during deployment.
+Accept a single Linux manifest or an index with one Linux platform and attestations; multi-platform indexes require a later per-architecture runtime contract.
+Verify the authored image digest and every selected index, manifest, and configuration blob before using the image's catalog; never substitute a bundled default runtime or executable list.
+The local image-build tools may export the metadata from an existing immutable image without publishing or pulling it.
+The optional local test fixture supplies this artifact automatically; deployment inputs and credential values remain outside Git.

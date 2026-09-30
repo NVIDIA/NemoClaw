@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_runtime::hardware::GIB;
 use nemoclaw_sdk::{
-    config::{Document, ServiceDefinition, schema::input_schema},
-    hardware::GIB,
+    config::Document, config::ServiceDefinition, config::schema::input_schema,
     services::installers::vllm::Service,
 };
 use serde_json::{Value, json};
@@ -71,9 +71,8 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
 
 #[test]
 fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
-    use nemoclaw_sdk::{
-        hardware::{Capacity, GpuMemory},
-        services::installers::vllm::hardware_capacity::check_capacity,
+    use nemoclaw_runtime::{
+        hardware::Capacity, hardware::GpuMemory, vllm::hardware_capacity::check_capacity,
     };
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
     let service = service(&doc);

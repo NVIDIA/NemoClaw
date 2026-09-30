@@ -25,11 +25,12 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
 | Provision or use a Kubernetes gateway | [Kubernetes backend](kubernetes.md) |
+| Configure the offline-tested OpenShift profile | [OpenShift profile](openshift.md) |
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
 | Review trust, credential storage and access, and isolation | [Security](security.md) |
-| Declare sandbox filesystem, process, egress, and proxy settings | [Sandbox policy and proxy](sandbox-network.md) |
+| Declare sandbox filesystem, process, and egress settings | [Sandbox policy](sandbox-network.md) |
 
 ## Agents and Inference
 
@@ -90,4 +91,4 @@ The design decision defines current invariants; historical test results apply on
 - [Generic vLLM source notices](../runtimes/vllm/NOTICE.md).
 - [Qwen3.8 source notices](../runtimes/qwen38/NOTICE.md).
 - [Configuration fixture provenance](../crates/nemoclaw-sdk/tests/fixtures/config/README.md).
-- [Managed runtime fixture provenance](../crates/nemoclaw-sdk/src/managed/REFERENCE.md).
+- [Managed runtime fixture provenance](../crates/nemoclaw-provider/src/managed/REFERENCE.md).

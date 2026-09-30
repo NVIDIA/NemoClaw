@@ -69,6 +69,14 @@ class ImageBuilds(unittest.TestCase):
             self.assertEqual(adapted["target"], "openclaw-kubernetes")
             self.assertNotEqual(adapted["tags"], ordinary["tags"])
 
+    def test_openshift_image_uses_its_separate_seed_layout_for_each_architecture(self):
+        for platform in ("linux/arm64", "linux/amd64"):
+            targets = self.plan("openclaw", "openclaw-openshift", platform=platform)["target"]
+            self.assertEqual(targets["openclaw-openshift"]["args"], targets["openclaw"]["args"])
+            self.assertEqual(targets["openclaw-openshift"]["platforms"], [platform])
+            self.assertEqual(targets["openclaw-openshift"]["target"], "openclaw-openshift")
+            self.assertNotEqual(targets["openclaw-openshift"]["tags"], targets["openclaw"]["tags"])
+
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})

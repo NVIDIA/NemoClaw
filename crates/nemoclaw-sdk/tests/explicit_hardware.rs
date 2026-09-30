@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
-    config::{Document, schema::input_schema},
-    hardware::{Capacity, GIB},
-    services::{ServiceDefinition, installers::vllm::hardware_capacity::check_capacity},
+use nemoclaw_runtime::{
+    hardware::Capacity, hardware::GIB, vllm::hardware_capacity::check_capacity,
 };
+use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::ServiceDefinition};
 use serde_json::{Value, json};
 
 fn input() -> Value {

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_provider::openshell::{OpenShell, Secrets};
 use nemoclaw_sdk::{
     ObservationError,
     backend::Backend,
     config::{ComputeDriver, Credential, Document, Gateway, TLS},
-    openshell::{OpenShell, Secrets},
 };
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -68,6 +68,7 @@ async fn authenticated_gateway(driver: ComputeDriver) {
     values.insert("TOKEN".into(), "secret-sentinel".into());
     let reference = |env: &str| Credential { env: env.into() };
     let gateway = Gateway::External(nemoclaw_sdk::config::ExternalGateway {
+        engine: String::new(),
         endpoint: fixture.endpoint.clone(),
         credential: Some(reference("TOKEN")),
         tls: Some(TLS {

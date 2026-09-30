@@ -85,6 +85,14 @@ pub fn compile_teardown(
             .expect("compiled instances")
             .is_empty()
     });
+    if resources.is_empty() {
+        // An image-only failure has no retained storage. OpenTofu JSON syntax
+        // requires omitting resource blocks rather than emitting an empty one.
+        graph
+            .as_object_mut()
+            .expect("compiled graph")
+            .remove("resource");
+    }
     Ok(CompiledTeardown { graph, retained })
 }
 
@@ -113,9 +121,10 @@ mod tests {
     }
 
     fn addresses(graph: &Value) -> BTreeSet<String> {
-        graph["resource"]
-            .as_object()
-            .unwrap()
+        let Some(resources) = graph.get("resource").and_then(Value::as_object) else {
+            return BTreeSet::new();
+        };
+        resources
             .iter()
             .flat_map(|(kind, resources)| {
                 resources
@@ -153,6 +162,12 @@ mod tests {
                 compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
             assert_eq!(compiled.retained, established);
             let graph = compiled.graph;
+            if established.is_empty() {
+                assert!(
+                    graph.get("resource").is_none(),
+                    "OpenTofu rejects an empty resource block after image-only failure"
+                );
+            }
             assert_eq!(
                 addresses(&graph),
                 established,
@@ -229,6 +244,40 @@ mod tests {
                     json!({"prevent_destroy":true})
                 );
             }
+        }
+    }
+
+    #[test]
+    fn legacy_kubernetes_intent_without_image_metadata_can_be_retained_and_torn_down() {
+        let mut document = Document::parse(
+            include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+        )
+        .unwrap();
+        for sandbox in &mut document.spec.sandboxes {
+            sandbox.image.metadata = None;
+        }
+        // Old intent must remain exportable and reloadable without inspecting
+        // the former image or resolving a newly introduced environment name.
+        let document = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::state::Store::open(directory.path()).unwrap();
+        store
+            .save(&crate::state::Record::new(document.clone()).unwrap())
+            .unwrap();
+        assert_eq!(store.load().unwrap().unwrap().document, document);
+        for (runtime, retained) in [
+            (false, "nemoclaw_workspace.deployment"),
+            (true, "nemoclaw_kubernetes_storage.runtime"),
+        ] {
+            let established = BTreeSet::from([retained.into()]);
+            let compiled =
+                compile_teardown(&document, &generations, "0.1.0", &established, runtime).unwrap();
+            assert_eq!(compiled.retained, established);
+            assert!(compiled.graph.get("data").is_none());
+            assert!(compiled.graph.get("output").is_none());
         }
     }
 

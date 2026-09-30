@@ -35,7 +35,7 @@ fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
         desired["spec"]["inferenceProviders"][0]["endpoint"],
         "https://integrate.api.nvidia.com/v1"
     );
-    assert_eq!(reparsed.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert_eq!(reparsed.credential_names(), ["NVIDIA_API_KEY"]);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn onboarding_authors_hermes_with_hosted_nvidia() {
         desired["spec"]["inferenceProviders"][0]["api"],
         "openai-completions"
     );
-    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert_eq!(document.credential_names(), ["NVIDIA_API_KEY"]);
 }
 
 #[test]
@@ -208,8 +208,6 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
             ["mode"],
         "tools"
     );
-    assert_eq!(sandboxes[0]["network"]["proxy"]["host"], "10.200.0.1");
-    assert_eq!(sandboxes[0]["network"]["proxy"]["port"], 3128);
     assert_eq!(
         desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["diagnostics"]["otel"]
             ["enabled"],

@@ -158,6 +158,10 @@ pub struct ManagedGateway {
 #[serde(default, deny_unknown_fields)]
 /// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
 pub struct ExternalGateway {
+    /// Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub engine: String,
     /// Gateway HTTP(S) origin, without a path.
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
@@ -269,8 +273,12 @@ pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
     #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
-    /// Immutable image reference. Kubernetes requires an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
+    /// Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
     pub ref_: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Credential")]
+    /// Kubernetes and OpenShift deployment planning requires an environment reference to an absolute local OCI metadata bundle path; omission permits reading legacy intent for teardown. Its index, manifest, configuration, and Fabric catalog are verified against ref before use. No image layers or credential values belong in the bundle. Docker and Podman inspect their selected engine instead.
+    pub metadata: Option<Credential>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -278,9 +286,9 @@ pub struct Image {
 #[serde(default, deny_unknown_fields)]
 /// Sandbox runtime selected through OpenShell.
 pub struct Runtime {
-    #[serde(rename = "provider", deserialize_with = "super::kinds::runtime_driver")]
+    #[serde(rename = "provider")]
     #[schemars(default)]
-    /// Docker, Podman, or Kubernetes driver. Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints. A managed service with Podman requires explicit service placement.
+    /// Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.
     pub provider: super::ComputeDriver,
 }
 
@@ -361,7 +369,7 @@ pub struct Route {
     /// Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition.
     pub provider: Option<InferenceProvider>,
     #[serde(rename = "overrides")]
-    /// Model selection, optional native tuning, and optional legacy model metadata.
+    /// Model selection, shared limits, and optional native settings.
     pub overrides: Overrides,
 }
 

@@ -89,7 +89,7 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
                 let authored = document.clone();
                 assert_eq!(
                     provider_scope::normalized(targets(&document, &generations).unwrap()),
-                    expected
+                    provider_scope::normalized(expected.clone())
                 );
                 assert_eq!(document, authored);
                 assert_eq!(

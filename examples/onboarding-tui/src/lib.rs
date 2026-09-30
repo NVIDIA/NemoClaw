@@ -4,9 +4,12 @@
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
 #[cfg(test)]
 mod scenarios;
+mod template;
 mod tui;
 
-use nemoclaw_authoring::{Answers, Capabilities, Draft, Session};
+#[cfg(test)]
+use nemoclaw_authoring::Answers;
+use nemoclaw_authoring::{Capabilities, Draft, Session, TargetFacts};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
 use std::{
     io::{IsTerminal, Read, Write},
@@ -64,11 +67,8 @@ fn load(
     capabilities: &Capabilities,
 ) -> Result<Draft, Box<dyn std::error::Error>> {
     let draft = match source {
-        Source::Defaults => {
-            let authored =
-                Session::new()?.project(capabilities, &Answers::onboarding_defaults())?;
-            Draft::from_document(authored.document().clone())?
-        }
+        Source::Defaults => template::onboarding_template()
+            .draft(&TargetFacts::new("local machine"), capabilities)?,
         Source::Template(path) => {
             let original = read_draft(path)?;
             Session::new()?.draft_from_template(original.document().clone())?
@@ -106,6 +106,29 @@ fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nemoclaw_authoring::{AnswerStatus, EditableField};
+
+    #[test]
+    fn built_in_defaults_use_the_partial_template() {
+        let capabilities = Capabilities::available();
+        let draft = load(Source::Defaults, &capabilities).unwrap();
+        for field in [
+            EditableField::Harness,
+            EditableField::Runtime,
+            EditableField::Inference,
+            EditableField::Api,
+            EditableField::DeploymentName,
+            EditableField::Model,
+        ] {
+            assert_eq!(draft.answer_status(field), AnswerStatus::Suggested);
+        }
+        assert_eq!(draft.guided_fields(&capabilities).unwrap().len(), 6);
+        assert_eq!(
+            draft.guided_answers(&capabilities).unwrap(),
+            Answers::onboarding_defaults()
+        );
+    }
+
     #[test]
     fn saved_unknown_harness_is_a_template_without_losing_defaults() {
         let directory = tempfile::tempdir().unwrap();

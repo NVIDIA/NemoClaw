@@ -25,7 +25,7 @@ impl ImagePullPolicy {
         }
     }
 
-    pub(crate) fn from_row(row: &crate::backend::Row) -> Result<Option<Self>, crate::Error> {
+    pub fn from_row(row: &crate::backend::Row) -> Result<Option<Self>, crate::Error> {
         match row.get("image_pull_policy").map(String::as_str) {
             None | Some("") => Ok(None),
             Some("Always") => Ok(Some(Self::Always)),

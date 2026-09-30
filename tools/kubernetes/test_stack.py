@@ -165,13 +165,14 @@ class RenderTests(unittest.TestCase):
         self.assertFalse(values["server"]["auth"]["allowUnauthenticatedUsers"])
         self.assertTrue(values["server"]["tls"]["enableMtls"])
         self.assertFalse(values["server"]["telemetryEnabled"])
-        self.assertTrue(values["supervisor"]["sandboxRuntime"]["networkPolicyEnforced"])
+        self.assertEqual(values["global"]["image"]["registry"], "")
         for image in [
-            values["image"],
+            values["gateway"]["image"],
             values["supervisor"]["image"],
             values["sandboxRuntime"]["image"],
+            values["sandbox"]["image"],
         ]:
-            self.assertIn("@sha256:", image["tag"])
+            self.assertRegex(image["digest"], r"^sha256:[a-f0-9]{64}$")
         self.assertEqual(values["server"]["credentialStorage"]["existingSecret"], "nemoclaw-kek")
 
     def test_artifact_digest_mismatch_is_rejected(self):

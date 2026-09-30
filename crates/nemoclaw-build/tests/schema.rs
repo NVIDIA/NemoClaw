@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "sdk")]
 use std::{fs, path::Path, process::Command};
 
 fn generate(directory: &Path, check: bool) -> std::process::Output {
@@ -139,4 +140,28 @@ fn compiled_source_identity_stays_fixed_when_inputs_change_during_assembly() {
         .extend(b"\n// changed contract\n");
     assert!(nemoclaw_build::verify_source_version(expected, &files).is_err());
     assert_ne!(expected, nemoclaw_build::source_version(&files));
+}
+
+#[test]
+fn reference_explains_conditional_memory_limits() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!(generate(directory.path(), false).status.success());
+    let reference =
+        fs::read_to_string(directory.path().join("docs/reference/configuration.md")).unwrap();
+    let memory = reference
+        .split("## Memory\n")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(
+        memory.contains("When `gpuMemoryUtilization` is present"),
+        "{memory}"
+    );
+    assert!(memory.contains("`kvCacheGiB`: `0`"), "{memory}");
+    assert!(
+        memory.contains("Otherwise: `kvCacheGiB`: `0` or minimum 4; maximum 12"),
+        "{memory}"
+    );
 }

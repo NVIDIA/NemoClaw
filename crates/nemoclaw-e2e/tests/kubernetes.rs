@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
-use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
+use nemoclaw_sdk::{
+    CancellationToken, Deployment,
+    config::{ComputeDriver, Document},
+};
 use std::{fs, path::PathBuf};
 
 fn document() -> Document {
@@ -17,13 +20,26 @@ fn document() -> Document {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes gateway protocol fixture"]
 async fn kubernetes_lifecycle_preserves_bindings_across_export_reapply_and_driver_drift() {
+    cluster_lifecycle(ComputeDriver::Kubernetes).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires verified NEMOCLAW_TEST_BUNDLE; isolated OpenShift gateway protocol fixture"]
+async fn openshift_lifecycle_preserves_profile_export_and_destroy_without_metadata() {
+    cluster_lifecycle(ComputeDriver::OpenShift).await;
+}
+
+async fn cluster_lifecycle(driver: ComputeDriver) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     fixture.state.lock().unwrap().driver = Some("kubernetes".into());
     let mut document = document();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let deployment = Deployment::new(directory.path(), &bundle);
+    document.spec.sandboxes[0].runtime.provider = driver;
+    let metadata = directory.path().join("image-metadata.json");
+    let secrets = nemoclaw_e2e::image_runtime::metadata(&mut document, &metadata);
+    let deployment = Deployment::new(directory.path(), &bundle).with_secrets(secrets);
     let cancel = CancellationToken::new();
     deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
@@ -52,6 +68,7 @@ async fn kubernetes_lifecycle_preserves_bindings_across_export_reapply_and_drive
         &bindings,
     );
     fixture.state.lock().unwrap().driver = Some("kubernetes".into());
+    fs::remove_file(metadata).unwrap();
     deployment.destroy(&cancel).await.unwrap();
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
@@ -67,8 +84,13 @@ async fn kubernetes_rejects_a_docker_gateway_without_mutation() {
     let fixture = Fixture::start().await;
     let mut document = document();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let secrets = nemoclaw_e2e::image_runtime::metadata(
+        &mut document,
+        &directory.path().join("image-metadata.json"),
+    );
     assert!(
         Deployment::new(directory.path(), &bundle)
+            .with_secrets(secrets)
             .apply(&document, &CancellationToken::new())
             .await
             .is_err()

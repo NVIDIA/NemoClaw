@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+
+impl OpenShell {
+    pub(super) async fn create_workspace(&self, want: &Row) -> Result<String, ObservationError> {
+        let name = value(want, "name");
+        let response = self
+            .client
+            .raw_grpc()
+            .create_workspace(self.request(proto::CreateWorkspaceRequest {
+                name: name.into(),
+                labels: labels(want),
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner();
+        let row = base(response.workspace.and_then(|w| w.metadata), name, false)?;
+        verify_identity(want, &row)?;
+        Ok(row["id"].clone())
+    }
+    pub(super) async fn create_provider(&self, want: &Row) -> Result<String, ObservationError> {
+        let name = value(want, "name");
+        let workspace = value(want, "workspace");
+        let response = self
+            .client
+            .raw_grpc()
+            .create_provider(self.request(proto::CreateProviderRequest {
+                provider: Some(self.provider(want).await?),
+                workspace_scope: Some(proto::workspace_selector(workspace)),
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner();
+        let row = base(response.provider.and_then(|p| p.metadata), name, false)?;
+        verify_identity(want, &row)?;
+        Ok(row["id"].clone())
+    }
+    pub(super) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
+        let name = value(want, "name");
+        let workspace = value(want, "workspace");
+        if value(want, "agent_runtime") != "fabric" {
+            return Err(ObservationError::BindingMismatch);
+        }
+        let mut labels = labels(want);
+        labels.insert(AGENT.into(), value(want, "agent_name").into());
+        if !value(want, "agent_runtime").is_empty() {
+            labels.insert(AGENT_RUNTIME.into(), value(want, "agent_runtime").into());
+        }
+        let response = self
+            .client
+            .raw_grpc()
+            .create_sandbox(
+                self.request(proto::CreateSandboxRequest {
+                    name: name.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    labels,
+                    annotations: [
+                        (agent::RUNTIME.into(), value(want, "runtime_json").into()),
+                        (agent::POLICY.into(), value(want, "policy_json").into()),
+                    ]
+                    .into(),
+                    spec: Some(proto::SandboxSpec {
+                        template: Some(proto::SandboxTemplate {
+                            image: value(want, "image").into(),
+                            ..Default::default()
+                        }),
+                        command: agent::binding(want)?
+                            .command("serve", &["--agent", value(want, "agent_name")]),
+                        providers: inference::provider_names(
+                            value(want, "provider_names_json"),
+                            value(want, "agent_runtime"),
+                        )?,
+                        environment: inference_environment(want)?.into_iter().collect(),
+                        policy: Some(row_policy(want)?),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner();
+        let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
+        verify_identity(want, &row)?;
+        Ok(row["id"].clone())
+    }
+}

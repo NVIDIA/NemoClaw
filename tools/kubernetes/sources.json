@@ -1,8 +1,8 @@
 {
   "openshell": {
-    "url": "https://codeload.github.com/NVIDIA/OpenShell/tar.gz/1fe79f53991debf32776853a60f0cbd4e127dcfb",
-    "sha256": "a194dacc451919a2c9457f9db4608fa7b613fcf55a2570abda746b0a4027b23a",
-    "directory": "OpenShell-1fe79f53991debf32776853a60f0cbd4e127dcfb"
+    "url": "https://codeload.github.com/NVIDIA/OpenShell/tar.gz/6648bd0c290efbc41ba131ee9831ee45cd431f94",
+    "sha256": "298ee3c0566c51e593e9eadc724a0e1c072fbb542b4f362b82e82a254f8eaea6",
+    "directory": "OpenShell-6648bd0c290efbc41ba131ee9831ee45cd431f94"
   },
   "agentSandbox": {
     "url": "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml",

@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_e2e::image_runtime::targets;
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{
-    ObservationError,
-    backend::Backend,
-    compile::{Generations, targets},
-    config::Document,
-    openshell::{OpenShell, Secrets},
-};
+use nemoclaw_provider::openshell::{OpenShell, Secrets};
+use nemoclaw_sdk::{ObservationError, backend::Backend, compile::Generations, config::Document};
 use std::sync::Arc;
 struct Key(&'static str);
 impl Secrets for Key {
@@ -40,7 +36,7 @@ async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_regi
 async fn search_credential_lifecycle(
     provider_type: &str,
     profile_address: &str,
-    profile_name: &str,
+    _profile_name: &str,
     credential_env: &str,
 ) {
     let fixture = Fixture::start().await;
@@ -66,7 +62,7 @@ async fn search_credential_lifecycle(
     );
     let profile = &targets
         .iter()
-        .find(|t| t.address == profile_address)
+        .find(|t| t.address.starts_with(&format!("{profile_address}_")))
         .unwrap()
         .values;
     fixture.state.lock().unwrap().lose_create = true;
@@ -120,7 +116,7 @@ async fn search_credential_lifecycle(
             "owned-search-key"
         );
     }
-    let key = format!("{}/{profile_name}", doc.workspace());
+    let key = format!("{}/{}", doc.workspace(), profile["name"]);
     let original = fixture.state.lock().unwrap().profiles[&key].clone();
     fixture
         .state

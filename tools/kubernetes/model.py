@@ -181,7 +181,7 @@ def configuration(image, address, harness):
             "sandboxes": [
                 {
                     "name": "assistant",
-                    "image": {"ref": image},
+                    "image": {"ref": image, "metadata": {"env": "NEMOCLAW_AGENT_IMAGE_METADATA"}},
                     "runtime": {"provider": "kubernetes"},
                     "network": {"tier": "isolated"},
                     "harness": {"kind": "nvidia.fabric." + harness},

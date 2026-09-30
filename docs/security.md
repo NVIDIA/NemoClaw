@@ -65,6 +65,22 @@ Use environment references for provider secrets and protected files for gateway 
 Configuration export preserves references; it cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway/model/proxy storage, and caller-owned files.
 
+### Diagnostic Disclosure
+
+The SDK keeps credentials out of its own error construction and filters child-process errors and progress as a backstop.
+For values of at least eight Unicode characters, the filter replaces matching spans in one pass, merging overlaps without rescanning `[redacted]` markers.
+This exact-value filter does not cover encoded or transformed secrets; providers must still avoid putting credentials in diagnostics.
+
+When any protected value has fewer than eight characters, the SDK withholds child error text and detailed child resource/download progress uniformly, whether or not that value appears in the output.
+Failures report `child diagnostic withheld because a credential is too short for safe redaction`.
+This prevents character-position disclosure; the threshold does not reject credentials or validate their strength.
+SDK stage progress, operation results, and known remaining-state guidance remain available.
+
+Protected values include resolved environment references passed to the child, including gateway TLS file paths, and nonempty values in the SDK process environment whose names contain `KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, ignoring case.
+The environment scan includes values subsequently excluded from the child environment or overridden.
+If withholding is unexpected, check those references and remove unrelated credential-like environment variables from the invocation.
+The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../crates/nemoclaw-e2e/tests/deployment.rs) exercise these boundaries.
+
 ### Separate the TLS Connections
 
 | Connection | Current configuration boundary |
@@ -103,5 +119,5 @@ Provider authentication references do not implement that older identity workflow
 
 ## Implementation and Tests
 
-The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-sdk/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-sdk/src/services/installers/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
+The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-provider/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
 Use [retained validation records](validation/README.md) for their tested environments and limits.

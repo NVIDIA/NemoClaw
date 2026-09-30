@@ -3,7 +3,7 @@
 
 use openshell_core::proto as p;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -23,14 +23,22 @@ pub struct State {
     pub active_policy: Option<p::SandboxPolicy>,
     pub sandbox_phase: Option<p::SandboxPhase>,
     pub sandbox_conditions: Vec<p::SandboxCondition>,
+    pub configuration_admission: Option<p::SandboxConfigurationAdmission>,
     pub exec_exit: i32,
     pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
+    pub lose_configure_reply: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
+    pub exec_environments: Vec<HashMap<String, String>>,
     pub fabric_configurations: HashMap<String, serde_json::Value>,
-    pub fabric_stopped: bool,
+    pub fabric_stopped: HashSet<String>,
+    pub staged_files: HashMap<String, Vec<u8>>,
+    pub fabric_generations: HashMap<String, usize>,
+    pub host_unavailable_checks: usize,
+    pub exec_response: Option<Vec<u8>>,
+    pub configuration_error: Option<serde_json::Value>,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -507,11 +515,15 @@ fn create_sandbox(
         return Err(Status::already_exists("collision"));
     }
     let sandbox = p::Sandbox {
-        metadata: Some(state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)),
+        metadata: Some(p::ObjectMeta {
+            annotations: q.annotations,
+            ..state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)
+        }),
         spec: q.spec,
         status: Some(p::SandboxStatus {
             phase: state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready) as i32,
             conditions: state.sandbox_conditions.clone(),
+            configuration_admission: state.configuration_admission.clone(),
             ..Default::default()
         }),
         ..Default::default()
@@ -534,6 +546,7 @@ fn create_sandbox(
     state.created("sandbox");
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
+        ..Default::default()
     })
 }
 fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
@@ -546,6 +559,7 @@ fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::Sandbox
                 .ok_or_else(|| Status::not_found("absent"))?
                 .clone(),
         ),
+        ..Default::default()
     })
 }
 fn delete_sandbox(
@@ -572,7 +586,7 @@ fn policy_status(
     state.read("policy")?;
     let sandbox = state
         .sandboxes
-        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox))
         .ok_or_else(|| Status::not_found("absent"))?;
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
@@ -606,90 +620,181 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
     fn call(&mut self, request: Request<p::ExecSandboxRequest>) -> Self::Future {
         let request = request.into_inner();
         let mut state = self.0.lock().unwrap();
-        if !state.sandboxes.values().any(|sandbox| {
-            sandbox
-                .metadata
-                .as_ref()
-                .is_some_and(|m| m.id == request.sandbox_id)
-        }) {
+        let scope = match workspace(&request.workspace_scope) {
+            Ok(scope) => scope,
+            Err(error) => return std::future::ready(Err(error)),
+        };
+        let Some(sandbox) = state.sandboxes.get(&format!("{scope}/{}", request.sandbox)) else {
             return std::future::ready(Err(Status::not_found("absent")));
-        }
+        };
+        let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
+        let launch = &sandbox.spec.as_ref().unwrap().command;
+        let operation_index = launch.len() - 3;
+        let is_bridge = request.command.starts_with(&launch[..operation_index]);
+
         if state.exec_stalled {
             return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
         let mut events = Vec::new();
-        if request.command.last().is_some_and(|arg| arg == "health") {
-            let health = state.health_report.clone().unwrap_or_else(|| {
-                serde_json::json!({
-                    "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
-                })
-            });
-            events.push(Ok(p::ExecSandboxEvent {
-                payload: Some(p::exec_sandbox_event::Payload::Stdout(
-                    p::ExecSandboxStdout {
-                        data: serde_json::to_vec(&health).unwrap(),
-                    },
-                )),
-            }));
-        }
-        if request.command.first().is_some_and(|c| c == "openclaw") {
-            events.push(Ok(p::ExecSandboxEvent {
-                payload: Some(p::exec_sandbox_event::Payload::Stdout(
-                    p::ExecSandboxStdout {
-                        data: br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"}]}}"#
-                            .to_vec(),
-                    },
-                )),
-            }));
-        }
-        if request.command.iter().any(|arg| arg == "probe")
-            && request
-                .command
-                .get(1)
-                .is_some_and(|arg| arg.ends_with("/fabric.py"))
+        let mut exit = state.exec_exit;
+        let mut output = state.exec_response.clone();
+        if request
+            .command
+            .get(2)
+            .is_some_and(|c| c.contains("Stage a bounded JSON file"))
         {
-            events.push(Ok(p::ExecSandboxEvent {
-                payload: Some(p::exec_sandbox_event::Payload::Stdout(
-                    p::ExecSandboxStdout {
-                        data: br#"{"status":"succeeded","output":{"response":"FOUR"}}"#.to_vec(),
-                    },
-                )),
-            }));
-        }
-        if request.command.get(2).is_some_and(|c| c == "configure") && state.exec_exit == 0 {
-            state.fabric_configurations.insert(
-                request.sandbox_id.clone(),
-                serde_json::from_str(&request.command[4]).unwrap(),
-            );
-            state.fabric_stopped = false;
+            state
+                .staged_files
+                .insert(request.command[3].clone(), request.stdin);
         }
         if request
             .command
             .get(2)
-            .is_some_and(|c| c.contains("Read the existing Fabric host status"))
+            .is_some_and(|code| code.contains(".unlink(missing_ok=True)"))
         {
-            let model = state.fabric_configurations.get(&request.sandbox_id);
-            let config = model.cloned();
-            let status = serde_json::json!({"ready":model.is_some() && !state.fabric_stopped,"runtime_id":"pi-runtime","config":config});
-            events.push(Ok(p::ExecSandboxEvent {
-                payload: Some(p::exec_sandbox_event::Payload::Stdout(
-                    p::ExecSandboxStdout {
-                        data: serde_json::to_vec(&status).unwrap(),
-                    },
-                )),
-            }));
+            state.staged_files.remove(request.command.last().unwrap());
         }
-        let exit = if request
-            .command
-            .iter()
-            .any(|arg| arg.ends_with("/inference-probe.mts") || arg.ends_with("/pi-probe.js"))
-        {
-            state.inference_exit
-        } else {
-            state.exec_exit
-        };
+        if is_bridge {
+            let operation = request
+                .command
+                .get(operation_index)
+                .map(String::as_str)
+                .unwrap_or("");
+            let flag = |name: &str| {
+                request
+                    .command
+                    .windows(2)
+                    .find(|args| args[0] == name)
+                    .map(|args| args[1].as_str())
+            };
+            let mut error = None;
+            let mut changed = false;
+            if matches!(operation, "configure" | "prepare") && exit == 0 {
+                if flag("--expected-generation")
+                    != Some(
+                        format!(
+                            "fixture:{}",
+                            state
+                                .fabric_generations
+                                .get(&sandbox_id)
+                                .copied()
+                                .unwrap_or_default()
+                        )
+                        .as_str(),
+                    )
+                {
+                    error = Some(
+                        serde_json::json!({"code":"stale_generation", "stage":"generation", "message":"stale generation", "effects":"none"}),
+                    );
+                    exit = 1;
+                } else {
+                    let payload = &state.staged_files[flag("--config").unwrap()];
+                    let config: serde_json::Value = serde_json::from_slice(payload).unwrap();
+                    changed = if operation == "prepare" {
+                        state.fabric_configurations.contains_key(&sandbox_id)
+                            && !state.fabric_stopped.contains(&sandbox_id)
+                    } else {
+                        state.fabric_configurations.get(&sandbox_id) != Some(&config)
+                            || state.fabric_stopped.contains(&sandbox_id)
+                    };
+                    if changed {
+                        *state
+                            .fabric_generations
+                            .entry(sandbox_id.clone())
+                            .or_default() += 1;
+                    }
+                    let stopped = operation == "prepare" || state.configuration_error.is_some();
+                    if stopped {
+                        state.fabric_stopped.insert(sandbox_id.clone());
+                    } else {
+                        state.fabric_stopped.remove(&sandbox_id);
+                    }
+                    if let Some(failure) = &state.configuration_error {
+                        error = Some(
+                            serde_json::json!({"code":failure["error"]["code"], "stage":failure["error"]["stage"], "message":"safe fixture failure", "effects":"applied"}),
+                        );
+                        exit = 1;
+                    } else if operation == "configure" {
+                        state
+                            .fabric_configurations
+                            .insert(sandbox_id.clone(), config);
+                    }
+                    if stopped {
+                        state.fabric_configurations.remove(&sandbox_id);
+                    }
+                }
+            }
+            let model = state.fabric_configurations.get(&sandbox_id);
+            let running = model.is_some() && !state.fabric_stopped.contains(&sandbox_id);
+            let mut result = serde_json::json!({"runtime_id": if running { Some("fixture-runtime") } else { None }, "runtime_state":if running {"running"} else {"stopped"}, "generation":format!("fixture:{}", state.fabric_generations.get(&sandbox_id).copied().unwrap_or_default()), "applied_config":if running { model } else { None }});
+            let mut status = if exit == 0 { "succeeded" } else { "failed" };
+            if operation == "prepare" {
+                result["prepared"] = serde_json::json!(exit == 0 && !running);
+            }
+            if operation == "check" {
+                let health = state.health_report.clone().unwrap_or_else(|| serde_json::json!({"supported":true,"report":{"fixture":true},"reason_code":null}));
+                result["health"] = health["report"].clone();
+                if health["supported"] == false {
+                    status = "unsupported";
+                    exit = 1;
+                    error = Some(
+                        serde_json::json!({"code":"fabric_health_unsupported","stage":"check","message":"health unsupported","effects":"none"}),
+                    );
+                } else if !health["report"].is_object() || !health["reason_code"].is_null() {
+                    status = "failed";
+                    exit = 1;
+                    error = Some(
+                        serde_json::json!({"code":"fabric_health_failed","stage":"check","message":"health failed","effects":"none"}),
+                    );
+                }
+            }
+            if operation == "check" && state.host_unavailable_checks > 0 {
+                state.host_unavailable_checks -= 1;
+                result = serde_json::json!({"runtime_id":null,"runtime_state":"unknown","generation":null,"applied_config":null,"health":null});
+                status = "failed";
+                exit = 1;
+                error = Some(
+                    serde_json::json!({"code":"host_unavailable","stage":"transport","message":"host unavailable","effects":"none"}),
+                );
+            }
+            if state.exec_exit != 0 {
+                exit = state.exec_exit;
+                status = "failed";
+            }
+            if exit != 0 && error.is_none() {
+                error = Some(
+                    serde_json::json!({"code":"fixture_failed","stage":operation,"message":"fixture failed","effects":"unknown"}),
+                );
+            }
+            if state.exec_response.is_none() {
+                let mut bytes = serde_json::to_vec(&serde_json::json!({"operation":operation,"status":status,"changed":changed,"result":result,"error":error})).unwrap();
+                bytes.push(b'\n');
+                output = Some(bytes);
+            }
+        }
+        if let Some(data) = output {
+            // Match the real streaming transport instead of hiding the caller's
+            // output cap behind one oversized protobuf message.
+            for chunk in data.chunks(64 * 1024) {
+                events.push(Ok(p::ExecSandboxEvent {
+                    payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                        p::ExecSandboxStdout {
+                            data: chunk.to_vec(),
+                        },
+                    )),
+                }));
+            }
+        }
+        let truncated = state.exec_truncated
+            || (is_bridge
+                && request
+                    .command
+                    .get(operation_index)
+                    .is_some_and(|operation| operation == "configure")
+                && std::mem::take(&mut state.lose_configure_reply));
+        state.exec_environments.push(request.environment);
         state.exec_calls.push(request.command);
-        if !state.exec_truncated {
+        if !truncated {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
                     exit_code: exit,
@@ -709,7 +814,7 @@ fn get_profile(
         profile: Some(
             state
                 .profiles
-                .get(&format!("{}/{}", q.workspace, q.id))
+                .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.id))
                 .ok_or_else(|| Status::not_found("absent"))?
                 .clone(),
         ),
@@ -724,7 +829,7 @@ fn import_profiles(
         let mut profile = item
             .profile
             .ok_or_else(|| Status::invalid_argument("missing profile"))?;
-        let key = format!("{}/{}", q.workspace, profile.id);
+        let key = format!("{}/{}", workspace(&q.workspace_scope)?, profile.id);
         if state.profiles.contains_key(&key) {
             return Err(Status::already_exists("collision"));
         }
@@ -753,23 +858,21 @@ fn delete_profile(
     state: &mut State,
     q: p::DeleteProviderProfileRequest,
 ) -> Result<p::DeleteProviderProfileResponse, Status> {
-    if !state
-        .profiles
-        .contains_key(&format!("{}/{}", q.workspace, q.id))
-    {
+    let scope = workspace(&q.workspace_scope)?;
+    if !state.profiles.contains_key(&format!("{}/{}", scope, q.id)) {
         return Err(Status::not_found("absent"));
     }
     // The pinned gateway refuses deletion while a registration uses the profile.
     if state
         .providers
         .values()
-        .any(|provider| provider.profile_workspace == q.workspace && provider.r#type == q.id)
+        .any(|provider| provider.profile_workspace == scope && provider.r#type == q.id)
     {
         return Err(Status::failed_precondition("profile is in use"));
     }
     let deleted = state
         .profiles
-        .remove(&format!("{}/{}", q.workspace, q.id))
+        .remove(&format!("{}/{}", scope, q.id))
         .is_some();
     if state.lose_delete {
         state.lose_delete = false;

@@ -281,7 +281,7 @@ These references support the coverage column; owning guides provide the specific
 [state-store]: ../../crates/nemoclaw-sdk/src/state/mod.rs
 [teardown-implementation]: ../../crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs
 [bundle-builder]: ../../crates/nemoclaw-build/src/lib.rs
-[gateway-probes]: ../../crates/nemoclaw-sdk/src/openshell/probes.rs
+[gateway-probes]: ../../crates/nemoclaw-provider/src/openshell/probes.rs
 [resource-management-tests]: ../../crates/nemoclaw-sdk/tests/resource_management.rs
 [openclaw-adapter]: https://github.com/NVIDIA/NemoClaw/blob/9146224da4/image/fabric/openclaw_adapter.py
 [hermes-adapter]: https://github.com/NVIDIA/NemoClaw/blob/9146224da4/image/fabric/hermes_adapter.py
@@ -291,7 +291,7 @@ These references support the coverage column; owning guides provide the specific
 [inference-connection-tests]: ../../crates/nemoclaw-sdk/tests/inference_connection.rs
 [model-selection-tests]: ../../crates/nemoclaw-sdk/tests/model_selection.rs
 [network-config-tests]: ../../crates/nemoclaw-sdk/tests/network_config.rs
-[credential-implementation]: ../../crates/nemoclaw-sdk/src/services/authentication.rs
+[credential-implementation]: ../../crates/nemoclaw-provider/src/services/authentication.rs
 [sdk-api]: ../../crates/nemoclaw-sdk/src/lib.rs
 [native-platform-results]: ../validation/rust-native-platforms.json
 [two-daemon-results]: ../validation/rust-dual-daemon-linux-arm64.json
