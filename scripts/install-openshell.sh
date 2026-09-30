@@ -696,27 +696,6 @@ EOF
     || fail "openshell-driver-vm was signed but the macOS Hypervisor entitlement was not present afterward."
 }
 
-repair_existing_macos_vm_driver() {
-  local bin
-  [ "$OS" = "Darwin" ] || return 0
-  bin="$(macos_vm_driver_bin)"
-  [ -n "$bin" ] && [ -x "$bin" ] || return 1
-  if macos_vm_driver_has_hypervisor_entitlement "$bin"; then
-    return 0
-  fi
-
-  warn "openshell-driver-vm is missing the macOS Hypervisor entitlement — repairing..."
-  if [ -w "$bin" ]; then
-    sign_macos_vm_driver "$bin" 0
-    return 0
-  fi
-  if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ] && [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
-    sign_macos_vm_driver "$bin" 1
-    return 0
-  fi
-  return 1
-}
-
 macos_homebrew_formula_installed() {
   local formula_info formula_operation_pin
   [ "$OS" = "Darwin" ] || return 1
