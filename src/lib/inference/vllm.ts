@@ -277,6 +277,21 @@ export function selectVllmGpuDevice(profile: VllmProfile, device: string): VllmP
   };
 }
 
+/**
+ * Render the catalog's pinned download size for the pre-install declaration.
+ *
+ * The operator commits to the download at the `Continue?` gate, which runs
+ * before any pull or model fetch, so the size has to be on that screen; the
+ * onboarding review screen prints the same estimate only after the install
+ * finished (#12207). A recipe without a pinned size keeps the plain wording
+ * instead of declaring an invented number.
+ */
+function declaredDownloadSize(bytes: number | undefined): string {
+  return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0
+    ? ` (${formatStorageBytes(BigInt(Math.ceil(bytes)))})`
+    : "";
+}
+
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
   const authentication = hfDownloadAuthentication();
   if (authentication.authenticated) {
@@ -2396,6 +2411,14 @@ async function runVllmInstall(
 
   console.log("");
   console.log(`  vLLM (${runtimeProfile.name}):`);
+  // A catalog selection always knows its preset and recipe, but only a recipe
+  // that pins a catalog receipt copies them onto the runtime profile, so the
+  // selection is the more complete source for this declaration.
+  const declaredCatalogIdentity = hostLocalSelection ?? runtimeProfile.servingCatalog;
+  if (declaredCatalogIdentity) {
+    console.log(`    Serving profile: ${declaredCatalogIdentity.presetId}`);
+    console.log(`    Recipe: ${declaredCatalogIdentity.recipeId}`);
+  }
   console.log(`    Image: ${runtimeProfile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
@@ -2413,8 +2436,16 @@ async function runVllmInstall(
       `    Fabric: ${dualStationPlan.rails.map((rail) => rail.subnet).join(", ")} (RoCEv2 GID ${String(dualStationPlan.roceGidIndex)})`,
     );
   }
-  if (!opts.hasImage) console.log("    Image download on first run, cached after");
-  console.log("    Model download on first run, cached after");
+  if (!opts.hasImage) {
+    console.log(
+      `    Image download on first run${declaredDownloadSize(runtimeProfile.imageDownloadSizeBytes)}, cached after`,
+    );
+  }
+  console.log(
+    `    Model download on first run${declaredDownloadSize(
+      runtimeProfile.modelDownloadSizeBytes ?? model.downloadSizeBytes,
+    )}, cached after`,
+  );
   printHfDownloadAuthentication(opts.nonInteractive);
   console.log("");
 

@@ -11,7 +11,11 @@ import {
   type VllmModelDef,
   vllmModelMatchesAlias,
 } from "../vllm-models.js";
-import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
+import {
+  formatStorageBytes,
+  imageStorageRequirementBytes,
+  modelStorageRequirementBytes,
+} from "../vllm-storage.js";
 import {
   claimManagedClusterManagedServingCapability,
   type ManagedClusterConfirmedManagedServingCapability,
@@ -317,6 +321,18 @@ function printSummary(
   deps.log(`    Image: ${head.image}`);
   deps.log(`    Model: ${plan.model.id}@${plan.model.revision}`);
   deps.log(`    Served model: ${plan.model.servedName}`);
+  // Each node downloads the same pinned image and model snapshot, so declare
+  // the per-node sizes before the confirmation gate below (#12207).
+  deps.log(
+    `    Image download per node on first run (${formatStorageBytes(
+      BigInt(head.runtime.imageDownloadSizeBytes),
+    )}), cached after`,
+  );
+  deps.log(
+    `    Model download per node on first run (${formatStorageBytes(
+      BigInt(head.preparation.modelDownloadSizeBytes),
+    )}), cached after`,
+  );
   deps.log(
     `    Topology: ${[capability.local, ...capability.peers]
       .map(({ hostname }) => hostname)
