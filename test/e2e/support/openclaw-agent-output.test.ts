@@ -55,7 +55,7 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("NEMOCLAW_E2E_READY_6002");
   });
 
-  it("accepts a completed tool replay whose final response and tool summary are successful", () => {
+  it("accepts a completed non-replayable tool turn but rejects a timed-out turn", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
@@ -80,9 +80,10 @@ describe("OpenClaw agent-output fixture", () => {
           status: "ok",
           summary: "completed",
           result: {
-            payloads: [{ text: "UNTRUSTED_PAYLOAD" }],
+            payloads: [{ text: "TOOLS_COMPLETE" }],
             meta: {
               replayInvalid: true,
+              timeoutPhase: "provider",
               finalAssistantVisibleText: "TOOLS_COMPLETE",
               toolSummary: { calls: 1, failures: 0, tools: ["exec"] },
             },
@@ -368,10 +369,18 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("42");
   });
 
+  it("accepts a non-replayable reply without optional tool summary metadata", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({ payloads: [{ text: "56" }], meta: { replayInvalid: true } }),
+      ),
+    ).toBe("56");
+  });
+
   it.each([
     ["timeout phase", { timeoutPhase: "provider" }],
     ["abandoned liveness", { livenessState: "abandoned" }],
-    ["invalid replay", { replayInvalid: true }],
+    ["non-replayable incomplete turn", { replayInvalid: true, error: { kind: "incomplete_turn" } }],
     ["incomplete-turn error", { error: { kind: "incomplete_turn" } }],
   ])("rejects reply evidence with declared %s metadata", (_label, meta) => {
     expect(parseOpenClawAgentText(JSON.stringify({ payloads: [{ text: "56" }], meta }))).toBe("");
