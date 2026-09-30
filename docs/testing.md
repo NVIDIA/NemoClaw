@@ -30,6 +30,49 @@ Running branch pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/live.md#bare-brev).
 
+## Combined V1 Suite
+
+The `E2E / V1 Suite` entry point belongs on the default branch, `main`.
+It calls the reusable [native](../.github/workflows/rust.yml) and [image](../.github/workflows/images.yml) workflows on `v1`, with one resolved V1 commit for every checkout.
+Merge the reusable workflow changes into `v1` before merging the entry point into `main`.
+A workflow on `v1` alone does not enable GitHub's manual-run UI or nightly scheduler while `main` remains the default branch.
+
+After both changes merge, select **Actions → E2E / V1 Suite → Run workflow**, leaving the branch set to `main`.
+The entry point always tests `v1`; the selected UI branch identifies the workflow, not the test source.
+From a checkout with authenticated GitHub CLI access, the equivalent command is:
+
+```sh
+gh workflow run e2e-v1.yaml --repo NVIDIA/NemoClaw --ref main
+```
+
+The schedule runs daily at 06:23 UTC (02:23 Eastern daylight time or 01:23 Eastern standard time).
+GitHub may delay scheduled runs.
+Manual and scheduled runs use the same suites, require no live-service credentials, build images locally, and publish no packages or images.
+The run summary records the tested commit and both suite results; a failed, cancelled, or skipped required suite makes the final result fail.
+Runs do not cancel an active suite.
+Read failed job logs and retained lifecycle timing artifacts before rerunning.
+
+| Coverage | Execution |
+|---|---|
+| Ordinary workspace tests, including non-ignored E2E contracts and doctests | Native jobs on Linux ARM64/AMD64, macOS ARM64, and Windows AMD64 |
+| `provider_protocol`, `service_capacity`, `service_readiness`, `sandbox_readiness`, `opentofu_openshell`, `deployment`, `export_observations`, `fabric_deployment`, `multiple_providers`, `remote_service`, `gateway_readiness`, `inference_discovery` | Verified bundle fixtures selected by the [Nextest lifecycle profile](../.config/nextest.toml); Unix-only tests remain platform-gated |
+| First three `discovery` tests and the SDK native-state identity test | The same lifecycle profile, using isolated protocol fixtures and temporary state |
+| Image packaging, generic Fabric lifecycle, installed discovery, and native adapter qualification | Image jobs on Linux ARM64/AMD64, with the existing platform-specific adapter selection |
+
+The following tests are not part of this credential-free suite:
+
+| Tests | Required setup |
+|---|---|
+| `brev` | [Live / Brev](testing/live.md#bare-brev), with Brev and NVIDIA secrets and an owned VM |
+| `fabric_live`, `model_live`, `spark`, `hosted_parity` | [Owned live deployments](testing/live.md), model endpoints, images, and applicable hardware |
+| `managed`, SDK `managed_live` and `ssh_live`, provider `managed_gateway_live`, and SDK live gateway tests | Explicit retained state, SSH engines, or owned gateway documents |
+| `cache_provider`, `docker_provider_proxy`, SDK Docker compute tests, and runtime Ollama cache test | Explicit Docker engine and pinned runtime/cache/proxy images; see [fixture setup](testing/fixtures.md) |
+| `fabric_owned_adapter_settings_reach_real_planning_without_consumer_manifests` in `discovery` | Installed external Fabric fixture, descriptor, and interpreter, in addition to the bundle |
+| Ignored runtime vendoring build and unsupported onboarding journeys | Separate explicit build qualification or currently unsupported behavior; these are not default lifecycle tests |
+
+Do not replace the lifecycle profile with an unrestricted ignored-test run.
+Several live tests require different initial states or intentionally leave resources running.
+
 ## Test Runner
 
 All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
