@@ -134,7 +134,7 @@ def main() -> int:
                         if desired not in current:
                             raise RuntimeError(f"harness choice {desired!r} is unavailable")
                         for _ in range(32):
-                            if f"❯ {desired}" in screen():
+                            if f"●  {desired}" in screen():
                                 break
                             send("Down")
                             time.sleep(0.05)

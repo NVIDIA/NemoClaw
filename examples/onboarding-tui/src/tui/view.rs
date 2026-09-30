@@ -6,14 +6,23 @@ use super::{
     labels::{display_value, label, terminal_text},
     logo::BrandImage,
 };
+use nemoclaw_authoring::JourneyQuestion;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Paragraph, Wrap},
 };
 
+const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
+const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
+const DEEP_GREEN: Color = Color::Rgb(15, 35, 18);
+const PROGRESS_GREEN: Color = Color::Rgb(82, 135, 49);
+const DIM: Color = Color::Rgb(82, 121, 84);
+const MUTED: Color = Color::Rgb(126, 145, 128);
+const WHITE: Color = Color::Rgb(238, 245, 238);
+const WARNING: Color = Color::Rgb(255, 170, 70);
 const LOGO_GRADIENT: [Color; 6] = [
     Color::Rgb(180, 246, 72),
     Color::Rgb(154, 226, 51),
@@ -49,7 +58,7 @@ impl JourneyWizard {
                 Paragraph::new(
                     "NEMOCLAW\n\nThis experience needs a 72 × 24 terminal.\nResize to continue.",
                 )
-                .style(Style::new().fg(Color::Rgb(118, 185, 0))),
+                .style(Style::new().fg(NVIDIA_GREEN)),
                 area,
             );
             return;
@@ -63,33 +72,65 @@ impl JourneyWizard {
         );
         let rows = Layout::vertical([
             Constraint::Length(8),
+            Constraint::Length(1),
             Constraint::Min(10),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
         .split(body);
         self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
-        let mut lines = Vec::new();
         let current = self.question();
         let reviewing = self.started && matches!(&current, Ok(None));
-        if !self.started {
-            lines.push(Line::from("Welcome to NemoClaw"));
-            lines.push(Line::from("Create desired state for an isolated sandbox."));
-            lines.push(Line::from(
-                "Review deployment settings and author deployment YAML.",
-            ));
-            lines.push(Line::from("Nothing is installed or started yet."));
-            lines.push(Line::from("Press Enter to begin."));
+        let asking = self.started && matches!(&current, Ok(Some(_)));
+        let lines = if !self.started {
+            welcome()
         } else if let Err(error) = &current {
-            lines.push(Line::from(terminal_text(&error.to_string())));
-            lines.push(Line::from(
-                "The questionnaire cannot continue. Press ← to go back or Esc to cancel.",
-            ));
-        } else if let Ok(Some(question)) = current {
+            vec![
+                Line::from(Span::styled(
+                    terminal_text(&error.to_string()),
+                    Style::new().fg(WARNING),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "The questionnaire cannot continue. Press ← to go back or Esc to cancel.",
+                    Style::new().fg(MUTED),
+                )),
+            ]
+        } else if let Ok(Some(question)) = current.as_ref() {
+            self.question_lines(question, rows[2].width)
+        } else {
+            self.review_lines()
+        };
+        let mut content = Paragraph::new(lines).wrap(Wrap { trim: false });
+        if reviewing {
+            content = content.scroll((self.review_scroll, 0));
+        }
+        frame.render_widget(content, rows[2]);
+        let optional = matches!(&current, Ok(Some(question)) if !question.required());
+        let choosing = matches!(&current, Ok(Some(question))
+            if !question.choices().is_empty() && !self.custom_answer);
+        self.render_footer(frame, rows[3], reviewing, asking, choosing, optional);
+    }
+
+    fn question_lines(&self, question: &JourneyQuestion, width: u16) -> Vec<Line<'static>> {
+        let mut title = vec![Span::styled(
+            terminal_text(&label(question)),
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )];
+        if let Some((position, total)) = self.progress() {
+            title.extend([
+                Span::raw("  "),
+                Span::styled(format!("⟦ {position}/{total} ⟧"), Style::new().fg(DIM)),
+            ]);
+        }
+        let mut lines = vec![Line::from(title), Line::from("")];
+        if let Some(description) = question.schema()["description"].as_str() {
             lines.push(Line::from(Span::styled(
-                terminal_text(&label(&question)),
-                Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+                terminal_text(description),
+                Style::new().fg(MUTED),
             )));
-            lines.push(Line::from(format!(
+        }
+        lines.push(Line::from(Span::styled(
+            format!(
                 "{}  ·  {}",
                 if question.required() {
                     "Required"
@@ -97,132 +138,191 @@ impl JourneyWizard {
                     "Optional"
                 },
                 terminal_text(question.id())
-            )));
-            if let Some(cause) = question.reopened_because() {
-                lines.push(Line::from(format!(
+            ),
+            Style::new().fg(DIM),
+        )));
+        if let Some(cause) = question.reopened_because() {
+            lines.push(Line::from(Span::styled(
+                format!(
                     "Recheck this answer because {} changed.",
                     terminal_text(cause)
+                ),
+                Style::new().fg(WARNING),
+            )));
+        }
+        lines.push(Line::from(""));
+        if question.choices().is_empty() || self.custom_answer {
+            let input = if self.input.is_empty() {
+                self.suggested_input(question)
+            } else {
+                self.input.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(terminal_text(&input), Style::new().fg(WHITE)),
+                Span::styled("▌", Style::new().fg(BRIGHT_GREEN)),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "─".repeat(width as usize),
+                Style::new().fg(BRIGHT_GREEN),
+            )));
+            if question.suggestion().is_some() {
+                lines.push(Line::from(Span::styled(
+                    "Enter accepts the suggested value; typing replaces it.",
+                    Style::new().fg(MUTED),
                 )));
             }
-            lines.push(Line::from(""));
-            if question.choices().is_empty() || self.custom_answer {
-                let input = if self.input.is_empty() {
-                    self.suggested_input(&question)
-                } else {
-                    self.input.clone()
-                };
-                lines.push(Line::from(format!("> {}", terminal_text(&input))));
-                if question.suggestion().is_some() {
-                    lines.push(Line::from(
-                        "Enter accepts the suggested value; typing replaces it.",
-                    ));
-                }
-                if !question.required() {
-                    lines.push(Line::from("Press Ctrl+O to omit."));
-                }
-            } else {
-                for (index, value) in question.choices().iter().enumerate() {
-                    lines.push(Line::from(format!(
-                        "{} {}",
-                        if index == self.choice_index(&question) {
-                            "❯"
-                        } else {
-                            " "
-                        },
-                        terminal_text(&display_value(value)),
-                    )));
-                }
-                if question.allows_custom_answer() {
-                    lines.push(Line::from(format!(
-                        "{} Type another model",
-                        if self.choice_index(&question) == question.choices().len() {
-                            "❯"
-                        } else {
-                            " "
-                        }
-                    )));
-                }
-                if !question.required() {
-                    lines.push(Line::from(format!(
-                        "{} Omit",
-                        if self.choice_index(&question) == question.choices().len() {
-                            "❯"
-                        } else {
-                            " "
-                        }
-                    )));
-                }
-            }
         } else {
-            lines.push(Line::from(Span::styled(
+            let selected = self.choice_index(question);
+            let mut choices = question
+                .choices()
+                .iter()
+                .map(display_value)
+                .collect::<Vec<_>>();
+            if question.allows_custom_answer() {
+                choices.push("Type another model".into());
+            }
+            if !question.required() {
+                choices.push("Omit".into());
+            }
+            lines.extend(
+                choices
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| choice_line(value, index == selected)),
+            );
+        }
+        lines
+    }
+
+    fn review_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from(Span::styled(
                 "Review desired state",
-                Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
-            )));
-            match self.state.resolve_with_evidence(
-                &self.capabilities,
-                &self.facts,
-                self.discovery.as_ref(),
-            ) {
-                Ok(resolution) => {
-                    if let Some(document) = resolution.materialized_document() {
-                        if let Ok(yaml) = document.yaml() {
-                            lines.extend(yaml.lines().map(|line| Line::from(terminal_text(line))));
-                        }
-                    } else {
-                        lines.extend(
-                            resolution
-                                .unverified()
-                                .iter()
-                                .map(|warning| Line::from(terminal_text(warning))),
-                        );
-                        lines.extend(resolution.assessment().issues().iter().take(5).map(
-                            |issue| {
-                                Line::from(terminal_text(&format!(
-                                    "{}: {}",
-                                    issue.path(),
-                                    issue.rule()
-                                )))
-                            },
-                        ));
+                Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+        match self.state.resolve_with_evidence(
+            &self.capabilities,
+            &self.facts,
+            self.discovery.as_ref(),
+        ) {
+            Ok(resolution) => {
+                if let Some(document) = resolution.materialized_document() {
+                    if let Ok(yaml) = document.yaml() {
+                        lines.extend(yaml.lines().map(yaml_line));
                     }
-                    if let Some(assessment) = resolution.target_assessment() {
-                        lines.push(Line::from(format!("Target: {:?}", assessment.status)));
-                        lines.extend(
-                            assessment
-                                .reasons
-                                .iter()
-                                .take(2)
-                                .map(|reason| Line::from(terminal_text(reason))),
-                        );
-                    }
-                }
-                Err(error) => lines.push(Line::from(terminal_text(&error.to_string()))),
-            }
-            lines.push(Line::from("Press Enter to save."));
-        }
-        let mut content = Paragraph::new(lines)
-            .block(Block::new().borders(Borders::ALL))
-            .wrap(Wrap { trim: false });
-        if reviewing {
-            content = content.scroll((self.review_scroll, 0));
-        }
-        frame.render_widget(content, rows[1]);
-        let footer = if reviewing {
-            "Enter save  ·  ↑↓ scroll  ·  ← back  ·  Esc cancel"
-        } else {
-            "Enter continue  ·  ↑↓ choose  ·  Ctrl+O omit  ·  Ctrl+D delegate  ·  ← back  ·  Esc cancel"
-        };
-        let footer = self.error.as_deref().unwrap_or(footer);
-        frame.render_widget(
-            Paragraph::new(terminal_text(footer))
-                .style(Style::new().fg(if self.error.is_some() {
-                    Color::Red
                 } else {
-                    Color::Gray
-                }))
-                .wrap(Wrap { trim: true }),
-            rows[2],
+                    lines.extend(resolution.unverified().iter().map(|warning| {
+                        Line::from(Span::styled(
+                            terminal_text(warning),
+                            Style::new().fg(WARNING),
+                        ))
+                    }));
+                    lines.extend(
+                        resolution
+                            .assessment()
+                            .issues()
+                            .iter()
+                            .take(5)
+                            .map(|issue| {
+                                Line::from(Span::styled(
+                                    terminal_text(&format!("{}: {}", issue.path(), issue.rule())),
+                                    Style::new().fg(WARNING),
+                                ))
+                            }),
+                    );
+                }
+                if let Some(assessment) = resolution.target_assessment() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!("Target: {:?}", assessment.status),
+                        Style::new().fg(MUTED),
+                    )));
+                    lines.extend(assessment.reasons.iter().take(2).map(|reason| {
+                        Line::from(Span::styled(terminal_text(reason), Style::new().fg(MUTED)))
+                    }));
+                }
+            }
+            Err(error) => lines.push(Line::from(Span::styled(
+                terminal_text(&error.to_string()),
+                Style::new().fg(WARNING),
+            ))),
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Press Enter to save.",
+            Style::new().fg(MUTED),
+        )));
+        lines
+    }
+
+    fn render_footer(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        reviewing: bool,
+        asking: bool,
+        choosing: bool,
+        optional: bool,
+    ) {
+        let rows = Layout::vertical([Constraint::Length(1); 3]).split(area);
+        let controls = if !self.started {
+            "Enter  begin     Esc  exit".to_owned()
+        } else if reviewing {
+            "Enter  save     ↑/↓  scroll     ←  back     Esc  exit".to_owned()
+        } else {
+            format!(
+                "{}     Enter  continue     ←  back     Esc  exit{}",
+                if choosing {
+                    "↑/↓  choose"
+                } else {
+                    "Type to replace"
+                },
+                if optional { "     Ctrl+O  omit" } else { "" }
+            )
+        };
+        let (controls, color) = match &self.error {
+            Some(error) => (terminal_text(error), WARNING),
+            None => (controls, MUTED),
+        };
+        frame.render_widget(
+            Paragraph::new(controls).style(Style::new().fg(color)),
+            rows[0],
         );
+        if asking {
+            frame.render_widget(
+                Paragraph::new("Ctrl+D  choose remaining settings and review")
+                    .style(Style::new().fg(MUTED)),
+                rows[1],
+            );
+        }
+        if let Some((position, total)) = self.progress().filter(|_| asking) {
+            let width = rows[2].width as usize;
+            let filled = width.saturating_mul(position) / total;
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("▄".repeat(filled), Style::new().fg(PROGRESS_GREEN)),
+                    Span::styled(
+                        "▄".repeat(width.saturating_sub(filled)),
+                        Style::new().fg(DEEP_GREEN),
+                    ),
+                ])),
+                rows[2],
+            );
+        }
+    }
+
+    /// Answered questions plus the questions the resolver still has open.
+    fn progress(&self) -> Option<(usize, usize)> {
+        let remaining = self
+            .state
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())
+            .ok()?
+            .questions()
+            .len();
+        let answered = self.history.len();
+        (remaining > 0).then_some((answered + 1, answered + remaining))
     }
 
     fn render_logo(&self, frame: &mut Frame<'_>, area: Rect, brand: Option<BrandImage>) {
@@ -250,6 +350,64 @@ impl JourneyWizard {
         }
         lines.push(texture_line(area.width as usize));
         frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+fn welcome() -> Vec<Line<'static>> {
+    let muted = |text: &'static str| Line::from(Span::styled(text, Style::new().fg(MUTED)));
+    vec![
+        Line::from(Span::styled(
+            "Welcome to NemoClaw",
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        muted("Create desired state for an isolated sandbox."),
+        Line::from(""),
+        muted("Review deployment settings and author deployment YAML."),
+        muted("Nothing is installed or started yet."),
+        Line::from(""),
+        muted("Press Enter to begin."),
+    ]
+}
+
+fn choice_line(value: &str, active: bool) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            if active { "  ●  " } else { "  ○  " },
+            Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
+        ),
+        Span::styled(
+            terminal_text(value),
+            if active {
+                Style::new().fg(WHITE).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(MUTED)
+            },
+        ),
+    ])
+}
+
+/// Mute YAML keys so the authored values stand out.
+fn yaml_line(line: &str) -> Line<'static> {
+    let line = terminal_text(line);
+    let body = line.trim_start().trim_start_matches("- ");
+    let key_end = body
+        .find(": ")
+        .or_else(|| body.ends_with(':').then(|| body.len() - 1))
+        .filter(|&end| {
+            body[..end]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        });
+    match key_end {
+        Some(end) => {
+            let split = line.len() - body.len() + end + 1;
+            Line::from(vec![
+                Span::styled(line[..split].to_owned(), Style::new().fg(MUTED)),
+                Span::styled(line[split..].to_owned(), Style::new().fg(WHITE)),
+            ])
+        }
+        None => Line::from(Span::styled(line, Style::new().fg(WHITE))),
     }
 }
 
