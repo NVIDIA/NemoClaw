@@ -49,6 +49,29 @@ const ALIVE_CLOUDFLARED_CONTROL: ProcessControl = {
   signalCloudflared: () => "signaled",
 };
 
+function fakeCloudflaredProcessControl(): ProcessControl {
+  return {
+    isAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    commandLine: (pid) =>
+      pid === process.pid ? process.argv.join(" ") : "/usr/local/bin/cloudflared tunnel run",
+    signalCloudflared: (pid, signal) => {
+      try {
+        process.kill(pid, signal);
+        return "signaled";
+      } catch {
+        return "not-running";
+      }
+    },
+  };
+}
+
 function resetIntegrationPidDirs(): void {
   for (const dir of [INTEGRATION_ENV_PID_DIR, INTEGRATION_REGISTRY_PID_DIR]) {
     rmSync(dir, { recursive: true, force: true });
@@ -241,6 +264,11 @@ describe("status host service PID dir matches start/stop env (#1077)", () => {
         sandboxName: resolveDefaultSandboxName(() => ({
           defaultSandbox: INTEGRATION_REGISTRY_SANDBOX,
         })),
+        processControl: {
+          isAlive: () => true,
+          commandLine: () => "/usr/bin/node vitest.mjs",
+          signalCloudflared: () => "signaled",
+        },
       });
       const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
       // Wrong PID dir would report "(stopped)" with no PID; env-resolved dir finds our pid file.
@@ -365,7 +393,7 @@ describe("startAll", () => {
     } else {
       process.env.CLOUDFLARE_TUNNEL_TOKEN = originalCloudflareTunnelToken;
     }
-    const pid = readCloudflaredState(pidDir);
+    const pid = readCloudflaredState(pidDir, fakeCloudflaredProcessControl());
     if (pid.kind === "running") {
       try {
         process.kill(pid.pid, "SIGTERM");
@@ -395,7 +423,11 @@ describe("startAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
 
     const pidFile = join(pidDir, "cloudflared.pid");
     expect(readFileSync(pidFile, "utf-8")).toMatch(/^\d+$/);
@@ -426,7 +458,11 @@ describe("startAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
 
     const log = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -454,7 +490,11 @@ describe("startAll", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
 
     const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -541,10 +581,13 @@ describe("readCloudflaredState", () => {
   });
 
   it("returns stale-pid-process when the PID points at a different process", () => {
-    // Use this test process's own PID — guaranteed alive, but not cloudflared.
-    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
-    const state = readCloudflaredState(pidDir);
-    expect(state.kind).toBe("stale-pid-process");
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/usr/bin/node\0vitest.mjs",
+      signalCloudflared: () => "signaled",
+    });
+    expect(state).toEqual({ kind: "stale-pid-process", pid: 4242 });
   });
 
   it("does not accept cloudflared appearing only as an unrelated process argument", () => {
@@ -556,6 +599,17 @@ describe("readCloudflaredState", () => {
     });
 
     expect(state).toEqual({ kind: "stale-pid-process", pid: 4242 });
+  });
+
+  it("keeps a shell-wrapped cloudflared PID unverified", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/bin/sh\0/tmp/cloudflared\0tunnel\0run",
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
   });
 
   it("returns unverified-pid-process when a live PID cannot be inspected", () => {
@@ -725,6 +779,32 @@ describe("stopAll", () => {
     expect(output).toContain("Host service cleanup remains incomplete");
   });
 
+  it("does not signal or discard a shell-wrapped cloudflared PID", () => {
+    const signals: Array<{ pid: number; sig: string }> = [];
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "/bin/sh /tmp/cloudflared tunnel run",
+      signalCloudflared: (pid, sig) => {
+        signals.push({ pid, sig });
+        return "signaled";
+      },
+    };
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      stopAll({ pidDir, processControl });
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("Independently verify PID 4242 is cloudflared");
+  });
+
   it("preserves the PID when identity-bound signaling is unavailable", () => {
     const processControl: ProcessControl = {
       isAlive: () => true,
@@ -734,13 +814,17 @@ describe("stopAll", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
     try {
       stopAll({ pidDir, processControl });
     } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       logSpy.mockRestore();
     }
 
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(output).toContain("Independently verify PID 4242 is cloudflared");
+    expect(output).toContain("keep the PID record until it exits");
   });
 
   it("does not send SIGTERM when the PID is recycled after initial validation", () => {
@@ -1116,7 +1200,7 @@ describe("startAll tunnel-origin registration (#6212)", () => {
   });
 
   afterEach(() => {
-    const state = readCloudflaredState(pidDir);
+    const state = readCloudflaredState(pidDir, fakeCloudflaredProcessControl());
     const runningPid = state.kind === "running" ? state.pid : Number.NaN;
     try {
       process.kill(runningPid, "SIGTERM");
@@ -1133,7 +1217,12 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      sandboxName: "my-sandbox",
+      processControl: fakeCloudflaredProcessControl(),
+    });
     logSpy.mockRestore();
 
     expect(registerTunnelOrigin).toHaveBeenCalledTimes(1);
@@ -1151,7 +1240,11 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345 });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: fakeCloudflaredProcessControl(),
+    });
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 
@@ -1188,7 +1281,12 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await expect(
-      startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" }),
+      startAll({
+        pidDir,
+        dashboardPort: 12345,
+        sandboxName: "my-sandbox",
+        processControl: fakeCloudflaredProcessControl(),
+      }),
     ).resolves.toBeUndefined();
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();

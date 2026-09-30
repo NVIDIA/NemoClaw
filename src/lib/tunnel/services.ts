@@ -172,15 +172,25 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
     : commandLine.split(/\s+/).filter(Boolean);
   const namesExecutable = (token: string | undefined, name: RegExp): boolean =>
     token !== undefined && name.test(basename(token.replaceAll("\\", "/")));
-  if (namesExecutable(records[0]?.trim(), /^(?:cloudflared)(?:\.exe)?$/i)) return true;
+  return namesExecutable(records[0]?.trim(), /^(?:cloudflared)(?:\.exe)?$/i);
+}
 
-  // Test fixtures and operator wrappers can launch a cloudflared-named shell
-  // script through its shebang. Accept only the interpreter's script operand,
-  // never an arbitrary later process argument.
-  return records.some(
-    (token, index) =>
-      namesExecutable(token.trim(), /^(?:ba|da|z)?sh$/i) &&
-      namesExecutable(records[index + 1]?.trim(), /^cloudflared$/i),
+function commandLineMayWrapCloudflared(commandLine: string): boolean {
+  const records = commandLine.includes("\0")
+    ? commandLine.split("\0").filter(Boolean)
+    : commandLine.split(/\s+/).filter(Boolean);
+  const executableNames = records.map((token) =>
+    basename(token.trim().replaceAll("\\", "/")).toLowerCase(),
+  );
+  let startIndex = 0;
+  // `ps -o comm= -o args=` reports the executable before argv, so the first
+  // name can appear twice. /proc cmdline does not include that prefix.
+  if (executableNames[0] === executableNames[1]) startIndex += 1;
+  if (executableNames[startIndex] === "env") startIndex += 1;
+
+  return (
+    /^(?:ba|da|z)?sh$/i.test(executableNames[startIndex] ?? "") &&
+    executableNames[startIndex + 1] === "cloudflared"
   );
 }
 
@@ -522,6 +532,9 @@ export function readCloudflaredState(
   if (commandLine === null) {
     return { kind: "unverified-pid-process", pid };
   }
+  if (commandLineMayWrapCloudflared(commandLine)) {
+    return { kind: "unverified-pid-process", pid };
+  }
   if (!commandLineNamesCloudflared(commandLine)) {
     return { kind: "stale-pid-process", pid };
   }
@@ -610,6 +623,11 @@ function stopService(
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
 ): boolean {
+  const warnManualRecovery = (pid: number): void => {
+    warn(
+      `Independently verify PID ${String(pid)} is cloudflared with the host process manager, stop it, keep the PID record until it exits, then retry cleanup`,
+    );
+  };
   const state = readCloudflaredState(pidDir, pc);
   if (state.kind === "stopped" || state.kind === "stale-pid-file") {
     info(`${name} was not running`);
@@ -627,6 +645,7 @@ function stopService(
     warn(
       `${name} PID ${String(state.pid)} was not stopped because its process identity is unavailable`,
     );
+    warnManualRecovery(state.pid);
     return false;
   }
 
@@ -637,6 +656,7 @@ function stopService(
     warn(
       `${name} PID ${String(pid)} was not stopped because identity-bound signaling is unavailable`,
     );
+    warnManualRecovery(pid);
     return false;
   }
   if (termOutcome === "not-running" || termOutcome === "not-cloudflared") {
@@ -661,6 +681,7 @@ function stopService(
       warn(
         `${name} PID ${String(pid)} was not force-stopped because identity-bound signaling is unavailable`,
       );
+      warnManualRecovery(pid);
       return false;
     }
     if (killOutcome === "not-running" || killOutcome === "not-cloudflared") {
