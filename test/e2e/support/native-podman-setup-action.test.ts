@@ -26,6 +26,7 @@ const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
 
 type WorkflowStep = {
+  env?: Record<string, unknown>;
   name?: string;
   uses?: string;
   run?: string;
@@ -507,6 +508,10 @@ describe("native Podman E2E setup boundary", () => {
     const checkout = toolchain.steps?.find(
       (step) => step.name === "Check out the pinned Podman 5.7 source",
     );
+    const dependencyInstall = toolchain.steps?.find(
+      (step) =>
+        step.name === "Install pinned Podman build dependencies from the signed Ubuntu snapshot",
+    );
     const replace = toolchain.steps?.find(
       (step) => step.name === "Replace only Podman with the pinned portable runtime",
     );
@@ -526,6 +531,34 @@ describe("native Podman E2E setup boundary", () => {
       "fetch-depth": 1,
       "persist-credentials": false,
     });
+    expect(dependencyInstall?.env).toEqual({
+      UBUNTU_SNAPSHOT_ID: "20260911T000000Z",
+    });
+    expect(dependencyInstall?.run).toContain("Dir::Etc::sourcelist=sources.list.d/ubuntu.sources");
+    expect(dependencyInstall?.run).toContain("Dir::Etc::sourceparts=-");
+    expect(dependencyInstall?.run).toContain("APT::Get::AllowUnauthenticated=false");
+    expect(dependencyInstall?.run).toContain("Acquire::AllowInsecureRepositories=false");
+    expect(dependencyInstall?.run).toContain('--snapshot "$UBUNTU_SNAPSHOT_ID"');
+    expect(dependencyInstall?.run).toContain(`
+            "gcc=4:13.2.0-7ubuntu1"
+            "git=1:2.43.0-1ubuntu7.3"
+            "libapparmor-dev=4.0.1really4.0.1-0ubuntu0.24.04.7"
+            "libbtrfs-dev=6.6.3-1.1build2"
+            "libc6-dev=2.39-0ubuntu8.9"
+            "libdevmapper-dev=2:1.02.185-3ubuntu3.2"
+            "libglib2.0-dev=2.80.0-6ubuntu3.8"
+            "libprotobuf-c-dev=1.4.1-1ubuntu4"
+            "libprotobuf-dev=3.21.12-8.2ubuntu0.3"
+            "libseccomp-dev=2.5.5-1ubuntu3.1"
+            "libselinux1-dev=3.5-2ubuntu2.1"
+            "libsqlite3-dev=3.45.1-1ubuntu2.7"
+            "libsystemd-dev=255.4-1ubuntu8.17"
+            "make=4.3-4.1build2"
+            "pkg-config=1.8.1-2build1"
+            "protobuf-compiler=3.21.12-8.2ubuntu0.3"
+`);
+    expect(dependencyInstall?.run).toContain("dpkg-query --show --showformat='${Version}'");
+    expect(dependencyInstall?.run).toContain('[[ "$actual_version" == "$expected_version" ]]');
     expect(replace?.run).toContain("sha256sum --check --strict SHA256SUMS");
     expect(replace?.run).toContain('"podman version 5.7.0"');
     expect(replace?.run).toContain('.podmanVersion = "5.7.0"');
@@ -540,6 +573,13 @@ describe("native Podman E2E setup boundary", () => {
 
   // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
   it("runs Portable Hermes only on the explicit Podman 5.7 GPU lane", () => {
+    const setupAction = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
+      inputs: Record<string, { default?: string }>;
+      runs: { steps: WorkflowStep[] };
+    };
+    const setupRuntime = setupAction.runs.steps.find(
+      (step) => step.name === "Start native Podman runtime",
+    );
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
     const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
     const gpu = job.steps?.find((step) => step.name === "Prove x86-64 NVIDIA GPU host authority");
@@ -565,7 +605,19 @@ describe("native Podman E2E setup boundary", () => {
       E2E_AGENT_RUNTIME: "hermes",
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
+    expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
+    expect(setupRuntime?.env).toMatchObject({
+      CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
+    });
+    expect(setupRuntime?.run).toContain("trap cleanup_interrupted_setup EXIT");
+    expect(setupRuntime?.run).toContain("trap 'exit 130' INT");
+    expect(setupRuntime?.run).toContain("trap 'exit 143' TERM");
+    expect(setupRuntime?.run).toContain('== "0:0:555"');
+    expect(setupRuntime?.run).toContain("setup_completed=true");
+    expect(setupRuntime?.run).toContain("trap - EXIT INT TERM");
     expect(setup?.with).toEqual({
+      "cleanup-fixture":
+        "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
       enabled: "true",
       toolchain: "portable-5.7",
       "isolate-docker-cli": "false",
@@ -918,11 +970,11 @@ describe("native Podman E2E setup boundary", () => {
       expect(fs.existsSync(path.join(fixture.toolchainRoot, "bin", "podman"))).toBe(true);
       expect(fs.existsSync(fixture.storageDirectory)).toBe(true);
       expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(true);
-      expect(fs.existsSync(fixture.destination)).toBe(false);
-      expect(fs.existsSync(fixture.restoreRoot)).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "docker"))).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "metadata"))).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "runtime.json"))).toBe(true);
+      expect(fs.existsSync(fixture.destination)).toBe(true);
+      expect(fs.existsSync(fixture.restoreRoot)).toBe(false);
+      expect(createHash("sha256").update(fs.readFileSync(fixture.destination)).digest("hex")).toBe(
+        fixture.expectedSha256,
+      );
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

@@ -1246,17 +1246,47 @@ jobs:
           go-version: 1.25.9
           cache: false
 
-      - name: Install Podman build dependencies from the signed runner OS repository
+      - name: Install pinned Podman build dependencies from the signed Ubuntu snapshot
+        env:
+          UBUNTU_SNAPSHOT_ID: 20260911T000000Z
         shell: bash
         run: |
           set -euo pipefail
-          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
-            --yes --no-install-recommends \
-            gcc git libapparmor-dev libbtrfs-dev libc6-dev libdevmapper-dev \
-            libglib2.0-dev libprotobuf-c-dev libprotobuf-dev libseccomp-dev \
-            libselinux1-dev libsqlite3-dev libsystemd-dev make pkg-config \
-            protobuf-compiler
+          packages=(
+            "gcc=4:13.2.0-7ubuntu1"
+            "git=1:2.43.0-1ubuntu7.3"
+            "libapparmor-dev=4.0.1really4.0.1-0ubuntu0.24.04.7"
+            "libbtrfs-dev=6.6.3-1.1build2"
+            "libc6-dev=2.39-0ubuntu8.9"
+            "libdevmapper-dev=2:1.02.185-3ubuntu3.2"
+            "libglib2.0-dev=2.80.0-6ubuntu3.8"
+            "libprotobuf-c-dev=1.4.1-1ubuntu4"
+            "libprotobuf-dev=3.21.12-8.2ubuntu0.3"
+            "libseccomp-dev=2.5.5-1ubuntu3.1"
+            "libselinux1-dev=3.5-2ubuntu2.1"
+            "libsqlite3-dev=3.45.1-1ubuntu2.7"
+            "libsystemd-dev=255.4-1ubuntu8.17"
+            "make=4.3-4.1build2"
+            "pkg-config=1.8.1-2build1"
+            "protobuf-compiler=3.21.12-8.2ubuntu0.3"
+          )
+          apt_sources=(
+            -o 'Dir::Etc::sourcelist=sources.list.d/ubuntu.sources'
+            -o 'Dir::Etc::sourceparts=-'
+            -o 'APT::Get::AllowUnauthenticated=false'
+            -o 'Acquire::AllowInsecureRepositories=false'
+          )
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get \
+            "${apt_sources[@]}" update --snapshot "$UBUNTU_SNAPSHOT_ID"
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get \
+            "${apt_sources[@]}" install --yes --no-install-recommends \
+            --snapshot "$UBUNTU_SNAPSHOT_ID" "${packages[@]}"
+          for package_spec in "${packages[@]}"; do
+            package_name="${package_spec%%=*}"
+            expected_version="${package_spec#*=}"
+            actual_version="$(dpkg-query --show --showformat='${Version}' "$package_name")"
+            [[ "$actual_version" == "$expected_version" ]]
+          done
 
       - name: Download the reviewed native helper toolchain
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

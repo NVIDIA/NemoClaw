@@ -17,6 +17,10 @@ inputs:
     description: Remove the Docker client after disabling the Docker daemon.
     required: false
     default: "true"
+  cleanup-fixture:
+    description: Optional immutable workflow-owned restore script used if runtime setup is interrupted.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -70,12 +74,44 @@ runs:
       if: ${{ inputs.enabled == 'true' }}
       shell: bash
       env:
+        CLEANUP_FIXTURE: ${{ inputs.cleanup-fixture }}
         EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
         EXPECTED_PODMAN_SOURCE_SHA: ${{ steps.artifact.outputs.podman_source_sha }}
         EXPECTED_PODMAN_VERSION: ${{ steps.artifact.outputs.podman_version }}
         TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
       run: |
         set -euo pipefail
+        setup_completed=false
+        cleanup_interrupted_setup() {
+          local command_status=$?
+          local cleanup_status=0
+          trap - EXIT INT TERM
+          if [[ "$setup_completed" != true && -n "$CLEANUP_FIXTURE" ]]; then
+            set +e
+            /usr/bin/env -i \
+              HOME="$HOME" \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              RUNNER_TEMP="$RUNNER_TEMP" \
+              /bin/bash "$CLEANUP_FIXTURE"
+            cleanup_status=$?
+            set -e
+          fi
+          if [[ "$cleanup_status" -ne 0 ]]; then
+            echo "::error::Native Podman setup failed and runner restoration also failed" >&2
+            exit "$cleanup_status"
+          fi
+          exit "$command_status"
+        }
+        if [[ -n "$CLEANUP_FIXTURE" ]]; then
+          [[ "$CLEANUP_FIXTURE" == /usr/local/libexec/nemoclaw/* ]]
+          [[ "$CLEANUP_FIXTURE" != *'/../'* && "$CLEANUP_FIXTURE" != */.. ]]
+          sudo -n test -f "$CLEANUP_FIXTURE"
+          sudo -n test ! -L "$CLEANUP_FIXTURE"
+          [[ "$(sudo -n stat -c '%u:%g:%a' "$CLEANUP_FIXTURE")" == "0:0:555" ]]
+          trap cleanup_interrupted_setup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+        fi
         [[ "$RUNNER_OS" == "Linux" ]]
         [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
         [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
@@ -453,6 +489,8 @@ runs:
           printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"
+        setup_completed=true
+        trap - EXIT INT TERM
 
     - name: Remove Docker CLI from native Podman execution
       if: ${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}
