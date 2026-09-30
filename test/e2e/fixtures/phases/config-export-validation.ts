@@ -52,9 +52,6 @@ import type { NemoClawInstance } from "./onboarding.ts";
 const { Type } = require("typebox") as typeof TypeBoxModule;
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
-type ConfigExportTarget = Pick<TargetDefinition, "id" | "manifestPath" | "configExport">;
-type ConfigExportSource = Pick<NemoClawInstance, "sandboxName" | "expectedFailure">;
-
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
 const EXPORT_FILE = "config-export.yaml";
@@ -106,10 +103,7 @@ const ExportAgentSchema = Type.Object(
       ]),
     ),
     integrationRefs: Type.Optional(
-      Type.Array(Type.Union([Type.Literal("brave-search"), Type.Literal("tavily-search")]), {
-        minItems: 1,
-        maxItems: 1,
-      }),
+      Type.Array(Type.Literal("brave-search"), { minItems: 1, maxItems: 1 }),
     ),
   },
   { additionalProperties: false },
@@ -145,28 +139,16 @@ const ExportSandboxFields = {
   integrations: Type.Optional(
     Type.Object(
       {
-        "brave-search": Type.Optional(
-          Type.Object(
-            {
-              kind: Type.Literal("webSearch"),
-              provider: Type.Literal("brave"),
-              credential: CredentialSchema,
-            },
-            { additionalProperties: false },
-          ),
-        ),
-        "tavily-search": Type.Optional(
-          Type.Object(
-            {
-              kind: Type.Literal("webSearch"),
-              provider: Type.Literal("tavily"),
-              credential: CredentialSchema,
-            },
-            { additionalProperties: false },
-          ),
+        "brave-search": Type.Object(
+          {
+            kind: Type.Literal("webSearch"),
+            provider: Type.Literal("brave"),
+            credential: CredentialSchema,
+          },
+          { additionalProperties: false },
         ),
       },
-      { additionalProperties: false, minProperties: 1, maxProperties: 1 },
+      { additionalProperties: false },
     ),
   ),
 };
@@ -363,11 +345,6 @@ export interface ConfigExportSemantics {
   routeProviderReference: string | null;
   policySha256: string | null;
   enabledFeatures: string[];
-  webSearch: {
-    provider: string;
-    credentialReference: string;
-    agentRefs: string[];
-  } | null;
 }
 
 export interface ConfigExportVerification {
@@ -542,22 +519,7 @@ export function parseConfigExport(raw: string): ConfigExportDocument {
   if (!Check(ConfigExportDocumentSchema, document)) {
     throw new Error("exported configuration must match the complete v1alpha1 export contract");
   }
-  const result = document as ConfigExportDocument;
-  for (const sandbox of result.spec.sandboxes) {
-    const refs = sandbox.agent.integrationRefs ?? [];
-    const definitions = Object.keys(sandbox.integrations ?? {});
-    if (refs.length !== definitions.length || refs.some((ref) => !sandbox.integrations?.[ref]))
-      throw new Error("exported search definitions must match the agent grants");
-    const search = refs[0] ? sandbox.integrations?.[refs[0]] : undefined;
-    if (
-      search &&
-      (sandbox.harness.kind === "deepagents" ||
-        (sandbox.harness.kind === "hermes" && search.provider !== "tavily") ||
-        (sandbox.agent.tools && "allow" in sandbox.agent.tools))
-    )
-      throw new Error("exported search requires a supported unrestricted agent");
-  }
-  return result;
+  return document as ConfigExportDocument;
 }
 
 function readRegistry(): ConfigExportRegistry {
@@ -649,19 +611,6 @@ function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1Con
     ...(hermesNativeSettings
       ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
       : {}),
-    ...(entry.webSearchEnabled && entry.webSearchProvider
-      ? {
-          webSearch: {
-            [entry.name]: {
-              provider: entry.webSearchProvider,
-              credentialReference:
-                entry.webSearchProvider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY",
-              agentRefs: ["primary"],
-              nativeProvider: entry.webSearchProvider,
-            },
-          },
-        }
-      : {}),
     openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
     hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
   };
@@ -674,7 +623,6 @@ function comparablePinnedV1Evidence(
 ): PinnedV1ConsumerEvidence {
   const actualHermesNativeSettings = evidence.hermesNativeSettings?.[sandboxName];
   const actualNativeSettings = evidence.openclawNativeSettings?.[sandboxName];
-  const actualWebSearch = evidence.webSearch?.[sandboxName];
   return {
     revision: evidence.revision,
     compiledSandboxes: evidence.compiledSandboxes,
@@ -692,9 +640,6 @@ function comparablePinnedV1Evidence(
             ? { [sandboxName]: actualHermesNativeSettings }
             : {},
         }
-      : {}),
-    ...(expected.webSearch
-      ? { webSearch: actualWebSearch ? { [sandboxName]: actualWebSearch } : {} }
       : {}),
     openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
     hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
@@ -761,7 +706,7 @@ function observedFeatures(
   sandbox: V1Alpha1Export["spec"]["sandboxes"][number] | undefined,
 ): string[] {
   const features: string[] = [];
-  if (sandbox?.agent.integrationRefs?.length) features.push("webSearch");
+  if (sandbox?.integrations?.["brave-search"]) features.push("webSearch");
   if (sandbox?.harness.observability) features.push("observability");
   return features.sort();
 }
@@ -821,8 +766,6 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
   const sandbox = document.spec.sandboxes[0];
   const agent = sandbox?.agent;
   const route = agent?.inference.routes[0];
-  const searchName = agent?.integrationRefs?.[0];
-  const search = searchName ? sandbox?.integrations?.[searchName] : undefined;
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,
   );
@@ -842,20 +785,12 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     routeProviderReference: route?.providerRef ?? null,
     policySha256: sandbox ? sha256(canonicalJson(sandbox.network.policy.explicit)) : null,
     enabledFeatures: observedFeatures(sandbox),
-    webSearch:
-      search && agent
-        ? {
-            provider: search.provider,
-            credentialReference: search.credential.env,
-            agentRefs: [agent.name],
-          }
-        : null,
   };
 }
 
 async function expectedSemantics(
-  target: ConfigExportTarget,
-  instance: ConfigExportSource,
+  target: TargetDefinition,
+  instance: NemoClawInstance,
   host: HostCliClient,
   secrets: SecretStore,
   dependencies: ConfigExportValidationDependencies,
@@ -897,21 +832,6 @@ async function expectedSemantics(
   if (credentialReference && !declaredCredentialReferences.includes(credentialReference)) {
     throw new Error("the live credential reference is not declared by the target manifest");
   }
-  const searchCredential =
-    entry.webSearchEnabled === true
-      ? entry.webSearchProvider === "tavily"
-        ? "TAVILY_API_KEY"
-        : entry.webSearchProvider === "brave"
-          ? "BRAVE_API_KEY"
-          : null
-      : null;
-  if (
-    entry.webSearchEnabled === true &&
-    (!searchCredential || !declaredCredentialReferences.includes(searchCredential))
-  )
-    throw new Error(
-      "enabled web search requires a recognized provider and a credential reference declared in the target manifest",
-    );
   if (entry.agent === "langchain-deepagents-code") {
     if (
       entry.dcodeAutoApprovalMode !== "disabled" ||
@@ -944,14 +864,6 @@ async function expectedSemantics(
     policySha256: sha256(canonicalJson(expectedPolicy)),
     enabledFeatures:
       entry.agent === "langchain-deepagents-code" ? [] : enabledManifestFeatures(manifest),
-    webSearch:
-      searchCredential && entry.webSearchProvider
-        ? {
-            provider: entry.webSearchProvider,
-            credentialReference: searchCredential,
-            agentRefs: ["primary"],
-          }
-        : null,
   };
 }
 
@@ -973,7 +885,6 @@ function compareSemantics(
     "routeName",
     "policySha256",
     "enabledFeatures",
-    "webSearch",
   ] as const;
   const checks: ConfigExportVerification[] = scalarFields.map((field) => ({
     id: field,
@@ -1152,8 +1063,8 @@ export class ConfigExportValidationPhaseFixture {
   }
 
   async from(
-    target: ConfigExportTarget,
-    instance: ConfigExportSource,
+    target: TargetDefinition,
+    instance: NemoClawInstance,
   ): Promise<ConfigExportEvidenceEnvelope> {
     const startedAt = this.dependencies.now();
     const producer = this.dependencies.producer();

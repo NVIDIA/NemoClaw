@@ -13,7 +13,29 @@ function buildWebSearchConfig(env: Record<string, string>) {
 }
 
 describe("generate-openclaw-config.mts: Tavily web search", () => {
-  it("emits the bundled plugin's credential path", () => {
+  it.each(["brave", "tavily"])(
+    "enables only the selected %s search plugin in the managed image (#11294)",
+    (provider) => {
+      const config = buildWebSearchConfig({
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
+      });
+
+      expect(config.tools?.web?.search).toEqual({ enabled: true, provider });
+      expect(config.plugins?.entries?.[provider]).toEqual({
+        enabled: true,
+        config: {
+          webSearch: { apiKey: `openshell:resolve:env:${provider.toUpperCase()}_API_KEY` },
+        },
+      });
+      const inactive = provider === "brave" ? "tavily" : "brave";
+      expect(config.plugins?.entries?.[inactive]).toEqual({ enabled: false });
+      expect(config.tools?.web?.search?.apiKey).toBeUndefined();
+    },
+  );
+
+  it("emits the Tavily plugin's credential reference (#11294)", () => {
     const config = buildWebSearchConfig({
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",

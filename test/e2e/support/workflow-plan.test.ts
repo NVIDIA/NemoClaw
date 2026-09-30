@@ -78,16 +78,14 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual(
       credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
     );
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
-      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
-    );
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
+      catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 3,
       "shared-e2e": 1,
       "retained-workflow": 14,
@@ -684,7 +682,6 @@ describe("E2E workflow plan", () => {
       "nvidia-api": false,
       "nvidia-inference": false,
       "github-read": false,
-      "tavily-nvidia-inference": false,
     });
   });
 
@@ -941,25 +938,12 @@ describe("E2E workflow plan", () => {
 
     expect(plan).toEqual({
       ...fullPlan,
-      catalogueMatrices: {
-        ...fullPlan.catalogueMatrices,
-        "tavily-nvidia-inference": [
-          expect.objectContaining({ id: "tavily-export-openclaw" }),
-          expect.objectContaining({ id: "tavily-export-hermes" }),
-        ],
-      },
-      coverageMatrix: expect.arrayContaining([
-        ...fullPlan.coverageMatrix,
-        expect.objectContaining({ id: "tavily-export-openclaw", source: "catalogue" }),
-        expect.objectContaining({ id: "tavily-export-hermes", source: "catalogue" }),
-      ]),
       selectedJobs: [...fullPlan.selectedJobs, "jetson-nvmap-gpu"],
       runtimeProvidersByJob: {
         ...fullPlan.runtimeProvidersByJob,
         "jetson-nvmap-gpu": ["none"],
       },
     });
-    expect(plan.coverageMatrix).toHaveLength(fullPlan.coverageMatrix.length + 2);
   });
 
   it("selects catalogue targets without unrelated jobs when their profile changes", () => {
@@ -1087,7 +1071,6 @@ describe("E2E workflow plan", () => {
           "nvidia-api": [],
           "nvidia-inference": [],
           "github-read": [],
-          "tavily-nvidia-inference": [],
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],

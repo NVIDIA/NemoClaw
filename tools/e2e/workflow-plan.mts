@@ -29,16 +29,13 @@ import {
   catalogueExclusionReason,
   catalogueHostPackages,
   catalogueMatrix,
-  catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
   E2E_HOST_PACKAGES,
-  E2E_OPTIONAL_CREDENTIALS,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
-  type E2eOptionalCredential,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -99,7 +96,6 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
   "github-read": "catalogue-github-read",
-  "tavily-nvidia-inference": "catalogue-tavily-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -446,7 +442,6 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     "nvidia-api": [],
     "nvidia-inference": [],
     "github-read": [],
-    "tavily-nvidia-inference": [],
   };
 }
 
@@ -766,7 +761,6 @@ export function buildE2eWorkflowPlan(
       return withCoverageMatrix(
         {
           ...planWithoutCoverage,
-          catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
           selectedJobs,
           runtimeProvidersByJob: {
             ...plan.runtimeProvidersByJob,
@@ -859,10 +853,7 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(
-        E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired),
-        gatewayRuntimes,
-      ),
+      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
@@ -986,27 +977,6 @@ function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
     ...selectorIds(selectors.targets, "targets"),
   ];
   return selected.length === 0 || selected.includes(HERMES_JOB_ID);
-}
-
-export function withoutUnavailableOptionalCredentialTargets(
-  plan: E2eWorkflowPlan,
-  availableCredentials: ReadonlySet<E2eOptionalCredential>,
-): E2eWorkflowPlan {
-  const catalogueMatrices = Object.fromEntries(
-    E2E_EXECUTION_PROFILES.map((profile) => [
-      profile,
-      plan.catalogueMatrices[profile].filter((row) =>
-        catalogueTarget(row.id).requiredOptionalCredentials.every((credential) =>
-          availableCredentials.has(credential),
-        ),
-      ),
-    ]),
-  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
-  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
-  return withCoverageMatrix(
-    { ...planWithoutCoverage, catalogueMatrices },
-    readFreeStandingJobsInventory(),
-  );
 }
 
 type RuntimeExclusion = {
@@ -1162,31 +1132,7 @@ export function writeE2eWorkflowPlanCiOutput(
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
   const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
-  const availableOptionalCredentials = new Set<E2eOptionalCredential>(
-    E2E_OPTIONAL_CREDENTIALS.filter(
-      (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
-    ),
-  );
-  const availabilityScopedPlan = hasPlannerSelectors
-    ? planned
-    : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
-  const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
-  const scheduledExecutions = new Set(
-    Object.values(plan.catalogueMatrices)
-      .flat()
-      .map((row) => row.execution_id),
-  );
-  const omittedTargetLines = Object.values(planned.catalogueMatrices)
-    .flat()
-    .filter((row) => !scheduledExecutions.has(row.execution_id))
-    .map((row) => {
-      const unavailableCredentials = catalogueTarget(row.id)
-        .requiredOptionalCredentials.filter(
-          (credential) => !availableOptionalCredentials.has(credential),
-        )
-        .map((credential) => `\`${credential}\``);
-      return `- \`${row.id}\`: not scheduled; unavailable credentials: ${unavailableCredentials.join(", ")}.`;
-    });
+  const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
@@ -1203,7 +1149,6 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-      `catalogue_tavily_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["tavily-nvidia-inference"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
@@ -1218,10 +1163,7 @@ export function writeE2eWorkflowPlanCiOutput(
     summary,
     renderE2eWorkflowPlanSummary(plan, {
       includeCoverageAudit: !hasPlannerSelectors && changedFiles === undefined,
-    }) +
-      (omittedTargetLines.length > 0
-        ? `\n### Targets not scheduled\n\n${omittedTargetLines.join("\n")}\n`
-        : ""),
+    }),
   );
 }
 

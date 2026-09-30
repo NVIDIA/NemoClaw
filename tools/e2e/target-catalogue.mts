@@ -35,7 +35,6 @@ export const E2E_EXECUTION_PROFILES = [
   "nvidia-api",
   "nvidia-inference",
   "github-read",
-  "tavily-nvidia-inference",
 ] as const;
 export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 
@@ -68,9 +67,6 @@ export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
 export const E2E_ARTIFACT_LAYOUTS = ["target-shard", "flat-shard"] as const;
 export type E2eArtifactLayout = (typeof E2E_ARTIFACT_LAYOUTS)[number];
 
-export const E2E_OPTIONAL_CREDENTIALS = ["TAVILY_API_KEY"] as const;
-export type E2eOptionalCredential = (typeof E2E_OPTIONAL_CREDENTIALS)[number];
-
 export interface E2eCatalogueTarget {
   id: string;
   targetId: string;
@@ -96,7 +92,6 @@ export interface E2eCatalogueTarget {
   runnerComparison: boolean;
   runnerPressure: boolean;
   compatibleApiKey: boolean;
-  requiredOptionalCredentials: readonly E2eOptionalCredential[];
   prAdvisorSelectable: boolean;
   shard: string;
   artifactLayout: E2eArtifactLayout;
@@ -154,7 +149,6 @@ type TargetOptions = Omit<
   | "runnerComparison"
   | "runnerPressure"
   | "compatibleApiKey"
-  | "requiredOptionalCredentials"
   | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
@@ -176,9 +170,7 @@ type TargetOptions = Omit<
   runnerComparison?: boolean;
   runnerPressure?: boolean;
   compatibleApiKey?: boolean;
-  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   prAdvisorSelectable?: boolean;
-  releaseRequired?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
   testFile?: string;
@@ -204,9 +196,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison = false,
     runnerPressure = false,
     compatibleApiKey = false,
-    requiredOptionalCredentials = [],
     prAdvisorSelectable = false,
-    releaseRequired = true,
     shard = "default",
     artifactLayout = "target-shard",
     testFile = `test/e2e/live/${id}.test.ts`,
@@ -221,7 +211,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     unresolvedReason,
     testFile,
     owningPaths: [testFile, ...owningPaths],
-    releaseRequired,
+    releaseRequired: true,
     runner,
     runnerKey,
     targetId,
@@ -233,7 +223,6 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison,
     runnerPressure,
     compatibleApiKey,
-    requiredOptionalCredentials,
     prAdvisorSelectable,
     shard,
     artifactLayout,
@@ -550,7 +539,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and mocked Brave Search",
     profile: "nvidia-inference",
-    selector: "^Brave.credentials.stay.outside.+$",
     timeoutMinutes: 45,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -564,44 +552,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  ...(["openclaw", "hermes"] as const).map((agent) =>
-    dockerOnlyTarget(`tavily-export-${agent}`, {
-      displayName: `Export: ${agent} preserves Tavily intent without credential values`,
-      agentRuntime: agent,
-      environmentOrInferenceEndpoint: "Ubuntu Docker; hosted inference and Tavily Search",
-      profile: "tavily-nvidia-inference",
-      requiredOptionalCredentials: ["TAVILY_API_KEY"],
-      releaseRequired: false,
-      timeoutMinutes: 45,
-      installMode: "authenticated",
-      installNonInteractive: true,
-      restoreCli: true,
-      exposeCliBin: true,
-      hostPreparation: agent === "hermes" ? "hermes-swap" : "none",
-      testFile: "test/e2e/live/brave-search.test.ts",
-      selector: `^${agent}.Tavily.export.+$`,
-      owningPaths: [
-        "src/commands/config/export.ts",
-        "src/lib/actions/config/",
-        "src/lib/adapters/config/",
-        "src/lib/adapters/openshell/providers.ts",
-        "src/lib/adapters/openshell/sdk-read-schema.ts",
-        "src/lib/config/v1alpha1-export.ts",
-        "src/lib/domain/config/",
-        "test/support/v1-config-consumer.ts",
-        "test/fixtures/v1-config-consumer/",
-        "test/e2e/fixtures/tavily-export-source.ts",
-        "test/e2e/fixtures/phases/config-export-validation.ts",
-        `test/e2e/manifests/${agent}-nvidia-tavily.yaml`,
-      ],
-      environment: {
-        ...hostedInference,
-        ...nonInteractive,
-        NEMOCLAW_AGENT: agent,
-        OPENSHELL_GATEWAY: "nemoclaw",
-      },
-    }),
-  ),
   managedRuntimeTarget("channels-add-remove", {
     displayName: "Messaging: adds and removes Telegram configuration",
     agentRuntime: "openclaw",

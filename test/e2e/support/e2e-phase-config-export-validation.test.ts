@@ -1,314 +1,411 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import {
   EXPECTED_NATIVE_SETTINGS,
   PINNED_CONSUMER_EVIDENCE,
 } from "./config-export-consumer-evidence-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
+  type ConfigExportDocument,
   type ConfigExportEvidenceEnvelope,
+  type ConfigExportValidationDependencies,
+  ConfigExportValidationPhaseFixture,
   parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
+import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
-import { ShellProbe } from "../fixtures/shell-probe.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
+import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { listTargets } from "../registry/registry.ts";
+import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
 
-import {
-  IMAGE_REF,
-  SOURCE_REVISION,
-  SECRET,
-  ENCODED_SECRET,
-  DIAGNOSTIC_SECRET_REPRESENTATIONS,
-  INTERNAL_TRANSPORT,
-  ENCODED_INTERNAL_TRANSPORT,
-  INTERNAL_TRANSPORT_REPRESENTATIONS,
-  POLICY,
-  createdDirectories,
-  artifactDirectories,
-  sha256,
-  target,
-  document,
-  searchDocument,
-  instance,
-  dependencies,
-  successfulHost,
-  refusalHost,
-  fixture,
-  captureFailure,
-} from "./config-export-validation-test-fixture.ts";
+const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
+const SOURCE_REVISION = "b".repeat(40);
+const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+const SECRET = "fixture-secret-value";
+const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
+const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
+  { name: "literal", value: SECRET },
+  { name: "wrapped-literal", value: `${SECRET.slice(0, 7)}\n# ${SECRET.slice(7)}` },
+  {
+    name: "escaped-literal",
+    value: `\\u${SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${SECRET.slice(1)}`,
+  },
+  { name: "base64", value: ENCODED_SECRET },
+  {
+    name: "wrapped-base64",
+    value: `${ENCODED_SECRET.slice(0, 12)}\n# ${ENCODED_SECRET.slice(12)}`,
+  },
+  {
+    name: "escaped-base64",
+    value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
+  },
+] as const;
+const INTERNAL_TRANSPORT = "openshell:resolve:env:KEY";
+const ENCODED_INTERNAL_TRANSPORT = Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64");
+const INTERNAL_TRANSPORT_REPRESENTATIONS = [
+  {
+    name: "escaped",
+    value: [...INTERNAL_TRANSPORT]
+      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join(""),
+  },
+  { name: "base64", value: ENCODED_INTERNAL_TRANSPORT },
+  {
+    name: "base64url",
+    value: Buffer.from("openshell:resolve:env:ÿ", "utf8")
+      .toString("base64")
+      .replace(/\+/gu, "-")
+      .replace(/\//gu, "_"),
+  },
+  {
+    name: "wrapped-base64",
+    value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
+  },
+] as const;
+const POLICY = {
+  version: 1,
+  network_policies: {
+    inference: {
+      name: "inference",
+      endpoints: [{ host: "inference.example", port: 443 }],
+      binaries: [{ path: "/usr/bin/openclaw" }],
+    },
+  },
+};
+const createdDirectories: string[] = [];
+const artifactDirectories: string[] = [];
 
-describe("automatic config export validation phase", () => {
-  it.each([
-    ["openclaw", "brave"],
-    ["openclaw", "tavily"],
-    ["hermes", "tavily"],
-  ] as const)(
-    "accepts the %s %s export shape and rejects missing grants (#12138)",
-    (agent, provider) => {
-      const candidate = searchDocument(provider, agent);
-      expect(parseConfigExport(JSON.stringify(candidate))).toEqual(candidate);
-      expect(candidate.spec.sandboxes[0]).not.toHaveProperty("image");
-      const invalid = {
-        ...candidate,
-        spec: {
-          ...candidate.spec,
-          sandboxes: [
-            { ...candidate.spec.sandboxes[0]!, agent: document().spec.sandboxes[0]!.agent },
-          ],
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function target(expectation: TargetDefinition["configExport"]["expectation"]): TargetDefinition {
+  return {
+    ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!,
+    configExport:
+      expectation === "expected-refusal"
+        ? { expectation, failureCategory: "unsupported" }
+        : { expectation },
+  };
+}
+
+function manifest(
+  features?: Record<string, unknown>,
+  credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
+): NemoClawInstanceManifest {
+  return {
+    apiVersion: "nemoclaw.io/v1",
+    kind: "NemoClawInstance",
+    metadata: { name: "openclaw" },
+    spec: {
+      setup: { install: {}, runtime: {}, platform: {} },
+      onboarding: {
+        agent: "openclaw",
+        provider: "nvidia",
+        modelRoute: "inference-local",
+        policyTier: "personal",
+        messaging: [],
+        ...(features ? { features } : {}),
+      },
+      state: { credentialRefs },
+    },
+  };
+}
+
+function document(
+  overrides: {
+    model?: string;
+    observability?: boolean;
+    credentialReference?: string;
+    gatewayEndpoint?: string;
+  } = {},
+): ConfigExportDocument {
+  const gatewayEndpoint = overrides.gatewayEndpoint ?? "http://127.0.0.1:8080";
+  return {
+    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
+    kind: "NemoClawConfig",
+    metadata: {
+      name: "export",
+      uid: "123e4567-e89b-42d3-a456-426614174000",
+    },
+    spec: {
+      gateway: { management: "managed", endpoint: gatewayEndpoint },
+      inferenceProviders: [
+        {
+          name: "hosted-compatible-endpoint",
+          provider: "openai",
+          api: "openai-completions",
+          endpoint: "https://inference.example/v1",
+          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
         },
+      ],
+      sandboxes: [
+        {
+          name: "sandbox",
+          runtime: { provider: "docker" },
+          network: { policy: { explicit: POLICY } },
+          harness: {
+            kind: "openclaw",
+            ...(overrides.observability
+              ? {
+                  observability: {
+                    otlp: {
+                      enabled: true,
+                      endpoint: "http://host.openshell.internal:4318",
+                      serviceName: "openclaw",
+                      sampleRate: 1,
+                    },
+                  },
+                }
+              : {}),
+          },
+          agent: {
+            name: "primary",
+            inference: {
+              routes: [
+                {
+                  name: "primary",
+                  providerRef: "hosted-compatible-endpoint",
+                  overrides: { model: overrides.model ?? "nvidia/model" },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  } as unknown as ConfigExportDocument;
+}
+
+function instance(expectedFailure = false): NemoClawInstance {
+  return {
+    onboarding: "cloud-openclaw",
+    sandboxName: "sandbox",
+    agent: "openclaw",
+    provider: "nvidia",
+    providerEnv: "cloud",
+    gatewayUrl: "http://127.0.0.1:18789",
+    result: {} as NemoClawInstance["result"],
+    ...(expectedFailure
+      ? {
+          expectedFailure: {
+            phase: "onboarding" as const,
+            errorClass: "policy-presets-required" as const,
+          },
+        }
+      : {}),
+  };
+}
+
+function dependencies(
+  options: {
+    credentialRefs?: string[];
+    features?: Record<string, unknown>;
+    parsedDocument?: ConfigExportDocument;
+    removeDirectory?: (directory: string) => void;
+  } = {},
+): ConfigExportValidationDependencies {
+  return {
+    closeFile: fs.closeSync,
+    inspectFile: (filePath) => {
+      const stat = fs.lstatSync(filePath);
+      return {
+        device: stat.dev,
+        inode: stat.ino,
+        isFile: stat.isFile(),
+        linkCount: stat.nlink,
+        size: stat.size,
       };
-      expect(() => parseConfigExport(JSON.stringify(invalid))).toThrow("agent grants");
     },
-  );
-
-  it.each([
-    {
-      label: "a managed search export with the retired null image placeholder",
-      change: { image: null },
-      message: "complete v1alpha1 export contract",
+    inspectOpenFile: (file) => {
+      const stat = fs.fstatSync(file);
+      return {
+        device: stat.dev,
+        inode: stat.ino,
+        isFile: stat.isFile(),
+        linkCount: stat.nlink,
+        size: stat.size,
+      };
     },
-    {
-      label: "a managed search export with a Deep Agents image reference",
-      change: { image: { ref: IMAGE_REF } },
-      message: "complete v1alpha1 export contract",
-    },
-    {
-      label: "a missing search definition",
-      change: { integrations: undefined },
-      message: "agent grants",
-    },
-    {
-      label: "a mismatched search grant",
-      change: {
-        agent: { ...document().spec.sandboxes[0]!.agent, integrationRefs: ["brave-search"] },
-      },
-      message: "agent grants",
-    },
-    {
-      label: "search-enabled Deep Agents",
-      change: { harness: { kind: "deepagents" }, image: { ref: IMAGE_REF } },
-      message: "supported unrestricted agent",
-    },
-    {
-      label: "a restricted search agent",
-      change: {
-        agent: { ...searchDocument("tavily").spec.sandboxes[0]!.agent, tools: { allow: ["read"] } },
-      },
-      message: "supported unrestricted agent",
-    },
-  ])("refuses $label (#12138)", ({ change, message }) => {
-    const value = searchDocument("tavily");
-    const sandbox = value.spec.sandboxes[0]!;
-    const invalid = {
-      ...value,
-      spec: { ...value.spec, sandboxes: [{ ...sandbox, ...change }] },
-    };
-    expect(() => parseConfigExport(JSON.stringify(invalid))).toThrow(message);
-  });
-
-  it("refuses Hermes Brave exports (#12138)", () => {
-    expect(() => parseConfigExport(JSON.stringify(searchDocument("brave", "hermes")))).toThrow(
-      "supported unrestricted agent",
-    );
-  });
-
-  it.each([
-    ["openclaw", "brave"],
-    ["openclaw", "tavily"],
-    ["hermes", "tavily"],
-  ] as const)(
-    "retains the observed %s %s provider, credential reference and agent grant in evidence (#12138)",
-    async (agent, provider) => {
-      const key = provider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY";
-      const exported = searchDocument(provider, agent);
-      const providerDependencies = dependencies({
-        agent,
-        features: { webSearch: true },
-        searchProvider: provider,
-        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", key],
-      });
-      providerDependencies.parseConfig = parseConfigExport;
-      const consumer = vi.fn(providerDependencies.validateWithPinnedV1);
-      providerDependencies.validateWithPinnedV1 = consumer;
-      const setup = fixture({
-        host: successfulHost(JSON.stringify(exported)),
-        dependencies: providerDependencies,
-      });
-      const evidence = await setup.phase.from(target("required"), instance());
-      expect(evidence.passed).toBe(true);
-      expect(evidence.observed?.webSearch).toEqual({
-        provider,
-        credentialReference: key,
-        agentRefs: ["primary"],
-      });
-      expect(evidence.verifications.find((check) => check.id === "webSearch")?.passed).toBe(true);
-      expect(consumer).toHaveBeenCalledExactlyOnceWith(JSON.stringify(exported));
-      expect(evidence.consumer?.passed).toBe(true);
-      expect(evidence.consumer?.actual.webSearch).toEqual({
+    loadManifest: (filePath) => ({
+      filePath,
+      document: manifest(options.features, options.credentialRefs),
+    }),
+    loadRegistry: () => ({
+      defaultSandbox: "sandbox",
+      sandboxes: {
         sandbox: {
-          provider,
-          credentialReference: key,
-          agentRefs: ["primary"],
-          nativeProvider: provider,
-        },
-      });
-    },
-  );
-
-  it.each(["openclaw", "hermes"] as const)(
-    "withholds %s Tavily output when the pinned consumer rejects its raw YAML (#12138)",
-    async (agent) => {
-      const raw = JSON.stringify(searchDocument("tavily", agent));
-      const providerDependencies = dependencies({
-        agent,
-        features: { webSearch: true },
-        searchProvider: "tavily",
-        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
-      });
-      providerDependencies.parseConfig = parseConfigExport;
-      const consumer = vi.fn(() => {
-        throw new Error("target parser rejected Tavily");
-      });
-      providerDependencies.validateWithPinnedV1 = consumer;
-      const setup = fixture({ host: successfulHost(raw), dependencies: providerDependencies });
-      await captureFailure(setup.phase.from(target("required"), instance()));
-      expect(consumer).toHaveBeenCalledExactlyOnceWith(raw);
-      expect(setup.writes.at(-1)).toMatchObject({
-        classification: "failure",
-        failureStage: "verification",
-        consumer: { passed: false },
-      });
-      expect(setup.writes.at(-1)).not.toHaveProperty("export");
-    },
-  );
-
-  it.each(["openclaw", "hermes"] as const)(
-    "withholds %s Tavily output when the consumer grants a different agent (#12138)",
-    async (agent) => {
-      const providerDependencies = dependencies({
-        agent,
-        features: { webSearch: true },
-        searchProvider: "tavily",
-        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
-      });
-      providerDependencies.parseConfig = parseConfigExport;
-      const evidence = providerDependencies.validateWithPinnedV1("");
-      providerDependencies.validateWithPinnedV1 = () => ({
-        ...evidence,
-        webSearch: { sandbox: { ...evidence.webSearch!.sandbox!, agentRefs: ["other"] } },
-      });
-      const setup = fixture({
-        host: successfulHost(JSON.stringify(searchDocument("tavily", agent))),
-        dependencies: providerDependencies,
-      });
-      await captureFailure(setup.phase.from(target("required"), instance()));
-      expect(setup.writes.at(-1)).toMatchObject({ consumer: { passed: false } });
-      expect(setup.writes.at(-1)).not.toHaveProperty("export");
-    },
-  );
-
-  it("refuses otherwise valid Brave output for a Tavily source (#12138)", async () => {
-    const exported = searchDocument("brave");
-    const providerDependencies = dependencies({
-      features: { webSearch: true },
-      searchProvider: "tavily",
-      credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
-    });
-    providerDependencies.parseConfig = parseConfigExport;
-    const setup = fixture({
-      host: successfulHost(JSON.stringify(exported)),
-      dependencies: providerDependencies,
-    });
-    await captureFailure(setup.phase.from(target("required"), instance()));
-    expect(setup.writes.at(-1)?.passed).toBe(false);
-    expect(
-      setup.writes.at(-1)?.verifications.find((check) => check.id === "webSearch")?.passed,
-    ).toBe(false);
-  });
-
-  it.each([
-    {
-      field: "credential",
-      change: {
-        integrations: {
-          "tavily-search": {
-            kind: "webSearch",
-            provider: "tavily",
-            credential: { env: "OTHER_KEY" },
+          name: "sandbox",
+          agent: "openclaw",
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+          provider: "compatible-endpoint",
+          preferredInferenceApi: "openai-completions",
+          endpointUrl: "https://inference.example/v1",
+          model: "nvidia/model",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+            reference: IMAGE_REF,
+            platform: "linux/amd64",
+            release: "test",
+            sourceRevision: SOURCE_REVISION,
+            sourceCohort: "test",
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+            encodedProfile: ENCODED_PROFILE,
+            startupProfileSha256: `sha256:${"c".repeat(64)}`,
+            credentialProxyReplayRequired: true,
+            shared: true,
           },
         },
       },
+    }),
+    makeTempDirectory: (prefix) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+      createdDirectories.push(directory);
+      return directory;
     },
-    {
-      field: "agent",
-      change: { agent: { ...searchDocument("tavily").spec.sandboxes[0]!.agent, name: "other" } },
+    now: vi.fn().mockReturnValueOnce(100).mockReturnValue(125),
+    openFileNoFollow: (filePath) =>
+      fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
+    parseConfig: () => options.parsedDocument ?? document(),
+    producer: () => ({
+      sourceRevision: SOURCE_REVISION,
+      cliVersion: "0.1.0",
+      cliArtifactSha256: "d".repeat(64),
+    }),
+    readOpenFile: (file, limitBytes) => {
+      const buffer = Buffer.alloc(limitBytes + 1);
+      const bytesRead = fs.readSync(file, buffer, 0, buffer.length, null);
+      return buffer.subarray(0, bytesRead).toString("utf8");
     },
-  ])(
-    "rejects the Tavily $field mismatch read from the exported bytes (#12138)",
-    async ({ change }) => {
-      const exported = searchDocument("tavily");
-      const sandbox = exported.spec.sandboxes[0]!;
-      Object.assign(sandbox, change);
-      const providerDependencies = dependencies({
-        features: { webSearch: true },
-        searchProvider: "tavily",
-        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
-      });
-      providerDependencies.parseConfig = parseConfigExport;
-      const setup = fixture({
-        host: successfulHost(JSON.stringify(exported)),
-        dependencies: providerDependencies,
-      });
-      await captureFailure(setup.phase.from(target("required"), instance()));
-      const evidence = setup.writes.at(-1)!;
-      expect(evidence.passed).toBe(false);
-      expect(evidence.verifications.find((check) => check.id === "webSearch")?.passed).toBe(false);
-      expect(evidence).not.toHaveProperty("export");
+    removeDirectory:
+      options.removeDirectory ??
+      ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateWithPinnedV1: () => PINNED_CONSUMER_EVIDENCE,
+  };
+}
+
+function successfulHost(raw: string, effectivePolicy: unknown = POLICY) {
+  return {
+    command: vi.fn(
+      async (): Promise<
+        Pick<ShellProbeResult, "exitCode" | "signal" | "timedOut" | "stdout" | "stderr">
+      > => ({
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: `Version: 1\n---\n${JSON.stringify(effectivePolicy)}`,
+        stderr: "",
+      }),
+    ),
+    nemoclaw: vi.fn(async (args: string[]) => {
+      const outputPath = args.at(args.indexOf("--output") + 1)!;
+      fs.writeFileSync(outputPath, raw, "utf8");
+      return { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
+    }),
+    openshellCommandPath: "openshell",
+  };
+}
+
+function refusalHost(
+  message = "Config export failed (unsupported).\nThe source cannot be exported.",
+) {
+  return {
+    command: vi.fn(async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+      stderr: "",
+    })),
+    nemoclaw: vi.fn(async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: message,
+    })),
+    openshellCommandPath: "openshell",
+  };
+}
+
+function fixture(
+  options: {
+    artifacts?: ArtifactSink;
+    dependencies?: ConfigExportValidationDependencies;
+    host?: ReturnType<typeof successfulHost> | HostCliClient;
+    secret?: string;
+  } = {},
+) {
+  const writes: ConfigExportEvidenceEnvelope[] = [];
+  const artifacts =
+    options.artifacts ??
+    ({
+      writeJson: vi.fn(async (_name: string, value: ConfigExportEvidenceEnvelope) => {
+        writes.push(value);
+        return "evidence.json";
+      }),
+      writeText: vi.fn(async () => "config-export.yaml"),
+      redact: (text: string) => text,
+    } as unknown as ArtifactSink);
+  const cleanup = new CleanupRegistry();
+  const host = options.host ?? successfulHost(JSON.stringify(document()));
+  const secrets = new SecretStore(
+    options.secret ? { FIXTURE_API_KEY: options.secret } : {},
+    (message) => {
+      throw new Error(message);
     },
   );
+  return {
+    cleanup,
+    host,
+    phase: new ConfigExportValidationPhaseFixture(
+      host as never,
+      secrets,
+      cleanup,
+      artifacts,
+      options.dependencies ?? dependencies(),
+    ),
+    writes,
+  };
+}
 
-  it("refuses undeclared search credentials before running the exporter (#12138)", async () => {
-    const test = fixture({ dependencies: dependencies({ searchProvider: "tavily" }) });
-    await captureFailure(test.phase.from(target("required"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "observation",
-      diagnostic:
-        "enabled web search requires a recognized provider and a credential reference declared in the target manifest",
-    });
-    expect(test.host.nemoclaw).not.toHaveBeenCalled();
-    expect(test.writes.at(-1)).not.toHaveProperty("export");
-  });
+async function captureFailure(operation: Promise<unknown>): Promise<Error> {
+  try {
+    await operation;
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    return error as Error;
+  }
+  throw new Error("expected the config export validation operation to fail");
+}
 
-  it.each([undefined, null])(
-    "refuses enabled search without a provider (%s) (#12138)",
-    async (provider) => {
-      const deps = dependencies();
-      const registry = deps.loadRegistry();
-      registry.sandboxes.sandbox!.webSearchEnabled = true;
-      registry.sandboxes.sandbox!.webSearchProvider = provider;
-      deps.loadRegistry = () => registry;
-      const test = fixture({ dependencies: deps });
-      await captureFailure(test.phase.from(target("required"), instance()));
-      expect(test.writes.at(-1)).toMatchObject({
-        classification: "failure",
-        failureStage: "observation",
-        diagnostic:
-          "enabled web search requires a recognized provider and a credential reference declared in the target manifest",
-      });
-      expect(test.host.nemoclaw).not.toHaveBeenCalled();
-      expect(test.writes.at(-1)).not.toHaveProperty("export");
-    },
-  );
-
+afterEach(() => {
+  for (const directory of createdDirectories.splice(0)) {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+  for (const directory of artifactDirectories.splice(0)) {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+});
+describe("automatic config export validation phase", () => {
   it.each([
     {
       hosted: "1",
@@ -421,109 +518,96 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-  it.each([
-    { name: "default", effectivePolicy: POLICY, exportedPolicy: POLICY },
-    {
-      name: "strict Landlock",
-      effectivePolicy: { ...POLICY, landlock: { compatibility: "strict" } },
-      exportedPolicy: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
-    },
-  ])(
-    "publishes exact bytes for $name policy only when pinned native settings match (#11485)",
-    async ({ effectivePolicy, exportedPolicy }) => {
-      const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
-      Object.assign(exported.spec.sandboxes[0]!.network.policy, {
-        explicit: exportedPolicy,
-      });
-      const raw = `${JSON.stringify(exported)}\n`;
-      const publishedExport = {
-        bytes: raw,
-        byteLength: Buffer.byteLength(raw, "utf8"),
-        sha256: sha256(raw),
-      };
-      const artifactRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"),
-      );
-      artifactDirectories.push(artifactRoot);
-      const independentDependencies = dependencies();
-      independentDependencies.parseConfig = parseConfigExport;
-      const test = fixture({
-        artifacts: new ArtifactSink(artifactRoot),
-        dependencies: independentDependencies,
-        host: successfulHost(raw, effectivePolicy),
-      });
-
-      const evidence = await test.phase.from(target("required"), instance());
-      const persistedEvidence = JSON.parse(
-        fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
-      ) as ConfigExportEvidenceEnvelope;
-      expect(evidence).toMatchObject({
-        contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
-        classification: "success",
+  it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
+    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
+      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    });
+    const raw = `${JSON.stringify(exported)}\n`;
+    const publishedExport = {
+      bytes: raw,
+      byteLength: Buffer.byteLength(raw, "utf8"),
+      sha256: sha256(raw),
+    };
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
+    artifactDirectories.push(artifactRoot);
+    const independentDependencies = dependencies();
+    independentDependencies.parseConfig = parseConfigExport;
+    const test = fixture({
+      artifacts: new ArtifactSink(artifactRoot),
+      dependencies: independentDependencies,
+      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
+    });
+    const evidence = await test.phase.from(target("required"), instance());
+    const persistedEvidence = JSON.parse(
+      fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
+    ) as ConfigExportEvidenceEnvelope;
+    expect(evidence).toMatchObject({
+      contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
+      classification: "success",
+      passed: true,
+      command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
+      cleanup: { registeredBeforeExport: true, succeeded: true },
+      export: publishedExport,
+      security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
+      consumer: {
         passed: true,
-        command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
-        cleanup: { registeredBeforeExport: true, succeeded: true },
-        export: publishedExport,
-        security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
-        consumer: {
-          passed: true,
-          expected: PINNED_CONSUMER_EVIDENCE,
-          actual: PINNED_CONSUMER_EVIDENCE,
+        expected: PINNED_CONSUMER_EVIDENCE,
+        actual: PINNED_CONSUMER_EVIDENCE,
+      },
+    });
+    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
+    expect(persistedEvidence.export).toEqual(publishedExport);
+    expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining([
+        "sandboxName",
+        "agent",
+        "runtimeProvider",
+        "imageRef",
+        "inferenceProvider",
+        "inferenceApi",
+        "inferenceEndpoint",
+        "model",
+        "credentialReference",
+        "routeName",
+        "policySha256",
+        "enabledFeatures",
+        "routeProviderReference",
+        "sourceRegistryUnchanged",
+      ]),
+    );
+    expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
+    expect(evidence.producer).toEqual({
+      sourceRevision: SOURCE_REVISION,
+      cliVersion: "0.1.0",
+      cliArtifactSha256: "d".repeat(64),
+    });
+    expect(evidence.elapsedMs).toBe(25);
+    expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
+    expect((await test.cleanup.runAll()).failures).toEqual([]);
+    const mismatched = dependencies();
+    mismatched.validateWithPinnedV1 = () => ({
+      ...PINNED_CONSUMER_EVIDENCE,
+      compiledSandboxes: 2,
+      openclawNativeSettings: {
+        sandbox: {
+          ...EXPECTED_NATIVE_SETTINGS,
+          model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
         },
-      });
-      expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
-      expect(persistedEvidence.export).toEqual(publishedExport);
-      expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
-        expect.arrayContaining([
-          "sandboxName",
-          "agent",
-          "runtimeProvider",
-          "imageRef",
-          "inferenceProvider",
-          "inferenceApi",
-          "inferenceEndpoint",
-          "model",
-          "credentialReference",
-          "routeName",
-          "policySha256",
-          "enabledFeatures",
-          "routeProviderReference",
-          "sourceRegistryUnchanged",
-        ]),
-      );
-      expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
-      expect(evidence.producer).toEqual({
-        sourceRevision: SOURCE_REVISION,
-        cliVersion: "0.1.0",
-        cliArtifactSha256: "d".repeat(64),
-      });
-      expect(evidence.elapsedMs).toBe(25);
-      expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
-      expect((await test.cleanup.runAll()).failures).toEqual([]);
-      const mismatched = dependencies();
-      mismatched.validateWithPinnedV1 = () => ({
-        ...PINNED_CONSUMER_EVIDENCE,
-        compiledSandboxes: 2,
-        openclawNativeSettings: {
-          sandbox: {
-            ...EXPECTED_NATIVE_SETTINGS,
-            model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
-          },
-        },
-        openclawNativeSettingsVerified: 0,
-      });
-      const rejected = fixture({ dependencies: mismatched });
-      await captureFailure(rejected.phase.from(target("required"), instance()));
-      expect(rejected.writes.at(-1)).toMatchObject({
-        failureStage: "verification",
-        consumer: { passed: false },
-      });
-      expect(rejected.writes.at(-1)?.verifications).toContainEqual(
-        expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
-      );
-      expect(rejected.writes.at(-1)).not.toHaveProperty("export");
-    },
-  );
+      },
+      openclawNativeSettingsVerified: 0,
+    });
+    const rejected = fixture({ dependencies: mismatched });
+    await captureFailure(rejected.phase.from(target("required"), instance()));
+    expect(rejected.writes.at(-1)).toMatchObject({
+      failureStage: "verification",
+      consumer: { passed: false },
+    });
+    expect(rejected.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
+    );
+    expect(rejected.writes.at(-1)).not.toHaveProperty("export");
+  });
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
     const test = fixture();
     const evidence = await test.phase.from(target("required"), instance());
