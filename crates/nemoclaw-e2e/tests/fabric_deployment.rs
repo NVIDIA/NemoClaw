@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Deployment planning requires image discovery, whose engine transports are Unix-only.
+// Windows retains deterministic bridge tests and an explicit unsupported-engine regression.
+#![cfg(unix)]
 use nemoclaw_sdk::config::InferenceProviderKind;
 
 use nemoclaw_e2e::openshell::Fixture;
@@ -17,16 +20,16 @@ macro_rules! harness_test {
     };
 }
 
-harness_test!(harness_deepagents, "deepagents");
-harness_test!(harness_hermes, "hermes");
-harness_test!(harness_openclaw, "openclaw");
-harness_test!(harness_claude, "claude");
-harness_test!(harness_codex, "codex");
-harness_test!(harness_mini_swe_agent, "mini-swe-agent");
-harness_test!(harness_nooa, "nooa");
-harness_test!(harness_nooa_bench, "nooa-bench");
-harness_test!(harness_remote_agent, "remote-agent");
-harness_test!(harness_pi, "pi");
+harness_test!(harness_deepagents, "nvidia.fabric.langchain.deepagents");
+harness_test!(harness_hermes, "nvidia.fabric.hermes");
+harness_test!(harness_openclaw, "nvidia.fabric.openclaw");
+harness_test!(harness_claude, "nvidia.fabric.claude");
+harness_test!(harness_codex, "nvidia.fabric.codex");
+harness_test!(harness_mini_swe_agent, "nvidia.fabric.mini-swe-agent");
+harness_test!(harness_nooa, "nvidia.fabric.nooa");
+harness_test!(harness_nooa_bench, "nvidia.fabric.nooa.bench-agent");
+harness_test!(harness_remote_agent, "nvidia.fabric.remote-agent");
+harness_test!(harness_pi, "nvidia.fabric.pi");
 
 async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness: &str) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
@@ -37,11 +40,17 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     // Keep passive discovery deterministic across apply and export. Connection
     // failures can otherwise vary between transport errors and timeouts.
     let inference = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     document.spec.inference_providers[0].endpoint =
         format!("http://{}/v1", inference.local_addr().unwrap());
+    let request_line = if harness == "nvidia.fabric.claude" {
+        "GET /v1/models?limit=1000 HTTP/1.1\r\n"
+    } else {
+        "GET /v1/models HTTP/1.1\r\n"
+    };
     let mut catalog_server = tokio::task::JoinSet::<()>::new();
     catalog_server.spawn(async move {
         loop {
@@ -50,7 +59,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             while !request.ends_with(b"\r\n\r\n") {
                 request.push(stream.read_u8().await.unwrap());
             }
-            assert!(request.starts_with(b"GET /v1/models HTTP/1.1\r\n"));
+            assert!(request.starts_with(request_line.as_bytes()));
             stream
                 .write_all(
                     b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -60,7 +69,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         }
     });
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
-    if harness == "pi" {
+    if harness == "nvidia.fabric.pi" {
         let pi = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
         )
@@ -80,13 +89,29 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .overrides
             .clone();
     }
-    if harness == "claude" {
+    if harness == "nvidia.fabric.claude" {
         document.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
+    }
+    if harness == "nvidia.fabric.codex" {
+        document.spec.inference_providers[0].api =
+            Some(nemoclaw_sdk::config::InferenceApi::OpenaiResponses);
+    }
+    if harness == "nvidia.fabric.nooa" {
+        document.spec.sandboxes[0].harness.as_mut().unwrap().config = Some(
+            serde_json::from_value(
+                serde_json::json!({"workflow":{"target_id":"nvidia.nooa.coding-agent"}}),
+            )
+            .unwrap(),
+        );
     }
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().inference_exit = 1;
     deployment.apply(&document, &cancel).await.unwrap();
+    assert!(
+        catalog_server.try_join_next().is_none(),
+        "model catalog fixture exited"
+    );
     assert!(
         !fixture
             .state
@@ -112,8 +137,8 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .iter()
             .filter(|command| {
                 command
-                    .get(2)
-                    .is_some_and(|arg| arg == "configure" || arg == "prepare")
+                    .get(1)
+                    .is_some_and(|arg| matches!(arg.as_str(), "configure" | "prepare" | "invoke"))
             })
             .count()
     };
@@ -148,7 +173,47 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .iter()
                 .any(|arg| arg == "invoke" || arg == "--message"))
     );
-    if harness == "pi" {
+    if harness != "nvidia.fabric.pi" {
+        let mut changed_model = document.clone();
+        changed_model.spec.sandboxes[0]
+            .agent
+            .inference
+            .as_mut()
+            .unwrap()
+            .routes[0]
+            .overrides
+            .model = "another-model".into();
+        let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+        let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
+        assert_eq!(planned.changes.len(), 1, "{harness}");
+        assert_eq!(
+            planned.changes[0].resource,
+            "nemoclaw_agent_configuration.assistant"
+        );
+        assert_eq!(
+            writes(),
+            initial_writes,
+            "plan must not configure {harness}"
+        );
+        let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
+        assert_eq!(applied.changes, planned.changes);
+        assert_eq!(writes(), initial_writes + 1);
+        assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        assert_eq!(deployment.export(&cancel).await.unwrap(), changed_model);
+        assert!(
+            deployment
+                .apply(&changed_model, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert_eq!(writes(), initial_writes + 1);
+        deployment.apply(&document, &cancel).await.unwrap();
+    }
+    let initial_writes = writes();
+    if harness == "nvidia.fabric.pi" {
         let mut changed_model = document.clone();
         changed_model.spec.sandboxes[0]
             .agent
@@ -224,9 +289,19 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         let configured = calls
             .iter()
             .rev()
-            .find(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+            .find(|command| command.get(1).is_some_and(|arg| arg == "configure"))
             .unwrap();
-        let config: serde_json::Value = serde_json::from_str(&configured[4]).unwrap();
+        assert_eq!(configured[0], "/usr/local/bin/fabric-agent");
+        assert!(configured.iter().any(|arg| arg == "--config"));
+        let config = fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_configurations
+            .values()
+            .next()
+            .unwrap()
+            .clone();
         assert_eq!(config["schema_version"], "fabric.agent/v1alpha1");
         assert_eq!(config["harness"]["adapter_id"], harness);
         for role in ["primary", "default"] {
@@ -239,7 +314,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         assert!(
             !calls
                 .iter()
-                .any(|command| command.get(2).is_some_and(|arg| arg == "prepare"))
+                .any(|command| command.get(1).is_some_and(|arg| arg == "prepare"))
         );
         deployment.apply(&document, &cancel).await.unwrap();
     }
@@ -247,31 +322,41 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
     let before_writes = writes();
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
-        "nvidia.fabric.hermes".parse().unwrap()
-    } else {
-        "nvidia.fabric.langchain.deepagents".parse().unwrap()
-    };
-    // A harness change updates Fabric inside the same sandbox. It does not
-    // migrate conversations or authorize replacing the sandbox's files.
-    let planned = deployment.plan(&changed, &cancel).await.unwrap();
-    assert_eq!(planned.changes.len(), 1);
-    assert_eq!(
-        planned.changes[0].resource,
-        format!(
-            "nemoclaw_agent_configuration.{}",
-            document.spec.sandboxes[0].name
-        )
-    );
-    assert_eq!(planned.changes[0].actions, ["update"]);
-    assert_eq!(writes(), before_writes, "plan must not configure a harness");
-    let applied = deployment.apply(&changed, &cancel).await.unwrap();
-    assert_eq!(applied.changes, planned.changes);
-    assert_eq!(writes(), before_writes + 1);
+    changed.spec.sandboxes[0].harness.as_mut().unwrap().kind =
+        if harness == "nvidia.fabric.langchain.deepagents" {
+            "nvidia.fabric.hermes".parse().unwrap()
+        } else {
+            "nvidia.fabric.langchain.deepagents".parse().unwrap()
+        };
+    changed.spec.sandboxes[0].harness.as_mut().unwrap().config = None;
+    changed.spec.inference_providers[0].api = None;
+    changed.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .settings = None;
+    // An adapter change selects different image-scoped executable grants and
+    // provider attachments. It cannot replace the retained sandbox implicitly.
+    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    for error in [
+        deployment.plan(&changed, &cancel).await.unwrap_err(),
+        deployment.apply(&changed, &cancel).await.unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, nemoclaw_sdk::Error::SandboxChangeRefused { sandbox, action: "replace" } if sandbox == &document.spec.sandboxes[0].name),
+            "{error}"
+        );
+    }
+    assert_eq!(writes(), before_writes);
     assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(deployment.export(&cancel).await.unwrap(), changed);
-    deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        state
+    );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
 
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
@@ -313,6 +398,34 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         fs::read(directory.path().join("terraform.tfstate")).unwrap(),
         state
     );
+    // Restore the deliberately corrupted observation before tearing down the original deployment.
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .values_mut()
+        .next()
+        .unwrap()
+        .spec
+        .as_mut()
+        .unwrap()
+        .environment = sandboxes
+        .values()
+        .next()
+        .unwrap()
+        .spec
+        .as_ref()
+        .unwrap()
+        .environment
+        .clone();
+    deployment.destroy(&cancel).await.unwrap();
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
+    assert!(
+        catalog_server.try_join_next().is_none(),
+        "model catalog fixture exited"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -326,6 +439,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();
@@ -362,4 +476,76 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     assert!(deployment.export(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, 4);
     assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn failed_configuration_reports_safe_runtime_state_and_recovers_without_recreation() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    let original = fixture.state.lock().unwrap().sandboxes.clone();
+    let sandbox_id = original
+        .values()
+        .next()
+        .unwrap()
+        .metadata
+        .as_ref()
+        .unwrap()
+        .id
+        .clone();
+    let effects = fixture.state.lock().unwrap().effects;
+    document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "changed-model".into();
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+    }));
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("lifecycle_adapter_start_failed"), "{error}");
+    assert!(error.contains("sandbox/assistant"), "{error}");
+    assert!(error.contains("agent runtime is unavailable"), "{error}");
+    assert!(!error.contains("native-secret"), "{error}");
+    assert!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_stopped
+            .contains(&sandbox_id)
+    );
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().configuration_error = None;
+    deployment.apply(&document, &cancel).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_stopped
+            .contains(&sandbox_id)
+    );
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    deployment.destroy(&cancel).await.unwrap();
 }

@@ -5,8 +5,29 @@ use nemoclaw_authoring::{
     Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
     JourneyScope, PartialDocument,
 };
-use nemoclaw_sdk::fabric_catalog::FabricCatalog;
+use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
 use serde_json::json;
+
+/// Observed images must advertise the Fabric bridge to be compatible.
+fn installed_catalog() -> FabricCatalog {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
+    catalog
+}
 
 fn minimum() -> PartialDocument {
     PartialDocument::from_yaml(
@@ -1355,7 +1376,6 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
     use nemoclaw_sdk::{
         discovery::{EngineObservation, FabricObservation, ObservationStatus},
         fabric_capabilities::ImageMetadata,
-        fabric_catalog::FabricCatalog,
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1407,7 +1427,7 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
             reason: None,
             source: "fixture".into(),
             image_id: Some("sha256:observed".into()),
-            catalog: Some(FabricCatalog::bundled()),
+            catalog: Some(installed_catalog()),
             image: ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),
@@ -3052,9 +3072,13 @@ fn accepted_implicit_gateway_choice_can_be_revisited() {
 
 #[test]
 fn switching_gateway_management_drops_fields_from_the_previous_branch() {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
+    // `networkCIDR` is defined only for managed gateways; `engine` is defined
+    // for both forms.
+    values["spec"]["gateway"]["networkCIDR"] = json!("10.200.0.0/24");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("switch-gateway", base)
         .ask([
@@ -3089,7 +3113,11 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
             Some(json!("external")),
         )
         .unwrap();
-    assert_eq!(journey.values().pointer("/spec/gateway/engine"), None);
+    assert_eq!(journey.values().pointer("/spec/gateway/networkCIDR"), None);
+    assert_eq!(
+        journey.values().pointer("/spec/gateway/engine"),
+        Some(&podman)
+    );
     journey
         .answer(
             &capabilities,

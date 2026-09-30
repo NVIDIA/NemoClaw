@@ -61,7 +61,7 @@ fn explicit_policy_survives_yaml_and_compilation() {
         .values;
     let policy: Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
     assert_eq!(
-        policy["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["method"],
+        policy["explicit"]["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["method"],
         "GET"
     );
 }
@@ -165,120 +165,21 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
 }
 
 #[test]
-fn explicit_filesystem_policy_must_allow_the_selected_runtime() {
-    for (harness, extra) in [
-        ("openclaw", "/app"),
-        ("hermes", "/opt/hermes"),
-        ("pi", "/opt/fabric-source"),
-        ("deepagents", "/opt/fabric"),
-    ] {
-        let mut value = input();
-        value["spec"]["sandboxes"][0]["harness"] = json!({"kind": harness});
-        let fs = "/spec/sandboxes/0/network/policy/explicit/filesystem_policy";
-        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr"]);
-        assert!(
-            parse(&value)
-                .unwrap_err()
-                .to_string()
-                .contains("/opt/fabric")
-        );
-        value.pointer_mut(fs).unwrap()["read_only"] =
-            json!(["/usr", "/opt/fabric", "/opt/nemoclaw", extra]);
-        parse(&value).unwrap();
-        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr", "/opt/fabric", extra]);
-        assert!(
-            parse(&value)
-                .unwrap_err()
-                .to_string()
-                .contains("/opt/nemoclaw")
-        );
-    }
-}
-
-#[test]
-fn runtime_grants_accept_parents_and_writable_paths_without_rewriting_policy() {
+fn document_validation_preserves_filesystem_intent_until_image_discovery() {
     for grants in [
+        json!(["/usr"]),
+        json!(["/srv/runtime"]),
         json!(["/opt", "/app"]),
-        json!(["/opt/fabric", "/opt/nemoclaw", "/app/"]),
-    ] {
-        let mut value = input();
-        let fs = value
-            .pointer_mut("/spec/sandboxes/0/network/policy/explicit/filesystem_policy")
-            .unwrap();
-        fs["read_only"] = json!(["/usr"]);
-        fs["read_write"] = grants;
-        let document = parse(&value).unwrap();
-        let expected = value["spec"]["sandboxes"][0]["network"]["policy"].clone();
-        assert_eq!(
-            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
-            expected
-        );
-    }
-    for grants in [
-        json!(["/op", "/app"]),
-        json!(["/opt/fabric-source", "/opt/nemoclaw", "/app"]),
-        json!(["/opt/../unrelated", "/app"]),
     ] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]["read_only"] =
             grants;
-        assert!(parse(&value).is_err());
+        let document = parse(&value).unwrap();
+        assert_eq!(
+            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
+            value["spec"]["sandboxes"][0]["network"]["policy"]
+        );
     }
-}
-
-#[test]
-fn shared_harness_policy_is_checked_but_omitted_filesystem_grants_keep_defaults() {
-    let mut value = input();
-    value["spec"]["harnesses"] = json!({"shared": {"kind": "openclaw"}});
-    value["spec"]["sandboxes"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("harness");
-    value["spec"]["sandboxes"][0]["harnessRef"] = json!("shared");
-    let policy = &mut value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"];
-    policy["filesystem_policy"]["read_only"] = json!(["/usr", "/opt"]);
-    parse(&value).unwrap();
-    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]
-        .as_object_mut()
-        .unwrap()
-        .remove("filesystem_policy");
-    parse(&value).unwrap();
-}
-
-#[tokio::test]
-async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state() {
-    use nemoclaw_sdk::{CancellationToken, Deployment};
-    let mut document = parse(&input()).unwrap();
-    let mut second = document.spec.sandboxes[0].clone();
-    second.name = "blocked".into();
-    let NetworkPolicy::Explicit(policy) = &mut second.network.policy else {
-        panic!("expected explicit policy");
-    };
-    let filesystem = policy.filesystem_policy.as_mut().unwrap();
-    filesystem.read_only = Some(vec!["/usr".into()]);
-    filesystem.include_workdir = Some(true);
-    document.spec.sandboxes.push(second);
-    let directory = tempfile::tempdir().unwrap();
-    let state = directory.path().join("state");
-    let deployment = Deployment::new(&state, &directory.path().join("missing-bundle"));
-    let cancel = CancellationToken::new();
-    assert!(
-        deployment
-            .plan(&document, &cancel)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("/opt/fabric")
-    );
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("/opt/fabric")
-    );
-    assert!(!state.exists());
 }
 
 #[test]
@@ -327,16 +228,13 @@ fn default_network_is_a_valid_isolated_policy() {
     let default = Network::default();
     default.validate().unwrap();
     assert_eq!(default.policy, NetworkPolicy::Isolated);
-    let mut policy = default.policy_proto().unwrap();
-    policy.filesystem.as_mut().unwrap().read_only.reverse();
-    assert_eq!(nemoclaw_sdk::config::policy_json(&policy).unwrap(), "");
-    policy
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_write
-        .push("/".into());
-    assert!(!matches!(nemoclaw_sdk::config::policy_json(&policy), Ok(value) if value.is_empty()));
+    assert!(
+        default
+            .policy_proto()
+            .unwrap_err()
+            .to_string()
+            .contains("image runtime metadata")
+    );
     for value in [json!({}), json!({"tier": ""}), json!({"tier": "isolated"})] {
         assert_eq!(serde_json::from_value::<Network>(value).unwrap(), default);
     }

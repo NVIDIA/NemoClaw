@@ -4,9 +4,9 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, DiscoveryEvidence, EndpointEvidence, GatewayEvidence,
-    HardwareEvidence, JourneyQuestionKind, JourneyState, discovery_key_for_document,
-    inference_request_for_document,
+    AuthoringFacts, Capabilities, DiscoveryEvidence, DiscoveryKey, EndpointEvidence,
+    GatewayEvidence, HardwareEvidence, JourneyQuestionKind, JourneyState,
+    discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
@@ -374,23 +374,7 @@ async fn observe_target(
         )?,
         ..Default::default()
     };
-    let mut queries = Vec::new();
-    if !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine.clone(),
-            compute_driver: key.compute_driver,
-        }));
-        queries.push(DiscoveryQuery::Fabric {
-            engine: key.engine.clone(),
-            image: key.image.clone(),
-        });
-        queries.push(DiscoveryQuery::Hardware {
-            engine: key.engine.clone(),
-        });
-    }
-    if request.validate().is_ok() {
-        queries.push(DiscoveryQuery::Inference(request));
-    }
+    let queries = discovery_queries(&key, request);
     match session.batch(&queries, cancel).await {
         Ok(observations) => {
             for (query, observation) in queries.into_iter().zip(observations) {
@@ -443,9 +427,83 @@ async fn observe_target(
     Ok(Some((evidence, facts)))
 }
 
+fn discovery_queries(
+    key: &DiscoveryKey,
+    request: nemoclaw_sdk::inference_discovery::EndpointRequest,
+) -> Vec<DiscoveryQuery> {
+    let mut queries = Vec::new();
+    // An external gateway's engine only stores images: read their metadata,
+    // but do not probe it as the gateway's engine or hardware.
+    if key.managed_gateway && !key.engine.is_empty() {
+        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
+            engine: key.engine.clone(),
+            compute_driver: key.compute_driver,
+        }));
+    }
+    if !key.engine.is_empty() {
+        queries.push(DiscoveryQuery::Fabric {
+            engine: key.engine.clone(),
+            image: key.image.clone(),
+        });
+    }
+    if key.managed_gateway && !key.engine.is_empty() {
+        queries.push(DiscoveryQuery::Hardware {
+            engine: key.engine.clone(),
+        });
+    }
+    if request.validate().is_ok() {
+        queries.push(DiscoveryQuery::Inference(request));
+    }
+    queries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_gateway_does_not_guess_a_local_engine_for_discovery() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/remote-vllm.yaml");
+        let document = Document::parse(std::fs::File::open(path).unwrap()).unwrap();
+        let key = discovery_key_for_document(&document).unwrap();
+        assert!(key.engine.is_empty());
+        let queries = discovery_queries(
+            &key,
+            inference_request_for_document(&document, None).unwrap(),
+        );
+        assert!(
+            queries
+                .iter()
+                .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
+            "unresolved engine must not target the local daemon: {queries:?}"
+        );
+    }
+
+    #[test]
+    fn external_gateway_queries_its_image_store_without_gateway_or_hardware_probes() {
+        let mut document =
+            Document::parse(&include_bytes!("../../../onboarding/openclaw.yaml")[..]).unwrap();
+        document.spec.gateway = serde_json::from_value(serde_json::json!({
+            "management": "external",
+            "endpoint": "https://gateway.example:8080",
+            "engine": "ssh://images@example.com",
+        }))
+        .unwrap();
+        document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
+        let key = discovery_key_for_document(&document).unwrap();
+        let request = inference_request_for_document(&document, None).unwrap();
+        assert_eq!(
+            discovery_queries(&key, request.clone()),
+            vec![
+                DiscoveryQuery::Fabric {
+                    engine: "ssh://images@example.com".into(),
+                    image: key.image.clone(),
+                },
+                DiscoveryQuery::Inference(request),
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn escape_cancels_discovery_and_restores_the_questionnaire() {

@@ -24,6 +24,10 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 | Provider `managed/storage.rs`, `managed/gateway_storage.rs`, and `managed/observation.rs` | Durable storage bindings combine daemon identity, volume identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Docker gateway, disposable service compute, and model-cache volumes use native Docker-provider IDs. Cache recovery does not require the original daemon ID or volume creation time. |
 | Provider `openshell/transport.rs`; SDK `state/` and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
+Both Unix-socket and SSH engine transports currently require a Unix client.
+Windows deployment planning is blocked by required image discovery, including when using an external OpenShell gateway.
+The Linux ARM64 lifecycle fixtures do not qualify Windows deployments.
+
 A changed bound gateway or credential engine endpoint is rejected; there is no target migration or lost-state adoption command.
 Unavailable or mismatched identity stops the operation.
 The rootless Podman validation found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.

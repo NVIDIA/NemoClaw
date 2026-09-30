@@ -160,6 +160,12 @@ impl Provider for NemoClawProvider {
                 )) as Box<dyn DynamicDataSource>,
             ),
             (
+                "runtime_image".into(),
+                Box::new(crate::runtime_image::RuntimeImageDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "service_readiness".into(),
                 Box::new(crate::readiness::ReadinessDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
@@ -330,6 +336,7 @@ impl Provider for NemoClawProvider {
                     "endpoint",
                     "provider_type",
                     "authenticated",
+                    "binaries_json",
                 ],
                 &[],
             ),
@@ -358,6 +365,7 @@ impl Provider for NemoClawProvider {
                     "credential_env",
                     "provider_type",
                     "credential_source",
+                    "profile_name",
                 ],
                 // Endpoint and authentication-mode changes also replace the
                 // imported profile. Delete the registration first so the API
@@ -375,6 +383,7 @@ impl Provider for NemoClawProvider {
                     "agent_name",
                     "agent_runtime",
                     "policy_json",
+                    "runtime_json",
                     "provider_names_json",
                 ],
                 &[],
@@ -521,3 +530,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "gateway_tests.rs"]
+mod gateway_tests;

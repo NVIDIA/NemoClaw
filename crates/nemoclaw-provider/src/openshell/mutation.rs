@@ -31,13 +31,18 @@ impl OpenShell {
                         == nemoclaw_sdk::config::search_provider_name(
                             provider,
                             value(want, "credential_env"),
+                            value(want, "profile_name"),
                         )
+                        && nemoclaw_sdk::config::SearchProvider::from_profile(value(
+                            want,
+                            "profile_name",
+                        )) == Some(provider)
                         && value(want, "endpoint") == provider.endpoint()
                         && !value(want, "credential_env").is_empty()
                 }) =>
             {
                 let search = search.unwrap();
-                (search.profile(), "", search.credential_env())
+                (value(want, "profile_name"), "", search.credential_env())
             }
             _ => return Err(ObservationError::Query),
         };
@@ -306,6 +311,12 @@ impl Backend for OpenShell {
             )
             .await?;
         if kind == "sandbox"
+            && let Some(row) = &observed
+            && prior.get("runtime_json") != row.get("runtime_json")
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
         {
@@ -392,13 +403,18 @@ mod search_tests {
         *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
         let client = OpenShell::connect(&gateway, Arc::new(SearchSecrets)).unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            let name = nemoclaw_sdk::config::search_provider_name(provider, "SEARCH_KEY");
+            let name = nemoclaw_sdk::config::search_provider_name(
+                provider,
+                "SEARCH_KEY",
+                provider.profile(),
+            );
             let want: Row = [
                 ("name", name.as_str()),
                 ("workspace", "workspace"),
                 ("owner", "deployment"),
                 ("generation", "generation"),
                 ("provider_type", provider.name()),
+                ("profile_name", provider.profile()),
                 ("endpoint", provider.endpoint()),
                 ("credential_env", "SEARCH_KEY"),
             ]

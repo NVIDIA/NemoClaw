@@ -98,6 +98,7 @@ mod hardware_data;
 mod inference_discovery;
 mod provider;
 mod readiness;
+mod runtime_image;
 mod sandbox_readiness;
 pub use provider::NemoClawProvider;
 

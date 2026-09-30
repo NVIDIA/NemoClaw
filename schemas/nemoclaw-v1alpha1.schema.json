@@ -502,6 +502,10 @@
               "pattern": "^https?://",
               "type": "string"
             },
+            "engine": {
+              "description": "Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown.",
+              "type": "string"
+            },
             "management": {
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
@@ -1878,7 +1882,7 @@
         },
         "overrides": {
           "$ref": "#/$defs/Overrides",
-          "description": "Model selection, optional native tuning, and optional legacy model metadata."
+          "description": "Model selection, shared limits, and optional native settings."
         },
         "provider": {
           "$ref": "#/$defs/InferenceProvider",
@@ -1901,21 +1905,13 @@
       "description": "Sandbox runtime selected through OpenShell.",
       "properties": {
         "provider": {
-          "anyOf": [
-            {
-              "const": ""
-            },
-            {
-              "enum": [
-                "docker",
-                "podman"
-              ]
-            }
-          ],
           "default": "docker",
           "description": "Docker or Podman driver. A managed service with Podman requires explicit service placement.",
-          "type": "string",
-          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+          "enum": [
+            "docker",
+            "podman"
+          ],
+          "type": "string"
         }
       },
       "type": "object"
@@ -3134,10 +3130,7 @@
                         "runtime": {
                           "properties": {
                             "provider": {
-                              "enum": [
-                                "",
-                                "docker"
-                              ]
+                              "const": "docker"
                             }
                           }
                         }
@@ -3215,7 +3208,7 @@
   "title": "NemoClaw configuration (v1alpha1)",
   "type": "object",
   "x-nemoclaw-parser-checks": [
-    "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
+    "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",

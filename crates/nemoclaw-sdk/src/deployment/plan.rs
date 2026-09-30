@@ -34,8 +34,17 @@ fn observation(
         }
         return Ok(false);
     }
-    let expected = (change.address.starts_with("data.docker_image.")
-        && allowed.contains_key(&change.address))
+    let runtime_image = ["runtime_image_present_", "runtime_image_acquired_"]
+        .iter()
+        .any(|prefix| {
+            change
+                .address
+                .strip_prefix(&format!("data.nemoclaw_runtime_image.{prefix}"))
+                .is_some_and(|name| allowed.contains_key(&format!("docker_container.{name}")))
+        });
+    let expected = runtime_image
+        || (change.address.starts_with("data.docker_image.")
+            && allowed.contains_key(&change.address))
         || crate::compile::is_gateway_observation(&change.address)
         || crate::discovery_graph::is_observation(&change.address)
         || allowed.keys().any(|address| {
@@ -351,6 +360,10 @@ impl Plan {
         observations
             .iter()
             .filter_map(|(name, value)| {
+                // Catalogs and apply-time readiness do not gate resource planning.
+                if matches!(super::reporting::category(name), "inference" | "service") {
+                    return None;
+                }
                 let observation = value
                     .as_str()
                     .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok());
@@ -360,7 +373,7 @@ impl Plan {
                         && (!name.starts_with("sandbox_")
                             || value["compatibility"]["status"] == "supported")
                 });
-                if resolved || (name.starts_with("service_") && value["ready"] == true) {
+                if resolved {
                     return None;
                 }
                 Some(super::reporting::unverified_message(name))
@@ -424,10 +437,10 @@ mod reporting_tests {
         );
     }
     #[test]
-    fn unknown_gateway_does_not_hide_already_observed_endpoint_and_hardware_categories() {
+    fn unknown_gateway_preserves_hardware_deferrals_without_blocking_on_catalogs() {
         let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
         let messages = plan.discovery_deferred();
-        assert!(messages.iter().any(|message| message.contains("Inference")));
+        assert!(!messages.iter().any(|message| message.contains("Inference")));
         assert!(messages.iter().any(|message| message.contains("hardware")));
         assert!(messages.iter().any(|message| message.contains("Gateway")));
     }

@@ -131,15 +131,3 @@ impl FromStr for InferenceProviderKind {
         }
     }
 }
-
-// Empty input is a legacy runtime default, not a compute-driver variant.
-pub(super) fn runtime_driver<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ComputeDriver, D::Error> {
-    let value = String::deserialize(deserializer)?;
-    if value.is_empty() {
-        Ok(ComputeDriver::Docker)
-    } else {
-        value.parse().map_err(serde::de::Error::custom)
-    }
-}

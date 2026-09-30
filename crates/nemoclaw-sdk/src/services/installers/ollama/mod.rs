@@ -169,7 +169,13 @@ fn managed_targets(
         network_cidr: network_cidr.clone(),
         create_network: service.placement.is_some(),
         architecture: service.architecture()?.into(),
-        image_labels: BTreeMap::from([("org.nemoclaw.backend".into(), "ollama".into())]),
+        image_labels: BTreeMap::from([
+            ("org.nemoclaw.backend".into(), "ollama".into()),
+            (
+                nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
+                nemoclaw_runtime::SPEC_VERSION.into(),
+            ),
+        ]),
         pull_image: false,
         image_pull_policy: None,
         configuration: serde_json::to_string(&runtime)

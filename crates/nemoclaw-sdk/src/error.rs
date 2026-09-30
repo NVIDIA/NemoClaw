@@ -13,10 +13,18 @@ pub enum Error {
     Bundle(&'static str),
     #[error("{0}")]
     Conflict(&'static str),
+    #[error(
+        "ordinary apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
+    )]
+    SandboxChangeRefused {
+        sandbox: String,
+        action: &'static str,
+    },
     #[error("gateway is incompatible with this configuration: {0}")]
     GatewayIncompatible(String),
     #[error(
-        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
+        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}{guidance}; resources retained",
+        guidance = sandbox_startup_guidance(.reason)
     )]
     SandboxStartup {
         phase: &'static str,
@@ -87,5 +95,18 @@ impl From<nemoclaw_runtime::Error> for Error {
                 nemoclaw_runtime::ObservationError::Transport => crate::ObservationError::Transport,
             }),
         }
+    }
+}
+
+/// Explain only recognized reason codes; gateway message text may contain secrets.
+pub(crate) fn sandbox_startup_guidance(reason: &str) -> &'static str {
+    match reason {
+        "IdentityResolutionFailed" => {
+            "; workload user or group could not be resolved in the pinned image; check policy.process.run_as_user and run_as_group"
+        }
+        "ControlSupervisorStartFailed" => {
+            "; control supervisor could not start; check the sandbox policy and attached providers"
+        }
+        _ => "",
     }
 }

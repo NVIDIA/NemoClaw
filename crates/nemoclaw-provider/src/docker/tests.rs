@@ -93,3 +93,24 @@ fn engine_endpoint_syntax_can_be_validated_without_opening_a_transport() {
     assert!(crate::config::validate_engine_endpoint("ssh://user:password@host").is_err());
     assert!(crate::config::validate_engine_endpoint("tcp://host:2375").is_err());
 }
+
+#[test]
+#[cfg(windows)]
+fn windows_image_discovery_rejects_unsupported_engine_transports() {
+    for (endpoint, diagnostic) in [
+        (
+            "unix:///var/run/docker.sock",
+            "local container-engine connections are unsupported on this platform",
+        ),
+        (
+            "ssh://operator@gpu-box:2222",
+            "SSH container-engine connections are unsupported on this platform",
+        ),
+    ] {
+        crate::config::validate_engine_endpoint(endpoint).unwrap();
+        let error = Engine::connect(endpoint)
+            .err()
+            .expect("no supported Windows engine transport");
+        assert!(error.to_string().contains(diagnostic), "{error}");
+    }
+}

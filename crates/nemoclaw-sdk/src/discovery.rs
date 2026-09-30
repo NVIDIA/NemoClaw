@@ -22,6 +22,7 @@ pub enum DiscoveryObservation {
     Hardware(crate::hardware_discovery::HardwareObservation),
     Fabric(crate::discovery::FabricObservation),
     Inference(crate::inference_discovery::EndpointObservation),
+    RuntimeImage(RuntimeImageObservation),
     Gateway(GatewayObservation),
     Service { ready: Option<bool>, source: String },
     Unresolved { category: String },
@@ -56,4 +57,12 @@ pub struct FabricObservation {
     pub image: crate::fabric_capabilities::ImageMetadata,
     #[serde(default)]
     pub compatibility: Option<crate::fabric_capabilities::CompatibilityReport>,
+}
+
+/// Compatibility of a managed inference image with the compiled runtime contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeImageObservation {
+    pub status: ObservationStatus,
+    pub source: String,
+    pub required_version: String,
 }

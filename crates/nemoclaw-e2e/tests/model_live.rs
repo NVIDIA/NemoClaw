@@ -65,6 +65,7 @@ async fn selected_model_apply_export_and_watchdog_recovery_preserve_data_and_ide
 async fn selected_model_continues_from_retained_state() {
     exercise(false).await;
 }
+// Qualify model storage and supervision; explicit agent invocation is covered by fabric_live.
 async fn exercise(fresh: bool) {
     let explicit = |name| {
         let p = PathBuf::from(std::env::var_os(name).expect(name));
@@ -97,12 +98,6 @@ async fn exercise(fresh: bool) {
         assert!(directory.join("runtime/terraform.tfstate").is_file());
     }
     deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        !nemoclaw_e2e::verify_agent(&document, &directory)
-            .await
-            .trim()
-            .is_empty()
-    );
     let before = bindings(&directory);
     assert_eq!(
         before
@@ -199,12 +194,6 @@ async fn exercise(fresh: bool) {
         "automatic restart loop"
     );
     deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        !nemoclaw_e2e::verify_agent(&document, &directory)
-            .await
-            .trim()
-            .is_empty()
-    );
     let recovered = bindings(&directory);
     for (address, id) in before
         .iter()

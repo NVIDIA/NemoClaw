@@ -9,10 +9,31 @@ use nemoclaw_authoring::{
 use nemoclaw_sdk::{
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_capabilities::ImageMetadata,
-    fabric_catalog::FabricCatalog,
+    fabric_catalog::{BridgeCapabilities, FabricCatalog},
     inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
 use serde_json::json;
+
+/// Observed images must advertise the Fabric bridge to be compatible.
+fn installed_catalog() -> FabricCatalog {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
+    catalog
+}
 
 fn express() -> JourneyDefinition {
     let base =
@@ -70,7 +91,7 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
             reason: None,
             source: "fixture".into(),
             image_id: Some("sha256:observed".into()),
-            catalog: Some(FabricCatalog::bundled()),
+            catalog: Some(installed_catalog()),
             image: ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),

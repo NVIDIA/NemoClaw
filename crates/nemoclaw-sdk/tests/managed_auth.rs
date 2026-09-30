@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 use nemoclaw_sdk::{
     compile,
     config::{Document, schema::input_schema},
@@ -30,11 +32,14 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     let targets = compile::targets(&doc, &generations).unwrap();
     let provider = targets
         .iter()
-        .find(|t| t.address == "nemoclaw_provider.inference_qwen")
+        .find(|t| t.address.starts_with("nemoclaw_provider.inference_qwen-"))
         .unwrap();
     let profile = targets
         .iter()
-        .find(|t| t.address == "nemoclaw_provider_profile.inference_qwen")
+        .find(|t| {
+            t.address
+                .starts_with("nemoclaw_provider_profile.inference_qwen-")
+        })
         .unwrap();
     assert_eq!(profile.values["authenticated"], "true");
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
@@ -80,7 +85,7 @@ fn runtime_preserves_literal_recipe_environment_without_copying_it_into_credenti
     .into();
     let graph = compile::compile(&doc, &generations, "0.1.0").unwrap();
     let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
-    let credential = graph["resource"]["nemoclaw_provider"]["inference_qwen"]["credential_source"]
+    let credential = provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "qwen")["credential_source"]
         .as_str()
         .unwrap();
     assert!(!credential.contains("VLLM_LITERAL"));

@@ -24,14 +24,10 @@ pub(crate) struct Record {
     pending: bool,
     #[serde(skip_serializing_if = "is_false")]
     runtime_pending: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pending_creations: BTreeMap<String, crate::backend::Row>,
     succeeded: bool,
     pub digest: String,
-    // Accept older version-7 records, but saved plan artifacts no longer
-    // authorize recovery. Current bindings and fresh plans determine it.
-    #[serde(rename = "planDigest", skip_serializing)]
-    pub _legacy_plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
     destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
@@ -67,27 +63,83 @@ impl Record {
             ..Default::default()
         })
     }
+    pub fn reconcile_pending_creations(&mut self, bindings: &BTreeMap<String, StateBinding>) {
+        if !self.pending || self.runtime_pending {
+            return;
+        }
+        self.pending_creations.retain(|address, desired| {
+            // Fabric configuration has no independent runtime: its sandbox owns
+            // any partial effects, and its configuration binding uses that ID.
+            let address = address
+                .strip_prefix("nemoclaw_agent_configuration.")
+                .map(|name| format!("nemoclaw_sandbox.{name}"))
+                .unwrap_or_else(|| address.clone());
+            !bindings.get(&address).is_some_and(|binding| {
+                !binding.id.is_empty()
+                    && [
+                        ("name", &binding.name),
+                        ("workspace", &binding.workspace),
+                        ("owner", &binding.owner),
+                        ("generation", &binding.generation),
+                    ]
+                    .iter()
+                    .all(|(key, value)| desired.get(*key).is_none_or(|want| want == *value))
+            })
+        });
+        if self.pending_creations.is_empty() {
+            self.finish_apply();
+        }
+        // This only resolves lost-ID uncertainty. A fresh provider refresh and
+        // validated plan must still verify live ownership before any mutation.
+    }
     pub fn validate_pending_intent(&self, document: &Document) -> Result<(), Error> {
         if !self.pending || self.runtime_pending {
             return Ok(());
         }
-        if let Some(pending) = &self.pending_creations {
-            let targets = crate::compile::targets(document, &self.generations)?;
-            if pending.iter().any(|(address, desired)| {
-                !targets
-                    .iter()
-                    .any(|target| &target.address == address && &target.values == desired)
-            }) {
-                return Err(Error::Conflict(
-                    "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
-                ));
-            }
-        } else if self.digest != document.digest() {
-            // Records written before scoped recovery lack per-resource evidence.
+        let targets = crate::compile::targets(document, &self.generations)?;
+        if self.pending_creations.iter().any(|(address, desired)| {
+            !targets
+                .iter()
+                .any(|target| &target.address == address && &target.values == desired)
+        }) {
             return Err(Error::Conflict(
-                "unfinished apply has different intent; reapply its original configuration",
+                "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
             ));
         }
+        Ok(())
+    }
+    pub fn validate_bound_sandboxes(
+        &self,
+        document: &Document,
+        bindings: &BTreeMap<String, StateBinding>,
+    ) -> Result<(), Error> {
+        if !bindings
+            .keys()
+            .any(|address| address.starts_with("nemoclaw_sandbox."))
+        {
+            return Ok(());
+        }
+        let before = crate::compile::targets(&self.document, &self.generations)?;
+        let after = crate::compile::targets(document, &self.generations)?;
+        for prior in before
+            .iter()
+            .filter(|target| target.kind == "sandbox" && bindings.contains_key(&target.address))
+        {
+            let next = after.iter().find(|target| target.address == prior.address);
+            // Every compiled sandbox attribute is immutable. Model and adapter
+            // settings live in the separate agent-configuration target.
+            let action = match next {
+                None => "remove",
+                Some(next) if next.values != prior.values => "replace",
+                _ => continue,
+            };
+            return Err(Error::SandboxChangeRefused {
+                sandbox: prior.values["name"].clone(),
+                action,
+            });
+        }
+        // This only rejects authored changes before runtime reconciliation.
+        // Provider refresh and plan still own live identity and drift checks.
         Ok(())
     }
     pub fn begin_apply(
@@ -102,13 +154,9 @@ impl Record {
             // deletions, or apply-time observations.
             return;
         }
-        // Never narrow an older full-intent guard or forget an earlier lost reply.
-        if !self.pending || self.runtime_pending {
-            self.pending_creations = Some(creations);
-        } else if let Some(pending) = &mut self.pending_creations {
-            for (address, desired) in creations {
-                pending.entry(address).or_insert(desired);
-            }
+        // Preserve every earlier lost reply until its resource binding is known.
+        for (address, desired) in creations {
+            self.pending_creations.entry(address).or_insert(desired);
         }
         self.pending = true;
         self.runtime_pending = false;
@@ -116,7 +164,7 @@ impl Record {
     pub fn finish_apply(&mut self) {
         self.pending = false;
         self.runtime_pending = false;
-        self.pending_creations = None;
+        self.pending_creations.clear();
     }
     pub fn begin_runtime_apply(&mut self, document: &Document) {
         self.prepare_apply(document);
@@ -195,12 +243,11 @@ impl Record {
                         .is_some_and(|value| !value.is_empty())
                 })
             });
-        if self.pending_creations.as_ref().is_some_and(|pending| {
-            pending.is_empty()
-                || !self.pending
-                || self.runtime_pending
-                || self.validate_pending_intent(&self.document).is_err()
-        }) {
+        let has_pending_creations = !self.pending_creations.is_empty();
+        if has_pending_creations != (self.pending && !self.runtime_pending)
+            || (self.runtime_pending && !self.document.has_runtime())
+            || self.validate_pending_intent(&self.document).is_err()
+        {
             return Err(Error::State("pending resource recovery intent is invalid"));
         }
         if self.document.validate().is_err()
@@ -220,6 +267,14 @@ impl Record {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct StateBinding {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub workspace: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub generation: String,
     #[serde(default)]
     pub spec: String,
     #[serde(skip)]
@@ -395,6 +450,10 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             } else {
                 binding.id = attributes.id;
                 binding.spec = attributes.spec;
+                binding.name = attributes.name;
+                binding.workspace = attributes.workspace;
+                binding.owner = attributes.owner;
+                binding.generation = attributes.generation;
             }
         }
     }

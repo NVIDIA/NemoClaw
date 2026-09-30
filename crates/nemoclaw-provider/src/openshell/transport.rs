@@ -136,7 +136,7 @@ impl OpenShell {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    active_policy(status, &row["policy_json"])?;
+                    active_policy(status, &policy_json(&row_policy(&row)?)?)?;
                 }
                 Some(row)
             }

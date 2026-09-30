@@ -17,6 +17,25 @@ from pathlib import Path
 
 
 class AgentImage(unittest.TestCase):
+    def test_bridge_entrypoint_reports_argument_errors_as_one_json_response(self):
+        command = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])["runtime"]["command"]
+        self.assertEqual(command, ["/usr/local/bin/fabric-agent"])
+        self.assertTrue(Path(command[0]).is_file())
+        self.assertTrue(os.access(command[0], os.X_OK))
+        result = subprocess.run(
+            [*command, "check", "--agent", "image-contract", "--unknown"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stdout.endswith("\n"))
+        response = json.loads(result.stdout)
+        self.assertEqual(set(response), {"operation", "status", "changed", "result", "error"})
+        self.assertEqual(response["operation"], "check")
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["effects"], "none")
+
     def test_shared_python_satisfies_every_pinned_fabric_adapter(self):
         from pip._vendor.packaging.specifiers import SpecifierSet
 

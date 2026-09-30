@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "command": ["/usr/local/bin/fabric-agent"],
+  "environment": {
+    "ADAPTER_PYTHON": "/opt/fabric/bin/python",
+    "HOME": "/sandbox",
+    "TMPDIR": "/sandbox/tmp",
+    "XDG_CACHE_HOME": "/sandbox/.cache",
+    "NEMOCLAW_ANONYMOUS_API_KEY": "unused",
+    "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+    "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PATH": "/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin"
+  },
+  "required_paths": ["/opt/fabric", "/opt/nemoclaw"],
+  "policy": {
+    "version": 1,
+    "filesystem_policy": {
+      "read_only": ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/app", "/opt", "/proc"],
+      "read_write": ["/sandbox", "/tmp", "/dev/null", "/dev/urandom", "/home/node"],
+      "include_workdir": false
+    },
+    "landlock": {"compatibility": "best_effort"},
+    "process": {"run_as_user": "1000", "run_as_group": "1000"},
+    "network_policies": {}
+  }
+}

@@ -35,10 +35,12 @@ ARG SOURCE_DATE_EPOCH=1789516800
 ARG FABRIC_REVISION=24f068c895e5cbc30286bc743498be4e5014d658
 ARG FABRIC_SHA256=77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f
 ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
+COPY image/fabric/fabric-error-codes.patch /build-patches/fabric-error-codes.patch
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev patch \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
-    && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
+    && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
+    && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
 RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
@@ -49,6 +51,12 @@ ARG HARNESS
 ARG ADAPTER
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
+RUN if [ "$ADAPTER" = openclaw ]; then \
+        apt-get update && apt-get install -y --no-install-recommends patch \
+        && rm -rf /var/lib/apt/lists/* \
+        && patch --batch --fuzz=0 -d /src/fabric -p1 < /build/openclaw-reconfigure.patch \
+        && cp /build/openclaw_configuration.py /src/fabric/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/configuration.py; \
+    fi
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
@@ -64,7 +72,8 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/catalog.py /opt/nemoclaw/
+COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic

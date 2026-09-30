@@ -35,7 +35,7 @@ After accepting a harness, **Ctrl+D** requests delegation of the remaining sugge
 When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
 With one route this reaches review; with multiple routes the questionnaire still offers the other routes.
 Fabric validates the proposed public configuration against the observed canonical descriptors; missing contracts leave compatibility unverified and prevent delegation.
-The authoring library checks the suggestions together: engine and image compatibility must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
+The authoring library checks the suggestions together: image compatibility and any managed-gateway engine prerequisites must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
 A required adapter setting without a suggested value prevents delegation until answered.
 This shortcut preserves accepted answers and uses the current suggestions; it does not search for another engine, provider, image, or model.
 If you have edited the current answer, press Enter to accept it before delegating.
@@ -100,7 +100,13 @@ The CLI uses its installed verified bundle for discovery, or a bundle selected w
 nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the engine, hardware advertisements, selected Fabric image, and inference model catalog.
+With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
+For a managed gateway, it also checks engine prerequisites and hardware advertisements.
+For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
+Onboarding uses that engine only to inspect the image; the image store's compute driver and hardware do not describe the external gateway.
+Changing the image engine discards the previous image observation.
+Omitting it leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
+Image compatibility does not verify the external gateway's execution platform or readiness.
 Independent requests share a plan, and duplicate requests are read once.
 It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes the relevant observations when entering review.
 Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.

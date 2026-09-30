@@ -55,7 +55,7 @@ impl AuthoringFacts {
         if self
             .hardware
             .as_ref()
-            .is_some_and(|evidence| evidence.engine != key.engine)
+            .is_some_and(|evidence| !key.managed_gateway || evidence.engine != key.engine)
         {
             self.hardware = None;
         }

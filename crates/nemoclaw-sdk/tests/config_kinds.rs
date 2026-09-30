@@ -61,15 +61,11 @@ fn selector_names_round_trip_without_changing_wire_values() {
 }
 
 #[test]
-fn omitted_and_empty_runtime_select_docker_without_changing_intent_digest() {
+fn omitted_runtime_selects_docker_without_changing_intent_digest() {
     use nemoclaw_sdk::config::{ComputeDriver, Document};
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
-    for runtime in [
-        json!({}),
-        json!({"provider":""}),
-        json!({"provider":"docker"}),
-    ] {
+    for runtime in [json!({}), json!({"provider":"docker"})] {
         let mut input = serde_json::to_value(&document).unwrap();
         input["spec"]["sandboxes"][0]["runtime"] = runtime;
         let parsed = Document::parse(input.to_string().as_bytes()).unwrap();
@@ -80,6 +76,21 @@ fn omitted_and_empty_runtime_select_docker_without_changing_intent_digest() {
         assert_eq!(parsed.digest(), document.digest());
         assert_eq!(parsed.yaml().unwrap(), document.yaml().unwrap());
     }
+}
+
+#[test]
+fn empty_runtime_driver_is_rejected_without_defaulting() {
+    use nemoclaw_sdk::config::{Document, schema::input_schema};
+    assert!(serde_json::from_value::<Runtime>(json!({"provider":""})).is_err());
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    input["spec"]["sandboxes"][0]["runtime"] = json!({"provider":""});
+    assert!(
+        !jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&input)
+    );
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
 }
 
 #[test]

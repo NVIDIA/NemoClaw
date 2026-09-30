@@ -52,8 +52,10 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
             .output()
             .await
             .unwrap();
-        if let Ok(plan) = serde_json::from_slice::<Value>(&shown.stdout) {
-            for change in plan["resource_changes"].as_array().unwrap() {
+        if let Ok(plan) = serde_json::from_slice::<Value>(&shown.stdout)
+            && let Some(changes) = plan["resource_changes"].as_array()
+        {
+            for change in changes {
                 eprintln!(
                     "planned cleanup: {}",
                     json!({"address":change["address"],"deposed":change["deposed"],"actions":change["change"]["actions"],"id":change["change"]["before"]["id"]})
@@ -68,8 +70,9 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
     assert_eq!(
         output.status.success(),
         success,
-        "{command}: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "{command}: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     if success && command == "apply" {
         let result: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -80,42 +83,59 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("nvidia.fabric.openclaw", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.openclaw", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
 async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("nvidia.fabric.hermes", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.hermes", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
-    lifecycle("nvidia.fabric.hermes", true, "vllm", false).await;
+    lifecycle("nvidia.fabric.hermes", true, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("nvidia.fabric.pi", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.pi", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and application-health fixtures"]
 async fn remote_ollama_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("nvidia.fabric.openclaw", false, "ollama", false).await;
+    lifecycle("nvidia.fabric.openclaw", false, "ollama", false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
 async fn partial_runtime_destroy_retains_storage_without_creating_network() {
-    lifecycle("nvidia.fabric.openclaw", false, "vllm", true).await;
+    lifecycle("nvidia.fabric.openclaw", false, "vllm", true, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated partial deployment fixtures"]
 async fn partial_ollama_destroy_retains_storage_without_creating_network() {
-    lifecycle("nvidia.fabric.openclaw", false, "ollama", true).await;
+    lifecycle("nvidia.fabric.openclaw", false, "ollama", true, false).await;
 }
 
-async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destroy: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
+async fn unverified_vllm_images_are_checked_after_pull_before_storage() {
+    lifecycle("nvidia.fabric.openclaw", false, "vllm", false, true).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
+async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
+    lifecycle("nvidia.fabric.openclaw", false, "ollama", false, true).await;
+}
+
+async fn lifecycle(
+    harness: &str,
+    authenticated: bool,
+    kind: &str,
+    partial_destroy: bool,
+    incompatible_pull: bool,
+) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -172,13 +192,79 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     save(
         root,
         "fixture.json",
-        &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
+        &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.runtime.spec":"v1","org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
     );
     save(
         root,
         "engine.json",
         &json!({"effects":0,"creates":0,"image_missing":check_pulls,"pulls":0}),
     );
+    save(root, "control.json", &json!({}));
+    if incompatible_pull {
+        let mut stale = read(root, "fixture.json");
+        stale["image"]["Config"]["Labels"]["org.nemoclaw.runtime.spec"] = json!("v0");
+        save(root, "fixture.json", &stale);
+        let plan: Value =
+            serde_json::from_slice(&run(root, &bundle, "plan", "config.yaml", true).await).unwrap();
+        assert_eq!(plan["complete"], false);
+        assert!(
+            plan["deferred"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason
+                    .as_str()
+                    .unwrap()
+                    .contains("Runtime image compatibility")),
+            "{plan}"
+        );
+        assert_eq!(read(root, "engine.json")["effects"], 0);
+        let error =
+            String::from_utf8(run(root, &bundle, "apply", "config.yaml", false).await).unwrap();
+        assert!(error.contains("runtime specification"), "{error}");
+        let engine = read(root, "engine.json");
+        assert_eq!(engine["pulls"], 1);
+        assert_eq!(engine["effects"], 1);
+        assert_eq!(engine["creates"], 0);
+        for resource in ["volume", "auth_volume", "network", "container"] {
+            assert!(engine[resource].is_null(), "{engine}");
+        }
+        assert_eq!(gateway.state.lock().unwrap().effects, 0);
+        run(root, &bundle, "destroy", "", true).await;
+        assert_eq!(read(root, "engine.json")["effects"], 1);
+        return;
+    }
+    // An already present incompatible image must fail before any owned resources exist.
+    if !partial_destroy {
+        let original = read(root, "fixture.json");
+        let engine = read(root, "engine.json");
+        save(
+            root,
+            "engine.json",
+            &json!({"effects":0,"creates":0,"image_missing":false,"pulls":0}),
+        );
+        for version in [None, Some("v0"), Some("PRIVATE_IMAGE_SENTINEL")] {
+            let mut stale = original.clone();
+            let labels = stale["image"]["Config"]["Labels"].as_object_mut().unwrap();
+            labels.remove("org.nemoclaw.runtime.spec");
+            if let Some(version) = version {
+                labels.insert("org.nemoclaw.runtime.spec".into(), json!(version));
+            }
+            save(root, "fixture.json", &stale);
+            for command in ["plan", "apply"] {
+                let error =
+                    String::from_utf8(run(root, &bundle, command, "config.yaml", false).await)
+                        .unwrap();
+                assert!(error.contains("runtime specification"), "{error}");
+                assert!(error.contains("rebuild"), "{error}");
+                assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
+                assert_eq!(read(root, "engine.json")["effects"], 0);
+                assert_eq!(gateway.state.lock().unwrap().effects, 0);
+            }
+        }
+        save(root, "fixture.json", &original);
+        save(root, "engine.json", &engine);
+    }
     // Runtime-owned admission means planning needs no SSH host collector,
     // model registry access, or retained artifact inventory.
     save(root, "control.json", &json!({"capacity_failure":true}));
@@ -347,6 +433,46 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     fs::write(root.join("export.yaml"), exported).unwrap();
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
+    let before_plan = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+    let shell_state = fs::read(root.join("deployment/terraform.tfstate")).unwrap();
+    let gateway_effects = gateway.state.lock().unwrap().effects;
+    // Readiness is an apply-time gate, even after a successful unchanged apply.
+    save(root, "control.json", &json!({"startup_failure":true}));
+    let preview: Value =
+        serde_json::from_slice(&run(root, &bundle, "plan", "export.yaml", true).await).unwrap();
+    assert_eq!(preview["complete"], true, "{preview}");
+    assert!(preview.get("deferred").is_none(), "{preview}");
+    assert_eq!(preview["changes"], json!([]));
+    assert!(
+        preview["unverified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message.as_str().unwrap().contains("readiness"))
+    );
+    assert!(
+        preview["discovery"]["observations"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|observation| observation["kind"] == "service"
+                && observation["observation"]["ready"].is_null())
+    );
+    assert_eq!(read(root, "engine.json"), stable);
+    assert_eq!(gateway.state.lock().unwrap().effects, gateway_effects);
+    assert_eq!(
+        fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+        before_plan
+    );
+    assert_eq!(
+        fs::read(root.join("deployment/terraform.tfstate")).unwrap(),
+        shell_state
+    );
+    assert!(!root.join("capacity_reads").exists());
+    run(root, &bundle, "apply", "export.yaml", false).await;
+    assert_eq!(read(root, "engine.json"), stable);
+    save(root, "control.json", &json!({}));
+    run(root, &bundle, "apply", "export.yaml", true).await;
     let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
     if harness == "nvidia.fabric.openclaw" && !authenticated {
         let original = read(root, "config.yaml");
@@ -442,6 +568,9 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
                 || arg == "probe"
                 || arg == "--message")
     );
+    if harness == "nvidia.fabric.pi" {
+        refused_sandbox_changes_preserve_retained_intent(root, &bundle, &gateway).await;
+    }
     if check_pulls {
         let mut changed = read(root, "config.yaml");
         changed["spec"]["services"]["qwen"]
@@ -487,6 +616,28 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     if authenticated {
         replacement_cleanup(root, &bundle).await;
     }
+    let mut stale = read(root, "fixture.json");
+    stale["image"]["Config"]["Labels"]
+        .as_object_mut()
+        .unwrap()
+        .remove("org.nemoclaw.runtime.spec");
+    save(root, "fixture.json", &stale);
+    let before = read(root, "engine.json");
+    let bindings = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+    let intent = fs::read(root.join("deployment/intent.json")).unwrap();
+    for operation in ["plan", "apply"] {
+        run(root, &bundle, operation, "config.yaml", false).await;
+        assert_eq!(read(root, "engine.json"), before);
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            bindings
+        );
+        assert_eq!(
+            fs::read(root.join("deployment/intent.json")).unwrap(),
+            intent
+        );
+    }
+    // Teardown must not require a compatible image for the bound workload.
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());
@@ -555,4 +706,96 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
     // Teardown must also accept both current and pending-delete identities.
     interrupt_cleanup(root, true);
+}
+
+async fn refused_sandbox_changes_preserve_retained_intent(
+    root: &Path,
+    bundle: &Path,
+    gateway: &Fixture,
+) {
+    let mut original = read(root, "config.yaml");
+    let mut reviewer = original["spec"]["sandboxes"][0].clone();
+    reviewer["name"] = json!("reviewer");
+    original["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(reviewer);
+    save(root, "config.yaml", &original);
+    run(root, bundle, "apply", "config.yaml", true).await;
+    let before = [
+        "intent.json",
+        "terraform.tfstate",
+        "runtime/terraform.tfstate",
+    ]
+    .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
+    let engine = read(root, "engine.json");
+    let effects = gateway.state.lock().unwrap().effects;
+    for change in ["remove", "image", "policy", "image-with-runtime-change"] {
+        let mut rejected = original.clone();
+        match change {
+            "remove" => {
+                rejected["spec"]["sandboxes"].as_array_mut().unwrap().pop();
+            }
+            "policy" => {
+                rejected["spec"]["sandboxes"][1]["network"] =
+                    json!({"policy":{"explicit":{"version":1,"network_policies":{}}}});
+            }
+            _ => {
+                rejected["spec"]["sandboxes"][1]["image"]["ref"] =
+                    json!(format!("sandbox@sha256:{}", "c".repeat(64)));
+                if change == "image-with-runtime-change" {
+                    rejected["spec"]["services"]["qwen"]["image"] =
+                        json!(format!("runtime@sha256:{}", "f".repeat(64)));
+                }
+            }
+        }
+        save(root, "rejected.yaml", &rejected);
+        for operation in ["apply", "plan"] {
+            let result: Value =
+                serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
+                    .unwrap();
+            for (path, saved) in [
+                "intent.json",
+                "terraform.tfstate",
+                "runtime/terraform.tfstate",
+            ]
+            .iter()
+            .zip(&before)
+            {
+                assert_eq!(
+                    fs::read(root.join("deployment").join(path)).unwrap(),
+                    *saved,
+                    "{change}: {operation} changed {path}"
+                );
+            }
+            assert_eq!(read(root, "engine.json"), engine, "{change}: {operation}");
+            assert_eq!(gateway.state.lock().unwrap().effects, effects);
+            let message = result["error"]["message"].as_str().unwrap();
+            assert!(message.contains("reviewer"), "{result}");
+            assert!(message.contains("ordinary apply"), "{result}");
+            assert_eq!(result["remainingState"], "No runtime resources changed.");
+            assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
+            let exported = run(root, bundle, "export", "", true).await;
+            assert_eq!(
+                Document::parse(exported.as_slice()).unwrap(),
+                Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
+            );
+        }
+    }
+    // A root observation failure after runtime planning must not save a new
+    // document either, even when its sandbox changes would otherwise be valid.
+    let mut revised = original.clone();
+    revised["metadata"]["name"] = json!("unaccepted-display-name");
+    save(root, "unaccepted.yaml", &revised);
+    gateway.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::PermissionDenied));
+    run(root, bundle, "apply", "unaccepted.yaml", false).await;
+    assert_eq!(
+        fs::read(root.join("deployment/intent.json")).unwrap(),
+        before[0]
+    );
+    assert_eq!(read(root, "engine.json"), engine);
+    assert_eq!(gateway.state.lock().unwrap().effects, effects);
+    gateway.state.lock().unwrap().fail_read = None;
+    run(root, bundle, "export", "", true).await;
+    // The caller destroys directly, without applying the original YAML again.
 }

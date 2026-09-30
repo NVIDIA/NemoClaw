@@ -281,7 +281,13 @@ fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
         .unwrap();
     assert!(tree.contains("/cli: [omit | <string>]"), "{tree}");
     assert!(tree.contains("invalid supplied value"), "{tree}");
-    assert!(!tree.contains("42"), "{tree}");
+    // Schema and catalog digests can contain the digits by chance.
+    assert!(
+        tree.lines()
+            .filter(|line| !line.contains("sha256:"))
+            .all(|line| !line.contains("42")),
+        "{tree}"
+    );
 }
 
 #[test]

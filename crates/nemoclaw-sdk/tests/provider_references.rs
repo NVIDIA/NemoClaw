@@ -50,7 +50,7 @@ fn provider_declaration_scope_preserves_intent_and_compiles_identically() {
         );
         assert_eq!(
             provider_scope::normalized(targets(&doc, &generations).unwrap()),
-            expected
+            provider_scope::normalized(expected.clone())
         );
         assert_eq!(
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
@@ -175,7 +175,10 @@ fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
                 targets(&local, &generations).unwrap(),
                 &shared.inference_provider().unwrap().name
             ),
-            targets(&shared, &generations).unwrap()
+            provider_scope::normalized_as(
+                targets(&shared, &generations).unwrap(),
+                &shared.inference_provider().unwrap().name
+            )
         );
         let local_runtime = nemoclaw_sdk::compile::runtime_targets(&local, &generations).unwrap();
         let shared_runtime = nemoclaw_sdk::compile::runtime_targets(&shared, &generations).unwrap();

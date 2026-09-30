@@ -23,7 +23,10 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
         false,
     )));
     let shared = state.clone();
-    let toml = spec.gateway_config(data_path);
+    let configuration = Arc::new(Mutex::new(Some(
+        spec.gateway_config(data_path).into_bytes(),
+    )));
+    let configured = configuration.clone();
     let fixture = Fixture::start(move |request| {
         assert_eq!(
             request.method, "GET",
@@ -47,7 +50,10 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
                 .1
                 .into_owned();
             let bytes = if path.ends_with("gateway.toml") {
-                toml.as_bytes().to_vec()
+                let Some(bytes) = configured.lock().unwrap().clone() else {
+                    return Some((404, br#"{"message":"missing"}"#.to_vec()));
+                };
+                bytes
             } else if path.ends_with("public.pem") {
                 b"public".to_vec()
             } else if path.ends_with("key-encryption-key.bin") {
@@ -109,6 +115,36 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
             .as_deref(),
         Some(id.as_str())
     );
+    let original_configuration = configuration.lock().unwrap().clone();
+    *configuration.lock().unwrap() = Some(
+        fixtures[0]["gatewayConfig"]
+            .as_str()
+            .unwrap()
+            .as_bytes()
+            .to_vec(),
+    );
+    for create in [false, true] {
+        let error = engine
+            .gateway_storage(&spec, &id, create)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "gateway storage configuration differs from this bundle; retain the original bundle and state, and use a fresh deployment UID and state directory"
+        );
+    }
+    *configuration.lock().unwrap() = None;
+    for create in [false, true] {
+        let error = engine
+            .gateway_storage(&spec, &id, create)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "gateway storage configuration is missing; resources retained"
+        );
+    }
+    *configuration.lock().unwrap() = original_configuration;
     state.lock().unwrap().5 = true;
     assert!(engine.gateway_storage(&spec, &id, false).await.is_err());
     assert!(engine.gateway_storage(&spec, &id, true).await.is_err());

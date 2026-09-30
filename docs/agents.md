@@ -42,7 +42,8 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 ### Run One Deep Agents or Pi Request
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
-The runtime bridge accepts JSON input through `fabric.py invoke NAME INPUT_JSON` and returns Fabric's result without interpreting native output fields.
+Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON object from a file and returns Fabric's result in `result.fabric_result`.
+The caller stages and removes the file; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
 Do not reuse the former NemoClaw `fabric.configuration` helper or assume a universal prompt/result shape.
 A qualified native request walkthrough for this migrated runtime remains **TBD**.
@@ -176,7 +177,8 @@ Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect retained sandboxes, provider registrations, and storage.
 
 The runtime host validates public Fabric configuration before starting a runtime.
-Configuration preparation stops a changing runtime before provider mutations; configuration application starts Fabric after those dependencies are ready.
+Ordinary apply calls configure after OpenTofu establishes the required dependencies.
+Configure preserves an unchanged runtime or stops it before starting the replacement; prepare is a separate explicit operation.
 OpenTofu retains desired configuration; the host remembers only its active configuration in memory and waits for apply after a host restart.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.

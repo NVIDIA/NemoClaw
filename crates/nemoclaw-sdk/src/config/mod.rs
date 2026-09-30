@@ -16,6 +16,7 @@ mod inference;
 mod providers;
 pub(crate) mod references;
 mod source;
+mod yaml_source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
@@ -24,7 +25,7 @@ pub use image_pull_policy::ImagePullPolicy;
 mod inference_profile;
 pub use inference_profile::definition as inference_profile;
 mod sandbox_policy;
-pub use sandbox_policy::{isolated_policy, isolated_policy_matches, policy_json};
+pub use sandbox_policy::policy_json;
 mod network;
 pub use network::*;
 mod kinds;
@@ -50,6 +51,10 @@ pub use nemoclaw_runtime::config::ConfigError;
 /// Parse a bounded YAML value without claiming it is a complete configuration.
 /// Authoring can inspect sparse input before constructing a [`Document`].
 pub fn parse_yaml_value(input: impl Read) -> Result<serde_json::Value, ConfigError> {
+    read_yaml(input).map(|(_, tree)| tree)
+}
+
+fn read_yaml(input: impl Read) -> Result<(String, serde_json::Value), ConfigError> {
     let mut bytes = Vec::new();
     input
         .take(MAX_DOCUMENT_BYTES + 1)
@@ -59,8 +64,10 @@ pub fn parse_yaml_value(input: impl Read) -> Result<serde_json::Value, ConfigErr
         return Err(ConfigError::new("configuration exceeds 1 MiB"));
     }
     let text =
-        std::str::from_utf8(&bytes).map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+        String::from_utf8(bytes).map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+    yaml_source::validate_tags(&text)?;
     let mut options = serde_saphyr::Options::default();
+    options.with_snippet = false;
     let mut budget = serde_saphyr::Budget::default();
     budget.max_aliases = 0;
     budget.max_anchors = 0;
@@ -68,8 +75,9 @@ pub fn parse_yaml_value(input: impl Read) -> Result<serde_json::Value, ConfigErr
     options.budget = Some(budget);
     options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
     options.reject_unsupported_tags = true;
-    serde_saphyr::from_str_with_options(text, options)
-        .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))
+    let tree =
+        serde_saphyr::from_str_with_options(&text, options).map_err(yaml_source::syntax_error)?;
+    Ok((text, tree))
 }
 
 impl Document {
@@ -78,8 +86,8 @@ impl Document {
     /// # Errors
     /// Returns an error for unreadable, oversized, malformed, or invalid input.
     pub fn parse(input: impl Read) -> Result<Self, ConfigError> {
-        let tree = parse_yaml_value(input)?;
-        schema::validate_input(&tree)?;
+        let (text, tree) = read_yaml(input)?;
+        schema::validate_input(&tree, Some(&text))?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;

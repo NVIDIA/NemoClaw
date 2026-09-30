@@ -377,7 +377,73 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .collect::<Vec<_>>()
         );
     }
+    runtime_image_checks(graph, raw)?;
     Ok(())
+}
+
+fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> {
+    let mut gates = Vec::new();
+    for target in raw
+        .iter()
+        .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
+    {
+        let image = image(target)?;
+        let container = address(&target.address);
+        let name = container
+            .split_once('.')
+            .ok_or(Error::State("invalid service address"))?
+            .1;
+        let present = format!("runtime_image_present_{name}");
+        let acquired = format!("runtime_image_acquired_{name}");
+        let mut config =
+            json!({"spec":target.values["spec"],"allow_missing":image.kind == "docker_image"});
+        literal(&mut config);
+        graph["data"]["nemoclaw_runtime_image"][&present] = config.clone();
+        let present_address = format!("data.nemoclaw_runtime_image.{present}");
+        let attribute = if image.kind == "docker_image_data" {
+            "id"
+        } else {
+            "image_id"
+        };
+        config["image_id"] = json!(format!("${{{}.{attribute}}}", image.address));
+        config["allow_missing"] = json!(false);
+        graph["data"]["nemoclaw_runtime_image"][&acquired] = config;
+        if image.kind == "docker_image" {
+            let name = image.address.split_once('.').unwrap().1;
+            add_dependencies(
+                &mut graph["resource"]["docker_image"][name],
+                &[json!(present_address)],
+            );
+        }
+        gates.push(json!(format!("data.nemoclaw_runtime_image.{acquired}")));
+    }
+    if !gates.is_empty()
+        && let Some(resources) = graph["resource"].as_object_mut()
+    {
+        // Image acquisition may precede compatibility. Every other mutation,
+        // including retained storage, waits for every runtime image to pass.
+        for (kind, instances) in resources {
+            if kind != "docker_image" {
+                for attrs in instances
+                    .as_object_mut()
+                    .ok_or(Error::State("invalid resource graph"))?
+                    .values_mut()
+                {
+                    add_dependencies(attrs, &gates);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+fn add_dependencies(attrs: &mut Value, dependencies: &[Value]) {
+    let mut all = attrs["depends_on"].as_array().cloned().unwrap_or_default();
+    for dependency in dependencies {
+        if !all.contains(dependency) {
+            all.push(dependency.clone());
+        }
+    }
+    attrs["depends_on"] = json!(all);
 }
 
 #[cfg(test)]
@@ -475,8 +541,24 @@ mod tests {
         assert_eq!(gateway["restart"], "no");
         assert_eq!(
             gateway["depends_on"],
-            json!(["nemoclaw_gateway_storage.runtime"])
+            json!([
+                "nemoclaw_gateway_storage.runtime",
+                "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+            ])
         );
+        let gate = json!(
+            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+        );
+        for (kind, resources) in graph["resource"].as_object().unwrap() {
+            if kind != "docker_image" {
+                for resource in resources.as_object().unwrap().values() {
+                    assert!(
+                        resource["depends_on"].as_array().unwrap().contains(&gate),
+                        "{kind}"
+                    );
+                }
+            }
+        }
         assert!(graph["resource"]["nemoclaw_managed_gateway"].is_null());
         assert_eq!(storage.layout, 1);
         assert!(

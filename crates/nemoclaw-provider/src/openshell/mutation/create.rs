@@ -53,26 +53,34 @@ impl OpenShell {
         let response = self
             .client
             .raw_grpc()
-            .create_sandbox(self.request(proto::CreateSandboxRequest {
-                name: name.into(),
-                workspace_scope: Some(proto::workspace_selector(workspace)),
-                labels,
-                spec: Some(proto::SandboxSpec {
-                    template: Some(proto::SandboxTemplate {
-                        image: value(want, "image").into(),
+            .create_sandbox(
+                self.request(proto::CreateSandboxRequest {
+                    name: name.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    labels,
+                    annotations: [
+                        (agent::RUNTIME.into(), value(want, "runtime_json").into()),
+                        (agent::POLICY.into(), value(want, "policy_json").into()),
+                    ]
+                    .into(),
+                    spec: Some(proto::SandboxSpec {
+                        template: Some(proto::SandboxTemplate {
+                            image: value(want, "image").into(),
+                            ..Default::default()
+                        }),
+                        command: agent::binding(want)?
+                            .command("serve", &["--agent", value(want, "agent_name")]),
+                        providers: inference::provider_names(
+                            value(want, "provider_names_json"),
+                            value(want, "agent_runtime"),
+                        )?,
+                        environment: inference_environment(want)?.into_iter().collect(),
+                        policy: Some(row_policy(want)?),
                         ..Default::default()
                     }),
-                    command: command(value(want, "agent_runtime")),
-                    providers: inference::provider_names(
-                        value(want, "provider_names_json"),
-                        value(want, "agent_runtime"),
-                    )?,
-                    environment: inference_environment(want)?.into_iter().collect(),
-                    policy: Some(row_policy(want)?),
                     ..Default::default()
                 }),
-                ..Default::default()
-            }))
+            )
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();

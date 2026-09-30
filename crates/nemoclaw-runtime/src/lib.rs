@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+/// Increment when the serialized runtime contract changes incompatibly.
+pub const SPEC_VERSION: &str = "v1";
+pub const SPEC_VERSION_LABEL: &str = "org.nemoclaw.runtime.spec";
 pub mod config;
 mod error;
 pub use error::Error;
@@ -24,8 +27,15 @@ pub enum RuntimeSpec {
 }
 impl RuntimeSpec {
     pub fn decode(text: &str) -> Result<Self, Error> {
-        let spec: Self = serde_json::from_str(text)
-            .map_err(|_| Error::State("invalid pinned runtime specification"))?;
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|_| {
+            Error::State("invalid pinned runtime specification: expected JSON for runtime spec v1")
+        })?;
+        schema::validate_value(&value)?;
+        let spec: Self = serde_json::from_value(value).map_err(|_| {
+            Error::State(
+                "invalid pinned runtime specification: unsupported structure for runtime spec v1",
+            )
+        })?;
         match &spec {
             Self::Vllm(s) => s.validate()?,
             Self::Ollama(s) => s.validate()?,

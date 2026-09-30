@@ -108,6 +108,11 @@ A working forward does not establish that the native UI has valid authentication
 
 NemoClaw compares the retained public Fabric configuration with the runtime host's configuration and preserves resource identities on failure.
 Fabric owns native file validation and service diagnostics.
+Configuration failures name the sandbox and report a fixed stage, code, and runtime state; raw exception messages and details are omitted.
+For `pi_model_unknown`, check the selected route's [Pi model metadata](../examples/fabric-pi.yaml) or choose a model present in the native catalog.
+These codes require the matching bundle and an agent image rebuilt with the updated bridge and Fabric error-code patch; older images can report only a generic code.
+A successful descriptor plan does not establish membership in Pi's runtime model catalog.
+The [runtime-failure qualification](validation/fabric-runtime-failure-linux-arm64.md) records the tested error and recovery paths.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.
 Offline configuration tests do not qualify browser rendering or public dashboard access.
 

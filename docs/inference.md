@@ -478,7 +478,6 @@ An empty `changes` list on apply does not skip configuration or readiness checks
 Operation results no longer contain `agentResponse`.
 After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
-The legacy `OpenShell::inference_ready` and `OpenShell::agent_response` methods report an unsupported probe because no generic Fabric contract establishes their request and response semantics.
 Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.

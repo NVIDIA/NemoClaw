@@ -46,6 +46,9 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 ```
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+The separate `gateway_readiness` test binary uses the same explicit OpenTofu/provider paths and local engine and OpenShell fixtures.
+It checks prompt managed-gateway exit diagnostics, bootstrap state retained after failure, corrected retry, unchanged-apply rechecks, and teardown with the readiness data source omitted.
+Its bootstrap identity is a built-in OpenTofu resource; it creates no live container.
 Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
 They also commit absence with refresh-only before a later creation plan, and verify that substituted creation readback preserves the original binding with an error.
 A lost creation response followed by removing its declaration demonstrates why pending creation intent must be retained: OpenTofu cannot remove an object whose binding it never received.
@@ -71,8 +74,12 @@ The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardo
 The direct provider fixture checks saved plans with both unchanged and newly created resources; incompatible or unavailable gateways stop dependent mutations without losing managed-resource bindings.
 The Pi lifecycle fixture verifies that this gate also blocks model configuration writes, and that unchanged apply performs no configuration writes.
 The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
+The `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` fixture uses the explicit-policy example and a simulated gateway admission rejection.
+It checks prompt CLI failure with sandbox context in text and JSON output, retained bindings, recovery after simulated acceptance, export/reapply, and direct destroy after rejection.
 The fixture returns protocol responses; it does not establish live agent inference.
 The export fixture checks provider refresh failures through OpenTofu, unchanged deployment state and configuration, and export without inference credentials or Fabric health requests.
+The web-search lifecycle case covers Brave and Tavily at deployment, sandbox, and agent scope, including profile and sandbox-grant drift.
+The mixed-search export case checks shared registrations, unused definitions, export without search keys, unchanged reapply, and rejected provider-type or credential-reference drift without changes to saved state.
 
 ## Standalone Sandbox Completion
 
@@ -86,7 +93,7 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 ```
 
 The fixture runs the sandbox completion data source through OpenTofu against a local gRPC server, without SDK deployment orchestration.
-It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, and teardown without readiness.
+It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, prompt configuration-admission rejection with safe sandbox context, and teardown without readiness.
 It creates temporary state and simulated OpenShell resources; it does not start containers or invoke a model.
 On failure, inspect the OpenTofu diagnostic and verify that the selected provider matches the checkout before rerunning.
 
@@ -189,6 +196,7 @@ Cancellation must leave a neighboring process alive.
 
 The backend HTTP fixture rejects unavailable, unauthorized, and redirect responses before accepting readiness.
 The executable test rejects invalid `NEMOCLAW_RUNTIME_SPEC` input and the removed environment alias without starting model work.
+Runtime contract tests check field/version diagnostics without configuration values or user-defined map keys; provider fixtures check read-only image compatibility and distinguish absence from authentication or transport failure.
 
 The recipe test checks declared serving arguments and capacity, and rejects model/backend/hardware combinations outside the declared compatibility requirements.
 The [live image-change test](live.md#spark-and-fabric) requires plan and apply to replace only the inference process.
@@ -202,6 +210,9 @@ Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCL
 It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, cache reconstruction with unchanged credentials, and failed observation or credential-daemon retargeting without lost bindings.
 Destroy removes disposable containers and service networks while retaining storage.
 The partial-runtime fixtures verify teardown after failed creation without first creating the missing compute; failed readiness also permits corrected intent while retaining bindings.
+After export and unchanged reapply, the service fixture checks a complete resource plan with readiness reported separately as unverified, unchanged bindings, failed apply when readiness fails, and explicit recovery.
+It also rejects present images with absent or incompatible runtime-spec labels before mutations, preserves established bindings after incompatibility, and permits teardown without a compatible image.
+The two `unverified_*_images_are_checked_after_pull_before_storage` cases check deferred planning, rejection after image acquisition without creating storage or compute, and cleanup of the recorded image binding.
 
 Native CI runs these isolated fixtures on Unix, including managed OpenClaw, Hermes, Pi, and bearer-credential lifecycles.
 Its runtime status and Docker responses are simulated; it does not download or serve a model.
@@ -227,6 +238,7 @@ OpenShell and the upstream Ollama inventory are local protocol fixtures; no mode
 The SDK's ignored `cpu_runtime_provider_reconciles_compute_and_retains_data` test exercises the production Ollama and vLLM resource graphs through real Docker and OpenTofu.
 It requires `NEMOCLAW_TEST_BUNDLE` and explicit `NEMOCLAW_TEST_RUNTIME_IMAGE_OLLAMA` and `NEMOCLAW_TEST_RUNTIME_IMAGE_VLLM` digest references to loaded CPU fixture images.
 Those images must provide Python 3 and `/usr/local/bin/nemoclaw-runtime`, which writes a fresh ready status to `/data/status.json` and stays running until stopped.
+They must also carry the current runtime-spec label and the backend, recipe, or authentication labels required by their compiled service; see [runtime image compatibility](../provider.md#runtime-image-compatibility).
 Run it with `cargo test -p nemoclaw-sdk cpu_runtime_provider_reconciles_compute_and_retains_data -- --ignored`.
 It adapts host placement and GPU-sized limits for CPU execution and checks replacement, network recreation, and a retained data sentinel.
 It does not qualify GPU execution, model preparation, inference, or the runtime's hardware checks.

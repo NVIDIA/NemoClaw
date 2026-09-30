@@ -108,7 +108,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
         explicit["spec"]["gateway"][key] = json!("");
     }
     explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});
-    explicit["spec"]["sandboxes"][0]["runtime"] = json!({"provider": ""});
+    explicit["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
     explicit["spec"]["sandboxes"][0]["network"] = json!({"tier": ""});
     explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,
@@ -184,10 +184,13 @@ fn service_image_error_identifies_the_required_digest_pin() {
     for image in ["local/runtime:latest", "local/runtime@sha256:short"] {
         let mut value = original.clone();
         value["spec"]["services"]["qwen"]["image"] = json!(image);
-        assert_eq!(
-            parse(&value).unwrap_err().to_string(),
-            "service image must be pinned by a SHA-256 digest"
+        let error = parse(&value).unwrap_err().to_string();
+        assert!(error.contains("spec.services.qwen.image"), "{error}");
+        assert!(
+            error.contains("service image must be pinned by a SHA-256 digest"),
+            "{error}"
         );
+        assert!(!error.contains(image), "{error}");
     }
     parse(&original).unwrap();
 }

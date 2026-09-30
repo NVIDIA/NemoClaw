@@ -1,0 +1,259 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Image-owned launch and executable metadata, independent of Fabric descriptors.
+use crate::{config::ExplicitPolicy, fabric_catalog::FabricAdapter};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageRuntime {
+    pub schema_version: u32,
+    /// Prefix prepended to a packaged bridge operation.
+    pub command: Vec<String>,
+    pub environment: BTreeMap<String, String>,
+    pub required_paths: Vec<String>,
+    pub policy: ExplicitPolicy,
+    /// Resolved host interpreter and descriptor-required executables for each installed adapter.
+    pub binaries: BTreeMap<String, Vec<String>>,
+}
+
+pub(crate) fn absolute(path: &str) -> bool {
+    path.starts_with('/') && !path.contains('\0') && !path.split('/').any(|part| part == "..")
+}
+
+impl ImageRuntime {
+    pub(crate) fn valid(&self, adapters: &[FabricAdapter]) -> bool {
+        self.valid_layout()
+            && self.binaries.len() == adapters.len()
+            && adapters
+                .iter()
+                .all(|adapter| self.binaries.contains_key(adapter.adapter_id()))
+    }
+
+    fn valid_layout(&self) -> bool {
+        self.schema_version == 1
+            && self.command.first().is_some_and(|path| absolute(path))
+            && self
+                .command
+                .iter()
+                .all(|part| !part.is_empty() && !part.contains('\0'))
+            && self.environment.iter().all(|(key, value)| {
+                !key.is_empty()
+                    && !key.contains(['=', '\0'])
+                    && !value.contains('\0')
+                    && !matches!(
+                        key.as_str(),
+                        "NEMOCLAW_AGENT_NAME" | "NEMOCLAW_PROVIDER_NAMES"
+                    )
+            })
+            && self
+                .environment
+                .get("ADAPTER_PYTHON")
+                .is_some_and(|path| absolute(path))
+            && !self.required_paths.is_empty()
+            && self.required_paths.iter().all(|path| absolute(path))
+            && self.policy.to_proto().is_ok_and(|policy| {
+                policy.filesystem.is_some()
+                    && policy.process.is_some()
+                    && policy.network_policies.is_empty()
+                    && policy.network_middlewares.is_empty()
+            })
+            && self
+                .binaries
+                .values()
+                .all(|paths| !paths.is_empty() && paths.iter().all(|path| absolute(path)))
+    }
+}
+
+/// Observed image layout retained with its sandbox for refresh and teardown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBinding {
+    pub runtime: Box<ImageRuntime>,
+    pub adapter_id: String,
+}
+
+/// Authored policy and deployment-owned endpoint grants before image resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyInput {
+    pub explicit: Option<ExplicitPolicy>,
+    pub managed: BTreeMap<String, crate::config::PolicyRule>,
+}
+impl PolicyInput {
+    pub fn for_sandbox(
+        document: &crate::config::Document,
+        sandbox: &crate::config::Sandbox,
+    ) -> Result<Self, crate::config::ConfigError> {
+        use crate::config::{ConfigError, NetworkPolicy};
+        let explicit = match &sandbox.network.policy {
+            NetworkPolicy::Isolated => None,
+            NetworkPolicy::Explicit(policy) => Some(policy.clone()),
+        };
+        let mut managed = BTreeMap::new();
+        if let Some(search) = document.web_search(sandbox)? {
+            if explicit.as_ref().is_some_and(|policy| {
+                policy.network_policies.keys().any(|name| {
+                    name == search.provider.profile()
+                        || name.starts_with(&format!("{}-", search.provider.profile()))
+                })
+            }) {
+                return Err(ConfigError::new(
+                    "the managed search policy name is reserved for web search",
+                ));
+            }
+            let mut rule = crate::config::search_policy(search.provider);
+            rule.name = search
+                .provider
+                .image_profile(&document.image_scope(sandbox)?);
+            rule.binaries.clear();
+            managed.insert(rule.name.clone(), rule);
+        }
+        for provider in document.sandbox_inference_providers(sandbox)? {
+            let connection = document.provider_connection(provider.definition)?;
+            let profile = crate::config::inference_profile(
+                &provider.key,
+                &connection.endpoint,
+                provider.definition.provider,
+                false,
+            )
+            .map_err(|_| ConfigError::new("invalid native inference policy"))?;
+            let policy = openshell_core::proto::SandboxPolicy {
+                version: 1,
+                network_policies: [(
+                    profile.id.clone(),
+                    openshell_core::proto::NetworkPolicyRule {
+                        name: profile.id,
+                        endpoints: profile.endpoints,
+                        binaries: vec![],
+                    },
+                )]
+                .into(),
+                ..Default::default()
+            };
+            let value = crate::config::policy_json(&policy)
+                .map_err(|_| ConfigError::new("cannot encode inference policy"))?;
+            let policy: ExplicitPolicy = serde_json::from_str(&value)
+                .map_err(|_| ConfigError::new("cannot represent inference policy"))?;
+            managed.extend(policy.network_policies);
+        }
+        if explicit.as_ref().is_some_and(|policy| {
+            managed
+                .keys()
+                .any(|name| policy.network_policies.contains_key(name))
+        }) {
+            return Err(ConfigError::new(
+                "managed inference and search policy names are reserved",
+            ));
+        }
+        Ok(Self { explicit, managed })
+    }
+}
+impl RuntimeBinding {
+    pub fn from_json(encoded: &str) -> Result<Self, crate::ObservationError> {
+        let binding: Self =
+            serde_json::from_str(encoded).map_err(|_| crate::ObservationError::Incomplete)?;
+        if !binding.runtime.valid_layout()
+            || !binding.runtime.binaries.contains_key(&binding.adapter_id)
+        {
+            return Err(crate::ObservationError::Incomplete);
+        }
+        Ok(binding)
+    }
+    pub fn command(&self, operation: &str, arguments: &[&str]) -> Vec<String> {
+        self.runtime
+            .command
+            .iter()
+            .cloned()
+            .chain(std::iter::once(operation.into()))
+            .chain(arguments.iter().map(|value| (*value).into()))
+            .collect()
+    }
+    pub fn environment(&self, name: &str) -> BTreeMap<String, String> {
+        let mut environment = self.runtime.environment.clone();
+        environment.insert("NEMOCLAW_AGENT_NAME".into(), name.into());
+        environment
+    }
+    pub fn binaries(&self) -> &[String] {
+        &self.runtime.binaries[&self.adapter_id]
+    }
+    pub fn policy(
+        &self,
+        input: &PolicyInput,
+    ) -> Result<openshell_core::proto::SandboxPolicy, crate::ObservationError> {
+        let mut policy = input
+            .explicit
+            .as_ref()
+            .unwrap_or(&self.runtime.policy)
+            .clone();
+        let binaries = self
+            .runtime
+            .binaries
+            .get(&self.adapter_id)
+            .ok_or(crate::ObservationError::Incomplete)?;
+        for (name, rule) in &input.managed {
+            if policy.network_policies.contains_key(name) {
+                return Err(crate::ObservationError::BindingMismatch);
+            }
+            let mut rule = rule.clone();
+            rule.binaries = binaries
+                .iter()
+                .map(|path| crate::config::PolicyBinary { path: path.clone() })
+                .collect();
+            policy.network_policies.insert(name.clone(), rule);
+        }
+        policy
+            .to_proto()
+            .map_err(|_| crate::ObservationError::Incomplete)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn retained_image_layout_controls_launch_user_and_managed_executables() {
+        let binding = RuntimeBinding::from_json(&serde_json::json!({
+            "adapter_id":"org.fixture.bun", "runtime":{
+                "schema_version":1,"command":["/srv/python3.99","-I","/srv/bridge.py"],
+                "environment":{"ADAPTER_PYTHON":"/srv/python3.99","HOME":"/work","PATH":"/srv"},
+                "required_paths":["/srv"],
+                "policy":{"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/work"]},"process":{"run_as_user":"1234","run_as_group":"1234"},"network_policies":{}},
+                "binaries":{"org.fixture.bun":["/srv/python3.99","/srv/bun"]}
+            }
+        }).to_string()).unwrap();
+        assert_eq!(
+            binding.command("configure", &["main", "{}"]),
+            [
+                "/srv/python3.99",
+                "-I",
+                "/srv/bridge.py",
+                "configure",
+                "main",
+                "{}"
+            ]
+        );
+        assert_eq!(binding.environment("main")["HOME"], "/work");
+        assert_eq!(binding.environment("main")["NEMOCLAW_AGENT_NAME"], "main");
+        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":{"model":{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}}})).unwrap();
+        let policy = binding.policy(&input).unwrap();
+        assert_eq!(policy.process.unwrap().run_as_user, "1234");
+        assert_eq!(policy.filesystem.unwrap().read_write, ["/work"]);
+        assert_eq!(
+            policy.network_policies["model"]
+                .binaries
+                .iter()
+                .map(|binary| binary.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/srv/python3.99", "/srv/bun"]
+        );
+        let mut explicit = input;
+        explicit.explicit = Some(serde_json::from_value(serde_json::json!({"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/mine"]},"process":{"run_as_user":"4321","run_as_group":"4321"},"network_policies":{}})).unwrap());
+        let policy = binding.policy(&explicit).unwrap();
+        assert_eq!(policy.process.unwrap().run_as_user, "4321");
+        assert_eq!(policy.filesystem.unwrap().read_write, ["/mine"]);
+        assert!(RuntimeBinding::from_json("{}").is_err());
+    }
+}

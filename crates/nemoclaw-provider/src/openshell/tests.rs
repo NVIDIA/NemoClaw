@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+fn policy() -> proto::SandboxPolicy {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../image/fabric/runtime.json")).unwrap();
+    let policy: nemoclaw_sdk::config::ExplicitPolicy =
+        serde_json::from_value(manifest["policy"].clone()).unwrap();
+    policy.to_proto().unwrap()
+}
+fn policy_matches(actual: &proto::SandboxPolicy) -> bool {
+    policy_json(actual).ok() == policy_json(&policy()).ok()
+}
 
 fn metadata() -> proto::ObjectMeta {
     proto::ObjectMeta {

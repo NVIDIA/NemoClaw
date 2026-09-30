@@ -127,7 +127,15 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     );
     assert_eq!(
         choices["smart"]["api_key_env"],
-        "NEMOCLAW_INFERENCE_HOSTED_KEY"
+        format!(
+            "NEMOCLAW_INFERENCE_{}_KEY",
+            rows.iter()
+                .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+                .unwrap()
+                .values["name"]
+                .replace('-', "_")
+                .to_ascii_uppercase()
+        )
     );
     assert_eq!(
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),

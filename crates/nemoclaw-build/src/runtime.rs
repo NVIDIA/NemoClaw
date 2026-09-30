@@ -57,7 +57,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     fs::copy(manifest, context.join("build.json"))?;
     fs::copy("LICENSE", context.join("LICENSE"))?;
     fs::copy(binary, context.join("nemoclaw-runtime"))?;
-    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-runtime":hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":hash_file(&context.join("supervisor-source.tar.gz"))?});
+    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"runtimeSpecVersion":nemoclaw_runtime::SPEC_VERSION,"nemoclaw-runtime":hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":hash_file(&context.join("supervisor-source.tar.gz"))?});
     fs::write(
         context.join("supervisor.json"),
         serde_json::to_vec_pretty(&metadata)?,

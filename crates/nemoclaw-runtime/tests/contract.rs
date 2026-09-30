@@ -67,3 +67,40 @@ fn direct_recipe_validation_rejects_structurally_invalid_preparation_limits() {
     service.recipe.as_mut().unwrap().resources.prepared_bytes = 0;
     assert!(service.recipe.as_ref().unwrap().validate(&service).is_err());
 }
+
+#[test]
+fn runtime_errors_identify_declared_fields_without_echoing_values_or_map_keys() {
+    let original: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/vllm.yaml")).unwrap();
+    for (pointer, value, field) in [
+        ("/serving/port", json!("PRIVATE_SENTINEL"), "port"),
+        ("/serving/port", json!(0), "port"),
+        (
+            "/recipe/apiVersion",
+            json!("PRIVATE_SENTINEL"),
+            "apiVersion",
+        ),
+        ("/memory/consecutiveSamples", json!(0), "consecutiveSamples"),
+    ] {
+        let mut input = original.clone();
+        *input.pointer_mut(pointer).unwrap() = value;
+        let error = RuntimeSpec::decode(&input.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(field), "{error}");
+        assert!(error.contains("v1"), "{error}");
+        assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
+    }
+    for pointer in ["", "/serving", "/recipe/serving/environment"] {
+        let mut input = original.clone();
+        if pointer.ends_with("/environment") {
+            input["recipe"]["serving"]["environment"] = json!({});
+        }
+        input.pointer_mut(pointer).unwrap()["PRIVATE_SENTINEL"] = json!("PRIVATE_SENTINEL");
+        let error = RuntimeSpec::decode(&input.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("runtime specification"), "{error}");
+        assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
+    }
+}

@@ -2088,6 +2088,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "flate2",
+ "nemoclaw-runtime",
  "nemoclaw-sdk",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
@@ -2181,6 +2182,7 @@ dependencies = [
  "openshell-core",
  "openshell-policy",
  "openshell-sdk",
+ "prost",
  "regex",
  "reqwest 0.13.5",
  "rustix",

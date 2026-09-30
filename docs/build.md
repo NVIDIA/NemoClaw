@@ -93,6 +93,16 @@ The builder starts a temporary process with networking disabled to read installe
 It removes its temporary image tag after completion; it does not start an adapter or request model responses.
 The commands build and load local images; they do not publish images or launch a deployment.
 
+Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
+If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
+See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
+
+Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
+For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
+This engine is used only for image inspection and does not authorize managing the external gateway.
+A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
+Keep the original bundle and state to operate or destroy deployments created before runtime metadata was retained; this change does not migrate their sandbox bindings.
+
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
 ```sh
@@ -167,6 +177,8 @@ Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
 The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
+It sets `org.nemoclaw.runtime.spec=v1` from the shared runtime contract and verifies that label on the loaded image.
+The retained `supervisor.json` records the same `runtimeSpecVersion` alongside the runtime source version.
 Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
@@ -191,3 +203,17 @@ The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.
+
+The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
+An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.
+When the image must be acquired, plan reports compatibility as deferred; apply may pull the image, then checks it before creating storage, networks, or containers.
+A matching label establishes the declared runtime contract, not successful model loading or inference.
+
+For a runtime-spec mismatch, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
+Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
+Keep the deployment state and reapply; existing model and credential storage remain subject to their ordinary retention and identity checks.
+Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
+The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
+
+Developers must increment `nemoclaw_runtime::SPEC_VERSION` when serialized fields or validation changes make the runtime contract incompatible.
+The image builder, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.

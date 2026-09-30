@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct SelectedProvider<'a> {
     pub definition: &'a InferenceProvider,
     pub key: String,
-    path: String,
+    pub(crate) path: String,
 }
 impl<'a> SelectedProvider<'a> {
     fn new(definition: &'a InferenceProvider, sandbox: Option<&Sandbox>, path: String) -> Self {
@@ -28,6 +28,15 @@ impl<'a> SelectedProvider<'a> {
             path,
         }
     }
+    fn for_image(mut self, scope: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        self.key = format!(
+            "{}-{}",
+            &self.definition.name[..self.definition.name.len().min(12)],
+            &super::hex(&Sha256::digest(format!("{}\0{scope}", self.key)))[..24]
+        );
+        self
+    }
 }
 
 fn provider_path(base: &str, name: &str) -> String {
@@ -38,6 +47,25 @@ fn sandbox_path(sandbox: &Sandbox) -> String {
 }
 
 impl Document {
+    pub(crate) fn image_scope(&self, sandbox: &Sandbox) -> Result<String, ConfigError> {
+        use sha2::{Digest, Sha256};
+        Ok(super::hex(&Sha256::digest(format!(
+            "{}\0{}",
+            sandbox.image.ref_,
+            self.sandbox_harness(sandbox)?.kind.as_str()
+        )))[..24]
+            .into())
+    }
+    pub(crate) fn sandbox_route_registration<'a>(
+        &'a self,
+        sandbox: &'a Sandbox,
+        route: &'a Route,
+    ) -> Result<SelectedProvider<'a>, ConfigError> {
+        let inference = self.scoped_inference(sandbox)?;
+        Ok(self
+            .route_provider(route, &inference)?
+            .for_image(&self.image_scope(sandbox)?))
+    }
     pub(crate) fn route_provider<'a>(
         &'a self,
         route: &'a Route,
@@ -151,7 +179,9 @@ impl Document {
         Ok(self
             .selected_providers()?
             .into_iter()
-            .map(|p| p.definition)
+            .map(|p| (p.path, p.definition))
+            .collect::<BTreeMap<_, _>>()
+            .into_values()
             .collect())
     }
 
@@ -175,7 +205,7 @@ impl Document {
             }
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
-                let provider = self.route_provider(route, &inference)?;
+                let provider = self.sandbox_route_registration(sandbox, route)?;
                 let path = provider.path.clone();
                 if let Some(previous) = selected.insert(provider.key.clone(), provider)
                     && previous.path != path
@@ -186,7 +216,14 @@ impl Document {
                 }
             }
         }
-        if selected.is_empty() || selected.len() > 32 {
+        if selected.is_empty()
+            || selected
+                .values()
+                .map(|provider| &provider.path)
+                .collect::<BTreeSet<_>>()
+                .len()
+                > 32
+        {
             return Err(ConfigError::new(
                 "a deployment requires between one and 32 selected providers",
             ));
@@ -201,7 +238,7 @@ impl Document {
         let mut selected = BTreeMap::new();
         let inference = self.scoped_inference(sandbox)?;
         for route in &inference.inference.routes {
-            let provider = self.route_provider(route, &inference)?;
+            let provider = self.sandbox_route_registration(sandbox, route)?;
             selected.insert(provider.key.clone(), provider);
         }
         Ok(selected.into_values().collect())
@@ -222,13 +259,22 @@ impl Document {
 
     /// Edit the selected definition in its authored scope without rewriting references.
     pub fn inference_provider_mut(&mut self) -> Result<&mut InferenceProvider, ConfigError> {
-        let selected = self.selected_providers()?;
-        let [provider] = selected.as_slice() else {
+        let selected: BTreeMap<_, _> = self
+            .selected_providers()?
+            .into_iter()
+            .map(|p| (p.path.clone(), p))
+            .collect();
+        let mut selected = selected.into_values();
+        let provider = selected
+            .next()
+            .ok_or(ConfigError::new("no selected provider"))?;
+        if selected.next().is_some() {
             return Err(ConfigError::new(
                 "select an explicit provider in a multi-provider deployment",
             ));
-        };
+        }
         let path = provider.path.clone();
+        drop(selected);
         self.provider_at_mut(&path)
     }
 

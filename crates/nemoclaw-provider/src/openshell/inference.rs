@@ -28,10 +28,8 @@ pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> 
         .map(String::as_str)
         .unwrap_or("");
     provider_names(text, runtime)?;
-    let mut env = environment(
-        row.get("agent_name").map(String::as_str).unwrap_or(""),
-        runtime,
-    );
+    let mut env =
+        agent::binding(row)?.environment(row.get("agent_name").map(String::as_str).unwrap_or(""));
     env.insert(PROVIDERS_ENV.into(), text.into());
     Ok(env)
 }

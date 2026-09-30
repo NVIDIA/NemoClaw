@@ -275,7 +275,7 @@ fn partial_failure_and_interruption_preserve_completed_milestones() {
         let cli = crate::args::Cli::parse_from(["nemoclaw", "apply", "配置.yaml"]);
         let context = crate::formatting::RenderContext::new(&cli);
         let mut reporter = Reporter::new(ProgressMode::Auto, false, context.header());
-        let send = reporter.callback();
+        let send = context.progress(reporter.callback());
         let pause = Duration::from_millis(
             std::env::var("NEMOCLAW_TEST_PROGRESS_DELAY_MS")
                 .ok()
@@ -283,6 +283,7 @@ fn partial_failure_and_interruption_preserve_completed_milestones() {
                 .unwrap_or(20),
         );
         send(Progress::Applying);
+        send(Progress::MutationStarted);
         send(resource("alpha", "started"));
         thread::sleep(pause);
         send(resource("alpha", "complete"));

@@ -314,7 +314,7 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
                 "{diagnostics}"
             );
             assert!(
-                diagnostics.contains("contradicts the configured platform"),
+                diagnostics.contains("sandbox/assistant: adapter/nvidia.fabric.openclaw"),
                 "{diagnostics}"
             );
         }
@@ -337,6 +337,30 @@ async fn fabric_owned_adapter_settings_reach_real_planning_without_consumer_mani
     let adapter_id = descriptor["adapter_id"].as_str().unwrap().to_owned();
     let python = std::env::var_os("NEMOCLAW_TEST_FABRIC_PYTHON")
         .expect("Fabric interpreter with installed fixture");
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let bridge_directory =
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/fabric"))
+            .canonicalize()
+            .unwrap();
+    let runtime_manifest = root.join("runtime.json");
+    fs::write(
+        &runtime_manifest,
+        json!({
+            "schema_version": 1,
+            "command": [python.to_str().unwrap(), bridge_directory.join("fabric.py")],
+            "environment": {"ADAPTER_PYTHON": python.to_str().unwrap()},
+            "required_paths": [bridge_directory],
+            "policy": {
+                "version": 1,
+                "filesystem_policy": {"read_only": [bridge_directory], "read_write": [root]},
+                "process": {"run_as_user": "1000", "run_as_group": "1000"},
+                "network_policies": {}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
     let bundled = FabricCatalog::bundled();
     let packaged = Command::new(&python)
         .arg(concat!(
@@ -345,6 +369,8 @@ async fn fabric_owned_adapter_settings_reach_real_planning_without_consumer_mani
         ))
         .args([
             "--installed",
+            "--runtime-manifest",
+            runtime_manifest.to_str().unwrap(),
             "--revision",
             &bundled.fabric_revision,
             "--source-sha256",
@@ -389,8 +415,6 @@ async fn fabric_owned_adapter_settings_reach_real_planning_without_consumer_mani
         };
         Some((200,serde_json::to_vec(&response).unwrap()))
     }).await;
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path();
     fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
     fs::write(root.join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(root).unwrap())).unwrap();
     let from_wizard = std::env::var_os("NEMOCLAW_TEST_AUTHORED_YAML").is_some();
@@ -494,11 +518,13 @@ async def run():
         config['runtime']['artifacts'] = directory
         host = RuntimeHost(config['metadata']['name'], Path(directory))
         try:
-            await host.configure(config)
+            configured = await host.handle({'operation':'configure', 'agent':config['metadata']['name'], 'config':config, 'expected_generation':host.snapshot()['generation']})
+            assert configured['status'] == 'succeeded', configured
             result = await host.handle({'operation':'invoke', 'agent':config['metadata']['name'], 'input':{'proof':'authored'}})
             assert result['status'] == 'succeeded', result
-            assert result['output']['settings'] == config['harness']['settings'], result
-            assert result['output']['input'] == {'proof':'authored'}, result
+            native = result['result']['fabric_result']
+            assert native['output']['settings'] == config['harness']['settings'], result
+            assert native['output']['input'] == {'proof':'authored'}, result
         finally:
             await host.stop()
 asyncio.run(run())

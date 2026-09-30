@@ -27,7 +27,7 @@ fn image_pull_policy_does_not_change_container_configuration() {
     }
 }
 #[test]
-fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
+fn gateway_configuration_preserves_driver_namespace_images_and_signing_paths() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "../../../nemoclaw-provider/src/managed/reference.json"
     ))
@@ -42,10 +42,7 @@ fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
         Some("docker")
     );
     let driver = &openshell["drivers"]["docker"];
-    assert_eq!(
-        driver["network_name"].as_str(),
-        Some(spec.network().as_str())
-    );
+    assert_eq!(driver["sandbox_label"].as_str(), Some(spec.name.as_str()));
     assert_eq!(
         driver["sandbox_runtime_image"].as_str(),
         Some(SANDBOX_RUNTIME_IMAGE)
@@ -281,29 +278,52 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
+fn managed_gateway_uses_driver_default_host_callback_without_legacy_docker_fields() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
         "../../../nemoclaw-provider/src/managed/reference.json"
     ))
     .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
-        let configuration = spec.gateway_config("/owned-data");
+        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned-data")).unwrap();
+        let driver = &config["openshell"]["drivers"][spec.compute_driver.as_str()];
         if spec.compute_driver == ComputeDriver::Docker {
-            assert!(
-                !configuration.contains("grpc_endpoint ="),
-                "Docker must derive the supervisor callback from its managed bridge"
-            );
-            assert!(configuration.contains(&format!(
-                "host_gateway_ip = {:?}",
-                spec.gateway_address().unwrap()
-            )));
+            assert!(driver.get("host_gateway_ip").is_none());
+            assert!(driver.get("network_name").is_none());
+            // The driver derives loopback and the actual listen port at startup.
+            // Storage uses a normalized port and must not freeze that callback.
+            assert!(driver.get("grpc_endpoint").is_none());
         } else {
-            assert!(
-                configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint))
+            assert_eq!(
+                driver["grpc_endpoint"].as_str(),
+                Some(spec.gateway.endpoint.as_str())
             );
         }
     }
+}
+
+#[test]
+fn managed_docker_gateway_namespaces_are_stable_and_distinct() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let first: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let namespace = |spec: &Spec| {
+        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
+        config["openshell"]["drivers"]["docker"]["sandbox_label"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let mut replacement = first.clone();
+    replacement.gateway.endpoint = "http://127.0.0.1:19002".into();
+    assert_eq!(namespace(&first), namespace(&replacement));
+    let mut second = first.clone();
+    second.name = "nc-0123456789abcdef-gateway".into();
+    second.owner = "12345678-1234-1234-1234-123456789abc".into();
+    assert_ne!(namespace(&first), namespace(&second));
+    assert_ne!(namespace(&first), "default");
 }
 
 #[test]
