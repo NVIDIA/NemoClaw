@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 import {
@@ -20,6 +21,49 @@ import {
 } from "./helpers";
 
 vi.setConfig({ maxConcurrency: 4 });
+
+const LARGE_DISCORD_ID = "1234567890123456789";
+const SANDBOX_CONTAINER_ID = "a".repeat(64);
+
+function writeHermesConfigSetStubs(home: string, rawConfig: string): string {
+  const localBin = path.join(home, "bin");
+  const sourceConfig = path.join(home, "hermes-config-source.yaml");
+  const writtenConfig = path.join(home, "hermes-config-written.yaml");
+  fs.writeFileSync(sourceConfig, rawConfig, { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      `  cat ${JSON.stringify(sourceConfig)}`,
+      "  exit 0",
+      "fi",
+      'printf "unexpected openshell args: %s\\n" "$*" >&2',
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(localBin, "docker"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'if [ "$1" = "ps" ]; then',
+      `  printf '%s\\t%s\\n' ${JSON.stringify(SANDBOX_CONTAINER_ID)} openshell-hsb`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "exec" ]; then',
+      `  cat > ${JSON.stringify(writtenConfig)}`,
+      "  exit 0",
+      "fi",
+      'printf "unexpected docker args: %s\\n" "$*" >&2',
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return writtenConfig;
+}
 
 function readOpenShellPolicy(home: string): string {
   return fs.readFileSync(path.join(home, "applied-policy.yaml"), "utf8");
@@ -205,6 +249,79 @@ describe.concurrent("CLI dispatch", () => {
     expect(result.out).toContain("Non-interactive mode requires a preset name.");
     expect(result.out).not.toContain("Unknown preset '/usr/bin/dmesg");
     expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
+  });
+
+  it("preserves an existing unsafe YAML integer when config set changes another field (#12410)", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home, "hsb", managedSandboxEntry("hsb", "hermes"));
+    const writtenConfig = writeHermesConfigSetStubs(
+      home,
+      [
+        "platforms:",
+        "  discord:",
+        "    home_channel:",
+        "      platform: discord",
+        `      chat_id: ${LARGE_DISCORD_ID}`,
+        "      name: Home",
+        "display:",
+        "  skin: default",
+        "samples:",
+        "  small: 42",
+        `  quoted: "${LARGE_DISCORD_ID}"`,
+        "  enabled: true",
+        "  nested:",
+        "    mode: fast",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runWithEnvAsync(
+      "hsb config set --key display.skin --value mono",
+      testHome.environment({ NEMOCLAW_OPENSHELL_BIN: path.join(testHome.bin, "openshell") }),
+    );
+
+    expect(result.code, result.out).toBe(0);
+    const parsed = parseYaml(fs.readFileSync(writtenConfig, "utf8"));
+    expect(parsed).toMatchObject({
+      platforms: { discord: { home_channel: { chat_id: LARGE_DISCORD_ID } } },
+      display: { skin: "mono" },
+      samples: {
+        small: 42,
+        quoted: LARGE_DISCORD_ID,
+        enabled: true,
+        nested: { mode: "fast" },
+      },
+    });
+  });
+
+  it("stores an unsafe integer CLI value without rounding it (#12410)", async ({ testHome }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home, "hsb", managedSandboxEntry("hsb", "hermes"));
+    const writtenConfig = writeHermesConfigSetStubs(
+      home,
+      [
+        "platforms:",
+        "  discord:",
+        "    home_channel:",
+        "      platform: discord",
+        "      chat_id: 42",
+        "      name: Home",
+        "display:",
+        "  skin: default",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runWithEnvAsync(
+      `hsb config set --key platforms.discord.home_channel.chat_id --value ${LARGE_DISCORD_ID}`,
+      testHome.environment({ NEMOCLAW_OPENSHELL_BIN: path.join(testHome.bin, "openshell") }),
+    );
+
+    expect(result.code, result.out).toBe(0);
+    const parsed = parseYaml(fs.readFileSync(writtenConfig, "utf8"));
+    expect(parsed.platforms.discord.home_channel.chat_id).toBe(LARGE_DISCORD_ID);
   });
 
   it("sandbox channels start rejects a sandbox missing from the registry (#4584)", async ({
