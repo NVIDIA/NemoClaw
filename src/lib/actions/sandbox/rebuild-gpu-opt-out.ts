@@ -115,6 +115,7 @@ export type RebuildRecreateOnboardOpts = {
   recreateModel: string | null;
   recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   controlUiPort: number | null;
@@ -158,6 +159,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
+  storedFromImage?: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
@@ -203,6 +205,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     recreateModel: args.sb?.model ?? null,
     recreatePreferredInferenceApi: args.sb?.preferredInferenceApi ?? null,
     fromDockerfile: args.storedFromDockerfile,
+    fromImage: args.storedFromImage ?? null,
     sandboxGpu: gpuOverrides.sandboxGpu,
     sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,
     controlUiPort: managesDashboard ? (dashboardPort ?? null) : null,

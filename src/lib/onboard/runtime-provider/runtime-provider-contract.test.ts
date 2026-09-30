@@ -92,6 +92,15 @@ const MANAGED_RECEIPT = {
   shared: true,
 } as const satisfies SandboxWorkloadReceipt;
 
+const EXTERNAL_IMAGE_RECEIPT = {
+  schemaVersion: 1,
+  kind: "external-image",
+  reference: `ghcr.io/example/downstream-openclaw@sha256:${"d".repeat(64)}`,
+  platform: "linux/amd64",
+  runtimeImageContentId: `sha256:${"e".repeat(64)}`,
+  shared: true,
+} as const satisfies SandboxWorkloadReceipt;
+
 type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
 
 function receiptForProfile(
@@ -528,6 +537,22 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(runtimeState).toEqual(runtimeStateBefore);
   });
 
+  it("retains publisher-owned external images during Docker cleanup", () => {
+    const docker = createDockerRuntimeProviderBundle({
+      removeImage: vi.fn(() => ({ status: 0 })),
+    });
+    expectSupportedSurface(docker.cleanup);
+    const sandbox = {
+      name: "external",
+      imageTag: EXTERNAL_IMAGE_RECEIPT.reference,
+      workload: EXTERNAL_IMAGE_RECEIPT,
+    } satisfies SandboxEntry;
+
+    expect(docker.cleanup.planOwnedWorkloadCleanup({ sandbox, sandboxName: sandbox.name })).toEqual(
+      { action: "retain", reason: "shared-image" },
+    );
+  });
+
   it("rejects capability/surface drift and duplicate operation-scoped engine identities", () => {
     const bundle = mxcBundle();
     const { capture: _capture, ...containerEngineWithoutCapture } = bundle.containerEngine;
@@ -850,6 +875,40 @@ describe("sandbox workload ownership receipt", () => {
 
     expect(cloned).toEqual(MANAGED_RECEIPT);
     expect(cloned).not.toBe(MANAGED_RECEIPT);
+  });
+
+  it("clones the complete immutable external-image ownership identity", () => {
+    const cloned = cloneSandboxWorkloadReceipt(EXTERNAL_IMAGE_RECEIPT);
+
+    expect(cloned).toEqual(EXTERNAL_IMAGE_RECEIPT);
+    expect(cloned).not.toBe(EXTERNAL_IMAGE_RECEIPT);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.workload.acceptsReceipt(cloned)).toBe(true);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.workload.acceptsReceipt(cloned)).toBe(
+      false,
+    );
+    expect(
+      CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.workload.acceptsReceipt({
+        ...EXTERNAL_IMAGE_RECEIPT,
+        runtimeImageContentId: "not-a-runtime-content-id",
+      } as SandboxWorkloadReceipt),
+    ).toBe(false);
+  });
+
+  it.each([
+    { reference: "ghcr.io/example/downstream-openclaw:latest" },
+    { reference: `GHCR.io/example/downstream-openclaw@sha256:${"d".repeat(64)}` },
+    { reference: null },
+    { platform: "linux/s390x" },
+    { runtimeImageContentId: "not-a-runtime-content-id" },
+    { runtimeImageContentId: null },
+    { shared: false },
+  ])("drops malformed external-image ownership evidence: %o", (drift) => {
+    expect(
+      cloneSandboxWorkloadReceipt({
+        ...EXTERNAL_IMAGE_RECEIPT,
+        ...drift,
+      } as unknown as SandboxWorkloadReceipt),
+    ).toBeUndefined();
   });
 
   it.each([
