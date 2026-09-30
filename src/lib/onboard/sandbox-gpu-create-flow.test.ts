@@ -100,6 +100,8 @@ const {
   expectNativeStateKept,
   errorOutput,
   createSourceInput,
+  writeDesktopCredsStore,
+  captureCreateEnv,
   setupHarness,
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
@@ -502,6 +504,23 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(patch.ensureApplied).toHaveBeenCalled();
   });
 
+  it("creates a WSL managed-image sandbox without a credential-free Docker config when the Desktop helper is unavailable", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    input.sandboxEnv = {
+      PATH: "/usr/bin",
+      WSL_DISTRO_NAME: "Ubuntu",
+      DOCKER_CONFIG: writeDesktopCredsStore(),
+    };
+    const captured = captureCreateEnv();
+
+    await runSandboxGpuCreateFlow(input, createDeps());
+
+    expect(captured.env).toEqual({ PATH: "/usr/bin" });
+    expect(mocks.helperResponds).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("credential-free");
+  });
+
   it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
     const input = createInput();
     const patch = createPatch();
@@ -514,6 +533,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
     input.persistStartupCommand = true;
+    input.externalImage = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
       { name: "nofile", soft: 65_536, hard: 65_536 },
@@ -552,6 +572,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",
     );
+    expect(errorOutput()).toContain("Verify that it targets this NemoClaw release");
   });
 
   it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {

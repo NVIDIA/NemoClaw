@@ -21,7 +21,11 @@ export interface ResumeSessionLike {
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
-  metadata?: { fromDockerfile?: string | null; hostMounts?: SandboxHostMount[] } | null;
+  metadata?: {
+    fromDockerfile?: string | null;
+    fromImage?: string | null;
+    hostMounts?: SandboxHostMount[];
+  } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
   checkpoint?: {
     sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
@@ -145,6 +149,7 @@ export function getResumeConfigConflicts(
   opts: {
     nonInteractive?: boolean;
     fromDockerfile?: string | null;
+    fromImage?: string | null;
     sandboxName?: string | null;
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
@@ -221,6 +226,16 @@ export function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedImage = opts.fromImage?.trim() || null;
+  const recordedImage = session?.metadata?.fromImage?.trim() || null;
+  if (requestedImage !== recordedImage) {
+    conflicts.push({
+      field: "fromImage",
+      requested: requestedImage,
+      recorded: recordedImage,
     });
   }
 

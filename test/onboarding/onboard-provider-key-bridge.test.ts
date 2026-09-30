@@ -221,7 +221,7 @@ describe("onboard provider-key compatibility bridges", () => {
   );
 
   it(
-    "bridges NEMOCLAW_PROVIDER_KEY to NVIDIA_INFERENCE_API_KEY when setupNim receives OpenClaw and NEMOCLAW_AGENT names Deep Agents Code",
+    "copies NEMOCLAW_PROVIDER_KEY into NVIDIA_INFERENCE_API_KEY when setupNim receives OpenClaw and NEMOCLAW_AGENT names Deep Agents Code",
     testTimeoutOptions(90_000),
     () => {
       const payload = runSetupNimBridgeScenario({

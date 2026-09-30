@@ -28,6 +28,7 @@ import {
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
 } from "./openshell-gateway-upgrade-fixture.mts";
+import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -35,7 +36,6 @@ export const E2E_EXECUTION_PROFILES = [
   "nvidia-api",
   "nvidia-inference",
   "github-read",
-  "brave-nvidia-inference",
 ] as const;
 export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 
@@ -68,9 +68,6 @@ export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
 export const E2E_ARTIFACT_LAYOUTS = ["target-shard", "flat-shard"] as const;
 export type E2eArtifactLayout = (typeof E2E_ARTIFACT_LAYOUTS)[number];
 
-export const E2E_OPTIONAL_CREDENTIALS = ["BRAVE_API_KEY"] as const;
-export type E2eOptionalCredential = (typeof E2E_OPTIONAL_CREDENTIALS)[number];
-
 export interface E2eCatalogueTarget {
   id: string;
   targetId: string;
@@ -96,7 +93,6 @@ export interface E2eCatalogueTarget {
   runnerComparison: boolean;
   runnerPressure: boolean;
   compatibleApiKey: boolean;
-  requiredOptionalCredentials: readonly E2eOptionalCredential[];
   prAdvisorSelectable: boolean;
   shard: string;
   artifactLayout: E2eArtifactLayout;
@@ -154,7 +150,6 @@ type TargetOptions = Omit<
   | "runnerComparison"
   | "runnerPressure"
   | "compatibleApiKey"
-  | "requiredOptionalCredentials"
   | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
@@ -176,7 +171,6 @@ type TargetOptions = Omit<
   runnerComparison?: boolean;
   runnerPressure?: boolean;
   compatibleApiKey?: boolean;
-  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   prAdvisorSelectable?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
@@ -203,7 +197,6 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison = false,
     runnerPressure = false,
     compatibleApiKey = false,
-    requiredOptionalCredentials = [],
     prAdvisorSelectable = false,
     shard = "default",
     artifactLayout = "target-shard",
@@ -231,7 +224,6 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison,
     runnerPressure,
     compatibleApiKey,
-    requiredOptionalCredentials,
     prAdvisorSelectable,
     shard,
     artifactLayout,
@@ -323,7 +315,6 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
-  requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -333,8 +324,7 @@ function commonEgressTarget(options: {
     displayName: options.displayName,
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
-    profile: options.profile ?? "brave-nvidia-inference",
-    requiredOptionalCredentials: options.requiredOptionalCredentials,
+    profile: options.profile ?? "nvidia-inference",
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -546,17 +536,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("brave-search", {
-    displayName: "Search: OpenClaw returns a Brave result without exposing its key",
+    displayName: "Search: Brave credentials stay outside OpenClaw and login shells",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Brave Search",
-    profile: "brave-nvidia-inference",
-    requiredOptionalCredentials: ["BRAVE_API_KEY"],
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and mocked Brave Search",
+    profile: "nvidia-inference",
     timeoutMinutes: 45,
-    installMode: "authenticated",
+    installMode: "credential-free",
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/brave-search-helpers.ts"],
+    owningPaths: ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -646,7 +635,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
-    requiredOptionalCredentials: ["BRAVE_API_KEY"],
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -1172,6 +1160,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/actions/inference-set.ts",
+      "src/lib/onboard.ts",
+      "src/lib/onboard/machine/core-flow-phases.ts",
+      "src/lib/onboard/machine/final-flow-phases.ts",
+      "src/lib/onboard/machine/finalization-deps.ts",
+      "src/lib/onboard/machine/flow-context.ts",
+      "src/lib/onboard/machine/handlers/agent-setup.ts",
+      "src/lib/onboard/machine/handlers/sandbox.ts",
+      "src/lib/onboard/openclaw-setup.ts",
+      "src/lib/onboard/openclaw/initial-inference-route.ts",
+      "src/lib/onboard/sandbox-recreate-transaction.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
       "scripts/patch-openclaw-device-self-approval.mts",
       "test/e2e/live/openclaw-admin-scope.ts",
@@ -1291,8 +1290,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "src/lib/actions/sandbox/gateway-state.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "tools/e2e/sandbox-survival-timeout-contract.mts",
     ],
-    timeoutMinutes: 30,
+    timeoutMinutes: SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
@@ -1666,15 +1666,6 @@ export function validateE2eTargetCatalogue(
       )
     ) {
       throw new Error(`E2E target ${entry.id} has invalid or duplicate host packages`);
-    }
-    if (
-      new Set(entry.requiredOptionalCredentials).size !==
-        entry.requiredOptionalCredentials.length ||
-      entry.requiredOptionalCredentials.some(
-        (credential) => !E2E_OPTIONAL_CREDENTIALS.includes(credential),
-      )
-    ) {
-      throw new Error(`E2E target ${entry.id} has invalid optional credential requirements`);
     }
     if (entry.selector !== undefined && !SELECTOR_PATTERN.test(entry.selector)) {
       throw new Error(`E2E target ${entry.id} has an invalid test selector`);

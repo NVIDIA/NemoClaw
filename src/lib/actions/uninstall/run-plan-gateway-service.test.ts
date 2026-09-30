@@ -17,6 +17,7 @@ import {
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { getDockerDriverGatewayRuntimeMarkerPath } from "../../onboard/docker-driver-gateway-runtime-marker";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -98,6 +99,7 @@ function writeGatewayState(test: Fixture): string {
   const stateDir = path.join(test.home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(

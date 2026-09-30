@@ -68,6 +68,7 @@ const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-man
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
 const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const EXTERNAL_IMAGE_AGENTS = new Set(["openclaw", "hermes"]);
 const PORTABLE_AGENT_RUNTIME_PLATFORM_SET: ReadonlySet<string> = new Set(
   PORTABLE_AGENT_RUNTIME_PLATFORMS,
 );
@@ -96,6 +97,7 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 ]);
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
+  "external-image-preparation",
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
@@ -316,6 +318,31 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
           `workload profile for '${providerId}' must declare portable agent runtime ${field}`,
         );
       }
+    }
+  }
+  if (profile.externalImageSupport !== undefined && profile.externalImageSupport !== null) {
+    if (!isPlainRecord(profile.externalImageSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid external image support`,
+      );
+    }
+    const externalSupport = profile.externalImageSupport;
+    if (
+      externalSupport.exactDigestReferences !== true ||
+      !Array.isArray(externalSupport.platforms) ||
+      externalSupport.platforms.length === 0 ||
+      externalSupport.platforms.some(
+        (platform) => !MANAGED_IMAGE_PLATFORMS.has(String(platform)),
+      ) ||
+      new Set(externalSupport.platforms).size !== externalSupport.platforms.length ||
+      !Array.isArray(externalSupport.agents) ||
+      externalSupport.agents.length === 0 ||
+      externalSupport.agents.some((agent) => !EXTERNAL_IMAGE_AGENTS.has(String(agent))) ||
+      new Set(externalSupport.agents).size !== externalSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid external image support`,
+      );
     }
   }
   if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {

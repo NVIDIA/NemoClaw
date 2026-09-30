@@ -94,6 +94,7 @@ export {
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
 export {
   getSandboxAcrossGatewayRoots,
+  hasSandboxLifecycleAuthority,
   recordSandboxStopIntentAcrossGatewayRoots,
 } from "./registry/cross-port";
 export type {

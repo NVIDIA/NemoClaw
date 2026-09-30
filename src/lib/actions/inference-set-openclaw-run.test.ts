@@ -54,7 +54,6 @@ describe("runInferenceSet OpenClaw routing", () => {
         : {
             id: "nvidia/new-model",
             name: "inference/nvidia/new-model",
-            contextWindow: 65536,
             params: { temperature: 0.3 },
           };
       expect(providerUpdate?.value).toEqual({
@@ -210,7 +209,11 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
       }),
     );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "nvidia-prod",
