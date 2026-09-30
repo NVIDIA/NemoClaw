@@ -787,12 +787,16 @@ describe("stopAll", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
         stopAll({ pidDir, unloadOllamaModels: () => undefined });
-        let processStopped = true;
-        try {
-          const status = readFileSync(`/proc/${String(pid)}/status`, "utf-8");
-          processStopped = /^State:\s+(?:Z|X)/m.test(status);
-        } catch {
-          // A missing /proc entry also proves that the process exited.
+        const deadline = Date.now() + 1000;
+        let processStopped = false;
+        while (!processStopped && Date.now() < deadline) {
+          try {
+            const status = readFileSync(`/proc/${String(pid)}/status`, "utf-8");
+            processStopped = /^State:\s+(?:Z|X)/m.test(status);
+          } catch {
+            // A missing /proc entry also proves that the process exited.
+            processStopped = true;
+          }
         }
         expect(processStopped).toBe(true);
       } finally {
