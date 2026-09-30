@@ -732,16 +732,26 @@ describe("stopAll", () => {
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 
-  it.each(["darwin", "win32"] as const)(
-    "does not raw-signal an identity-confirmed cloudflared process on %s",
-    (platform) => {
-      expect(
-        signalCloudflaredForPlatform(4242, "SIGTERM", platform, () =>
-          platform === "win32" ? "cloudflared.exe tunnel run" : "cloudflared tunnel run",
-        ),
-      ).toBe("unavailable");
-    },
-  );
+  it("signals an identity-confirmed cloudflared process with a macOS audit token", () => {
+    const signal = vi.fn(() => "signaled" as const);
+
+    expect(
+      signalCloudflaredForPlatform(
+        4242,
+        "SIGTERM",
+        "darwin",
+        () => "cloudflared tunnel run",
+        signal,
+      ),
+    ).toBe("signaled");
+    expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
+  });
+
+  it("does not raw-signal an identity-confirmed cloudflared process on Windows", () => {
+    expect(
+      signalCloudflaredForPlatform(4242, "SIGTERM", "win32", () => "cloudflared.exe tunnel run"),
+    ).toBe("unavailable");
+  });
 
   it.each(["darwin", "win32"] as const)(
     "does not signal a mismatched process on %s",
@@ -781,6 +791,51 @@ describe("stopAll", () => {
           }
         }
         expect(processStopped).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The identity-bound stop path already reaped the process.
+        }
+      }
+
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "signals a verified cloudflared process through a macOS audit token",
+    () => {
+      const executable = join(pidDir, "cloudflared");
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+        const processStopped = (): boolean => {
+          try {
+            const state = childProcess
+              .execFileSync("ps", ["-p", String(pid), "-o", "stat="], { encoding: "utf-8" })
+              .trim();
+            return state === "" || state.startsWith("Z");
+          } catch {
+            return true;
+          }
+        };
+        const deadline = Date.now() + 1000;
+        while (!processStopped() && Date.now() < deadline) {
+          // The helper signal is synchronous; this loop only gives the child time to exit.
+        }
+        expect(processStopped()).toBe(true);
       } finally {
         logSpy.mockRestore();
         try {

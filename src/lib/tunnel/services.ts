@@ -233,6 +233,64 @@ finally:
     os.close(pidfd)
 `;
 
+const MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT = String.raw`
+ObjC.bindFunction("malloc", ["void*", ["int"]]);
+ObjC.bindFunction("free", ["void", ["void*"]]);
+ObjC.bindFunction("proc_pidinfo", ["int", ["int", "int", "Int64", "void*", "int"]]);
+ObjC.bindFunction("proc_pidpath_audittoken", ["int", ["void*", "void*", "uint32_t"]]);
+ObjC.bindFunction("proc_signal_with_audittoken", ["int", ["void*", "int"]]);
+
+function writeUint32LittleEndian(buffer, offset, value) {
+  for (let index = 0; index < 4; index += 1) {
+    buffer[offset + index] = value % 256;
+    value = Math.floor(value / 256);
+  }
+}
+
+function readUint32LittleEndian(buffer, offset) {
+  let value = 0;
+  for (let index = 3; index >= 0; index -= 1) {
+    value = value * 256 + buffer[offset + index];
+  }
+  return value;
+}
+
+function run(argv) {
+  const pid = Number(argv[0]);
+  const signalNumber = argv[1] === "SIGKILL" ? 9 : 15;
+  const uniqueInfo = $.malloc(56);
+  const auditToken = $.malloc(32);
+  const processPath = $.malloc(4096);
+
+  try {
+    if ($.proc_pidinfo(pid, 17, 0, uniqueInfo, 56) !== 56) return "not-running";
+
+    for (let index = 0; index < 32; index += 1) auditToken[index] = 0;
+    writeUint32LittleEndian(auditToken, 20, pid);
+    writeUint32LittleEndian(auditToken, 28, readUint32LittleEndian(uniqueInfo, 32));
+
+    const pathLength = $.proc_pidpath_audittoken(auditToken, processPath, 4096);
+    if (pathLength <= 0) return "not-running";
+
+    let executablePath = "";
+    for (let index = 0; index < pathLength; index += 1) {
+      executablePath += String.fromCharCode(processPath[index]);
+    }
+    const pathParts = executablePath.split("/");
+    if (pathParts[pathParts.length - 1] !== "cloudflared") return "not-cloudflared";
+
+    const result = $.proc_signal_with_audittoken(auditToken, signalNumber);
+    if (result === 0) return "signaled";
+    if (result === 3) return "not-running";
+    return "unavailable";
+  } finally {
+    $.free(uniqueInfo);
+    $.free(auditToken);
+    $.free(processPath);
+  }
+}
+`;
+
 function signalCloudflaredWithPidfd(
   pid: number,
   sig: "SIGTERM" | "SIGKILL",
@@ -258,22 +316,56 @@ function signalCloudflaredWithPidfd(
   return "unavailable";
 }
 
+function signalCloudflaredWithAuditToken(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "darwin") return "unavailable";
+  try {
+    const result = execFileSync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT, String(pid), sig],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 2000,
+      },
+    ).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
 /**
  * Signal cloudflared only when the operating system exposes an identity-bound
- * process handle. A command-line recheck followed by a raw PID signal still
- * has a PID-reuse race, so hosts without pidfd support fail closed.
+ * process handle. Linux uses pidfd; macOS uses an audit token carrying the
+ * kernel process-version identity. Hosts without either primitive fail closed.
  */
 export function signalCloudflaredForPlatform(
   pid: number,
   sig: "SIGTERM" | "SIGKILL",
   platform: NodeJS.Platform = process.platform,
   commandLine: (pid: number) => string | null = readProcessCommandLine,
+  macSignal: (
+    pid: number,
+    sig: "SIGTERM" | "SIGKILL",
+  ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
 ): IdentityBoundSignalOutcome {
   if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
 
   const identity = commandLine(pid);
   if (identity === null) return "unavailable";
   if (!commandLineNamesCloudflared(identity)) return "not-cloudflared";
+  if (platform === "darwin") return macSignal(pid, sig);
   return "unavailable";
 }
 
