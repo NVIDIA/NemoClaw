@@ -5315,7 +5315,6 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Portable Hermes lifecycle completes on the supported NVIDIA GPU and Podman 5.7 boundary"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "x86-64 NVIDIA GPU runner; rootless Podman 5.7; local Ollama"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/portable-hermes-finalization
-      E2E_HERMES_BASE_STORAGE_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
       E2E_SOURCE_REVISION: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5402,6 +5401,7 @@ jobs:
 
       - name: Run Portable Hermes finalization live Vitest test
         env:
+          E2E_HERMES_BASE_STORAGE_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
           NEMOCLAW_HERMES_E2E_BASE_IMAGE: localhost/nemoclaw-hermes-base:portable-e2e
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run

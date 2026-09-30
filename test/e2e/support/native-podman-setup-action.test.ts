@@ -564,6 +564,7 @@ describe("native Podman E2E setup boundary", () => {
       E2E_TARGET_ID: "portable-hermes-finalization",
       E2E_AGENT_RUNTIME: "hermes",
     });
+    expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setup?.with).toEqual({
       enabled: "true",
       toolchain: "portable-5.7",
@@ -571,6 +572,11 @@ describe("native Podman E2E setup boundary", () => {
     });
     expect(gpu?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
     expect(gpu?.run).toContain("nvidia-smi --query-gpu=name");
+    expect(live).toMatchObject({
+      env: {
+        E2E_HERMES_BASE_STORAGE_HOME: "${{ runner.temp }}/nemoclaw-hermes-base-storage",
+      },
+    });
     expect(live?.run).toContain("test/e2e/live/portable-profile-rootless-linux.test.ts");
     expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);
