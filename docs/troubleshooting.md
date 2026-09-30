@@ -35,7 +35,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 
 | Symptom | Next action |
 |---|---|
-| Unknown field, duplicate key, or rejected combination | Compare the input with the matching [configuration reference](reference/configuration.md); an earlier schema is not automatically migrated |
+| Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correct-a-document-validation-error), then compare the input with the matching [configuration reference](reference/configuration.md) |
 | Bundle or schema hash failure | Follow [bundle rebuilding](build.md#build-a-native-bundle) and keep the selected bundle unchanged during operations |
 | `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
@@ -45,6 +45,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
+| `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again; see [compatibility diagnostics](validation/fabric-compatibility-linux-arm64.md) |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
@@ -54,6 +55,38 @@ The [SDK errors](../crates/nemoclaw-sdk/src/error.rs), [plan checks](../crates/n
 
 An ownership error is not fixed by renaming a resource, deleting `intent.json`, editing OpenTofu state, or rerunning with a fresh state path against the same resources.
 Retain the original binding while investigating the selected gateway and engine.
+
+## Correct a Document Validation Error
+
+Schema errors identify the document field, the violated constraint, and the source line and column.
+For example, `spec.services.qwen.memory.kvCacheGiB` identifies the `qwen` service; `spec.sandboxes[1]` identifies the second sandbox.
+Array indices start at zero; source lines and columns start at one, and columns count characters.
+Valid declaration names appear in paths, while arbitrary map keys appear as `[entry]` and rejected values remain omitted.
+YAML syntax and duplicate-key errors also include source positions without copying source snippets.
+Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and may lack source positions.
+
+For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
+With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero; see the [Memory reference](reference/configuration.md#memory) for defaults and related settings.
+An `empty document` error means no configuration content was supplied.
+All explicit YAML tags, including `!!binary`, `!!str`, `!!map`, and `!!seq`, are rejected; write the intended value directly and quote strings when needed.
+Tag-like text inside a quoted or block string is preserved.
+
+Correct the input, then rerun plan with the same state directory before choosing apply.
+The [validation diagnostic qualification](validation/configuration-diagnostics-linux-arm64.md) records the tests and CLI checks.
+
+## Recover a Managed Gateway Startup Failure
+
+If a managed Docker gateway stops during readiness, the error names its container and reports the observed exit code, or `unknown` when unavailable.
+Read that container's logs on the configured engine using the [log collection procedure](#inspect-an-openshell-sandbox-failure).
+The readiness diagnostic omits raw engine errors and log contents because they may contain credentials.
+A running but unreachable gateway reports a transport failure; check its endpoint and engine access before retrying.
+
+Keep the YAML, matching bundle, and state directory.
+After correcting the image or configuration problem, explicitly reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
+If retiring the deployment, preview and [destroy](usage.md#destroy) it with the same state directory.
+Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
+If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
+The [gateway startup qualification](validation/gateway-startup-linux-arm64.md) records the tested paths and limits.
 
 ## Inference and Agent Readiness
 
@@ -70,11 +103,17 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
-Terminal sandbox errors report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
-Recognized reasons are `ControlSupervisorExited` and `ContainerExited`; other backend reasons appear as `unknown`.
+Terminal sandbox apply errors name the sandbox and report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
+Recognized reasons are `ControlSupervisorExited`, `ContainerExited`, `IdentityResolutionFailed`, and `ControlSupervisorStartFailed`; other backend reasons appear as `unknown`.
+`IdentityResolutionFailed` means the workload user or group could not be resolved in the pinned image; check the explicit policy's `process.run_as_user` and `process.run_as_group`.
+`ControlSupervisorStartFailed` means the control supervisor could not start; inspect the sandbox policy and attached providers.
+These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
 The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
-The CLI points to OpenShell inspection and log collection; use the procedure below before cleanup.
+Use the OpenShell inspection and log collection procedure below before cleanup.
+If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
+A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
+The [startup diagnostic qualification](validation/sandbox-startup-linux-arm64.md) records the live missing-user reproduction and fixture coverage.
 The [current main-process environment blocker](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) can stop startup before native log files exist.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.

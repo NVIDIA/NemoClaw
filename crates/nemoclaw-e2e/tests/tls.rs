@@ -61,6 +61,7 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
     values.insert("TOKEN".into(), "secret-sentinel".into());
     let reference = |env: &str| Credential { env: env.into() };
     let gateway = Gateway::External(nemoclaw_sdk::config::ExternalGateway {
+        engine: String::new(),
         endpoint: fixture.endpoint.clone(),
         credential: Some(reference("TOKEN")),
         tls: Some(TLS {

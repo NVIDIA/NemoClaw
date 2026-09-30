@@ -4,7 +4,8 @@
 use crate::{ObservationError, config::InferenceProviderKind};
 use openshell_core::proto;
 
-/// Build the endpoint and credential boundary for a native inference provider.
+/// Build the endpoint and credential projection for a native inference provider.
+/// The caller must supply image-resolved binaries before importing the profile.
 pub fn definition(
     name: &str,
     endpoint: &str,
@@ -51,11 +52,7 @@ pub fn definition(
                 "name": id,
                 "endpoints": [{"host": host, "port": port, "path": path,
                     "protocol": "rest", "access": "full", "allowed_ips": allowed_ips}],
-                // OpenShell resolves interpreter symlinks inside the sandbox before enforcement.
-                "binaries": [
-                    {"path": "/usr/local/bin/python3"},
-                    {"path": "/usr/local/bin/node"}
-                ]
+                "binaries": []
             }}
         })
         .to_string(),
@@ -135,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn inference_grants_stable_interpreters_for_openshell_to_resolve() {
+    fn endpoint_projection_grants_no_implicit_interpreters() {
         let profile = definition(
             "local",
             "http://172.20.0.1:11436/v1",
@@ -143,14 +140,7 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(
-            profile
-                .binaries
-                .iter()
-                .map(|binary| binary.path.as_str())
-                .collect::<Vec<_>>(),
-            ["/usr/local/bin/python3", "/usr/local/bin/node"],
-        );
+        assert!(profile.binaries.is_empty());
         assert_eq!(profile.endpoints.len(), 1);
         assert_eq!(profile.endpoints[0].allowed_ips, ["172.20.0.1/32"]);
     }

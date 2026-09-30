@@ -70,6 +70,10 @@ fn targets(
         .map(|recipe| recipe.compatibility.image_labels.clone())
         .unwrap_or_default();
     image_labels.insert("org.nemoclaw.backend".into(), "vllm".into());
+    image_labels.insert(
+        nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
+        nemoclaw_runtime::SPEC_VERSION.into(),
+    );
     if service.authentication.is_some() {
         image_labels.insert(
             "org.nemoclaw.inference.authentication".into(),

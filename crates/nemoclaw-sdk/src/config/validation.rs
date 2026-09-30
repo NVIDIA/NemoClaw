@@ -101,6 +101,11 @@ impl Document {
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
         }
+        if let Gateway::External(gateway) = gateway
+            && !gateway.engine.is_empty()
+        {
+            super::validate_engine_endpoint(&gateway.engine)?;
+        }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
         let selected_providers = self.selected_inference_providers()?;
@@ -116,9 +121,8 @@ impl Document {
                 "sandbox names must be unique",
             )?;
             sandbox.network.validate()?;
-            sandbox.network.validate_runtime_access()?;
             let web_search = self.web_search(sandbox)?;
-            sandbox.policy_proto(web_search.as_ref().map(|search| search.provider))?;
+            crate::image_runtime::PolicyInput::for_sandbox(self, sandbox)?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {

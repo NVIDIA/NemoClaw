@@ -15,7 +15,9 @@ pub(super) fn loaded_policy_matches(
     if actual == expected {
         return Ok(true);
     }
-    let mut baseline = row_policy(&[("policy_json".into(), expected.into())].into())?;
+    let input: ExplicitPolicy =
+        serde_json::from_str(expected).map_err(|_| ObservationError::Query)?;
+    let mut baseline = input.to_proto().map_err(|_| ObservationError::Query)?;
     if baseline.network_policies.is_empty() {
         return Ok(false);
     }
@@ -67,14 +69,10 @@ pub(super) fn loaded_policy_matches(
 }
 
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
-    match row.get("policy_json").map(String::as_str).unwrap_or("") {
-        "" => Ok(policy()),
-        text => {
-            let policy: ExplicitPolicy =
-                serde_json::from_str(text).map_err(|_| ObservationError::Query)?;
-            policy.to_proto().map_err(|_| ObservationError::Query)
-        }
-    }
+    let input: nemoclaw_sdk::image_runtime::PolicyInput =
+        serde_json::from_str(row.get("policy_json").ok_or(ObservationError::Incomplete)?)
+            .map_err(|_| ObservationError::Query)?;
+    agent::binding(row)?.policy(&input)
 }
 
 pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {

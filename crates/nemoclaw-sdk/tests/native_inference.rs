@@ -13,11 +13,10 @@ fn native_inference_attaches_provider_without_a_managed_route() {
         .into();
     let resources = targets(&document, &generations).unwrap();
     assert!(resources.iter().all(|r| r.kind != "route"));
-    assert!(
-        resources
-            .iter()
-            .any(|r| r.address == "nemoclaw_provider_profile.inference_local")
-    );
+    assert!(resources.iter().any(|r| {
+        r.address
+            .starts_with("nemoclaw_provider_profile.inference_local-")
+    }));
     let sandbox = &resources
         .iter()
         .find(|r| r.kind == "agent_configuration")

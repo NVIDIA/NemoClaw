@@ -132,6 +132,12 @@ impl Backend for OpenShell {
             )
             .await?;
         if kind == "sandbox"
+            && let Some(row) = &observed
+            && prior.get("runtime_json") != row.get("runtime_json")
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
         {

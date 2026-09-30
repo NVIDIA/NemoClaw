@@ -24,14 +24,10 @@ pub(crate) struct Record {
     pending: bool,
     #[serde(skip_serializing_if = "is_false")]
     runtime_pending: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pending_creations: BTreeMap<String, crate::backend::Row>,
     succeeded: bool,
     pub digest: String,
-    // Accept older version-7 records, but saved plan artifacts no longer
-    // authorize recovery. Current bindings and fresh plans determine it.
-    #[serde(rename = "planDigest", skip_serializing)]
-    pub _legacy_plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
     destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
@@ -71,11 +67,7 @@ impl Record {
         if !self.pending || self.runtime_pending {
             return;
         }
-        let Some(pending) = &mut self.pending_creations else {
-            // Older records lack per-resource evidence; retain their full guard.
-            return;
-        };
-        pending.retain(|address, desired| {
+        self.pending_creations.retain(|address, desired| {
             // Fabric configuration has no independent runtime: its sandbox owns
             // any partial effects, and its configuration binding uses that ID.
             let address = address
@@ -94,7 +86,7 @@ impl Record {
                     .all(|(key, value)| desired.get(*key).is_none_or(|want| want == *value))
             })
         });
-        if pending.is_empty() {
+        if self.pending_creations.is_empty() {
             self.finish_apply();
         }
         // This only resolves lost-ID uncertainty. A fresh provider refresh and
@@ -104,21 +96,14 @@ impl Record {
         if !self.pending || self.runtime_pending {
             return Ok(());
         }
-        if let Some(pending) = &self.pending_creations {
-            let targets = crate::compile::targets(document, &self.generations)?;
-            if pending.iter().any(|(address, desired)| {
-                !targets
-                    .iter()
-                    .any(|target| &target.address == address && &target.values == desired)
-            }) {
-                return Err(Error::Conflict(
-                    "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
-                ));
-            }
-        } else if self.digest != document.digest() {
-            // Records written before scoped recovery lack per-resource evidence.
+        let targets = crate::compile::targets(document, &self.generations)?;
+        if self.pending_creations.iter().any(|(address, desired)| {
+            !targets
+                .iter()
+                .any(|target| &target.address == address && &target.values == desired)
+        }) {
             return Err(Error::Conflict(
-                "unfinished apply has different intent; reapply its original configuration",
+                "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
             ));
         }
         Ok(())
@@ -169,13 +154,9 @@ impl Record {
             // deletions, or apply-time observations.
             return;
         }
-        // Never narrow an older full-intent guard or forget an earlier lost reply.
-        if !self.pending || self.runtime_pending {
-            self.pending_creations = Some(creations);
-        } else if let Some(pending) = &mut self.pending_creations {
-            for (address, desired) in creations {
-                pending.entry(address).or_insert(desired);
-            }
+        // Preserve every earlier lost reply until its resource binding is known.
+        for (address, desired) in creations {
+            self.pending_creations.entry(address).or_insert(desired);
         }
         self.pending = true;
         self.runtime_pending = false;
@@ -183,7 +164,7 @@ impl Record {
     pub fn finish_apply(&mut self) {
         self.pending = false;
         self.runtime_pending = false;
-        self.pending_creations = None;
+        self.pending_creations.clear();
     }
     pub fn begin_runtime_apply(&mut self, document: &Document) {
         self.prepare_apply(document);
@@ -262,12 +243,11 @@ impl Record {
                         .is_some_and(|value| !value.is_empty())
                 })
             });
-        if self.pending_creations.as_ref().is_some_and(|pending| {
-            pending.is_empty()
-                || !self.pending
-                || self.runtime_pending
-                || self.validate_pending_intent(&self.document).is_err()
-        }) {
+        let has_pending_creations = !self.pending_creations.is_empty();
+        if has_pending_creations != (self.pending && !self.runtime_pending)
+            || (self.runtime_pending && !self.document.has_runtime())
+            || self.validate_pending_intent(&self.document).is_err()
+        {
             return Err(Error::State("pending resource recovery intent is invalid"));
         }
         if self.document.validate().is_err()

@@ -135,7 +135,19 @@ impl DataSource for SandboxReadinessDataSource {
                 // rejects completion while retaining the failure and bindings.
                 config.ready = Value::Value(false);
                 config.health_json = Value::Null;
-                config.error_message = Value::Value(error.to_string());
+                let sandbox = match &config.sandbox {
+                    Value::Value(binding) => match binding.get("name") {
+                        Some(Value::Value(name)) => Some(name.as_str()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                config.error_message = Value::Value(match error {
+                    Error::Observation(error) => {
+                        crate::resource::observation_message(error, sandbox)
+                    }
+                    other => other.to_string(),
+                });
                 Some(config)
             }
         }

@@ -119,28 +119,15 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 /// Require one adapter to satisfy the complete request. Capabilities from
 /// different adapters are never combined into a fictitious supported adapter.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
-    let configuration = request.configuration.clone();
-    let result = plan_configuration(catalog, configuration);
-    let status = match &result {
-        Ok(_) => Support::Supported,
-        Err(FabricPlanningError::Unverified) => Support::Unknown,
-        Err(FabricPlanningError::Rejected) => Support::Unsupported,
-    };
-    let mut checks = vec![CapabilityCheck {
-        requirement: "fabric_plan".into(),
-        status,
-        reason: match status {
-            Support::Supported => {
-                "Fabric accepted the configuration against the selected descriptor snapshot"
-            }
-            Support::Unsupported => {
-                "Fabric rejected the configuration against the selected descriptor snapshot"
-            }
-            Support::Unknown => {
-                "The selected image does not establish compatibility with the SDK Fabric contract"
-            }
-        }
-        .into(),
+    let result = plan_configuration_detailed(catalog, request.configuration.clone());
+    let mut checks = vec![match &result {
+        Ok(_) => CapabilityCheck {
+            requirement: "fabric_plan".into(),
+            status: Support::Supported,
+            reason: "Fabric accepted the configuration against the selected descriptor snapshot"
+                .into(),
+        },
+        Err((_, check)) => check.clone(),
     }];
     if let (Ok(plan), Some(grants)) = (&result, &request.filesystem_read)
         && let Some(descriptor) = &plan.adapter_descriptor
@@ -152,12 +139,24 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
             .get(&descriptor.descriptor.adapter_id)
             .into_iter()
             .flatten();
+        let runtime_paths: Vec<std::path::PathBuf> = catalog
+            .runtime
+            .as_ref()
+            .map(|runtime| {
+                runtime
+                    .required_paths
+                    .iter()
+                    .map(std::path::PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
         for file in descriptor
             .descriptor
             .requirements
             .files
             .iter()
             .chain(image_files)
+            .chain(runtime_paths.iter())
         {
             // These are Linux sandbox paths, including on Windows clients.
             let allowed = file.to_str().is_some_and(|path| {
@@ -176,7 +175,8 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
                             .all(|part| required.next() == Some(part))
                     })
             });
-            let path = file.display();
+            let path = file.to_string_lossy();
+            let path = diagnostic_field(&path);
             checks.push(CapabilityCheck {
                 requirement: "deployment_filesystem_grant".into(),
                 status: if allowed {
@@ -217,11 +217,58 @@ pub fn plan_configuration(
     catalog: &FabricCatalog,
     configuration: Value,
 ) -> Result<nemo_fabric_core::RunPlan, FabricPlanningError> {
-    if catalog.fabric_revision != FabricCatalog::bundled().fabric_revision {
-        return Err(FabricPlanningError::Unverified);
+    plan_configuration_detailed(catalog, configuration).map_err(|(kind, _)| kind)
+}
+
+// Field paths are public identifiers, never rejected values or schema prose.
+// Reject control characters and interpolation syntax instead of rendering them.
+pub(crate) fn diagnostic_field(value: &str) -> &str {
+    if !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-/[]".contains(&byte))
+    {
+        value
+    } else {
+        "configuration"
     }
-    let config =
-        serde_json::from_value(configuration).map_err(|_| FabricPlanningError::Rejected)?;
+}
+
+type PlanningFailure = (FabricPlanningError, CapabilityCheck);
+fn planning_failure(kind: FabricPlanningError, field: &str, reason: &str) -> PlanningFailure {
+    (
+        kind,
+        CapabilityCheck {
+            requirement: "fabric_plan".into(),
+            status: match kind {
+                FabricPlanningError::Unverified => Support::Unknown,
+                FabricPlanningError::Rejected => Support::Unsupported,
+            },
+            reason: format!("{}: {reason}", diagnostic_field(field)),
+        },
+    )
+}
+
+fn plan_configuration_detailed(
+    catalog: &FabricCatalog,
+    configuration: Value,
+) -> Result<nemo_fabric_core::RunPlan, PlanningFailure> {
+    use FabricPlanningError::{Rejected, Unverified};
+    if catalog.fabric_revision != FabricCatalog::bundled().fabric_revision {
+        return Err(planning_failure(
+            Unverified,
+            "fabric_contract",
+            "the image does not establish the SDK Fabric revision",
+        ));
+    }
+    let config = serde_json::from_value(configuration.clone()).map_err(|_| {
+        planning_failure(
+            Rejected,
+            "configuration",
+            "invalid public Fabric configuration",
+        )
+    })?;
     let descriptors = catalog
         .adapters
         .iter()
@@ -229,25 +276,55 @@ pub fn plan_configuration(
             serde_json::from_value(serde_json::to_value(adapter).expect("descriptor JSON"))
         })
         .collect::<Result<Vec<nemo_fabric_core::ResolvedAdapterDescriptor>, _>>()
-        .map_err(|_| FabricPlanningError::Unverified)?;
+        .map_err(|_| {
+            planning_failure(
+                Unverified,
+                "adapter_descriptor",
+                "the image does not establish valid adapter metadata",
+            )
+        })?;
     let targets = catalog
         .targets
         .iter()
         .cloned()
         .map(serde_json::from_value)
         .collect::<Result<Vec<nemo_fabric_core::ResolvedAdapterTargetDescriptor>, _>>()
-        .map_err(|_| FabricPlanningError::Unverified)?;
+        .map_err(|_| {
+            planning_failure(
+                Unverified,
+                "target_descriptor",
+                "the image does not establish valid target metadata",
+            )
+        })?;
     nemo_fabric_core::resolve_run_plan_from_descriptors(
         config,
         nemo_fabric_core::ResolveContext::new("/sandbox"),
         &descriptors,
         &targets,
     )
-    .map_err(|error| match error {
-        nemo_fabric_core::FabricError::UnverifiedAdapterCapability { .. } => {
-            FabricPlanningError::Unverified
+    .map_err(|error| {
+        use nemo_fabric_core::FabricError::*;
+        let (kind, field, reason) = match &error {
+            UnverifiedAdapterCapability { field, .. } => (Unverified, field.as_str(), "adapter metadata does not establish this capability"),
+            AdapterCompatibility { field, .. } => (Rejected, field.as_str(), "the selected adapter rejects this configuration field"),
+            InvalidHarnessSettings { settings_path, .. } => (Rejected, settings_path.as_str(), "the value does not satisfy the adapter settings schema"),
+            InvalidWorkflow { workflow_path, .. } => (Rejected, workflow_path.as_str(), "the value does not satisfy the workflow schema"),
+            InvalidToolDefinition { definition_path, .. } => (Rejected, definition_path.as_str(), "the value does not satisfy the tool definition schema"),
+            InvalidAdapterExtension { extension_path, .. } => (Rejected, extension_path.as_str(), "the value does not satisfy the adapter extension schema"),
+            InvalidConfig { field, .. } => (Rejected, field.as_str(), "invalid public Fabric configuration field"),
+            AdapterDescriptorUnsupported { field, .. } => (Rejected, *field, "the adapter descriptor excludes this configuration field"),
+            UnknownAdapter { .. } => (Rejected, "harness.adapter_id", "the selected adapter is absent from the image catalog"),
+            UnknownAdapterTarget { .. } => (Rejected, "workflow.target_id", "the selected target is absent from the image catalog"),
+            _ => (Rejected, "fabric_plan", "Fabric rejected the configuration against the selected descriptor snapshot"),
+        };
+        let mut failure = planning_failure(kind, field, reason);
+        if field.starts_with("models.") && field.ends_with(".max_tokens") {
+            let routes = configuration["models"].as_object().into_iter().flat_map(|models| models.iter())
+                .filter(|(_, model)| model.get("max_tokens").is_some())
+                .take(16).map(|(name, _)| diagnostic_field(name)).collect::<Vec<_>>().join(", ");
+            failure.1.reason.push_str(&format!("; models.max_tokens corresponds to overrides.maxTokens on model routes {routes}; remove the override or choose an adapter that accepts it"));
         }
-        _ => FabricPlanningError::Rejected,
+        failure
     })
 }
 
@@ -327,8 +404,8 @@ pub fn assess_image_digest(image: &ImageMetadata, reference: &str) -> Compatibil
 }
 
 /// Evaluate adapter requirements and image metadata through one shared rule set.
-/// Platform checking is requested only when the caller supplies either engine
-/// platform field; legacy metadata-only callers do not acquire new prerequisites.
+/// Compare platforms only when execution-engine metadata is supplied; an
+/// external gateway's image store does not establish its execution platform.
 pub fn assess_image(
     catalog: Option<&FabricCatalog>,
     request: &FabricRequirements,
@@ -345,6 +422,17 @@ pub fn assess_image(
             checks: vec![check("fabric_catalog", Support::Unknown)],
         },
     };
+    report.checks.push(check(
+        "bridge_interface",
+        if catalog
+            .and_then(|catalog| catalog.bridge.as_ref())
+            .is_some_and(|bridge| bridge.supports_interface())
+        {
+            Support::Supported
+        } else {
+            Support::Unknown
+        },
+    ));
     report
         .checks
         .extend(assess_image_digest(image, reference).checks);

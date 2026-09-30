@@ -5,42 +5,8 @@
 // 2026-09-15: derive a reserved, exact trace endpoint grant from desired telemetry.
 // 2026-09-23: obtain protocol types through the pinned OpenShell SDK's raw API.
 // 2026-09-28: use owner policy types independently of the transport client.
-use super::{ConfigError, ExplicitPolicy, Sandbox, SearchProvider};
-use openshell_core::proto;
+use super::SearchProvider;
 use serde_json::json;
-
-impl Sandbox {
-    pub(crate) fn policy_proto(
-        &self,
-        web_search: Option<SearchProvider>,
-    ) -> Result<proto::SandboxPolicy, ConfigError> {
-        let base = self.network.policy_proto()?;
-        if web_search.is_none() {
-            return Ok(base);
-        }
-        let mut value = openshell_policy::sandbox_policy_to_json_value(&base)
-            .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
-        value
-            .as_object_mut()
-            .expect("policy object")
-            .entry("network_policies")
-            .or_insert_with(|| json!({}));
-        let mut policy: ExplicitPolicy = serde_json::from_value(value)
-            .map_err(|_| ConfigError::new("cannot represent sandbox policy"))?;
-        if let Some(provider) = web_search {
-            let name = provider.profile();
-            if policy.network_policies.contains_key(name) {
-                return Err(ConfigError::new(
-                    "the managed search policy name is reserved for web search",
-                ));
-            }
-            policy
-                .network_policies
-                .insert(name.into(), search_policy(provider));
-        }
-        policy.to_proto()
-    }
-}
 
 pub fn search_policy(provider: SearchProvider) -> super::PolicyRule {
     let (host, rules) = match provider {
@@ -62,7 +28,7 @@ pub fn search_policy(provider: SearchProvider) -> super::PolicyRule {
     });
     serde_json::from_value(json!({
         "name": provider.profile(), "endpoints":[endpoint],
-        "binaries":[{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3"}]
+        "binaries":[]
     }))
     .expect("typed search policy")
 }

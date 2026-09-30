@@ -81,6 +81,14 @@ pub fn compile_teardown(
             .expect("compiled instances")
             .is_empty()
     });
+    if resources.is_empty() {
+        // An image-only failure has no retained storage. OpenTofu JSON syntax
+        // requires omitting resource blocks rather than emitting an empty one.
+        graph
+            .as_object_mut()
+            .expect("compiled graph")
+            .remove("resource");
+    }
     Ok(CompiledTeardown { graph, retained })
 }
 
@@ -109,9 +117,10 @@ mod tests {
     }
 
     fn addresses(graph: &Value) -> BTreeSet<String> {
-        graph["resource"]
-            .as_object()
-            .unwrap()
+        let Some(resources) = graph.get("resource").and_then(Value::as_object) else {
+            return BTreeSet::new();
+        };
+        resources
             .iter()
             .flat_map(|(kind, resources)| {
                 resources
@@ -149,6 +158,12 @@ mod tests {
                 compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
             assert_eq!(compiled.retained, established);
             let graph = compiled.graph;
+            if established.is_empty() {
+                assert!(
+                    graph.get("resource").is_none(),
+                    "OpenTofu rejects an empty resource block after image-only failure"
+                );
+            }
             assert_eq!(
                 addresses(&graph),
                 established,

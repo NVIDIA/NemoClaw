@@ -320,38 +320,6 @@ pub struct PolicyMcp {
 }
 
 impl Network {
-    pub(crate) fn validate_runtime_access(&self) -> Result<(), ConfigError> {
-        let NetworkPolicy::Explicit(policy) = &self.policy else {
-            return Ok(());
-        };
-        let Some(filesystem) = &policy.filesystem_policy else {
-            return Ok(());
-        };
-        for (required, diagnostic) in super::sandbox_policy::runtime_read_requirements() {
-            let covered = filesystem
-                .read_only
-                .iter()
-                .flatten()
-                .chain(filesystem.read_write.iter().flatten())
-                .any(|grant| {
-                    // Sandbox paths are POSIX paths even on a Windows client. Do not
-                    // resolve symlinks against the client filesystem or infer '..'.
-                    if !grant.starts_with('/') || grant.split('/').any(|part| part == "..") {
-                        return false;
-                    }
-                    let mut required = required.split('/').filter(|part| !part.is_empty());
-                    grant
-                        .split('/')
-                        .filter(|part| !part.is_empty() && *part != ".")
-                        .all(|part| required.next() == Some(part))
-                });
-            if !covered {
-                return Err(ConfigError::new(diagnostic));
-            }
-        }
-        Ok(())
-    }
-
     pub fn validate(&self) -> Result<(), ConfigError> {
         super::schema::validate_definition("Network", self)?;
         if let NetworkPolicy::Explicit(policy) = &self.policy {
@@ -361,7 +329,9 @@ impl Network {
     }
     pub fn policy_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
         match &self.policy {
-            NetworkPolicy::Isolated => Ok(super::isolated_policy()),
+            NetworkPolicy::Isolated => Err(ConfigError::new(
+                "isolated policy requires the selected image runtime metadata",
+            )),
             NetworkPolicy::Explicit(policy) => policy.to_proto(),
         }
     }

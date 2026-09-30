@@ -55,9 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, `Progress::Download`, and `Progress::Completed` events.
-Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with an `elapsed` duration; raw messages, addresses, IDs, and output values are omitted.
-Resources of the same kind share a label.
+The separate `unverified` list reports supplemental model-catalog or apply-time service-readiness checks; it does not make resource planning incomplete.
+The progress callback reports phase changes, `Progress::MutationStarted`, `Progress::Resource`, `Progress::Waiting`, `Progress::Download`, and `Progress::Completed` events.
+`MutationStarted` is emitted synchronously after each mutating OpenTofu subprocess launches, before child output is read.
+It does not prove that a resource changed or that a change completed.
+Track it across all stages of one operation if the application needs to distinguish preflight failure from possible partial mutation.
+Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with an `elapsed` duration.
+They include a bounded, redacted native address when available; raw messages, runtime IDs, and output values are omitted.
+Resources of the same kind share a kind label; the optional address distinguishes them.
 Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
 They cover bundle verification and OpenTofu commands, including provider readiness checks within apply, and contain no diagnostic payloads.
@@ -71,7 +76,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 
 | Method | Input and result | Effect |
 |---|---|---|
-| `plan(&document, &cancel)` | `OperationResult` with changes and any deferred checks | Observes and previews the desired deployment |
+| `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, and unverified checks | Observes and previews the desired deployment |
 | `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up native data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
@@ -152,11 +157,21 @@ A later observation replaces an earlier observation of the same query, including
 Known data reads remain visible when another provider read is deferred.
 
 For each resource, `existed` means it appeared in retained state or the refreshed plan's prior value; it is not a health assertion.
-`plannedActions` and `drifted` describe the checked plan.
+`plannedActions` describes the checked action list.
+`drifted` records OpenTofu refresh differences, including computed metadata; it can be true with `plannedActions: ["no-op"]` and does not mean the caller requested a configuration change.
+`agentRunning`, when present, is the pre-apply Fabric runtime status observed for an agent-configuration resource.
 `retained` identifies an established resource retained by the owning teardown compiler, and `reusePlanned` means its plan is unchanged with no reported drift.
 These entries contain no resource IDs, specifications, or credential values.
 Retaining a workspace does not preserve sandbox files; see [retention](state.md#deletion-and-retention).
-Always inspect the operation's `deferred` list before treating the preview as complete.
+Always inspect the operation's `deferred` list before treating the resource preview as complete.
+If a missing managed gateway prevents planning the deployment stage, `OperationResult.deferred_resources` lists its compiled resource addresses without assigning actions or adding them to `changes`.
+`OperationResult.resource_sources` maps opaque scoped provider registrations to their authored `name` and definition `path`, including route-inline providers.
+These source entries describe intent and can precede resource creation; they contain no credential references or values.
+`DiscoveryReport::deferred()` reports unresolved engine, hardware, image, and gateway prerequisites; missing credential references are added to `OperationResult.deferred`.
+`DiscoveryReport::unverified()` reports unavailable or unverified model catalogs and service readiness not confirmed by plan.
+The SDK copies those advisories into `OperationResult.unverified`, retaining full statuses and reasons in `discovery.observations`.
+A complete resource plan does not establish healthy services, successful catalog authentication, or working inference.
+Apply still enforces its readiness gates, including on unchanged deployments.
 
 ## Read Apply Health
 

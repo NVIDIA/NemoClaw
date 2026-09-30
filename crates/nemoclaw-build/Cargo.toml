@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 [dependencies]
 thiserror.workspace = true
+nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 clap.workspace = true
 serde.workspace = true

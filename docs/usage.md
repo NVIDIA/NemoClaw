@@ -7,6 +7,7 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
+Deployment planning currently requires a Unix client; see [engine connection limits](engine-assumptions.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
@@ -78,15 +79,17 @@ Destroy retains that network and gateway storage.
 
 Apply requests the packaged bridge's health report after configuration and infrastructure readiness checks, including on unchanged applies.
 It does not invoke agents, send generation requests, repair failures, or replay work.
-Plan, export, and destroy do not request Fabric health.
+Plan and export read host snapshots through `check --live` without requiring passing health.
+Destroy does not run readiness checks.
 
-Each sandbox's `health` entry identifies its agent and runtime.
-The pinned Fabric has no health API.
-The packaged bridge reports `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported` locally, without contacting the running Fabric host.
-Apply retains its other configuration and readiness checks; success does not establish fresh Fabric health or working inference.
+The provider requests `check --ready` through OpenShell.
+The pinned Fabric has no health API, so the bridge returns unsupported with its host snapshot and no health report.
+The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
+**Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
+A reachable bridge or remembered runtime handle does not establish agent health.
 Real adapter health qualification remains **TBD** until an accepted owner API is pinned and tested.
 
-Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the bridge fails with a rebuild diagnostic.
+Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
@@ -221,9 +224,9 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| Models, native model settings, adapter settings, or public Fabric configuration | Reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
+| Models, settings, or public Fabric configuration within the selected adapter | Reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
@@ -255,6 +258,9 @@ From the directory containing your deployment YAML, with the matching bundle and
 nemoclaw export --state-dir .local/deployment --output exported-new.yaml
 ```
 
+For Brave and Tavily integrations, export preserves definitions, selection references, and credential references at their authored deployment, sandbox, or agent scope.
+It observes installed search registrations without resolving search keys and rejects registration drift; reapply still requires the referenced credentials.
+
 After export succeeds, inspect its configuration and reapply it using the same state:
 
 ```sh
@@ -262,9 +268,11 @@ nemoclaw plan --state-dir .local/deployment exported-new.yaml
 nemoclaw apply --state-dir .local/deployment exported-new.yaml
 ```
 
-For a fully observed unchanged deployment, expect `No resource changes planned.` with no deferred work.
-With `-o json`, this is an empty `changes` list and no `deferred` field.
+For a fully resolved resource plan with no changes, expect `No resource changes planned.` with no deferred work.
+With `-o json`, this is `complete: true`, an empty `changes` list, and no `deferred` field.
 Deferred work means the plan is incomplete, even if the current changes list is empty.
+Unavailable or unverified model catalogs and service readiness scheduled for apply appear separately under `unverified`; they do not make the resource plan incomplete.
+Review those advisories and the [typed observations](sdk.md#read-plan-discovery-and-resource-inventory); a complete plan does not establish service health or working inference.
 Unchanged apply still performs configuration and readiness checks; it can fail if a required service is unavailable.
 It does not send generation requests.
 Keep the original YAML until verification succeeds.
@@ -278,9 +286,10 @@ After an interrupted apply, keep the original YAML and entire state directory, i
 For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
-Correct the model or agent settings and explicitly apply the revised YAML when the sandbox remains available and its launch specification is unchanged.
+For configuration rejected before a lifecycle change, correct the settings and explicitly apply the revised YAML when the sandbox remains available and its launch specification is unchanged.
 With the current bundle and bridge image, configuration failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
-A failed restart can leave the agent `unavailable` while retaining the sandbox and its files; correcting the configuration and explicitly applying it starts the runtime again.
+A failed restart retains the sandbox and its files.
+When Fabric cannot confirm that startup left no processes, the bridge reports `unknown` and refuses another lifecycle change; this protocol does not provide recovery for that state.
 An `unknown` runtime state does not establish that the old process stopped.
 A sandbox in `Error` can still block ordinary apply, but its saved identity permits [explicit teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).

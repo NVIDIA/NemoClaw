@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, compile, runtime_targets, targets},
     config::{Document, schema::input_schema},
@@ -76,7 +78,15 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     assert!(sandbox.values["provider_names_json"].contains("hosted"));
     assert_eq!(
         settings["models"]["smart"]["api_key_env"],
-        "NEMOCLAW_INFERENCE_HOSTED_KEY"
+        format!(
+            "NEMOCLAW_INFERENCE_{}_KEY",
+            rows.iter()
+                .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+                .unwrap()
+                .values["name"]
+                .replace('-', "_")
+                .to_ascii_uppercase()
+        )
     );
     let other = rows
         .iter()
@@ -96,12 +106,9 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
     assert!(other_settings["models"]["smart"].is_null());
     let other_policy: Value = serde_json::from_str(&other.values["policy_json"]).unwrap();
-    assert_eq!(
-        other_policy["network_policies"].as_object().unwrap().len(),
-        1
-    );
+    assert_eq!(other_policy["managed"].as_object().unwrap().len(), 1);
     let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-    assert_eq!(policy["network_policies"].as_object().unwrap().len(), 2);
+    assert_eq!(policy["managed"].as_object().unwrap().len(), 2);
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let mut dependencies: Vec<_> = rows
         .iter()
@@ -116,7 +123,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["other"]["depends_on"],
         json!([
-            "nemoclaw_provider.inference_local",
+            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
             "data.nemoclaw_gateway_capabilities.apply"
         ])
     );
@@ -142,7 +149,8 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 2);
     assert!(
         rows.iter()
-            .find(|row| row.kind == "provider" && row.values["name"] == local_name)
+            .find(|row| row.kind == "provider"
+                && row.values["name"].starts_with(&format!("{local_name}-")))
             .unwrap()
             .values
             .contains_key("credential_source")
@@ -150,7 +158,7 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     assert!(
         !rows
             .iter()
-            .find(|row| row.kind == "provider" && row.values["name"] == "hosted")
+            .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
             .unwrap()
             .values
             .contains_key("credential_source")
@@ -173,14 +181,20 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
             .any(|target| target.address == "docker_container.ollama_service_ollama-server")
     );
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
-    let dependencies =
-        graph["resource"]["nemoclaw_provider"][format!("inference_{local_name}")]["depends_on"]
-            .as_array()
-            .unwrap();
+    let dependencies = provider_scope::resource(
+        &graph["resource"]["nemoclaw_provider"],
+        &local_name,
+    )["depends_on"]
+        .as_array()
+        .unwrap();
     assert_eq!(
         dependencies,
         &[
-            json!("nemoclaw_provider_profile.inference_local"),
+            json!(provider_scope::address(
+                &graph["resource"]["nemoclaw_provider_profile"],
+                "provider_profile",
+                &local_name
+            )),
             json!("data.nemoclaw_gateway_capabilities.apply")
         ]
     );
@@ -266,7 +280,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         let credentials: Value = serde_json::from_str(
             &rows
                 .iter()
-                .find(|t| t.kind == "provider" && t.values["name"] == name)
+                .find(|t| t.kind == "provider" && t.values["name"].starts_with(&format!("{name}-")))
                 .unwrap()
                 .values["credential_source"],
         )

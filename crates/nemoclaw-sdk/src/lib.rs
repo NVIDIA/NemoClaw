@@ -27,6 +27,7 @@ use std::fmt;
 pub mod fabric_capabilities;
 pub mod fabric_catalog;
 pub mod fabric_config;
+pub mod image_runtime;
 
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
@@ -99,6 +100,9 @@ pub enum ObservationError {
         code: &'static str,
         runtime_state: &'static str,
     },
+    SandboxConfigurationRejected {
+        reason: &'static str,
+    },
     SandboxStartup {
         phase: &'static str,
         reason: &'static str,
@@ -109,14 +113,19 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SandboxConfigurationRejected { reason } => write!(
+                f,
+                "OpenShell configuration rejected: {reason}; resources retained"
+            ),
             Self::SandboxStartup {
                 phase,
                 reason,
                 exit_code,
             } => write!(
                 f,
-                "sandbox unavailable: {phase}, reason {reason}, exit code {}; resources retained",
-                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                "sandbox unavailable: {phase}, reason {reason}, exit code {}{}; resources retained",
+                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string()),
+                error::sandbox_startup_guidance(reason)
             ),
             Self::FabricConfiguration {
                 stage,
@@ -182,7 +191,7 @@ mod deployment;
 pub use deployment::{
     Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
     DiscoveryScope, DiscoveryTarget, OperationResult, Outcome, Progress, ResourceInventoryEntry,
-    StepOutcome,
+    ResourceSource, StepOutcome,
 };
 
 pub mod managed;

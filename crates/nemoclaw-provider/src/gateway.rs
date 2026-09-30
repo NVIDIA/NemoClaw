@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod process;
+
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
 use nemoclaw_sdk::ObservationError;
@@ -15,9 +17,11 @@ use tf_provider::{
 
 pub(crate) struct GatewayDataSource(pub Arc<ConfiguredBackend>);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub(crate) struct GatewayState {
     required_compute_drivers: Value<Vec<Value<String>>>,
+    managed_spec: Value<String>,
+    container_id: Value<String>,
     wait_timeout_seconds: Value<u64>,
     // An unknown scheduling input makes OpenTofu defer this read until apply.
     read_trigger: Value<bool>,
@@ -61,6 +65,23 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
         );
         return None;
     }
+    let managed = match (&config.managed_spec, &config.container_id) {
+        (Value::Null, Value::Null) => Ok(()),
+        (Value::Null, _) | (_, Value::Null) => {
+            Err("Supply both managed_spec and container_id.".to_owned())
+        }
+        (_, Value::Value(id)) if id.is_empty() => {
+            Err("Managed gateway container identity is empty.".to_owned())
+        }
+        (Value::Value(spec), _) => process::specification(spec)
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        _ => Ok(()),
+    };
+    if let Err(message) = managed {
+        diags.root_error("Invalid managed gateway observation", message);
+        return None;
+    }
     Some(())
 }
 
@@ -95,6 +116,16 @@ impl DataSource for GatewayDataSource {
             version: 0,
             block: Block {
                 attributes: [
+                    (
+                        "managed_spec",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "container_id",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
                     (
                         "wait_timeout_seconds",
                         AttributeType::Number,
@@ -200,14 +231,37 @@ impl DataSource for GatewayDataSource {
                 return None;
             }
         };
+        let managed = match (&config.managed_spec, &config.container_id) {
+            (Value::Null, Value::Null) => None,
+            (Value::Value(spec), Value::Value(id)) => {
+                let spec = process::specification(spec).ok()?;
+                match process::ManagedGateway::new(spec, id, self.0.connections()) {
+                    Ok(managed) => Some(managed),
+                    Err(error) => {
+                        diags.root_error("Gateway process observation failed", error.to_string());
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                diags.root_error_short("Managed gateway identity is not yet known");
+                return None;
+            }
+        };
         let observed = match self.0.client() {
             Ok(client) => {
-                observe_with_wait(Duration::from_secs(timeout), || {
-                    client.gateway_capabilities()
-                })
-                .await
+                let timeout = Duration::from_secs(timeout);
+                if let Some(managed) = &managed {
+                    managed
+                        .observe(timeout, || client.gateway_capabilities())
+                        .await
+                } else {
+                    observe_with_wait(timeout, || client.gateway_capabilities())
+                        .await
+                        .map_err(process::Failure::from)
+                }
             }
-            Err(error) => Err(error),
+            Err(error) => Err(process::Failure::from(error)),
         };
         match observed {
             Ok(observed) => {
@@ -240,7 +294,12 @@ impl DataSource for GatewayDataSource {
                 Some(config)
             }
             Err(error) => {
-                diags.root_error("Gateway capability observation failed", error.to_string());
+                let message = match (&managed, error) {
+                    (Some(managed), error) => error.message(managed.name()),
+                    (None, process::Failure::Observation(error)) => error.to_string(),
+                    (None, _) => unreachable!("process failures require a managed gateway"),
+                };
+                diags.root_error("Gateway capability observation failed", message);
                 None
             }
         }
@@ -270,6 +329,8 @@ mod tests {
                 required_compute_drivers: drivers,
                 wait_timeout_seconds: Value::Null,
                 read_trigger: Value::Null,
+                managed_spec: Value::Null,
+                container_id: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
@@ -306,6 +367,8 @@ mod wait_tests {
                 required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
                 wait_timeout_seconds: timeout,
                 read_trigger: Value::Null,
+                managed_spec: Value::Null,
+                container_id: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
@@ -369,5 +432,37 @@ mod wait_tests {
                 .unwrap_err(),
             ObservationError::Transport
         );
+    }
+}
+
+#[cfg(test)]
+mod managed_input_tests {
+    use super::*;
+    #[tokio::test]
+    async fn managed_observation_requires_paired_valid_inputs_and_defers_unknowns() {
+        let source = GatewayDataSource(Arc::new(ConfiguredBackend::default()));
+        for (spec, id, valid) in [
+            (Value::Null, Value::Null, true),
+            (Value::Unknown, Value::Unknown, true),
+            (Value::Unknown, Value::Value("bound".into()), true),
+            (Value::Null, Value::Value("bound".into()), false),
+            (Value::Unknown, Value::Null, false),
+            (Value::Unknown, Value::Value(String::new()), false),
+            (
+                Value::Value("PRIVATE_SENTINEL".into()),
+                Value::Unknown,
+                false,
+            ),
+        ] {
+            let mut diags = Diagnostics::default();
+            let config = GatewayState {
+                managed_spec: spec,
+                container_id: id,
+                required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
+                ..Default::default()
+            };
+            assert_eq!(source.validate(&mut diags, config).await.is_some(), valid);
+            assert!(!format!("{diags:?}").contains("PRIVATE_SENTINEL"));
+        }
     }
 }

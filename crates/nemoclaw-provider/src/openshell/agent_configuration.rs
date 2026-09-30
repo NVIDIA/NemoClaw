@@ -8,10 +8,11 @@ use serde_json::Value;
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
-fn configuration(encoded: &str) -> Result<String, ObservationError> {
-    let parsed: nemo_fabric_core::FabricConfig =
-        serde_json::from_str(encoded).map_err(|_| ObservationError::Query)?;
-    serde_json::to_string(&parsed).map_err(|_| ObservationError::Query)
+fn configuration(encoded: &str) -> Result<Value, ObservationError> {
+    let value: Value = serde_json::from_str(encoded).map_err(|_| ObservationError::Query)?;
+    serde_json::from_value::<nemo_fabric_core::FabricConfig>(value.clone())
+        .map_err(|_| ObservationError::Query)?;
+    Ok(value)
 }
 
 impl OpenShell {
@@ -62,31 +63,16 @@ impl OpenShell {
         if removing {
             return Ok(Some(prior.clone()));
         }
-        let (exit, output) = self
-            .exec_bound(
-                &parent,
-                vec![
-                    "/opt/fabric/bin/python".into(),
-                    "-c".into(),
-                    include_str!("agent_status.py").into(),
-                ],
-                Row::new(),
-                20,
-            )
+        let status = self
+            .agent_snapshot(&parent)
             .await
             .map_err(Error::into_observation)?;
-        if exit != 0 {
-            return Err(ObservationError::Query);
-        }
-        let status: Value =
-            serde_json::from_slice(&output).map_err(|_| ObservationError::Incomplete)?;
-        let ready = status["ready"]
-            .as_bool()
-            .ok_or(ObservationError::Incomplete)?;
-        let config = status.get("config").ok_or(ObservationError::Incomplete)?;
-        if status.get("runtime_id").is_none() {
-            return Err(ObservationError::Incomplete);
-        }
+        let ready = match status.runtime_state.as_str() {
+            "running" => true,
+            "stopped" => false,
+            _ => return Err(ObservationError::Incomplete),
+        };
+        let config = status.applied_config.unwrap_or(Value::Null);
         let mut row = prior.clone();
         row.insert("running".into(), ready.to_string());
         if config.is_null() && !ready {
@@ -95,19 +81,12 @@ impl OpenShell {
         if config["metadata"]["name"] != value(&parent, "agent_name") {
             return Err(ObservationError::BindingMismatch);
         }
-        if ready && status["runtime_id"].as_str().is_none_or(str::is_empty) {
+        if ready && status.runtime_id.as_deref().is_none_or(str::is_empty) {
             return Err(ObservationError::Incomplete);
         }
         let observed = config.to_string();
         if configuration(value(prior, "config_json"))? != configuration(&observed)? {
             row.insert("config_json".into(), observed.clone());
-        }
-        if ready {
-            let mut binding = parent;
-            binding.insert("config_json".into(), observed);
-            self.configuration(&binding)
-                .await
-                .map_err(Error::into_observation)?;
         }
         Ok(Some(row))
     }

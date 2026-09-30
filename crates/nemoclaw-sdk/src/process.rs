@@ -52,6 +52,7 @@ pub(crate) async fn run_with_progress(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    let mutation_progress = progress.clone();
     let redactions = std::sync::Arc::new(secret_values(overrides));
     let withhold_child_text = has_short_secret(&redactions);
     let progress = progress.map(|callback| {
@@ -117,6 +118,13 @@ pub(crate) async fn run_with_progress(
         diagnostic: "cannot launch bundled executable".into(),
         postcondition_failures: None,
     })?;
+    // This SDK fact is independent of optional child UI/download events and
+    // their redaction or transport. A failed spawn cannot have changed resources.
+    if args.first() == Some(&"apply")
+        && let Some(callback) = mutation_progress
+    {
+        callback(crate::Progress::MutationStarted);
+    }
     let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
         64 * 1024 * 1024,
@@ -367,6 +375,47 @@ async fn cancelling_a_running_command_kills_its_background_child() {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn mutation_boundary_survives_child_failure_and_short_secret_redaction() {
+        // macOS has no /bin/false. `sh <operation>` starts and then fails
+        // because the empty working directory has no such script.
+        for (operation, binary, cancelled, expected) in [
+            ("plan", "/bin/sh", false, false),
+            ("apply", "/bin/sh", false, true),
+            ("apply", "/missing-nemoclaw-binary", false, false),
+            ("apply", "/bin/sh", true, false),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let token = CancellationToken::new();
+            if cancelled {
+                token.cancel();
+            }
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = events.clone();
+            let result = run_with_progress(
+                directory.path(),
+                Path::new(binary),
+                &[operation],
+                &[("CUSTOM_CREDENTIAL".into(), "a".into())].into(),
+                &token,
+                Some(std::sync::Arc::new(move |event| {
+                    captured.lock().unwrap().push(event)
+                })),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(
+                *events.lock().unwrap(),
+                if expected {
+                    vec![crate::Progress::MutationStarted]
+                } else {
+                    vec![]
+                },
+                "{operation}, {binary}, cancelled={cancelled}"
+            );
+        }
+    }
+
     #[tokio::test]
     #[cfg(unix)]
     async fn failed_children_do_not_echo_referenced_secrets() {

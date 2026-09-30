@@ -16,6 +16,7 @@ mod inference;
 mod providers;
 pub(crate) mod references;
 mod source;
+mod yaml_source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
@@ -24,7 +25,7 @@ pub use image_pull_policy::ImagePullPolicy;
 mod inference_profile;
 pub use inference_profile::definition as inference_profile;
 mod sandbox_policy;
-pub use sandbox_policy::{isolated_policy, isolated_policy_matches, policy_json};
+pub use sandbox_policy::policy_json;
 mod network;
 pub use network::*;
 mod kinds;
@@ -63,7 +64,9 @@ impl Document {
         }
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
+        yaml_source::validate_tags(text)?;
         let mut options = serde_saphyr::Options::default();
+        options.with_snippet = false;
         let mut budget = serde_saphyr::Budget::default();
         budget.max_aliases = 0;
         budget.max_anchors = 0;
@@ -72,8 +75,8 @@ impl Document {
         options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
-        schema::validate_input(&tree)?;
+            .map_err(yaml_source::syntax_error)?;
+        schema::validate_input(&tree, Some(text))?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;

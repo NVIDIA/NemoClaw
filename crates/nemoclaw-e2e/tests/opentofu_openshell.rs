@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
+#[cfg(unix)]
+use nemoclaw_e2e::assert_same_managed_resources;
+use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
+#[cfg(unix)]
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::Document,
@@ -14,6 +17,8 @@ use std::{
     process::{Command, Output},
 };
 
+// Compiled deployment planning requires a currently Unix-only image engine.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
 async fn production_provider_applies_refreshes_and_destroys_the_reference_graph() {
@@ -40,6 +45,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))

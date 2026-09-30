@@ -58,14 +58,18 @@ struct SandboxObservation {
 
 impl SandboxObservation {
     fn health(self) -> Result<SandboxHealth, Error> {
+        let health = crate::RuntimeHealth::decode(
+            self.health_json
+                .ok_or(Error::State("sandbox health observation is absent"))?
+                .as_bytes(),
+        )?;
+        if self.failed || !health.allows_apply_completion() {
+            return Err(Error::State("sandbox readiness was not confirmed"));
+        }
         Ok(SandboxHealth {
             sandbox: self.sandbox,
             agents: vec![self.agent],
-            health: crate::RuntimeHealth::decode(
-                self.health_json
-                    .ok_or(Error::State("sandbox health observation is absent"))?
-                    .as_bytes(),
-            )?,
+            health,
         })
     }
 }
@@ -109,7 +113,9 @@ impl Readiness {
                 Ok(SandboxObservation {
                     sandbox: sandbox.name.clone(),
                     agent: sandbox.agent.name.clone(),
-                    failed: observed["ready"] == false,
+                    failed: !observed["ready"]
+                        .as_bool()
+                        .ok_or(Error::State("sandbox readiness observation is incomplete"))?,
                     health_json: observed["health_json"].as_str().map(String::from),
                 })
             })
@@ -139,7 +145,7 @@ mod tests {
         }]}))
         .unwrap();
         let health = if ready {
-            json!({"supported": false, "report": null, "reason_code": "fabric_health_unsupported"})
+            json!({"supported": true, "report": {"fixture": true}, "reason_code": null})
         } else {
             json!({"supported": true, "report": null, "reason_code": "fabric_health_timeout"})
         };
@@ -177,7 +183,40 @@ mod tests {
         };
         assert_eq!(health[0].sandbox, "assistant");
         assert_eq!(health[0].agents, ["main"]);
-        assert!(!health[0].health.supported);
+        assert!(health[0].health.supported);
+    }
+
+    #[test]
+    fn readiness_cannot_override_unsupported_failed_or_missing_health() {
+        for (ready, health) in [
+            (
+                json!(true),
+                json!({"supported": false, "report": null, "reason_code": "fabric_health_unsupported"}),
+            ),
+            (
+                json!(true),
+                json!({"supported": true, "report": null, "reason_code": "fabric_health_failed"}),
+            ),
+            (
+                json!(false),
+                json!({"supported": true, "report": {"fixture": true}, "reason_code": null}),
+            ),
+            (
+                Value::Null,
+                json!({"supported": true, "report": {"fixture": true}, "reason_code": null}),
+            ),
+        ] {
+            let (document, plan, bytes) = fixture("current", true);
+            let mut state: Value = serde_json::from_slice(&bytes).unwrap();
+            let observation = &mut state["values"]["root_module"]["resources"][0]["values"];
+            observation["ready"] = ready;
+            observation["health_json"] = json!(health.to_string());
+            let outcome = ApplyOutcome::classify(
+                Ok(Vec::new()),
+                Readiness::decode(&document, &plan, &serde_json::to_vec(&state).unwrap()),
+            );
+            assert!(matches!(outcome, ApplyOutcome::Settled(Err(_))));
+        }
     }
 
     #[test]

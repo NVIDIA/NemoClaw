@@ -2086,6 +2086,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "flate2",
+ "nemoclaw-runtime",
  "nemoclaw-sdk",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",

@@ -82,7 +82,7 @@ OpenShell owns sandbox creation and policy enforcement.
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
-| **Readiness and result** | Provider data sources observe sandbox configuration, startup, and the packaged bridge's health response within the deployment graph. The pinned bridge reports health as unsupported. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
+| **Readiness and result** | Provider data sources observe sandbox configuration, startup, and the packaged bridge's health response within the deployment graph. The pinned bridge reports health as unsupported, which fails apply without deleting completed resources. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
@@ -97,8 +97,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
 - Each adapter uses `nemoclaw_agent_configuration` after sandbox creation and route setup.
   Its host waits for explicit configuration before starting Fabric, including after a process restart.
 - The pinned Fabric lacks `runtime.check_health()`.
-  Apply reports that capability as unsupported while retaining its configuration and startup checks.
-  Success does not establish fresh Fabric health or working inference; see [Fabric health during apply](../usage.md#fabric-health-during-apply).
+  Unsupported health fails apply while preserving resources and state; see [Fabric health during apply](../usage.md#fabric-health-during-apply).
 
 For native configuration and optional tracing, see [agent runtimes](../agents.md).
 For listener setup and forwarding, see [agent interfaces](../interfaces.md).

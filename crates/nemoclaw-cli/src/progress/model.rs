@@ -75,6 +75,7 @@ impl Model {
         now: Instant,
     ) -> Option<Milestone> {
         let update = match event {
+            Progress::MutationStarted => return None,
             Progress::Waiting { operation, elapsed } => {
                 let label = operation_label(operation).or(verbose.then_some(operation));
                 let visible = verbose || !infrastructure_step(operation);

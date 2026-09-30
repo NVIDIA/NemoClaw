@@ -3,7 +3,7 @@
 
 use crate::{Diagnostics, Draft, diagnostics::diagnostic};
 use nemoclaw_sdk::{
-    config::{ComputeDriver, HarnessKind},
+    config::{ComputeDriver, Gateway, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
@@ -11,7 +11,10 @@ use nemoclaw_sdk::{
 /// Inputs determining which target facts can constrain the current document.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveryKey {
+    /// Explicit engine for image inspection; never inferred for an external gateway.
     pub engine: String,
+    /// Whether engine prerequisites and hardware describe a gateway we manage.
+    pub managed_gateway: bool,
     pub compute_driver: ComputeDriver,
     pub image: String,
     pub harness: HarnessKind,
@@ -38,8 +41,9 @@ pub enum DiscoveryQuery {
     Fabric,
 }
 
-/// Compatibility applies only to the selected engine and packaged adapter.
-/// It does not establish deployment readiness or successful inference.
+/// Compatibility applies to the packaged adapter and, for managed gateways,
+/// the selected execution engine. External image stores do not establish the
+/// gateway's platform, deployment readiness, or successful inference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveryAssessment {
     pub status: CompatibilityStatus,
@@ -62,12 +66,11 @@ impl Draft {
             .kind
             .clone();
         Ok(DiscoveryKey {
-            engine: document
-                .spec
-                .gateway
-                .as_managed()
-                .map(|gateway| gateway.engine.clone())
-                .unwrap_or_default(),
+            engine: match &document.spec.gateway {
+                Gateway::Managed(gateway) => gateway.engine.clone(),
+                Gateway::External(gateway) => gateway.engine.clone(),
+            },
+            managed_gateway: document.spec.gateway.as_managed().is_some(),
             compute_driver: sandbox.runtime.provider,
             image: sandbox.image.ref_.clone(),
             harness,
@@ -79,7 +82,11 @@ impl DiscoveryEvidence {
     /// Invalidate only facts whose query inputs changed. Changing harness merely
     /// re-evaluates the existing image catalog against the new requirement.
     pub fn retarget(&mut self, key: DiscoveryKey) {
-        if self.key.engine != key.engine || self.key.compute_driver != key.compute_driver {
+        if !key.managed_gateway
+            || self.key.managed_gateway != key.managed_gateway
+            || self.key.engine != key.engine
+            || self.key.compute_driver != key.compute_driver
+        {
             self.engine = None;
         }
         if self.key.engine != key.engine || self.key.image != key.image {
@@ -94,7 +101,10 @@ impl DiscoveryEvidence {
     pub fn assessment(&self, draft: &Draft) -> Result<DiscoveryAssessment, Diagnostics> {
         let key = draft.discovery_key()?;
         let engine = self.engine.as_ref().filter(|_| {
-            self.key.engine == key.engine && self.key.compute_driver == key.compute_driver
+            key.managed_gateway
+                && self.key.managed_gateway == key.managed_gateway
+                && self.key.engine == key.engine
+                && self.key.compute_driver == key.compute_driver
         });
         let fabric = self
             .fabric
@@ -103,21 +113,35 @@ impl DiscoveryEvidence {
         let mut reasons = Vec::new();
         let mut pending = Vec::new();
         let mut conflict = false;
-        let engine_available = match engine.map(|engine| engine.status) {
-            Some(ObservationStatus::Available) => true,
-            Some(ObservationStatus::Unavailable) => {
-                conflict = true;
-                reasons.push("The selected engine does not meet gateway prerequisites.".into());
+        // An external gateway's engine only supplies image metadata. Do not
+        // infer its execution platform or prerequisites from that image store.
+        let engine_available = if !key.managed_gateway {
+            if key.engine.is_empty() {
+                reasons.push(
+                    "Set spec.gateway.engine to inspect the external gateway's sandbox image."
+                        .into(),
+                );
                 false
+            } else {
+                true
             }
-            Some(ObservationStatus::Unknown) => {
-                reasons.push("The selected engine remains unverified.".into());
-                false
-            }
-            None => {
-                pending.push(DiscoveryQuery::Engine);
-                reasons.push("The selected engine has not been observed.".into());
-                false
+        } else {
+            match engine.map(|engine| engine.status) {
+                Some(ObservationStatus::Available) => true,
+                Some(ObservationStatus::Unavailable) => {
+                    conflict = true;
+                    reasons.push("The selected engine does not meet gateway prerequisites.".into());
+                    false
+                }
+                Some(ObservationStatus::Unknown) => {
+                    reasons.push("The selected engine remains unverified.".into());
+                    false
+                }
+                None => {
+                    pending.push(DiscoveryQuery::Engine);
+                    reasons.push("The selected engine has not been observed.".into());
+                    false
+                }
             }
         };
         let fabric_supported = match fabric {

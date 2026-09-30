@@ -62,10 +62,72 @@ static SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(build);
 static VALIDATOR: std::sync::LazyLock<jsonschema::Validator> =
     std::sync::LazyLock::new(|| jsonschema::validator_for(&SCHEMA).expect("runtime schema"));
 pub fn validate(spec: &crate::RuntimeSpec) -> Result<(), ConfigError> {
-    if !VALIDATOR.is_valid(&serde_json::to_value(spec).expect("runtime spec")) {
-        return Err(ConfigError::new("invalid pinned runtime specification"));
+    validate_value(&serde_json::to_value(spec).expect("runtime spec"))
+}
+pub(crate) fn validate_value(value: &Value) -> Result<(), ConfigError> {
+    VALIDATOR
+        .validate(value)
+        .map_err(|error| diagnostic(&error))
+}
+fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
+    use jsonschema::error::ValidationErrorKind as Kind;
+    if let Kind::OneOfNotValid { context } | Kind::AnyOf { context } = error.kind()
+        && let Some(variants) = SCHEMA
+            .pointer(error.schema_path().as_str())
+            .and_then(Value::as_array)
+    {
+        for (variant, errors) in variants.iter().zip(context) {
+            let matches_kind = variant["properties"]["kind"]
+                .get("const")
+                .is_some_and(|kind| error.instance().get("kind") == Some(kind));
+            let matches_profile = variant["properties"].get("profile").is_some()
+                && error.instance().get("profile").is_some();
+            if (matches_kind || matches_profile)
+                && let Some(error) = errors.first()
+            {
+                return diagnostic(error);
+            }
+        }
     }
-    Ok(())
+    // Only declared schema field names may appear in diagnostics. Map keys,
+    // unknown properties, values and raw parser messages are untrusted.
+    static FIELDS: std::sync::LazyLock<std::collections::BTreeSet<String>> =
+        std::sync::LazyLock::new(|| {
+            fn collect(value: &Value, fields: &mut std::collections::BTreeSet<String>) {
+                match value {
+                    Value::Object(object) => {
+                        if let Some(properties) =
+                            object.get("properties").and_then(Value::as_object)
+                        {
+                            fields.extend(properties.keys().cloned());
+                        }
+                        object.values().for_each(|value| collect(value, fields));
+                    }
+                    Value::Array(values) => values.iter().for_each(|value| collect(value, fields)),
+                    _ => {}
+                }
+            }
+            let mut fields = std::collections::BTreeSet::new();
+            collect(&SCHEMA, &mut fields);
+            fields
+        });
+    let location = error.instance_path().to_string();
+    let mut path: Vec<_> = location
+        .split('/')
+        .skip(1)
+        .map(|field| if FIELDS.contains(field) { field } else { "*" })
+        .collect();
+    if let Kind::Required { property } = error.kind()
+        && let Some(field) = property.as_str().filter(|field| FIELDS.contains(*field))
+    {
+        path.push(field);
+    }
+    ConfigError(format!(
+        "invalid runtime specification {} at /{} ({})",
+        crate::SPEC_VERSION,
+        path.join("/"),
+        error.kind().keyword()
+    ))
 }
 
 pub fn validate_recipe(

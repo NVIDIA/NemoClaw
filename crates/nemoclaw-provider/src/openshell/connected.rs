@@ -44,13 +44,18 @@ impl ConnectedOpenShellGateway {
                         == nemoclaw_sdk::config::search_provider_name(
                             provider,
                             value(want, "credential_env"),
+                            value(want, "profile_name"),
                         )
+                        && nemoclaw_sdk::config::SearchProvider::from_profile(value(
+                            want,
+                            "profile_name",
+                        )) == Some(provider)
                         && value(want, "endpoint") == provider.endpoint()
                         && !value(want, "credential_env").is_empty()
                 }) =>
             {
                 let search = search.unwrap();
-                (search.profile(), "", search.credential_env())
+                (value(want, "profile_name"), "", search.credential_env())
             }
             _ => return Err(ObservationError::Query),
         };
@@ -193,26 +198,34 @@ impl ConnectedOpenShellGateway {
         let response = self
             .client
             .raw_grpc()
-            .create_sandbox(self.request(proto::CreateSandboxRequest {
-                name: name.into(),
-                workspace_scope: Some(proto::workspace_selector(workspace)),
-                labels,
-                spec: Some(proto::SandboxSpec {
-                    template: Some(proto::SandboxTemplate {
-                        image: value(want, "image").into(),
+            .create_sandbox(
+                self.request(proto::CreateSandboxRequest {
+                    name: name.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    labels,
+                    annotations: [
+                        (agent::RUNTIME.into(), value(want, "runtime_json").into()),
+                        (agent::POLICY.into(), value(want, "policy_json").into()),
+                    ]
+                    .into(),
+                    spec: Some(proto::SandboxSpec {
+                        template: Some(proto::SandboxTemplate {
+                            image: value(want, "image").into(),
+                            ..Default::default()
+                        }),
+                        command: agent::binding(want)?
+                            .command("serve", &["--agent", value(want, "agent_name")]),
+                        providers: inference::provider_names(
+                            value(want, "provider_names_json"),
+                            value(want, "agent_runtime"),
+                        )?,
+                        environment: inference_environment(want)?.into_iter().collect(),
+                        policy: Some(row_policy(want)?),
                         ..Default::default()
                     }),
-                    command: command(value(want, "agent_runtime")),
-                    providers: inference::provider_names(
-                        value(want, "provider_names_json"),
-                        value(want, "agent_runtime"),
-                    )?,
-                    environment: inference_environment(want)?.into_iter().collect(),
-                    policy: Some(row_policy(want)?),
                     ..Default::default()
                 }),
-                ..Default::default()
-            }))
+            )
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();
@@ -378,13 +391,18 @@ mod tests {
         *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
         let client = ConnectedOpenShellGateway::connect(&gateway, Arc::new(SearchSecrets)).unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            let name = nemoclaw_sdk::config::search_provider_name(provider, "SEARCH_KEY");
+            let name = nemoclaw_sdk::config::search_provider_name(
+                provider,
+                "SEARCH_KEY",
+                provider.profile(),
+            );
             let want: Row = [
                 ("name", name.as_str()),
                 ("workspace", "workspace"),
                 ("owner", "deployment"),
                 ("generation", "generation"),
                 ("provider_type", provider.name()),
+                ("profile_name", provider.profile()),
                 ("endpoint", provider.endpoint()),
                 ("credential_env", "SEARCH_KEY"),
             ]

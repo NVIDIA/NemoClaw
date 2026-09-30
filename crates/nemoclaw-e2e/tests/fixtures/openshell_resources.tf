@@ -7,6 +7,9 @@ terraform {
   }
 }
 variable "endpoint" { type = string }
+variable "runtime_json" { type = string }
+variable "policy_json" { type = string }
+variable "binaries_json" { type = string }
 variable "enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
@@ -28,6 +31,7 @@ resource "nemoclaw_provider_profile" "inference" {
   generation    = "provider-generation"
   endpoint      = "http://127.0.0.1:11434/v1"
   authenticated = "false"
+  binaries_json = var.binaries_json
 }
 resource "nemoclaw_provider" "inference" {
   count      = var.enabled ? 1 : 0
@@ -38,13 +42,15 @@ resource "nemoclaw_provider" "inference" {
   endpoint   = nemoclaw_provider_profile.inference[0].endpoint
 }
 resource "nemoclaw_sandbox" "agent" {
-  count         = var.enabled ? 1 : 0
-  workspace     = nemoclaw_workspace.example.name
-  name          = "assistant"
-  owner         = nemoclaw_workspace.example.owner
-  generation    = "sandbox-generation"
-  image         = var.image
-  agent_name    = "assistant"
-  agent_runtime = "fabric"
+  count               = var.enabled ? 1 : 0
+  workspace           = nemoclaw_workspace.example.name
+  name                = "assistant"
+  owner               = nemoclaw_workspace.example.owner
+  generation          = "sandbox-generation"
+  image               = var.image
+  agent_name          = "assistant"
+  agent_runtime       = "fabric"
+  runtime_json        = var.runtime_json
+  policy_json         = var.policy_json
   provider_names_json = jsonencode([nemoclaw_provider.inference[0].name])
 }

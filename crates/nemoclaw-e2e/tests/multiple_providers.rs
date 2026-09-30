@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Deployment planning requires image discovery, whose engine transports are Unix-only.
+#![cfg(unix)]
+
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, Secrets, config::Document};
 use std::{fs, path::PathBuf, process::Command, sync::Arc};
@@ -12,6 +15,18 @@ impl Secrets for FixtureCredential {
     }
 }
 
+/// Registrations are scoped by image and adapter with a hash suffix; compare
+/// the provider definitions they register.
+fn definitions(registrations: &[String]) -> Vec<&str> {
+    registrations
+        .iter()
+        .map(|name| {
+            name.rsplit_once('-')
+                .map_or(name.as_str(), |(base, _)| base)
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated API fixture, no live inference"]
 async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_sandbox() {
@@ -21,6 +36,16 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
         Document::parse(include_str!("../../../examples/multiple-providers.yaml").as_bytes())
             .unwrap();
     *first.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    // A closed loopback port fails the same way on every runner, so repeated
+    // observations stay identical instead of timing out on the example hosts.
+    for provider in &mut first.spec.inference_providers {
+        provider.endpoint = match provider.endpoint.split_once("://") {
+            Some(("https", _)) => "https://127.0.0.1:9/v1",
+            _ => "http://127.0.0.1:9/v1",
+        }
+        .into();
+    }
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut first).await;
     let mut second = first.clone();
     second.metadata.uid = "7db61f79-1965-45ac-824a-1c3f3b26aa5d".into();
     second.spec.sandboxes.remove(0);
@@ -66,10 +91,10 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     );
     let first_key = format!("{}/{}", first.workspace(), first.spec.sandboxes[0].name);
     let second_key = format!("{}/{}", second.workspace(), second.spec.sandboxes[0].name);
-    {
+    let hosted = {
         let mut live = fixture.state.lock().unwrap();
         let second_spec = live.sandboxes[&second_key].spec.as_ref().unwrap();
-        assert_eq!(second_spec.providers, ["local"]);
+        assert_eq!(definitions(&second_spec.providers), ["local"]);
         let first_spec = live
             .sandboxes
             .get_mut(&first_key)
@@ -77,9 +102,9 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
             .spec
             .as_mut()
             .unwrap();
-        assert_eq!(first_spec.providers, ["hosted", "local"]);
-        first_spec.providers.remove(0);
-    }
+        assert_eq!(definitions(&first_spec.providers), ["hosted", "local"]);
+        first_spec.providers.remove(0)
+    };
     assert!(deployment.plan(&first, &cancel).await.is_err());
     assert!(
         other
@@ -101,7 +126,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
         .as_mut()
         .unwrap()
         .providers
-        .insert(0, "hosted".into());
+        .insert(0, hosted);
     for directory in [first_state.path(), second_state.path()] {
         let result = Command::new(&executable)
             .args(["destroy", "--state-dir"])

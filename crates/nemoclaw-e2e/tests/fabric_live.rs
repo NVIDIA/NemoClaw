@@ -118,29 +118,15 @@ async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8
     output
 }
 async fn invoke(client: &OpenShell, binding: &Row, name: &str, input: &Value) -> Vec<u8> {
-    exec(
-        client,
-        binding,
-        [
-            "/opt/fabric/bin/python",
-            "/opt/nemoclaw/fabric.py",
-            "invoke",
-            name,
-            &input.to_string(),
-        ]
-        .map(String::from)
-        .to_vec(),
-    )
-    .await
+    assert_eq!(binding["agent_name"], name);
+    let result = client.invoke_agent(binding, input).await.unwrap();
+    serde_json::to_vec(&result["fabric_result"]).unwrap()
 }
 
 async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let output = exec(client, binding, ["/opt/fabric/bin/python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"status\"}\\n'); print(s.makefile().readline())"].map(String::from).to_vec()).await;
-    let value: Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["ready"], true);
-    let id = value["runtime_id"].as_str().unwrap();
-    assert!(!id.is_empty());
-    id.into()
+    let snapshot = client.agent_snapshot(binding).await.unwrap();
+    assert_eq!(snapshot.runtime_state, "running");
+    snapshot.runtime_id.unwrap()
 }
 
 #[tokio::test]
@@ -199,12 +185,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    assert!(matches!(
-        client.agent_response(&binding).await,
-        Err(nemoclaw_sdk::Error::Conflict(
-            "Fabric does not expose a normalized text probe contract; resources retained"
-        ))
-    ));
     let response = invoke(&client, &binding, &agent.name, &input).await;
     assert!(
         successful_invocation(&response),

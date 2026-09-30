@@ -13,7 +13,9 @@ Intent version 7 delegates model caches to Docker volumes, separates vLLM creden
 Docker gateway storage binds both signing and encryption-key identity independently of the process.
 Containers and service-owned networks may be recreated during explicit apply while credentials retain their independent durable bindings.
 Missing model-cache volumes may be recreated; downloads and preparation run again, without replacing credentials.
-Intent versions 1 through 6 are rejected without rewriting state or adopting resources.
+Unsupported intent versions are rejected without rewriting state or adopting resources.
+Current version-7 records also reject obsolete `planDigest` fields, unfinished OpenShell creations without per-resource evidence, and `runtimePending` without a managed runtime.
+These records remain untouched.
 Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
 Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
 

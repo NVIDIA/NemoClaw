@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use nemoclaw_e2e::image_runtime::targets;
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
-use nemoclaw_sdk::{
-    backend::Backend,
-    compile::{Generations, targets},
-    config::Document,
-};
+use nemoclaw_sdk::{backend::Backend, compile::Generations, config::Document};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -240,7 +237,7 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
             .as_ref()
             .unwrap()
             .providers,
-        ["local"]
+        [rows[2]["name"].clone()]
     );
     fixture.state.lock().unwrap().fail_read = Some(("policy", tonic::Code::NotFound));
     assert!(client.read("sandbox", &rows[3], false).await.is_err());
@@ -322,6 +319,16 @@ async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity(
     let binding = binding.unwrap();
     assert_ne!(binding["workspace"], "default");
     let command = vec!["fixture".into()];
+    let mut incomplete = binding.clone();
+    incomplete.remove("runtime_json");
+    assert!(
+        client
+            .exec_bound(&incomplete, command.clone(), Default::default(), 5)
+            .await
+            .is_err(),
+        "execution requires the retained image runtime binding"
+    );
+    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     assert_eq!(
         client
             .exec_bound(&binding, command.clone(), Default::default(), 5)
@@ -520,7 +527,13 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
         .unwrap();
     assert_eq!(
         nemoclaw_provider::openshell::policy_json(spec.policy.as_ref().unwrap()).unwrap(),
-        sandbox["policy_json"]
+        nemoclaw_provider::openshell::policy_json(
+            &nemoclaw_sdk::image_runtime::RuntimeBinding::from_json(&sandbox["runtime_json"])
+                .unwrap()
+                .policy(&serde_json::from_str(&sandbox["policy_json"]).unwrap())
+                .unwrap()
+        )
+        .unwrap()
     );
     assert!(!spec.command.iter().any(|arg| arg.contains("PROXY=")));
     assert!(!spec.environment.keys().any(|key| key.contains("PROXY")));
@@ -528,7 +541,7 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     assert!(client.ensure("sandbox", sandbox).await.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // A loaded revision must match the sandbox specification, not just its status.
-    fixture.state.lock().unwrap().active_policy = Some(nemoclaw_provider::openshell::policy());
+    fixture.state.lock().unwrap().active_policy = Some(nemoclaw_e2e::image_runtime::policy());
     assert!(client.read("sandbox", sandbox, false).await.is_err());
     fixture.state.lock().unwrap().active_policy = None;
     // A coherent but different policy is observed as drift and never overwritten.
@@ -547,12 +560,7 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
         .unwrap()
         .network_policies
         .clear();
-    let observed = client
-        .read("sandbox", sandbox, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_ne!(observed["policy_json"], sandbox["policy_json"]);
+    assert!(client.read("sandbox", sandbox, false).await.is_err());
     assert!(client.ensure("sandbox", sandbox).await.error().is_some());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture
@@ -622,9 +630,48 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         .values
         .clone();
     desired.insert("sandbox_id".into(), rows[3]["id"].clone());
+    fixture.state.lock().unwrap().host_unavailable_checks = 1;
     let configured = client.ensure("agent_configuration", &desired).await;
     assert!(configured.error().is_none(), "{:?}", configured.error());
     let binding = configured.into_parts().0.unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(
+            state.staged_files.is_empty(),
+            "staged config must be removed"
+        );
+        assert_eq!(
+            state
+                .exec_calls
+                .iter()
+                .filter(|args| args.get(1).is_some_and(|arg| arg == "configure"))
+                .count(),
+            1,
+            "only passive observation may be retried during host startup"
+        );
+        let command = state
+            .exec_calls
+            .iter()
+            .find(|args| args.get(1).is_some_and(|arg| arg == "configure"))
+            .unwrap();
+        assert_eq!(
+            &command[..4],
+            [
+                "/usr/local/bin/fabric-agent",
+                "configure",
+                "--agent",
+                "main"
+            ]
+        );
+        assert_eq!(command[4], "--config");
+        assert!(command[5].starts_with("/sandbox/.nemoclaw-"));
+        assert_eq!(command[6], "--expected-generation");
+        assert_eq!(command[7], "fixture:0");
+        assert!(!command.iter().any(|arg| arg.contains("schema_version")));
+    }
+    fixture.state.lock().unwrap().health_report = Some(
+        serde_json::json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+    );
     let effects = fixture.state.lock().unwrap().effects;
     let writes = fixture
         .state
@@ -632,7 +679,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         .unwrap()
         .exec_calls
         .iter()
-        .filter(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+        .filter(|command| command.get(1).is_some_and(|arg| arg == "configure"))
         .count();
     client
         .read("agent_configuration", &binding, false)
@@ -646,7 +693,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
             state
                 .exec_calls
                 .iter()
-                .filter(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+                .filter(|command| command.get(1).is_some_and(|arg| arg == "configure"))
                 .count(),
             writes
         );
@@ -654,7 +701,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
             state
                 .exec_calls
                 .iter()
-                .any(|command| command.get(2).is_some_and(|arg| arg == "check"))
+                .any(|command| command.get(1).is_some_and(|arg| arg == "check"))
         );
     }
     fixture.state.lock().unwrap().exec_exit = 2;
@@ -727,7 +774,11 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
             .spec
             .as_mut()
             .unwrap();
-        assert_eq!(sandbox.providers, vec!["hosted", "local"]);
+        assert_eq!(
+            sandbox.providers,
+            serde_json::from_str::<Vec<String>>(&desired["provider_names_json"]).unwrap()
+        );
+        assert_eq!(sandbox.providers.len(), 2);
         sandbox.providers.pop();
     }
     assert!(client.read("sandbox", &row, false).await.is_err());
@@ -796,4 +847,170 @@ async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() 
         assert!(error.contains("exit code 1"), "{error}");
         assert!(!error.contains("secret-do-not-print"));
     }
+}
+
+#[tokio::test]
+async fn rejected_configuration_stops_startup_without_exec_and_preserves_bindings() {
+    use openshell_core::proto::{
+        ConfigurationAdmissionState, SandboxConfigurationAdmission, SandboxPhase,
+    };
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_slice(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let binding = binding.unwrap();
+    let key = format!("{}/{}", binding["workspace"], binding["name"]);
+    let effects = fixture.state.lock().unwrap().effects;
+    for (message, expected) in [
+        (
+            "Effective configuration could not be activated; replace the policy or repair attached providers",
+            "replace the policy or repair attached providers",
+        ),
+        (
+            "Effective provider configuration is invalid; repair credential bindings, attached providers, or their policy layers",
+            "repair credential bindings",
+        ),
+        ("PRIVATE_SENTINEL", "inspect the sandbox configuration"),
+    ] {
+        for phase in [SandboxPhase::Starting, SandboxPhase::Ready] {
+            {
+                let mut state = fixture.state.lock().unwrap();
+                let status = state
+                    .sandboxes
+                    .get_mut(&key)
+                    .unwrap()
+                    .status
+                    .as_mut()
+                    .unwrap();
+                status.phase = phase as i32;
+                status.configuration_admission = Some(SandboxConfigurationAdmission {
+                    instance_id: "PRIVATE_SENTINEL".into(),
+                    state: ConfigurationAdmissionState::Rejected as i32,
+                    error: message.into(),
+                    ..Default::default()
+                });
+            }
+            for configure in [false, true] {
+                let error = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    if configure {
+                        client.configure_agent(&binding, false).await
+                    } else {
+                        client
+                            .ready(&binding, &nemoclaw_sdk::CancellationToken::new())
+                            .await
+                    }
+                })
+                .await
+                .expect("a reported configuration rejection must not wait for startup timeout")
+                .unwrap_err()
+                .into_observation()
+                .to_string();
+                assert!(error.contains("configuration rejected"), "{error}");
+                assert!(error.contains(expected), "{error}");
+                assert!(error.contains("resources retained"), "{error}");
+                assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
+            }
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+            assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
+        }
+    }
+    // Identity and access failures take precedence over a rejection reported
+    // for a substituted or unreadable sandbox.
+    let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
+    for field in ["id", "owner", "generation"] {
+        let mut changed = original.clone();
+        let metadata = changed.metadata.as_mut().unwrap();
+        match field {
+            "id" => metadata.id = "other".into(),
+            "owner" => {
+                metadata
+                    .labels
+                    .insert(nemoclaw_provider::openshell::OWNER.into(), "other".into());
+            }
+            _ => {
+                metadata.labels.insert(
+                    nemoclaw_provider::openshell::GENERATION.into(),
+                    "other".into(),
+                );
+            }
+        }
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .insert(key.clone(), changed);
+        let error = client
+            .ready(&binding, &nemoclaw_sdk::CancellationToken::new())
+            .await
+            .unwrap_err()
+            .into_observation();
+        assert_eq!(error, nemoclaw_sdk::ObservationError::BindingMismatch);
+    }
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .insert(key.clone(), original);
+    for (code, expected) in [
+        (
+            tonic::Code::Unauthenticated,
+            nemoclaw_sdk::ObservationError::Authentication,
+        ),
+        (
+            tonic::Code::PermissionDenied,
+            nemoclaw_sdk::ObservationError::Permission,
+        ),
+        (
+            tonic::Code::Unavailable,
+            nemoclaw_sdk::ObservationError::Transport,
+        ),
+    ] {
+        fixture.state.lock().unwrap().fail_read = Some(("sandbox", code));
+        let error = client
+            .ready(&binding, &nemoclaw_sdk::CancellationToken::new())
+            .await
+            .unwrap_err()
+            .into_observation();
+        assert_eq!(error, expected);
+    }
+    fixture.state.lock().unwrap().fail_read = None;
+    // Planning must retain a nonterminal rejected sandbox so attached providers
+    // can be repaired, and teardown must remain independent of admission.
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .phase = SandboxPhase::Starting as i32;
+    assert_eq!(
+        client.read("sandbox", &binding, false).await.unwrap(),
+        Some(binding.clone())
+    );
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
 }

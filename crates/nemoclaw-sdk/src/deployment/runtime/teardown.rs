@@ -79,6 +79,7 @@ impl Deployment {
             })
             .transpose()?;
         let mut result = OperationResult::planned(Vec::new());
+        result.describe_sources(&record.document)?;
         result.retained.extend(root_graph.retained.iter().cloned());
         if let Some(graph) = &runtime_graph {
             result.retained.extend(graph.retained.iter().cloned());
@@ -269,17 +270,9 @@ fn validate_teardown_state(
     runtime_bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     if record.pending() {
-        let applicable_state_is_safe = if !record.runtime_pending() {
-            false
-        } else if record.document.has_runtime() {
-            runtime_bindings_safe(record, runtime_bindings)?
-        } else if !bindings.is_empty() {
-            // Older records used runtime_pending for bound-only OpenShell apply.
-            teardown_expected(record, bindings, false)?;
-            true
-        } else {
-            false
-        };
+        let applicable_state_is_safe = record.runtime_pending()
+            && record.document.has_runtime()
+            && runtime_bindings_safe(record, runtime_bindings)?;
         if !applicable_state_is_safe {
             return Err(Error::Conflict(
                 "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
@@ -325,9 +318,13 @@ mod tests {
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
         validate_teardown_state(&record, &bindings, &bindings).unwrap();
-        let mut saved = serde_json::to_value(&record).unwrap();
-        saved["pending"] = serde_json::json!(true);
-        record = serde_json::from_value(saved).unwrap();
+        let target = compile::targets(&record.document, &record.generations)
+            .unwrap()
+            .remove(0);
+        record.begin_apply(
+            &record.document.clone(),
+            [(target.address, target.values)].into(),
+        );
         assert_eq!(
             validate_teardown_state(&record, &bindings, &bindings)
                 .unwrap_err()
@@ -343,7 +340,7 @@ mod tests {
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
-        record.begin_runtime_apply(&record.document.clone());
+        record.begin_apply(&record.document.clone(), BTreeMap::new());
         let bindings = [
             (
                 "nemoclaw_workspace.deployment".into(),

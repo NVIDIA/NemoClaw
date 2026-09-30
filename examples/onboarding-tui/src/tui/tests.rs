@@ -6,6 +6,27 @@ use super::logo::BrandImage;
 use nemoclaw_authoring::{Answers, ApiChoice, Capabilities, Draft, HarnessChoice, Session};
 use ratatui::{Terminal, backend::TestBackend};
 
+fn installed_catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
+    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        health_checks: Vec::new(),
+    });
+    catalog
+}
+
 fn wizard() -> Wizard {
     let capabilities = Capabilities::available();
     let authored = Session::new()
@@ -269,7 +290,8 @@ fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
 
     assert_eq!(wizard.step(), Step::DeploymentName);
     assert!(
-        wizard.error().unwrap().contains("Metadata/properties/name"),
+        wizard.error().unwrap().contains("metadata.name")
+            && wizard.error().unwrap().contains("required pattern"),
         "{:?}",
         wizard.error()
     );
@@ -804,7 +826,7 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::Review, Input::Continue);
     let key = wizard.draft.discovery_key().unwrap();
-    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    let mut catalog = installed_catalog();
     catalog
         .adapters
         .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
@@ -955,7 +977,6 @@ fn establish_observed_discovery(wizard: &mut Wizard) {
     use nemoclaw_sdk::{
         discovery::{EngineObservation, FabricObservation, ObservationStatus},
         fabric_capabilities::ImageMetadata,
-        fabric_catalog::FabricCatalog,
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let key = wizard.draft.discovery_key().unwrap();
@@ -985,7 +1006,7 @@ fn establish_observed_discovery(wizard: &mut Wizard) {
             reason: None,
             source: "fixture".into(),
             image_id: Some("sha256:observed".into()),
-            catalog: Some(FabricCatalog::bundled()),
+            catalog: Some(installed_catalog()),
             image: ImageMetadata {
                 architecture: Some("arm64".into()),
                 operating_system: Some("linux".into()),

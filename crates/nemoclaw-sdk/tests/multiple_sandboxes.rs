@@ -30,7 +30,7 @@ fn graph(value: &Value) -> Value {
     .unwrap()
 }
 #[test]
-fn mixed_sandboxes_share_providers_and_ignore_declaration_order() {
+fn different_adapters_separate_provider_grants_and_ignore_declaration_order() {
     let mut value = example();
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("research");
@@ -57,7 +57,7 @@ fn mixed_sandboxes_share_providers_and_ignore_declaration_order() {
             .as_object()
             .unwrap()
             .len(),
-        1
+        2
     );
     value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
     assert_eq!(before, graph(&value));
@@ -127,7 +127,14 @@ fn adding_a_sandbox_preserves_existing_resource_addresses_and_values() {
     let after = graph(&value);
     for (kind, instances) in before["resource"].as_object().unwrap() {
         for (name, instance) in instances.as_object().unwrap() {
-            assert_eq!(instance, &after["resource"][kind][name]);
+            let mut prior = instance.clone();
+            let mut next = after["resource"][kind][name].clone();
+            // Adding an earlier sandbox changes the discovery expression; its resolved image metadata is identical.
+            for field in ["runtime_json", "binaries_json"] {
+                prior.as_object_mut().unwrap().remove(field);
+                next.as_object_mut().unwrap().remove(field);
+            }
+            assert_eq!(prior, next);
         }
     }
 }
@@ -170,7 +177,7 @@ fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference()
     let rows = nemoclaw_sdk::compile::targets(&document, &generations()).unwrap();
     let sandboxes: Vec<_> = rows.iter().filter(|row| row.kind == "sandbox").collect();
     assert_eq!(sandboxes.len(), 5);
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 1);
+    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 3);
     let mut counts = std::collections::BTreeMap::new();
     let mut names = std::collections::BTreeSet::new();
     for sandbox in &document.spec.sandboxes {

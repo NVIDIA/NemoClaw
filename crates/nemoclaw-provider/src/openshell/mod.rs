@@ -7,18 +7,16 @@ mod tests;
 mod agent;
 mod agent_configuration;
 mod connected;
+mod protocol;
+pub use protocol::AgentSnapshot;
 mod network;
 mod profile;
-pub use nemoclaw_sdk::config::{
-    inference_profile, isolated_policy as policy, isolated_policy_matches as policy_matches,
-    policy_json,
-};
+pub use nemoclaw_sdk::config::{inference_profile, policy_json};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
 use network::{row_policy, validate_row_policy};
 mod gateway;
 mod transport;
-pub use agent::{command, environment};
 use nemoclaw_sdk::{ObservationError, backend::Row};
 
 use nemoclaw_sdk::config::credential_metadata;
@@ -156,6 +154,7 @@ fn provider_row(
         }
         nemoclaw_sdk::services::authentication::Source::parse(&source, &row["owner"], endpoint)?;
     }
+    row.insert("profile_name".into(), String::new());
     row.insert("credential_source".into(), source);
     row.insert("endpoint".into(), endpoint.clone());
     row.insert("credential_env".into(), credential);
@@ -193,16 +192,35 @@ fn sandbox_row(
     let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
-    let mut expected_environment = self::environment(agent, &runtime);
+    let runtime_json = meta
+        .annotations
+        .get(agent::RUNTIME)
+        .ok_or(ObservationError::Incomplete)?
+        .clone();
+    let policy_input = meta
+        .annotations
+        .get(agent::POLICY)
+        .ok_or(ObservationError::Incomplete)?
+        .clone();
+    let binding = nemoclaw_sdk::image_runtime::RuntimeBinding::from_json(&runtime_json)?;
+    let input: nemoclaw_sdk::image_runtime::PolicyInput =
+        serde_json::from_str(&policy_input).map_err(|_| ObservationError::Incomplete)?;
+    let mut expected_environment = binding.environment(agent);
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
-    let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
+    if policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?
+        != policy_json(&binding.policy(&input)?)?
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
     let expected_providers = inference::provider_names(&inference, &runtime)?;
     if spec.providers != expected_providers {
         return Err(ObservationError::BindingMismatch);
     }
-    if image.is_empty() || spec.command != command(&runtime) || environment != expected_environment
+    if image.is_empty()
+        || spec.command != binding.command("serve", &["--agent", agent])
+        || environment != expected_environment
     {
         return Err(ObservationError::BindingMismatch);
     }
@@ -217,7 +235,8 @@ fn sandbox_row(
     row.insert("agent_runtime".into(), runtime);
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
-    row.insert("policy_json".into(), policy);
+    row.insert("policy_json".into(), policy_input);
+    row.insert("runtime_json".into(), runtime_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready))
 }

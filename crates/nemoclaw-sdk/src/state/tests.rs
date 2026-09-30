@@ -215,7 +215,7 @@ fn replacement_cleanup_keeps_current_and_deposed_objects_distinct() {
 #[test]
 fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
     let document = crate::config::Document::parse(
-        include_bytes!("../../tests/fixtures/config/local.yaml").as_slice(),
+        include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice(),
     )
     .unwrap();
     let mut record = Record::new(document).unwrap();
@@ -223,7 +223,13 @@ fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
     assert!(record.pending && record.runtime_pending);
     record.finish_runtime_apply();
     assert!(!record.pending && !record.runtime_pending);
-    record.pending = true;
+    let target = crate::compile::targets(&record.document, &record.generations)
+        .unwrap()
+        .remove(0);
+    record.begin_apply(
+        &record.document.clone(),
+        [(target.address, target.values)].into(),
+    );
     record.begin_runtime_apply(&record.document.clone());
     assert!(!record.runtime_pending);
     record.finish_runtime_apply();
@@ -242,7 +248,7 @@ fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery
         .find(|target| target.kind == "sandbox")
         .unwrap();
     record.pending = true;
-    record.pending_creations = Some([(pending.address.clone(), pending.values.clone())].into());
+    record.pending_creations = [(pending.address.clone(), pending.values.clone())].into();
     let mut revised = document.clone();
     let mut unrelated = revised.spec.inference_providers[0].clone();
     unrelated.name = "unrelated".into();
@@ -264,10 +270,7 @@ fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery
     record.begin_runtime_apply(&record.document.clone());
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
-    assert_eq!(
-        record.pending_creations.as_ref().unwrap()[&pending.address],
-        pending.values
-    );
+    assert_eq!(record.pending_creations[&pending.address], pending.values);
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
     store.save(&record).unwrap();
@@ -291,12 +294,12 @@ fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
         &document,
         [(second.address.clone(), second.values.clone())].into(),
     );
-    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    assert_eq!(record.pending_creations.len(), 2);
     record.begin_apply(&document, BTreeMap::new());
     assert!(record.pending && !record.runtime_pending);
-    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    assert_eq!(record.pending_creations.len(), 2);
     record.finish_apply();
-    assert!(!record.pending && record.pending_creations.is_none());
+    assert!(!record.pending && record.pending_creations.is_empty());
     record.begin_apply(&document, BTreeMap::new());
     assert!(!record.pending && !record.runtime_pending);
     assert!(record.validate_pending_intent(&document).is_ok());
@@ -318,53 +321,77 @@ fn applying_only_bound_resources_does_not_require_creation_recovery() {
         "OpenTofu already owns every planned resource binding"
     );
     assert!(!recovered.runtime_pending);
-    assert!(recovered.pending_creations.is_none());
+    assert!(recovered.pending_creations.is_empty());
+}
+
+fn assert_rejected_record_preserves_state(value: serde_json::Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    let intent = directory.path().join("intent.json");
+    let resources = directory.path().join("terraform.tfstate");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let binding = br#"{"resources":[{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
+    fs::write(&intent, &bytes).unwrap();
+    fs::write(&resources, binding).unwrap();
+    assert!(
+        store.load().is_err(),
+        "unsupported record was accepted: {value}"
+    );
+    assert_eq!(fs::read(intent).unwrap(), bytes);
+    assert_eq!(fs::read(resources).unwrap(), binding);
 }
 
 #[test]
-fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
+fn pending_creation_requires_current_per_resource_evidence() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
     let mut record = Record::new(document.clone()).unwrap();
-    record.pending = true;
-    let mut revised = document.clone();
-    revised.spec.sandboxes[0].image.ref_ =
-        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
-    revised.validate().unwrap();
-    assert!(record.validate_pending_intent(&revised).is_err());
     let target = crate::compile::targets(&document, &record.generations)
         .unwrap()
         .remove(0);
     record.begin_apply(&document, [(target.address, target.values)].into());
-    assert!(record.pending_creations.is_none());
-    assert!(record.validate_pending_intent(&revised).is_err());
-    record.finish_apply();
-    assert!(record.validate_pending_intent(&revised).is_ok());
+    let mut missing = serde_json::to_value(&record).unwrap();
+    missing.as_object_mut().unwrap().remove("pendingCreations");
+    assert_rejected_record_preserves_state(missing.clone());
+    for evidence in [
+        serde_json::Value::Null,
+        serde_json::json!({}),
+        serde_json::json!("invalid"),
+        serde_json::json!({"nemoclaw_sandbox.unknown": {}}),
+    ] {
+        let mut malformed = missing.clone();
+        malformed["pendingCreations"] = evidence;
+        assert_rejected_record_preserves_state(malformed);
+    }
 }
 
 #[test]
-fn obsolete_plan_hash_is_read_but_not_retained_as_recovery_authority() {
+fn obsolete_plan_hash_is_rejected_without_rewriting_state() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
     let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
     value["planDigest"] = serde_json::json!("old-failed-apply-plan");
-    let record: Record = serde_json::from_value(value).unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let store = Store::open(directory.path()).unwrap();
-    store.save(&record).unwrap();
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(directory.path().join("intent.json")).unwrap())
+    assert_rejected_record_preserves_state(value);
+}
+
+#[test]
+fn runtime_pending_without_a_runtime_is_rejected_without_rewriting_state() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
-    assert!(saved.get("planDigest").is_none());
-    assert!(store.load().unwrap().is_some());
+    assert!(!document.has_runtime());
+    let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    value["pending"] = serde_json::json!(true);
+    value["runtimePending"] = serde_json::json!(true);
+    assert_rejected_record_preserves_state(value);
 }
 
 #[test]
 fn recovery_checkpoints_survive_reload_and_reapply() {
     let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+        Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
             .unwrap();
     let mut record = Record::new(document.clone()).unwrap();
     let generations = record.generations.clone();
@@ -417,7 +444,7 @@ fn recovery_checkpoints_survive_reload_and_reapply() {
 #[test]
 fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoint() {
     let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+        Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
             .unwrap();
     let mut record = Record::new(document.clone()).unwrap();
     record.begin_runtime_apply(&document);
@@ -432,7 +459,7 @@ fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoin
     record = store.load().unwrap().unwrap();
     assert!(record.root_destroyed());
     record.finish_destroy();
-    assert!(!record.runtime_pending && record.pending_creations.is_none());
+    assert!(!record.runtime_pending && record.pending_creations.is_empty());
     store.save(&record).unwrap();
     assert_eq!(store.load().unwrap().unwrap(), record);
 }
@@ -485,7 +512,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
         let mut retained = record.clone();
         retained.reconcile_pending_creations(&mismatched);
         assert!(retained.pending(), "{field}");
-        let unresolved = retained.pending_creations.unwrap();
+        let unresolved = retained.pending_creations;
         assert!(unresolved.contains_key(sandbox));
         assert!(unresolved.contains_key("nemoclaw_agent_configuration.assistant"));
     }
@@ -497,19 +524,14 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
     bindings.remove(&missing);
     record.reconcile_pending_creations(&bindings);
     assert_eq!(
-        record
-            .pending_creations
-            .as_ref()
-            .unwrap()
-            .keys()
-            .collect::<Vec<_>>(),
+        record.pending_creations.keys().collect::<Vec<_>>(),
         [&missing]
     );
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
     store.save(&record).unwrap();
     assert_eq!(store.load().unwrap().unwrap(), record);
-    let desired = &record.pending_creations.as_ref().unwrap()[&missing];
+    let desired = &record.pending_creations[&missing];
     bindings.insert(
         missing.clone(),
         StateBinding {
@@ -523,7 +545,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
     );
     record.reconcile_pending_creations(&bindings);
     assert!(!record.pending());
-    assert!(record.pending_creations.is_none());
+    assert!(record.pending_creations.is_empty());
 }
 
 #[test]

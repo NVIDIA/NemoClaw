@@ -17,7 +17,7 @@ Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
 
-- Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
+- Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
@@ -315,6 +315,7 @@ An existing gateway managed outside this deployment.
 |---|---|---|---|---|
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
+| `engine` | string | No | — | Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
@@ -522,6 +523,8 @@ Paths:
 | `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
+
+When `gpuMemoryUtilization` is present: `gpuMemoryGiB`: `0`; `kvCacheGiB`: `0`. Otherwise: `kvCacheGiB`: `0` or minimum 4; maximum 12.
 
 ## Metadata
 
@@ -884,7 +887,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional native tuning, and optional legacy model metadata. |
+| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, shared limits, and optional native settings. |
 | `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -900,7 +903,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `provider` | string | No | `"docker"` | Docker or Podman driver. A managed service with Podman requires explicit service placement. Constraints: `""` or `"docker"` or `"podman"`. Omitted or empty selects the default. |
+| `provider` | string | No | `"docker"` | Docker or Podman driver. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"`. |
 
 ## Sandbox
 

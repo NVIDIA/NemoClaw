@@ -17,9 +17,34 @@ fn annotations(fields: Row) -> std::collections::HashMap<String, String> {
     .into()
 }
 
-fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto::ProviderProfile {
-    let rule = nemoclaw_sdk::config::search_policy(provider);
-    let name = provider.profile();
+fn binaries(want: &Row) -> Result<Vec<proto::NetworkBinary>, ObservationError> {
+    let paths: Vec<String> = serde_json::from_str(
+        want.get("binaries_json")
+            .ok_or(ObservationError::Incomplete)?,
+    )
+    .map_err(|_| ObservationError::Query)?;
+    if paths.is_empty()
+        || paths.iter().any(|path| {
+            !path.starts_with('/')
+                || path.contains('\0')
+                || path.split('/').any(|part| part == "..")
+        })
+    {
+        return Err(ObservationError::Query);
+    }
+    Ok(paths
+        .into_iter()
+        .map(|path| proto::NetworkBinary { path })
+        .collect())
+}
+
+fn definition(
+    provider: SearchProvider,
+    want: &Row,
+) -> Result<proto::ProviderProfile, ObservationError> {
+    let mut rule = nemoclaw_sdk::config::search_policy(provider);
+    let name = &want["name"];
+    rule.name = name.clone();
     let policy = openshell_policy::parse_sandbox_policy(
         &serde_json::json!({
             "version": 1, "network_policies": {name: rule}
@@ -32,8 +57,8 @@ fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto:
         SearchProvider::Brave => ("Brave", "header", "X-Subscription-Token"),
         SearchProvider::Tavily => ("Tavily", "bearer", "authorization"),
     };
-    proto::ProviderProfile {
-        id: name.into(),
+    Ok(proto::ProviderProfile {
+        id: name.clone(),
         display_name: format!("NemoClaw {display} Search"),
         description: format!("Declared {display} web search"),
         category: proto::ProviderProfileCategory::Knowledge as i32,
@@ -47,16 +72,14 @@ fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto:
             ..Default::default()
         }],
         endpoints: network.endpoints.clone(),
-        binaries: network.binaries.clone(),
+        binaries: binaries(want)?,
         annotations: annotations(
-            [
-                ("owner".into(), owner.into()),
-                ("generation".into(), generation.into()),
-            ]
-            .into(),
+            ["owner", "generation", "binaries_json"]
+                .map(|key| (key.into(), want[key].clone()))
+                .into(),
         ),
         ..Default::default()
-    }
+    })
 }
 fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
     let name = want["name"]
@@ -77,6 +100,7 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         },
         authenticated,
     )?;
+    profile.binaries = binaries(want)?;
     profile.annotations = annotations(
         [
             "owner",
@@ -84,6 +108,7 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
             "endpoint",
             "provider_type",
             "authenticated",
+            "binaries_json",
         ]
         .map(|key| (key.into(), want.get(key).cloned().unwrap_or_default()))
         .into(),
@@ -127,6 +152,18 @@ fn row(
     let mut fields: Row = ["endpoint", "provider_type", "authenticated"]
         .map(|key| (key.into(), String::new()))
         .into();
+    fields.extend([
+        ("name".into(), name.into()),
+        ("owner".into(), owner.clone()),
+        ("generation".into(), generation.clone()),
+        (
+            "binaries_json".into(),
+            metadata
+                .get("binaries_json")
+                .cloned()
+                .ok_or(ObservationError::Incomplete)?,
+        ),
+    ]);
     let expected = if name.starts_with("nemoclaw-inference-") {
         fields.extend([
             ("name".into(), name.into()),
@@ -144,7 +181,7 @@ fn row(
         }
         native_definition(&fields)?
     } else {
-        definition(search.ok_or(ObservationError::Query)?, &owner, &generation)
+        definition(search.ok_or(ObservationError::Query)?, &fields)?
     };
     if profile != expected {
         return Err(ObservationError::BindingMismatch);
@@ -185,7 +222,7 @@ pub(super) fn provider_row(
         .filter(|s| !s.is_empty())
         .ok_or(ObservationError::Incomplete)?
         .clone();
-    if name != nemoclaw_sdk::config::search_provider_name(search, &credential) {
+    if name != nemoclaw_sdk::config::search_provider_name(search, &credential, &provider.r#type) {
         return Err(ObservationError::BindingMismatch);
     }
     let mut result = base(provider.metadata, name, removing)?;
@@ -193,6 +230,7 @@ pub(super) fn provider_row(
     result.extend([
         ("endpoint".into(), search.endpoint().into()),
         ("provider_type".into(), search.name().into()),
+        ("profile_name".into(), provider.r#type),
         ("credential_env".into(), credential),
     ]);
     Ok(result)
@@ -234,7 +272,7 @@ impl ConnectedOpenShellGateway {
                 workspace_scope: Some(proto::workspace_selector(&want["workspace"])),
                 profiles: vec![proto::ProviderProfileImportItem {
                     profile: Some(if let Some(search) = search {
-                        definition(search, &want["owner"], &want["generation"])
+                        definition(search, want)?
                     } else {
                         native_definition(want)?
                     }),
@@ -266,6 +304,7 @@ mod tests {
 
     fn native_fields(kind: &str, authenticated: bool) -> Row {
         [
+            ("binaries_json", r#"["/srv/python3.99","/srv/bun"]"#),
             ("name", "nemoclaw-inference-test"),
             ("owner", "deployment"),
             ("generation", "generation"),
@@ -281,11 +320,43 @@ mod tests {
         .collect()
     }
 
+    fn search_definition(provider: SearchProvider) -> proto::ProviderProfile {
+        let mut fields = native_fields("", true);
+        fields.insert("name".into(), provider.profile().into());
+        definition(provider, &fields).unwrap()
+    }
+
+    #[test]
+    fn executable_grants_require_observed_paths_and_reject_live_broadening() {
+        for encoded in ["[]", "{}", r#"["python"]"#, r#"["/srv/../bin/python"]"#] {
+            let mut want = native_fields("", true);
+            want.insert("binaries_json".into(), encoded.into());
+            assert!(native_definition(&want).is_err());
+            want.insert("name".into(), SearchProvider::Brave.profile().into());
+            assert!(definition(SearchProvider::Brave, &want).is_err());
+        }
+        let mut profile = native_definition(&native_fields("", true)).unwrap();
+        assert_eq!(
+            profile
+                .binaries
+                .iter()
+                .map(|binary| binary.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/srv/python3.99", "/srv/bun"]
+        );
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        assert!(row(profile.clone(), "workspace", &profile.id, true).is_ok());
+        profile.binaries.clear();
+        assert!(row(profile.clone(), "workspace", &profile.id, true).is_err());
+    }
+
     #[test]
     fn imported_profiles_have_stable_revision_bytes_after_wire_round_trips() {
         let mut profiles = vec![
-            definition(SearchProvider::Brave, "deployment", "generation"),
-            definition(SearchProvider::Tavily, "deployment", "generation"),
+            search_definition(SearchProvider::Brave),
+            search_definition(SearchProvider::Tavily),
         ];
         for kind in ["", "anthropic"] {
             for authenticated in [false, true] {
@@ -392,7 +463,7 @@ mod tests {
                 "TAVILY_API_KEY",
             ),
         ] {
-            let mut profile = definition(provider, "deployment", "generation");
+            let mut profile = search_definition(provider);
             assert_eq!(profile.credentials.len(), 1);
             assert_eq!(profile.credentials[0].auth_style, auth);
             assert_eq!(profile.credentials[0].header_name, header);

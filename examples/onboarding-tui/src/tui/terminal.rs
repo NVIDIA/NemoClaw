@@ -365,7 +365,7 @@ fn discovery_queries(
 ) -> Vec<DiscoveryQuery> {
     let key = &evidence.key;
     let mut queries = Vec::new();
-    if !key.engine.is_empty() && evidence.engine.is_none() {
+    if key.managed_gateway && !key.engine.is_empty() && evidence.engine.is_none() {
         queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
             engine: key.engine.clone(),
             compute_driver: key.compute_driver,
@@ -377,7 +377,7 @@ fn discovery_queries(
             image: key.image.clone(),
         });
     }
-    if !key.engine.is_empty() && facts.hardware.is_none() {
+    if key.managed_gateway && !key.engine.is_empty() && facts.hardware.is_none() {
         queries.push(DiscoveryQuery::Hardware {
             engine: key.engine.clone(),
         });
@@ -430,6 +430,35 @@ mod target_tests {
                 .iter()
                 .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
             "unresolved engine must not target the local daemon: {queries:?}"
+        );
+    }
+
+    #[test]
+    fn external_gateway_queries_its_image_store_without_gateway_or_hardware_probes() {
+        let mut document = draft().document().clone();
+        document.spec.gateway = serde_json::from_value(serde_json::json!({
+            "management": "external",
+            "endpoint": "https://gateway.example:8080",
+            "engine": "ssh://images@example.com",
+        }))
+        .unwrap();
+        document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
+        let draft = Draft::from_document(document).unwrap();
+        let evidence = DiscoveryEvidence {
+            key: draft.discovery_key().unwrap(),
+            engine: None,
+            fabric: None,
+        };
+        let request = draft.inference_request(&Capabilities::available()).unwrap();
+        assert_eq!(
+            discovery_queries(&evidence, &AuthoringFacts::default(), request.clone()),
+            vec![
+                DiscoveryQuery::Fabric {
+                    engine: "ssh://images@example.com".into(),
+                    image: evidence.key.image.clone(),
+                },
+                DiscoveryQuery::Inference(request),
+            ]
         );
     }
 

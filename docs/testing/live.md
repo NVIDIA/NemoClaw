@@ -155,7 +155,8 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
     selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
-It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+It checks initial apply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+It sends no agent requests; use the [Fabric test](#spark-and-fabric) for explicit invocation.
 Explicit recovery must preserve durable storage bindings and the model manifest; the Docker provider may replace inference compute.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
@@ -180,7 +181,7 @@ Select it explicitly; do not run live tests as an ignored-test aggregate.
 ## Hosted NVIDIA Hermes Parity
 
 The [hosted Hermes test](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) compares an exact-hash historical export with separately authored v1 YAML through a test-only projection.
-It checks expected plan and apply results, the explicit unsupported text-probe contract, unchanged apply with stable resource identities, export/reapply, and destroy.
+It checks expected plan and apply results, unchanged apply with stable resource identities, export/reapply, and destroy without requesting a model response.
 It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, the immutable Hermes image, and the declared NVIDIA credential.
 Select `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` explicitly; the test writes no separate report.
 This scenario does not qualify Relay or Switchyard.

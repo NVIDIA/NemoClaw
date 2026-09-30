@@ -35,7 +35,7 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
     )
     .unwrap();
     assert!(
-        !policy["network_policies"]
+        !policy["managed"]
             .as_object()
             .unwrap()
             .contains_key("nemoclaw-otlp")

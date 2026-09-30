@@ -15,11 +15,22 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fabric import RuntimeHost
-from nemo_fabric import FabricRuntimeError
 from nemo_fabric_adapters.openclaw.adapter import OpenClawRuntime
 
 
 class OpenClawReconfiguration(unittest.IsolatedAsyncioTestCase):
+    async def configure(self, host, config, status="succeeded"):
+        response = await host.handle(
+            {
+                "operation": "configure",
+                "agent": "main",
+                "config": config,
+                "expected_generation": host.snapshot()["generation"],
+            }
+        )
+        self.assertEqual(response["status"], status, response["error"])
+        return response
+
     async def test_owned_process_stops_when_the_sandbox_denies_group_signals(self):
         runtime = OpenClawRuntime()
         runtime.process = await asyncio.create_subprocess_exec(
@@ -58,52 +69,48 @@ class OpenClawReconfiguration(unittest.IsolatedAsyncioTestCase):
             }
             host = RuntimeHost("main", root)
             try:
-                await host.configure(config)
-                original_id = host.status()["runtime_id"]
+                await self.configure(host, config)
+                original_id = host.snapshot()["runtime_id"]
                 home = root / ".openclaw"
                 retained = home / "retained-channel-state"
                 retained.write_text("retained native data")
                 changed = copy.deepcopy(config)
                 changed["models"]["default"]["model"] = "stub-b"
-                await host.configure(changed)
-                self.assertTrue(host.status()["ready"])
-                self.assertNotEqual(host.status()["runtime_id"], original_id)
+                await self.configure(host, changed)
+                self.assertEqual(host.snapshot()["runtime_state"], "running")
+                self.assertNotEqual(host.snapshot()["runtime_id"], original_id)
                 native = json.loads((home / "openclaw.json").read_text())
                 model = native["models"]["providers"]["fabric_default"]["models"][0]
                 self.assertEqual(model["id"], "stub-b")
                 changed["models"]["default"]["max_tokens"] = 2048
                 changed["tools"] = {"blocked": ["browser"]}
-                await host.configure(changed)
+                await self.configure(host, changed)
                 native = json.loads((home / "openclaw.json").read_text())
                 self.assertEqual(
                     native["models"]["providers"]["fabric_default"]["models"][0]["maxTokens"], 2048
                 )
                 self.assertEqual(native["agents"]["entries"]["main"]["tools"]["deny"], ["browser"])
-                stable_id = host.status()["runtime_id"]
-                await host.configure(changed)
-                self.assertEqual(host.status()["runtime_id"], stable_id)
-                failed = copy.deepcopy(changed)
-                failed["harness"]["settings"]["cli"] = "/missing/openclaw.mjs"
-                with self.assertRaises(FabricRuntimeError) as failure:
-                    await host.configure(failed)
-                self.assertEqual(
-                    host.failure(failure.exception)["error"],
-                    {
-                        "stage": "start",
-                        "code": "fabric_start_failed",
-                        "runtime_state": "unavailable",
-                    },
-                )
-                self.assertFalse(host.status()["ready"])
-                await host.configure(changed)
+                stable_id = host.snapshot()["runtime_id"]
+                await self.configure(host, changed)
+                self.assertEqual(host.snapshot()["runtime_id"], stable_id)
                 await host.stop()
                 host = RuntimeHost("main", root)
-                await host.configure(config)
-                self.assertTrue(host.status()["ready"])
+                await self.configure(host, config)
+                self.assertEqual(host.snapshot()["runtime_state"], "running")
+                failed = copy.deepcopy(config)
+                failed["harness"]["settings"]["cli"] = "/missing/openclaw.mjs"
+                response = await self.configure(host, failed, status="failed")
+                self.assertEqual(response["error"]["stage"], "start")
+                self.assertEqual(response["error"]["code"], "lifecycle_adapter_start_failed")
+                self.assertEqual(response["error"]["effects"], "unknown")
+                self.assertEqual(response["result"]["runtime_state"], "unknown")
+                self.assertIsNone(response["result"]["runtime_id"])
+                self.assertIsNone(response["result"]["applied_config"])
                 self.assertEqual(history.read_text(), "retained workspace data")
                 self.assertEqual(retained.read_text(), "retained native data")
             finally:
-                await host.stop()
+                if host.runtime is not None:
+                    await host.stop()
 
 
 if __name__ == "__main__":

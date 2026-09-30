@@ -47,13 +47,18 @@ pub(super) trait OpenShellGateway: Send + Sync {
     async fn delete(&self, kind: &str, workspace: &str, name: &str)
     -> Result<(), ObservationError>;
     async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError>;
-    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error>;
+    async fn sandbox_phase(
+        &self,
+        binding: &Row,
+        check_configuration: bool,
+    ) -> Result<SandboxPhase, Error>;
     async fn exec(
         &self,
         binding: &Row,
         command: Vec<String>,
         environment: Row,
         seconds: u32,
+        stdin: Vec<u8>,
     ) -> Result<(i32, Vec<u8>), Error>;
 }
 
@@ -204,7 +209,7 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    active_policy(status, &row["policy_json"])?;
+                    active_policy(status, &policy_json(&row_policy(&row)?)?)?;
                 }
                 Some(row)
             }
@@ -260,8 +265,12 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
         ConnectedOpenShellGateway::gateway_capabilities(self).await
     }
 
-    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error> {
-        ConnectedOpenShellGateway::sandbox_phase(self, binding).await
+    async fn sandbox_phase(
+        &self,
+        binding: &Row,
+        check_configuration: bool,
+    ) -> Result<SandboxPhase, Error> {
+        ConnectedOpenShellGateway::sandbox_phase(self, binding, check_configuration).await
     }
 
     async fn exec(
@@ -270,8 +279,9 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
         command: Vec<String>,
         environment: Row,
         seconds: u32,
+        stdin: Vec<u8>,
     ) -> Result<(i32, Vec<u8>), Error> {
-        ConnectedOpenShellGateway::exec(self, binding, command, environment, seconds).await
+        ConnectedOpenShellGateway::exec(self, binding, command, environment, seconds, stdin).await
     }
 }
 
@@ -295,7 +305,34 @@ fn row_value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
 
-pub(super) fn decode_sandbox_phase(status: proto::SandboxStatus) -> Result<SandboxPhase, Error> {
+pub(super) fn decode_sandbox_phase(
+    status: proto::SandboxStatus,
+    check_configuration: bool,
+) -> Result<SandboxPhase, Error> {
+    if check_configuration
+        && let Some(admission) = &status.configuration_admission
+        && admission.state == proto::ConfigurationAdmissionState::Rejected as i32
+    {
+        // The pinned gateway replaces runtime parser text with public admission
+        // diagnostics. Keep only its fixed vocabulary; never echo unknown text,
+        // policy load_error, credentials, or supervisor instance identifiers.
+        let reason = match admission.error.as_str() {
+            "Effective configuration could not be activated; replace the policy or repair attached providers" => {
+                "Effective configuration could not be activated; replace the policy or repair attached providers"
+            }
+            "Effective provider configuration is invalid; repair credential bindings, attached providers, or their policy layers" => {
+                "Effective provider configuration is invalid; repair credential bindings, attached providers, or their policy layers"
+            }
+            "Effective middleware configuration is invalid; repair the policy middleware bindings or registered services" => {
+                "Effective middleware configuration is invalid; repair the policy middleware bindings or registered services"
+            }
+            "Stored policy structure or safety validation failed; submit a complete valid replacement policy" => {
+                "Stored policy structure or safety validation failed; submit a complete valid replacement policy"
+            }
+            _ => "inspect the sandbox configuration; repair its policy or attached providers",
+        };
+        return Err(ObservationError::SandboxConfigurationRejected { reason }.into());
+    }
     if let Ok(
         phase @ (proto::SandboxPhase::Error
         | proto::SandboxPhase::Deleting
@@ -353,15 +390,33 @@ impl ConnectedOpenShellGateway {
             binding,
             &base(sandbox.metadata.clone(), row_value(binding, "name"), false)?,
         )?;
+        let (observed, _) = sandbox_row(
+            proto::SandboxResponse {
+                sandbox: Some(sandbox.clone()),
+                ..Default::default()
+            },
+            row_value(binding, "name"),
+            false,
+        )?;
+        for field in ["runtime_json", "agent_name", "agent_runtime"] {
+            if binding.get(field) != observed.get(field) {
+                return Err(ObservationError::BindingMismatch.into());
+            }
+        }
         Ok(sandbox)
     }
 
-    async fn sandbox_phase(&self, binding: &Row) -> Result<SandboxPhase, Error> {
+    async fn sandbox_phase(
+        &self,
+        binding: &Row,
+        check_configuration: bool,
+    ) -> Result<SandboxPhase, Error> {
         decode_sandbox_phase(
             self.bound_sandbox(binding)
                 .await?
                 .status
                 .ok_or(ObservationError::Incomplete)?,
+            check_configuration,
         )
     }
 
@@ -371,6 +426,7 @@ impl ConnectedOpenShellGateway {
         command: Vec<String>,
         environment: Row,
         seconds: u32,
+        stdin: Vec<u8>,
     ) -> Result<(i32, Vec<u8>), Error> {
         // Exec is name-addressed upstream; verify the retained identity immediately
         // before sending and never retry an ambiguous invocation.
@@ -379,6 +435,8 @@ impl ConnectedOpenShellGateway {
             sandbox: sandbox.metadata.ok_or(ObservationError::Incomplete)?.name,
             workspace_scope: Some(proto::workspace_selector(row_value(binding, "workspace"))),
             command,
+            stdin,
+            no_login_shell: true,
             environment: environment.into_iter().collect(),
             execution_timeout: Some(
                 openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
@@ -406,7 +464,7 @@ impl ConnectedOpenShellGateway {
             }
             match event.payload.ok_or(ObservationError::Incomplete)? {
                 proto::exec_sandbox_event::Payload::Stdout(chunk) => {
-                    if output.len() + chunk.data.len() > 1 << 20 {
+                    if output.len() + chunk.data.len() > protocol::RESPONSE_LIMIT {
                         return Err(Error::Conflict("sandbox exec output exceeds limit"));
                     }
                     output.extend(chunk.data);
@@ -478,7 +536,11 @@ mod tests {
             unreachable!()
         }
 
-        async fn sandbox_phase(&self, _binding: &Row) -> Result<SandboxPhase, Error> {
+        async fn sandbox_phase(
+            &self,
+            _binding: &Row,
+            _check_configuration: bool,
+        ) -> Result<SandboxPhase, Error> {
             unreachable!()
         }
 
@@ -488,6 +550,7 @@ mod tests {
             _command: Vec<String>,
             _environment: Row,
             _seconds: u32,
+            _stdin: Vec<u8>,
         ) -> Result<(i32, Vec<u8>), Error> {
             unreachable!()
         }
@@ -564,6 +627,44 @@ mod tests {
     }
 
     #[test]
+    fn startup_failures_name_the_sandbox_and_explain_known_reasons_without_backend_text() {
+        for (reason, guidance) in [
+            (
+                "IdentityResolutionFailed",
+                "check policy.process.run_as_user and run_as_group",
+            ),
+            (
+                "ControlSupervisorStartFailed",
+                "check the sandbox policy and attached providers",
+            ),
+        ] {
+            let failure = decode_sandbox_phase(
+                proto::SandboxStatus {
+                    phase: proto::SandboxPhase::Error as i32,
+                    conditions: vec![proto::SandboxCondition {
+                        r#type: "Ready".into(),
+                        status: "False".into(),
+                        reason: reason.into(),
+                        message: "PRIVATE_SENTINEL".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap_err();
+            let direct = failure.to_string();
+            let observation = failure.into_observation();
+            assert_eq!(direct, observation.to_string());
+            let message = crate::resource::observation_message(observation, Some("coder"));
+            for expected in ["sandbox/coder", reason, guidance, "resources retained"] {
+                assert!(message.contains(expected), "{message}");
+            }
+            assert!(!message.contains("PRIVATE_SENTINEL"));
+        }
+    }
+
+    #[test]
     fn terminal_sandbox_reports_known_failure_without_backend_text() {
         for (kind, status, reason, expected) in [
             (
@@ -589,17 +690,20 @@ mod tests {
             ("Ready", "True", "ControlSupervisorExited", "unknown"),
             ("Other", "False", "ControlSupervisorExited", "unknown"),
         ] {
-            let error = decode_sandbox_phase(proto::SandboxStatus {
-                phase: proto::SandboxPhase::Error as i32,
-                conditions: vec![proto::SandboxCondition {
-                    r#type: kind.into(),
-                    status: status.into(),
-                    reason: reason.into(),
-                    message: "secret-sentinel".into(),
+            let error = decode_sandbox_phase(
+                proto::SandboxStatus {
+                    phase: proto::SandboxPhase::Error as i32,
+                    conditions: vec![proto::SandboxCondition {
+                        r#type: kind.into(),
+                        status: status.into(),
+                        reason: reason.into(),
+                        message: "secret-sentinel".into(),
+                        ..Default::default()
+                    }],
                     ..Default::default()
-                }],
-                ..Default::default()
-            })
+                },
+                false,
+            )
             .unwrap_err()
             .into_observation()
             .to_string();

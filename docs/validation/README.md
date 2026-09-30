@@ -28,6 +28,18 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 
 | Behavior | Tests and Results |
 |---|---|
+| Relocated image launch, separate executable grants, unchanged apply, export, and teardown | [Linux ARM64 runtime consumer qualification](image-runtime-consumers-linux-arm64.md) |
+| Image-owned runtime metadata, executable resolution, and SDK catalog validation | [Linux ARM64 metadata qualification](image-runtime-metadata-linux-arm64.md) |
+| Failure-state boundaries, authored resource identities, restart guidance, and deferred proxy previews | [Linux ARM64 CLI results](cli-results-linux-arm64.md) |
+| Document validation paths, safe source positions, strict YAML tags, and conditional memory bounds | [Linux ARM64 configuration diagnostics](configuration-diagnostics-linux-arm64.md) |
+| Named OpenShell startup reasons, safe explanations, and failed-first-apply teardown | [Linux ARM64 sandbox startup qualification](sandbox-startup-linux-arm64.md) |
+| Fabric runtime error codes, named sandbox failures, and retained-state recovery | [Linux ARM64 runtime failure qualification](fabric-runtime-failure-linux-arm64.md) |
+| Named Fabric compatibility rejections, safe field details, and Pi model-token overrides | [Linux ARM64 compatibility diagnostics](fabric-compatibility-linux-arm64.md) |
+| Managed Docker gateway exit diagnostics, bounded readiness, and recovery | [Linux ARM64 gateway startup qualification](gateway-startup-linux-arm64.md) |
+| Runtime policy rejection, safe sandbox diagnostics, retained bindings, recovery, and destroy | [Linux ARM64 policy rejection qualification](policy-rejection-linux-arm64.md) |
+| Runtime-image version checks, pre-mutation rejection, and image-only failure cleanup | [Linux ARM64 compatibility fixtures](runtime-image-compatibility-linux-arm64.md) |
+| Complete resource plans, unverified catalogs/readiness, and retained apply gates | [Linux ARM64 completeness fixtures](plan-completeness-linux-arm64.md) |
+| Brave and Tavily export, authored integration scopes, shared registrations, and drift refusal | [Linux ARM64 search export fixtures](web-search-export-linux-arm64.md) |
 | Short and colliding credentials, bounded diagnostics, and CLI failure recovery | [Linux ARM64 redaction fixtures](credential-redaction-linux-arm64.md) |
 | OpenClaw model/settings updates, retained files, safe failure reporting, and explicit retry | [Linux ARM64 OpenClaw qualification](openclaw-reconfiguration-linux-arm64.md) |
 | Refused sandbox removal, image and policy changes preserve intent, export, and direct destroy | [Linux ARM64 refusal qualification](refused-apply-linux-arm64.md) |

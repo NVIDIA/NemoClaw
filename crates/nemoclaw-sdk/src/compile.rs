@@ -82,6 +82,7 @@ fn targets_with_plans(
     for sandbox in sandboxes {
         let harness = document.sandbox_harness(sandbox)?;
         let web_search = document.web_search(sandbox)?;
+        let image_scope = document.image_scope(sandbox)?;
         let agent_name = &sandbox.agent.name;
         let mut provider_names = document
             .sandbox_inference_providers(sandbox)?
@@ -92,6 +93,7 @@ fn targets_with_plans(
             provider_names.push(crate::config::search_provider_name(
                 search.provider,
                 &search.credential.env,
+                &search.provider.image_profile(&image_scope),
             ));
         }
 
@@ -112,32 +114,12 @@ fn targets_with_plans(
             ),
         ]
         .into();
-        let mut policy = sandbox.policy_proto(web_search.as_ref().map(|search| search.provider))?;
-        for provider in document.sandbox_inference_providers(sandbox)? {
-            let connection = document.provider_connection(provider.definition)?;
-            let profile = crate::config::inference_profile(
-                &provider.key,
-                &connection.endpoint,
-                provider.definition.provider,
-                false,
-            )
-            .map_err(|_| ConfigError::new("invalid native inference policy"))?;
-            if policy.network_policies.contains_key(&profile.id) {
-                return Err(ConfigError::new("inference policy name is reserved"));
-            }
-            policy.network_policies.insert(
-                profile.id.clone(),
-                openshell_core::proto::NetworkPolicyRule {
-                    name: profile.id,
-                    endpoints: profile.endpoints,
-                    binaries: profile.binaries,
-                },
-            );
-        }
         values.insert(
             "policy_json".into(),
-            crate::config::policy_json(&policy)
-                .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?,
+            serde_json::to_string(&crate::image_runtime::PolicyInput::for_sandbox(
+                document, sandbox,
+            )?)
+            .expect("policy input"),
         );
         {
             result.push(Target {
@@ -169,10 +151,14 @@ fn targets_with_plans(
             values,
         });
         if let Some(search) = web_search {
-            let provider_name =
-                crate::config::search_provider_name(search.provider, &search.credential.env);
+            let profile_name = search.provider.image_profile(&image_scope);
+            let provider_name = crate::config::search_provider_name(
+                search.provider,
+                &search.credential.env,
+                &profile_name,
+            );
             for (kind, name) in [
-                ("provider_profile", search.provider.profile()),
+                ("provider_profile", profile_name.as_str()),
                 ("provider", provider_name.as_str()),
             ] {
                 let mut values: Row = [
@@ -190,6 +176,7 @@ fn targets_with_plans(
                         ("endpoint".into(), search.provider.endpoint().into()),
                         ("credential_env".into(), search.credential.env.clone()),
                         ("provider_type".into(), search.provider.name().into()),
+                        ("profile_name".into(), profile_name.clone()),
                     ]);
                 }
                 let target = Target {
@@ -206,7 +193,7 @@ fn targets_with_plans(
                             provider_name.strip_prefix(&prefix).unwrap()
                         )
                     } else {
-                        search.provider.profile_address().into()
+                        search.provider.image_profile_address(&image_scope)
                     },
                     values,
                 };
@@ -389,6 +376,28 @@ fn compile_with_plans(
         .filter(|target| target.kind == "provider")
         .map(|target| (target.values["name"].clone(), target.address.clone()))
         .collect();
+    let mut runtime_sources = BTreeMap::new();
+    let mut profile_sources = BTreeMap::new();
+    let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
+    ordered.sort_by_key(|sandbox| &sandbox.name);
+    for (index, sandbox) in ordered.iter().enumerate() {
+        let source = format!("data.nemoclaw_fabric_capabilities.sandbox_{index}");
+        runtime_sources.insert(sandbox.name.clone(), source.clone());
+        for provider in document.sandbox_inference_providers(sandbox)? {
+            profile_sources
+                .entry(format!("nemoclaw-inference-{}", provider.key))
+                .or_insert_with(|| source.clone());
+        }
+        if let Some(search) = document.web_search(sandbox)? {
+            profile_sources
+                .entry(
+                    search
+                        .provider
+                        .image_profile(&document.image_scope(sandbox)?),
+                )
+                .or_insert(source);
+        }
+    }
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
         if target.values.contains_key("workspace") {
@@ -404,7 +413,17 @@ fn compile_with_plans(
                 .expect("Fabric configuration JSON");
             attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
+        if target.kind == "provider_profile" {
+            attributes["binaries_json"] = json!(format!(
+                "${{{}.binaries_json}}",
+                profile_sources[&target.values["name"]]
+            ));
+        }
         if target.kind == "sandbox" {
+            attributes["runtime_json"] = json!(format!(
+                "${{{}.runtime_json}}",
+                runtime_sources[&target.values["name"]]
+            ));
             // JSON configuration strings are still OpenTofu templates. Preserve
             // literal policy paths and matchers across that interpretation layer.
             for field in ["policy_json", "provider_names_json"] {
@@ -419,8 +438,13 @@ fn compile_with_plans(
                 .map(|provider| provider_dependencies[&provider.key].clone())
                 .collect();
             if let Some(search) = document.web_search(sandbox)? {
-                let name =
-                    crate::config::search_provider_name(search.provider, &search.credential.env);
+                let name = crate::config::search_provider_name(
+                    search.provider,
+                    &search.credential.env,
+                    &search
+                        .provider
+                        .image_profile(&document.image_scope(sandbox)?),
+                );
                 dependencies.push(provider_dependencies[&name].clone());
             }
             attributes["depends_on"] = json!(dependencies);
@@ -446,12 +470,20 @@ fn compile_with_plans(
             attributes["depends_on"] = json!(dependencies);
         }
         if target.kind == "provider"
-            && let Some(search) = target
+            && target
                 .values
                 .get("provider_type")
                 .and_then(|kind| SearchProvider::from_name(kind))
+                .is_some()
         {
-            attributes["depends_on"] = json!([search.profile_address()]);
+            let profile = targets
+                .iter()
+                .find(|candidate| {
+                    candidate.kind == "provider_profile"
+                        && candidate.values["name"] == target.values["profile_name"]
+                })
+                .expect("search profile target");
+            attributes["depends_on"] = json!([profile.address]);
         }
         attributes
             .as_object_mut()

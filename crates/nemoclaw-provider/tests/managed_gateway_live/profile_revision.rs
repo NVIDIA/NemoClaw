@@ -103,9 +103,15 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
             ("endpoint".into(), format!("https://{name}.example.com/v1")),
             ("provider_type".into(), kind.into()),
             ("authenticated".into(), authenticated.to_string()),
+            (
+                "binaries_json".into(),
+                r#"["/usr/local/bin/python3"]"#.into(),
+            ),
         ]);
         profiles.push(ensure(&backend, "provider_profile", &fields).await);
         fields.remove("authenticated");
+        fields.remove("binaries_json");
+        fields.insert("profile_name".into(), String::new());
         fields.insert("name".into(), name.into());
         fields.insert(
             "credential_env".into(),
@@ -122,11 +128,17 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
     for search in [SearchProvider::Brave, SearchProvider::Tavily] {
         let mut fields = base.clone();
         fields.insert("name".into(), search.profile().into());
+        fields.insert(
+            "binaries_json".into(),
+            r#"["/usr/local/bin/python3"]"#.into(),
+        );
         profiles.push(ensure(&backend, "provider_profile", &fields).await);
+        fields.remove("binaries_json");
         fields.extend([
+            ("profile_name".into(), search.profile().into()),
             (
                 "name".into(),
-                search_provider_name(search, "PROFILE_TEST_KEY"),
+                search_provider_name(search, "PROFILE_TEST_KEY", search.profile()),
             ),
             ("endpoint".into(), search.endpoint().into()),
             ("provider_type".into(), search.name().into()),

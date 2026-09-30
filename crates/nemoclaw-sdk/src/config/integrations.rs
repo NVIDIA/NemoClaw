@@ -181,6 +181,12 @@ impl SearchProvider {
             Self::Tavily => "nemoclaw_provider_profile.web_search_tavily",
         }
     }
+    pub fn image_profile(self, scope: &str) -> String {
+        format!("{}-{scope}", self.profile())
+    }
+    pub(crate) fn image_profile_address(self, scope: &str) -> String {
+        format!("{}_{scope}", self.profile_address())
+    }
     pub fn credential_env(self) -> &'static str {
         match self {
             Self::Brave => "BRAVE_API_KEY",
@@ -201,7 +207,14 @@ impl SearchProvider {
         }
     }
     pub fn from_profile(profile: &str) -> Option<Self> {
-        profile.strip_prefix("nemoclaw-").and_then(Self::from_name)
+        [Self::Brave, Self::Tavily].into_iter().find(|provider| {
+            profile == provider.profile()
+                || profile
+                    .strip_prefix(&format!("{}-", provider.profile()))
+                    .is_some_and(|scope| {
+                        scope.len() == 24 && scope.bytes().all(|c| c.is_ascii_hexdigit())
+                    })
+        })
     }
 }
 impl RuntimeWebSearch {
@@ -226,11 +239,11 @@ impl RuntimeWebSearch {
 }
 
 /// Stable registration identity for a search credential reference, never its value.
-pub fn search_provider_name(provider: SearchProvider, reference: &str) -> String {
+pub fn search_provider_name(provider: SearchProvider, reference: &str, profile: &str) -> String {
     use sha2::{Digest, Sha256};
     format!(
         "{}-search-{}",
         provider.name(),
-        &super::hex(&Sha256::digest(reference))[..24]
+        &super::hex(&Sha256::digest(format!("{reference}\0{profile}")))[..24]
     )
 }

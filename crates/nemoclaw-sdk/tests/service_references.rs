@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 
 use nemoclaw_sdk::{
     compile::{Generations, compile, runtime_targets},
@@ -42,7 +44,7 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_provider_profile"]["inference_local"]["authenticated"],
+        provider_scope::resource(&graph["resource"]["nemoclaw_provider_profile"], "local")["authenticated"],
         "false"
     );
     assert_eq!(

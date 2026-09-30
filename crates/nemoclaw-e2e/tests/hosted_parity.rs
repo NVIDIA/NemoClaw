@@ -202,7 +202,6 @@ fn hosted_hermes_scenario_rejects_legacy_export_and_preserves_authored_intent() 
 
 #[cfg(target_os = "linux")]
 mod live {
-    use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
     use nemoclaw_sdk::{
         CancellationToken, Change, Deployment, OperationResult, Outcome, backend::Row,
         config::Document,
@@ -212,7 +211,6 @@ mod live {
         collections::BTreeMap,
         fs,
         path::{Path, PathBuf},
-        sync::Arc,
     };
 
     fn explicit_path(name: &str) -> PathBuf {
@@ -292,6 +290,15 @@ mod live {
                 "create",
             ),
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
+            deferred_resources: vec![
+                "nemoclaw_agent_configuration.assistant".into(),
+                "nemoclaw_provider.inference_hosted-nvidia-prod".into(),
+                "nemoclaw_provider_profile.inference_hosted-nvidia-prod".into(),
+                "nemoclaw_sandbox.assistant".into(),
+                "nemoclaw_workspace.deployment".into(),
+            ],
+            resource_sources: Default::default(),
+            unverified: vec![],
             retained: vec![],
             health: vec![],
             discovery: Default::default(),
@@ -343,6 +350,7 @@ mod live {
                 .any(|message| message == &expected.deferred[0])
         );
         expected.deferred = plan.deferred.clone();
+        expected.unverified = plan.unverified.clone();
         assert_eq!(plan, expected);
         let applied = deployment.apply(document, cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
@@ -384,6 +392,9 @@ mod live {
                 connection: None,
                 changes: removed.clone(),
                 deferred: vec![],
+                deferred_resources: vec![],
+                resource_sources: Default::default(),
+                unverified: vec![],
                 retained: retained.clone(),
                 health: vec![],
                 discovery: Default::default(),
@@ -396,6 +407,9 @@ mod live {
                 connection: None,
                 changes: removed,
                 deferred: vec![],
+                deferred_resources: vec![],
+                resource_sources: Default::default(),
+                unverified: vec![],
                 retained: retained.clone(),
                 health: vec![],
                 discovery: Default::default(),
@@ -450,7 +464,7 @@ mod live {
         let cancel = CancellationToken::new();
 
         apply_initial(&deployment, &document, &cancel).await;
-        let (before, sandbox) = state_bindings(&directory);
+        let (before, _) = state_bindings(&directory);
         let mut expected = runtime_resources(&document);
         expected.extend(
             [
@@ -467,15 +481,6 @@ mod live {
             before.keys().map(String::as_str).collect::<Vec<_>>(),
             expected.iter().map(String::as_str).collect::<Vec<_>>()
         );
-        let client =
-            OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
-        assert!(matches!(
-            client.agent_response(&sandbox.unwrap()).await,
-            Err(nemoclaw_sdk::Error::Conflict(
-                "Fabric does not expose a normalized text probe contract; resources retained"
-            ))
-        ));
-
         let plan = deployment.plan(&document, &cancel).await.unwrap();
         assert_eq!(plan.outcome, Outcome::Planned);
         assert!(plan.changes.is_empty());

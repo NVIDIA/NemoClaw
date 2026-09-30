@@ -12,8 +12,9 @@ Apply creates the sandbox and grants the access declared by the policy.
 
 ## Choose a Policy
 
-Omitting `network`, or declaring `tier: isolated`, selects the existing isolated preset.
-That preset permits inference routing without general egress and supplies the SDK's filesystem grants and process identity.
+Omitting `network`, or declaring `tier: isolated`, selects the image's advertised filesystem and process defaults.
+NemoClaw adds the declared inference and search endpoint grants without granting general egress.
+Those managed grants use only the selected adapter's executable paths resolved during image assembly.
 
 An explicit policy replaces the entire preset.
 Omit `tier` when declaring `policy.explicit`; combining a nonempty tier with an explicit policy is rejected.
@@ -39,11 +40,11 @@ Kernel enforcement still requires qualification on the deployment host.
 When an explicit policy declares `filesystem_policy`, NemoClaw checks that it permits reads of the selected harness's runtime directories.
 The same checks apply to inline harnesses and `harnessRef`, separately for every sandbox.
 
-- Plan and apply check `/opt/fabric` and `/opt/nemoclaw`, which every harness requires, before opening deployment state or contacting runtime services.
-- Selected-image assessment checks the files declared by the Fabric descriptor and the runtime directories that the image's catalog records for its adapter: `/app` for OpenClaw, `/opt/hermes` for Hermes, and `/opt/fabric-source` for Pi.
-  A missing grant makes the sandbox's compatibility `unsupported` and fails plan; `observation_json.compatibility` names the path.
-  Images without a catalog label, such as older images and direct Bake builds, skip this check.
-
+Selected-image assessment checks the Fabric descriptor's required files, the adapter's image-owned `runtime_files`, and the runtime manifest's `required_paths`.
+The packaged image declares `/opt/fabric` and `/opt/nemoclaw`; a relocated image declares its own paths.
+A missing grant makes compatibility `unsupported` and fails plan; `observation_json.compatibility` names the path.
+Images without runtime metadata, including older images and direct Bake builds, fail planning; follow [image rebuilding and selection](build.md#build-agent-images).
+Document parsing validates policy syntax without assuming an image layout.
 These checks do not establish every path a harness reads; verify additional harness paths against the selected image before applying.
 
 A read-only or read-write grant for the directory or a parent directory satisfies the check.
@@ -54,7 +55,8 @@ An omitted `filesystem_policy` retains OpenShell defaults and is outside this ex
 
 Each error names the required path; edit the authored policy and rerun plan.
 NemoClaw does not add filesystem grants automatically.
-These checks do not verify image contents, Unix permissions, writable state directories, or kernel enforcement; those still require runtime verification.
+The image catalog records adapter requirements and runtime files, not a complete filesystem or executable inventory.
+These checks do not verify arbitrary policy paths, process identities in the image, Unix permissions, writable state directories, or kernel enforcement; those still require runtime verification.
 
 ## Choose TLS Inspection and Enforcement
 
@@ -116,7 +118,22 @@ Back up sandbox files and conversation history before using the explicit [destro
 Destroy deletes those sandbox files; retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
 
-Local fixture tests exercise creation, drift detection, and export/reapply behavior.
+### Recover from Runtime Policy Rejection
+
+If OpenShell reports configuration admission as rejected, apply stops its startup wait and reports `sandbox/<name>: OpenShell configuration rejected`, followed by a safe reason.
+This check applies while the sandbox is starting and before agent configuration or health requests.
+Known gateway diagnostics identify policy, attached-provider, or middleware repair; unrecognized text becomes a fixed configuration-repair message.
+The error does not include raw supervisor parser output.
+A sandbox that has not reported rejection still follows the ordinary startup wait.
+
+Preserve the state directory: failed apply retains created resource bindings.
+If the problem is an attached-provider or credential configuration that can be repaired without replacing the sandbox, correct it and reapply using the retained state.
+Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
+If the authored sandbox policy must change, use the [destroy and recreate procedure](usage.md#destroy); ordinary apply still refuses policy replacement.
+Destroy remains available after the failed first apply and does not require successful admission or readiness.
+See the [policy rejection results](validation/policy-rejection-linux-arm64.md) for tested recovery paths and live-test limits.
+
+Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.
 
 ## Earlier Policy Workflows

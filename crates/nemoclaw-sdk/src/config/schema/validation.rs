@@ -123,17 +123,10 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
         "Omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
     );
-    let driver_values = defs["Runtime"]["properties"]["provider"]
-        .as_object_mut()
-        .unwrap()
-        .remove("enum")
-        .expect("derived compute driver choices");
-    optional_string(
+    property(
         &mut defs["Runtime"],
         "provider",
-        c::RUNTIME,
-        &json!({"enum": driver_values}),
-        normalized,
+        json!({"default": super::super::ComputeDriver::default()}),
     );
     optional_string(
         &mut defs["Network"],
@@ -315,12 +308,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/management", json!({"const":"managed"}), true),
         "then": {"anyOf": [
-            at("spec/sandboxes/[]/runtime/provider", json!({"enum":["", "docker"]}), false),
+            at("spec/sandboxes/[]/runtime/provider", json!({"const":"docker"}), false),
             at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
         ]}
     }));
     root["x-nemoclaw-parser-checks"] = json!([
-        "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
+        "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
