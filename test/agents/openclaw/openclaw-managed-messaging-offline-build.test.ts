@@ -102,11 +102,11 @@ describe("OpenClaw managed messaging offline image build", () => {
     });
     expect(runtimeManifest.dependencies).toMatchObject({
       "@emnapi/core": "1.11.1",
-      "@emnapi/runtime": "1.11.1",
+      "@emnapi/runtime": "1.11.3",
     });
     expect(runtimeLock.packages[""].dependencies).toMatchObject({
       "@emnapi/core": "1.11.1",
-      "@emnapi/runtime": "1.11.1",
+      "@emnapi/runtime": "1.11.3",
     });
     expect(runtimeLock.packages["node_modules/@emnapi/core"]).toMatchObject({
       version: "1.11.1",
@@ -115,7 +115,7 @@ describe("OpenClaw managed messaging offline image build", () => {
       },
     });
     expect(runtimeLock.packages["node_modules/@emnapi/runtime"]).toMatchObject({
-      version: "1.11.1",
+      version: "1.11.3",
     });
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",

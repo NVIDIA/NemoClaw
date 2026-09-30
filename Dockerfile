@@ -472,7 +472,7 @@ ADD --chmod=0444 --checksum=sha256:7521d8445e845475e888ccb7af473c4afb17aabafefe3
 ADD --chmod=0444 --checksum=sha256:b144af37b39a9517f7a89f1d867e9c2cf29f13f4147d3e80c499fe6ffab69461 https://registry.npmjs.org/router/-/router-2.2.0.tgz /router-2.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:d29ace7117aaa0d6b119027e9a157c238e6899bbb35d03f508ae8d4fa9ca8c9d https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz /run-applescript-7.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:65b1049d7858c8d00adefe07a03671a218b439d9b7ee55a8a1af9fca1a19e759 https://registry.npmjs.org/@grammyjs/runner/-/runner-2.0.3.tgz /runner-2.0.3.tgz
-ADD --chmod=0444 --checksum=sha256:0acb45d7992e5fba729bb1d8f2586af7e522518aebd9b2859441b387ef890ad8 https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.1.tgz /runtime-1.11.1.tgz
+ADD --chmod=0444 --checksum=sha256:e6eb8913a08b551436d65f9a5cfbdcc8006f58e6798226d24e695c25679b5e49 https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.3.tgz /runtime-1.11.3.tgz
 ADD --chmod=0444 --checksum=sha256:4d7f1bd502a1a64d47625cc738d13284865f0666d2ed01f244de0adf05b69aa5 https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.7.tgz /runtime-7.29.7.tgz
 ADD --chmod=0444 --checksum=sha256:e09206c60fccafb952c854af7629cbb031a98d6da2e143fb3aa3c8a48402aa22 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz /safe-buffer-5.1.2.tgz
 ADD --chmod=0444 --checksum=sha256:5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz /safe-buffer-5.2.1.tgz
