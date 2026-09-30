@@ -170,6 +170,7 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
 a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
 </AgentOnly>
@@ -187,6 +188,7 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
+If NemoClaw reports incomplete tunnel cleanup, independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry the command.
 </AgentOnly>
 
 ## Related Topics

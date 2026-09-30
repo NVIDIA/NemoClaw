@@ -848,32 +848,20 @@ describe("stopAll", () => {
   it("signals an identity-confirmed cloudflared process with a macOS audit token", () => {
     const signal = vi.fn(() => "signaled" as const);
 
-    expect(
-      signalCloudflaredForPlatform(
-        4242,
-        "SIGTERM",
-        "darwin",
-        () => "cloudflared tunnel run",
-        signal,
-      ),
-    ).toBe("signaled");
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("signaled");
     expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
   });
 
-  it("does not raw-signal an identity-confirmed cloudflared process on Windows", () => {
-    expect(
-      signalCloudflaredForPlatform(4242, "SIGTERM", "win32", () => "cloudflared.exe tunnel run"),
-    ).toBe("unavailable");
+  it("does not raw-signal a process on Windows", () => {
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32")).toBe("unavailable");
   });
 
-  it.each(["darwin", "win32"] as const)(
-    "does not signal a mismatched process on %s",
-    (platform) => {
-      expect(
-        signalCloudflaredForPlatform(4242, "SIGTERM", platform, () => "/usr/bin/node vitest"),
-      ).toBe("not-cloudflared");
-    },
-  );
+  it("uses the identity-bound macOS signal result without an unbound precheck", () => {
+    const signal = vi.fn(() => "not-cloudflared" as const);
+
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("not-cloudflared");
+    expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
+  });
 
   it.skipIf(process.platform !== "linux")(
     "signals a verified cloudflared process through a Linux pidfd",
@@ -973,14 +961,7 @@ describe("stopAll", () => {
         })();
 
       try {
-        expect(
-          signalCloudflaredForPlatform(
-            pid,
-            "SIGTERM",
-            "darwin",
-            () => "/tmp/cloudflared tunnel run",
-          ),
-        ).toBe("not-cloudflared");
+        expect(signalCloudflaredForPlatform(pid, "SIGTERM", "darwin")).toBe("not-cloudflared");
         expect(() => process.kill(pid, 0)).not.toThrow();
       } finally {
         process.kill(pid, "SIGKILL");
@@ -1037,7 +1018,7 @@ describe("stopAll", () => {
 
   it("escalates to SIGKILL when cloudflared remains live after the grace period (#7644)", () => {
     const { control, signals } = scriptedControl({
-      alive: [true, true],
+      alive: [true, true, false],
       cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "cloudflared tunnel run"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
@@ -1056,6 +1037,39 @@ describe("stopAll", () => {
       { pid: 4242, sig: "SIGKILL" },
     ]);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("retains the PID when cloudflared remains live after SIGKILL", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["cloudflared tunnel run"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(3000)
+      .mockReturnValueOnce(3000)
+      .mockReturnValue(4000);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([
+      { pid: 4242, sig: "SIGTERM" },
+      { pid: 4242, sig: "SIGKILL" },
+    ]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readCloudflaredState(pidDir, control)).toEqual({ kind: "running", pid: 4242 });
+    expect(output).toContain("remained live after the force-stop signal");
+    expect(output).toContain("Host service cleanup remains incomplete");
   });
 
   it("removes stale PID files", () => {

@@ -387,17 +387,12 @@ export function signalCloudflaredForPlatform(
   pid: number,
   sig: "SIGTERM" | "SIGKILL",
   platform: NodeJS.Platform = process.platform,
-  commandLine: (pid: number) => string | null = readProcessCommandLine,
   macSignal: (
     pid: number,
     sig: "SIGTERM" | "SIGKILL",
   ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
 ): IdentityBoundSignalOutcome {
   if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
-
-  const identity = commandLine(pid);
-  if (identity === null) return "unavailable";
-  if (!commandLineNamesCloudflared(identity)) return "not-cloudflared";
   if (platform === "darwin") return macSignal(pid, sig);
   return "unavailable";
 }
@@ -688,6 +683,21 @@ function stopService(
       removePid(pidDir, name);
       info(`${name} was not running`);
       return true;
+    }
+
+    // A successful signal delivery is not proof that the process exited.
+    // Retain the PID record until liveness independently confirms termination.
+    const killDeadline = Date.now() + 1000;
+    while (Date.now() < killDeadline && pc.isAlive(pid)) {
+      const start = Date.now();
+      while (Date.now() - start < 100) {
+        /* spin */
+      }
+    }
+    if (pc.isAlive(pid)) {
+      warn(`${name} PID ${String(pid)} remained live after the force-stop signal`);
+      warnManualRecovery(pid);
+      return false;
     }
   }
 
