@@ -2964,12 +2964,12 @@ describe("Telegram diagnostics (#2766)", () => {
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
         'setpriv() { while [ "$1" != "--" ]; do shift; done; shift; "$@"; }',
-        // Test scaffolding skips sandbox-init.sh, so define the shared
-        // privilege-transition prefixes here.
+        // This fixture skips sandbox-init.sh and early startup selection.
         "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
         "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         "_SANDBOX_HOME=/sandbox",
+        "_DASHBOARD_PORT=18789",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,

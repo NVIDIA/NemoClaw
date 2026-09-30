@@ -1492,7 +1492,7 @@ ensure_gateway_token() {
 
   local _write_rc=0
   run_openclaw_config_as_owner /usr/local/bin/node - \
-    "$config_file" <<'NODETOKEN' || _write_rc=$?
+    "$config_file" "${1:-}" <<'NODETOKEN' || _write_rc=$?
 const crypto = require("crypto");
 const fs = require("fs");
 const pathModule = require("path");
@@ -1545,6 +1545,15 @@ function makeTempPath(dirPath) {
 try {
   const cfg = parseConfig(fs.readFileSync(path, "utf8"));
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
+  // Pairing commands clear environment overrides and read this native port.
+  const startupPort = process.argv[3];
+  if (startupPort) {
+    const port = Number(startupPort);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      throw new Error("invalid selected gateway startup port");
+    }
+    gateway.port = port;
+  }
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
   // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
@@ -1641,7 +1650,7 @@ needs_gateway_token_for_current_command() {
 
 prepare_gateway_token_for_current_command() {
   if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
-    ensure_gateway_token
+    ensure_gateway_token "${1:-}"
     return $?
   fi
 
@@ -4811,7 +4820,7 @@ if [ "$(id -u)" -ne 0 ]; then
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH
   refresh_openclaw_provider_placeholders
-  prepare_gateway_token_for_current_command
+  prepare_gateway_token_for_current_command "$_DASHBOARD_PORT"
   export_gateway_token
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
@@ -4910,7 +4919,7 @@ if is_managed_inference_route; then
 fi
 run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
-prepare_gateway_token_for_current_command
+prepare_gateway_token_for_current_command "$_DASHBOARD_PORT"
 export_gateway_token
 write_messaging_runtime_setup_plan
 write_runtime_shell_env
