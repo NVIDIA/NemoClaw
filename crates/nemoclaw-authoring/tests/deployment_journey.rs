@@ -59,6 +59,38 @@ fn supplied_deployment_field_is_asked_before_unrelated_required_answers() {
 }
 
 #[test]
+fn unknown_supplied_deployment_field_can_be_removed() {
+    let capabilities = Capabilities::available();
+    let mut supplied = example("onboarding/openclaw.yaml").supplied().clone();
+    supplied["spec"]["gateway"]["enginee"] = json!("unix:///var/run/docker.sock");
+    let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("unknown-deployment-field", base)
+        .ask([JourneyScope::DeploymentFields])
+        .start(&capabilities)
+        .unwrap();
+    let path = "/spec/gateway/enginee";
+    let question = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(path)
+        .cloned()
+        .expect("unknown field question");
+    assert_eq!(question.reason(), JourneyQuestionReason::InvalidSupplied);
+    assert!(!question.required());
+    assert!(state.answer(&capabilities, path, Some(json!("x"))).is_err());
+    state.answer(&capabilities, path, None).unwrap();
+    assert_eq!(state.values().pointer(path), None);
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .assessment()
+            .document()
+            .is_some()
+    );
+}
+
+#[test]
 fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_answers() {
     let capabilities = Capabilities::available();
     let mut state = journey("fabric-pi.yaml");

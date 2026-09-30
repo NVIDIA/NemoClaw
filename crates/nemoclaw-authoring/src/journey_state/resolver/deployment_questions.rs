@@ -32,7 +32,15 @@ impl QuestionResolver<'_> {
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
                     id: field.path,
-                    reason: JourneyQuestionReason::ExplicitAsk,
+                    reason: if field
+                        .suggestion
+                        .as_ref()
+                        .is_some_and(|value| schema_accepts(&field.schema, value) == Some(false))
+                    {
+                        JourneyQuestionReason::InvalidSupplied
+                    } else {
+                        JourneyQuestionReason::ExplicitAsk
+                    },
                     required: field.required,
                     choices: field.choices,
                     suggestion: field.suggestion,

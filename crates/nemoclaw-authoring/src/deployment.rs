@@ -72,12 +72,21 @@ fn collect(
         && !excluded(path)
         && (!value.is_object() && !value.is_array() || complex(path) || value.is_array())
     {
-        let (schema, required) = sdk_field_schema_for(root, path).ok_or_else(|| {
-            diagnostic(
-                "deployment",
-                &format!("SDK schema has no field for '{path}'."),
-            )
-        })?;
+        let Some((schema, required)) = sdk_field_schema_for(root, path) else {
+            // A `false` schema accepts no value, so the only answer is to omit
+            // (remove) the supplied field.
+            out.push(SettingQuestion {
+                path: path.into(),
+                title: title(path),
+                description: "The SDK schema does not define this field. Omit it to remove the value."
+                    .into(),
+                required: false,
+                schema: Value::Bool(false),
+                choices: Vec::new(),
+                suggestion: Some(value.clone()),
+            });
+            return Ok(());
+        };
         let mut choices = finite_choices(&schema);
         if choices.is_empty() && schema["type"] == "boolean" {
             choices = vec![Value::Bool(false), Value::Bool(true)];

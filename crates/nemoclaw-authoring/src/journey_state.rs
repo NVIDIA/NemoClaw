@@ -68,6 +68,7 @@ enum SdkFieldRole {
     ProviderApi,
     ProviderEndpoint,
     RuntimeProvider,
+    GatewayManagement,
     GatewayEngine,
 }
 
@@ -93,6 +94,8 @@ impl QuestionTarget {
             && segments[3].parse::<usize>().is_ok();
         let role = if path == RUNTIME_PROVIDER {
             SdkFieldRole::RuntimeProvider
+        } else if path == "/spec/gateway/management" {
+            SdkFieldRole::GatewayManagement
         } else if path == "/spec/gateway/engine" {
             SdkFieldRole::GatewayEngine
         } else if provider_field && segments[4] == "api" {

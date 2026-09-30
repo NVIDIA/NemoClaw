@@ -160,16 +160,21 @@ impl JourneyState {
                 } else {
                     None
                 };
+                let before = candidate.authored.values.clone();
                 candidate.authored.put_sdk_field(path, value.clone())?;
-                if previous != candidate.authored.values.pointer(path).cloned()
-                    && let Some(provider) = provider_for_dependency
-                {
-                    candidate.reopen_models_for_provider(&provider, path);
+                if previous != candidate.authored.values.pointer(path).cloned() {
+                    candidate.authored.remove_inactive_siblings(path, &before);
+                    if let Some(provider) = provider_for_dependency {
+                        candidate.reopen_models_for_provider(&provider, path);
+                    }
                 }
                 if *role == SdkFieldRole::GatewayEngine {
                     candidate.authored.generated_gateway_engine = false;
                 }
-                if *role == SdkFieldRole::RuntimeProvider {
+                if matches!(
+                    role,
+                    SdkFieldRole::RuntimeProvider | SdkFieldRole::GatewayManagement
+                ) {
                     candidate.authored.sync_gateway_engine_for_runtime()?;
                 }
                 if self
@@ -197,6 +202,8 @@ impl JourneyState {
         candidate
             .decisions
             .record_answer(id, &question.target, omitted);
+        // Later answers start by resolving, so never commit a state that cannot resolve.
+        candidate.resolve(capabilities)?;
         *self = candidate;
         Ok(())
     }

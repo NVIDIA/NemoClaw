@@ -1066,20 +1066,20 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
         .omit(["workflow:/settings/region"])
         .start(&required_capabilities)
         .unwrap();
-    required_omission
-        .answer(
-            &required_capabilities,
-            "workflow:/target_id",
-            Some(json!("fixture.target")),
-        )
-        .unwrap();
+    let before = required_omission.values().clone();
     assert!(
         required_omission
-            .resolve(&required_capabilities)
+            .answer(
+                &required_capabilities,
+                "workflow:/target_id",
+                Some(json!("fixture.target")),
+            )
             .unwrap_err()
             .to_string()
             .contains("required native setting")
     );
+    assert_eq!(required_omission.values(), &before);
+    assert!(required_omission.resolve(&required_capabilities).is_ok());
     let unreachable = JourneyDefinition::new("future-native-field", base)
         .ask(["model:/future_setting"])
         .start(&capabilities)
@@ -3048,6 +3048,99 @@ fn accepted_implicit_gateway_choice_can_be_revisited() {
             .question("/spec/gateway/endpoint")
             .is_some()
     );
+}
+
+#[test]
+fn switching_gateway_management_drops_fields_from_the_previous_branch() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("switch-gateway", base)
+        .ask([
+            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/management",
+        ])
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap();
+    let podman = json!("unix:///run/user/1000/podman/podman.sock");
+    journey
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/0/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    assert_eq!(
+        journey.values().pointer("/spec/gateway/engine"),
+        Some(&podman)
+    );
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("external")),
+        )
+        .unwrap();
+    assert_eq!(journey.values().pointer("/spec/gateway/engine"), None);
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/endpoint",
+            Some(json!("https://gateway.example.com")),
+        )
+        .unwrap();
+    let resolution = journey.resolve(&capabilities).unwrap();
+    assert!(
+        resolution.materialized_document().is_some(),
+        "questions={:?} issues={:?}",
+        resolution.questions(),
+        resolution.assessment().issues()
+    );
+    journey
+        .answer(
+            &capabilities,
+            "/spec/gateway/management",
+            Some(json!("managed")),
+        )
+        .unwrap();
+    assert_eq!(
+        journey.values().pointer("/spec/gateway/engine"),
+        Some(&podman)
+    );
+    assert!(journey.resolve(&capabilities).is_ok());
+}
+
+#[test]
+fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let capabilities = Capabilities::available();
+    let mut journey = JourneyDefinition::new("unresolvable-answer", base)
+        .ask(["/spec/gateway/management"])
+        .omit(["/spec/gateway/endpoint"])
+        .start(&capabilities)
+        .unwrap();
+    let before = journey.values().clone();
+    assert!(
+        journey
+            .answer(
+                &capabilities,
+                "/spec/gateway/management",
+                Some(json!("external")),
+            )
+            .is_err()
+    );
+    assert_eq!(journey.values(), &before);
+    assert!(journey.resolve(&capabilities).is_ok());
 }
 
 #[test]

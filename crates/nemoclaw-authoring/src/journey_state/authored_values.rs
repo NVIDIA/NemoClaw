@@ -199,6 +199,36 @@ impl AuthoredValues {
         Ok(())
     }
 
+    /// Remove sibling fields that the SDK schema defined before a write but no
+    /// longer defines, such as fields of the previous gateway form.
+    pub(super) fn remove_inactive_siblings(&mut self, pointer: &str, before: &Value) {
+        let Some((parent, _)) = pointer.rsplit_once('/') else {
+            return;
+        };
+        let Some(siblings) = self.values.pointer(parent).and_then(Value::as_object) else {
+            return;
+        };
+        let inactive = siblings
+            .keys()
+            .filter(|key| {
+                let field = format!("{parent}/{}", escape_pointer(key));
+                field != pointer
+                    && sdk_field_schema_for(before, &field).is_some()
+                    && sdk_field_schema_for(&self.values, &field).is_none()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(siblings) = self
+            .values
+            .pointer_mut(parent)
+            .and_then(Value::as_object_mut)
+        {
+            for key in inactive {
+                siblings.remove(&key);
+            }
+        }
+    }
+
     pub(super) fn sync_gateway_engine_for_runtime(&mut self) -> Result<(), Diagnostics> {
         if self
             .values
