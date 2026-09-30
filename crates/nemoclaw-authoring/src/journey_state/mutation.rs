@@ -5,13 +5,20 @@ use super::*;
 
 impl JourneyState {
     pub(super) fn reopen_models_for_provider(&mut self, provider: &str, cause: &str) {
-        let Some(routes_path) = routes_path(&self.authored.values) else {
-            return;
-        };
-        let route_indexes = self
-            .authored
-            .values
-            .pointer(&routes_path)
+        for index in self.routes_for_provider(provider) {
+            let model = format!(
+                "{}/{index}/overrides/model",
+                routes_path(&self.authored.values).expect("provider routes")
+            );
+            self.decisions.reopen(&model, cause);
+            self.position.completed_routes.remove(&index);
+            self.decisions.forget_model_settings(index);
+        }
+    }
+
+    fn routes_for_provider(&self, provider: &str) -> Vec<usize> {
+        routes_path(&self.authored.values)
+            .and_then(|path| self.authored.values.pointer(&path))
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
@@ -20,13 +27,7 @@ impl JourneyState {
                 (route.get("providerRef").and_then(Value::as_str) == Some(provider))
                     .then_some(index)
             })
-            .collect::<Vec<_>>();
-        for index in route_indexes {
-            let model = format!("{routes_path}/{index}/overrides/model");
-            self.decisions.reopen(&model, cause);
-            self.position.completed_routes.remove(&index);
-            self.decisions.forget_model_settings(index);
-        }
+            .collect()
     }
 
     pub(super) fn put_inference_preset(
@@ -47,7 +48,6 @@ impl JourneyState {
         );
         let api_path = format!("{provider_path}/api");
         let endpoint_path = format!("{provider_path}/endpoint");
-        let model_path = format!("{route_path}/overrides/model");
         let previous_name = self
             .authored
             .values
@@ -55,18 +55,6 @@ impl JourneyState {
             .and_then(Value::as_str)
             .ok_or_else(|| diagnostic("journey", "The shared provider needs a name."))?
             .to_owned();
-        if self
-            .authored
-            .values
-            .pointer(&format!("{route_path}/providerRef"))
-            .and_then(Value::as_str)
-            != Some(&previous_name)
-        {
-            return Err(diagnostic(
-                "journey",
-                "The route must reference the shared provider.",
-            ));
-        }
         let previous = self.current_preset();
         if previous == Some(preset) {
             self.decisions.selected_presets.insert(route_index, preset);
@@ -89,7 +77,6 @@ impl JourneyState {
             .pointer_mut(&provider_path)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The shared provider must be an object."))?;
-        provider.insert("name".into(), Value::String(profile.name.into()));
         provider.insert(
             "provider".into(),
             Value::String(profile.kind.as_str().into()),
@@ -109,7 +96,6 @@ impl JourneyState {
             .pointer_mut(&route_path)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The route must be an object."))?;
-        route.insert("providerRef".into(), Value::String(profile.name.into()));
         let overrides = route
             .get_mut("overrides")
             .and_then(Value::as_object_mut)
@@ -119,24 +105,26 @@ impl JourneyState {
         } else {
             overrides.remove("model");
         }
+        for route in self.routes_for_provider(&previous_name) {
+            self.decisions.selected_presets.remove(&route);
+            self.decisions.accepted_presets.remove(&route);
+        }
+        self.reopen_models_for_provider(&previous_name, INFERENCE_PRESET);
         self.decisions.selected_presets.insert(route_index, preset);
-        if previous != Some(preset) {
-            for field in [
-                api_path,
-                model_path,
-                endpoint_path,
-                format!("{provider_path}/credential/env"),
-            ] {
+        for field in [
+            api_path,
+            endpoint_path,
+            format!("{provider_path}/credential/env"),
+        ] {
+            self.decisions.reopen(&field, INFERENCE_PRESET);
+            self.decisions.omitted.remove(&field);
+        }
+        for field in self.decisions.accepted.clone() {
+            if field.starts_with('/')
+                && before_values.pointer(&field) != self.authored.values.pointer(&field)
+            {
                 self.decisions.reopen(&field, INFERENCE_PRESET);
                 self.decisions.omitted.remove(&field);
-            }
-            for field in self.decisions.accepted.clone() {
-                if field.starts_with('/')
-                    && before_values.pointer(&field) != self.authored.values.pointer(&field)
-                {
-                    self.decisions.reopen(&field, INFERENCE_PRESET);
-                    self.decisions.omitted.remove(&field);
-                }
             }
         }
         Ok(())

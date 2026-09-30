@@ -4,7 +4,11 @@
 use super::*;
 
 impl QuestionResolver<'_> {
-    pub(super) fn collect_inference_questions(&self, work: &mut ResolutionWork) {
+    pub(super) fn collect_inference_questions(
+        &self,
+        policy: &QuestionPolicy<'_>,
+        work: &mut ResolutionWork,
+    ) {
         let questions = &mut work.questions;
         if self
             .definition
@@ -40,62 +44,51 @@ impl QuestionResolver<'_> {
                 .and_then(Value::as_array)
                 && routes.len() > 1
             {
-                let current_pending = self
-                    .route_model_path()
-                    .is_some_and(|path| questions.iter().any(|question| question.id == path));
-                if !current_pending {
-                    let choices = routes
+                let choices = routes
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        Some(*index) != self.position.selected_route
+                            && !self.position.completed_routes.contains(index)
+                    })
+                    .filter_map(|(_, route)| route.get("name").cloned())
+                    .collect::<Vec<_>>();
+                let choices = if self.position.selected_route.is_none() {
+                    routes
                         .iter()
-                        .enumerate()
-                        .filter(|(index, _)| {
-                            Some(*index) != self.position.selected_route
-                                && !self.position.completed_routes.contains(index)
-                        })
-                        .filter_map(|(_, route)| route.get("name").cloned())
-                        .collect::<Vec<_>>();
-                    let choices = if self.position.selected_route.is_none() {
-                        routes
-                            .iter()
-                            .filter_map(|route| route.get("name").cloned())
-                            .collect::<Vec<_>>()
-                    } else {
-                        choices
-                    };
-                    if !choices.is_empty() {
-                        questions.push(JourneyQuestion {
-                            target: QuestionTarget::RouteSelection {
-                                routes: routes
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(index, route)| {
-                                        route
-                                            .get("name")
-                                            .and_then(Value::as_str)
-                                            .map(|name| (name.to_owned(), index))
-                                    })
-                                    .collect(),
-                            },
-                            kind: JourneyQuestionKind::Field,
-                            reopened_because: None,
-                            id: ROUTE_SELECTION.into(),
-                            reason: JourneyQuestionReason::Missing,
-                            required: true,
-                            choices,
-                            suggestion: None,
-                            schema: serde_json::json!({"type":"string"}),
-                        });
-                    }
+                        .filter_map(|route| route.get("name").cloned())
+                        .collect::<Vec<_>>()
+                } else {
+                    choices
+                };
+                if !choices.is_empty() {
+                    questions.push(JourneyQuestion {
+                        target: QuestionTarget::RouteSelection {
+                            routes: routes
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, route)| {
+                                    route
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .map(|name| (name.to_owned(), index))
+                                })
+                                .collect(),
+                        },
+                        kind: JourneyQuestionKind::Field,
+                        reopened_because: None,
+                        id: ROUTE_SELECTION.into(),
+                        reason: JourneyQuestionReason::Missing,
+                        required: true,
+                        choices,
+                        suggestion: None,
+                        schema: serde_json::json!({"type":"string"}),
+                    });
                 }
             }
         }
 
-        if self.definition.ask.contains(INFERENCE_PRESET)
-            && self.route_provider().is_some()
-            && !self
-                .position
-                .selected_route
-                .is_some_and(|route| self.decisions.accepted_presets.contains(&route))
-        {
+        if policy.preset_pending() {
             let suggestion = self
                 .current_preset()
                 .map(|preset| Value::String(preset.id().into()));
@@ -132,17 +125,9 @@ impl QuestionResolver<'_> {
             let path = format!("{provider}/api");
             if !self.decisions.accepted.contains(&path)
                 && !questions.iter().any(|question| question.id == path)
-                && let Some((mut schema, required)) = sdk_field_schema(&path)
+                && let Some((schema, required)) = sdk_field_schema(&path)
             {
-                if let Some(preset) = self.current_preset() {
-                    schema["enum"] = Value::Array(
-                        preset
-                            .apis()
-                            .iter()
-                            .map(|api| serde_json::to_value(api).expect("SDK API serializes"))
-                            .collect(),
-                    );
-                }
+                let schema = policy.sdk_schema(&path, schema);
                 let value = self.authored.values.pointer(&path);
                 questions.push(JourneyQuestion {
                     target: QuestionTarget::sdk(path.clone()),
@@ -161,27 +146,10 @@ impl QuestionResolver<'_> {
                 });
             }
         }
-        if self.definition.ask.contains(INFERENCE_PRESET)
-            && self
-                .position
-                .selected_route
-                .and_then(|route| self.decisions.selected_presets.get(&route))
-                .is_some_and(|preset| preset.profile().custom_endpoint)
-            && self.provider_path().is_some_and(|path| {
-                !self
-                    .decisions
-                    .accepted
-                    .contains(&format!("{path}/endpoint"))
-            })
-            && !questions.iter().any(|question| {
-                self.provider_path()
-                    .is_some_and(|path| question.id == format!("{path}/endpoint"))
-            })
+        if let Some(endpoint) = policy.endpoint_pending()
+            && !questions.iter().any(|question| question.id == endpoint)
         {
-            let endpoint = format!(
-                "{}/endpoint",
-                self.provider_path().expect("external provider")
-            );
+            let endpoint = endpoint.to_owned();
             let schema = sdk_field_schema(&endpoint)
                 .expect("external provider endpoint is in the SDK schema")
                 .0;

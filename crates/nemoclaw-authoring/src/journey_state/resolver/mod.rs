@@ -8,8 +8,11 @@ mod adapter_questions;
 mod deployment_questions;
 mod inference_questions;
 mod native_questions;
+mod policy;
 mod schema_questions;
 mod sdk_questions;
+
+use policy::QuestionPolicy;
 
 /// Questions and diagnostics accumulated by one resolution pass.
 #[derive(Default)]
@@ -57,8 +60,9 @@ impl<'a> QuestionResolver<'a> {
         }
         let assessment = PartialDocument::from_value(self.authored.values.clone()).assess();
         let mut work = ResolutionWork::default();
-        self.collect_sdk_questions(&assessment, &mut work);
-        self.collect_inference_questions(&mut work);
+        let policy = QuestionPolicy::new(self);
+        self.collect_sdk_questions(&assessment, &policy, &mut work);
+        self.collect_inference_questions(&policy, &mut work);
         self.collect_adapter_questions(capabilities, &mut work)?;
         let native_guidance = self
             .definition
@@ -81,89 +85,16 @@ impl<'a> QuestionResolver<'a> {
             &mut work,
         )?;
 
-        Ok(self.resolution(
-            work.questions,
-            work.omitted,
-            work.warnings,
-            work.unverified,
-            assessment,
-        ))
+        policy.apply(&self.authored.values, &mut work);
+        Ok(self.resolution(work, assessment))
     }
 
-    pub(super) fn resolution(
-        &self,
-        mut questions: Vec<JourneyQuestion>,
-        mut omitted: Vec<String>,
-        warnings: Vec<String>,
-        unverified: Vec<String>,
-        assessment: PartialAssessment,
-    ) -> JourneyResolution {
-        for field in &self.definition.omit {
-            if field.starts_with('/')
-                && sdk_field_schema_for(&self.authored.values, field).is_some()
-            {
-                omitted.push(field.clone());
-            }
-        }
-        questions.retain(|question| !self.definition.omit.contains(question.id()));
-        omitted.sort();
-        omitted.dedup();
-        if self.definition.ask.contains(INFERENCE_PRESET)
-            && self.route_provider().is_some()
-            && !self
-                .position
-                .selected_route
-                .is_some_and(|route| self.decisions.accepted_presets.contains(&route))
-        {
-            let provider = self.provider_path().expect("external provider");
-            let model = self.route_model_path().expect("selected route");
-            questions.retain(|question| {
-                !question.id.starts_with(&format!("{provider}/")) && question.id != model
-            });
-        } else if self
-            .position
-            .selected_route
-            .and_then(|route| self.decisions.selected_presets.get(&route))
-            .is_some_and(|preset| preset.profile().custom_endpoint)
-            && self.provider_path().is_some_and(|path| {
-                !self
-                    .decisions
-                    .accepted
-                    .contains(&format!("{path}/endpoint"))
-            })
-            && let Some(model) = self.route_model_path()
-        {
-            questions.retain(|question| question.id != model);
-        }
-        for question in &mut questions {
-            question.reopened_because = self.decisions.reopened_by.get(question.id()).cloned();
-        }
-        questions.sort_by_key(|question| {
-            (
-                question.id == ROUTE_SELECTION,
-                self.definition
-                    .ask_order
-                    .iter()
-                    .position(|id| id == question.id())
-                    .unwrap_or(usize::MAX),
-            )
-        });
-        if let (Some(provider), Some(model)) = (self.provider_path(), self.route_model_path()) {
-            let api = format!("{provider}/api");
-            if let (Some(api_index), Some(model_index)) = (
-                questions.iter().position(|question| question.id == api),
-                questions.iter().position(|question| question.id == model),
-            ) && api_index > model_index
-            {
-                let api_question = questions.remove(api_index);
-                questions.insert(model_index, api_question);
-            }
-        }
+    fn resolution(&self, work: ResolutionWork, assessment: PartialAssessment) -> JourneyResolution {
         JourneyResolution {
-            questions,
-            omitted,
-            warnings,
-            unverified,
+            questions: work.questions,
+            omitted: work.omitted,
+            warnings: work.warnings,
+            unverified: work.unverified,
             assessment,
             target_required: !self.definition.target_prerequisites.is_empty(),
             target_assessment: (!self.definition.target_prerequisites.is_empty()).then(|| {

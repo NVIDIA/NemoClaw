@@ -56,7 +56,6 @@ impl ProviderPreset {
 /// Endpoint defaults are presentation presets, not claims of adapter support.
 pub(crate) struct ProviderProfile {
     pub kind: InferenceProviderKind,
-    pub name: &'static str,
     pub endpoint: &'static str,
     pub credential: &'static str,
     pub custom_endpoint: bool,
@@ -94,7 +93,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
     match inference {
         ProviderPreset::NvidiaEndpoints => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "nvidia-prod",
             endpoint: "https://integrate.api.nvidia.com/v1",
             credential: "NVIDIA_API_KEY",
             custom_endpoint: false,
@@ -102,7 +100,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::OpenRouter => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "openrouter",
             endpoint: "https://openrouter.ai/api/v1",
             credential: "OPENROUTER_API_KEY",
             custom_endpoint: false,
@@ -110,7 +107,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::OpenAi => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "openai-api",
             endpoint: "https://api.openai.com/v1",
             credential: "OPENAI_API_KEY",
             custom_endpoint: false,
@@ -118,7 +114,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::OpenAiCompatible => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "compatible-endpoint",
             endpoint: "https://inference.example.com/v1",
             credential: "COMPATIBLE_API_KEY",
             custom_endpoint: true,
@@ -126,7 +121,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::Anthropic => ProviderProfile {
             kind: InferenceProviderKind::Anthropic,
-            name: "anthropic-prod",
             endpoint: "https://api.anthropic.com",
             credential: "ANTHROPIC_API_KEY",
             custom_endpoint: false,
@@ -134,7 +128,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::AnthropicCompatible => ProviderProfile {
             kind: InferenceProviderKind::Anthropic,
-            name: "compatible-anthropic-endpoint",
             endpoint: "https://anthropic.example.com",
             credential: "COMPATIBLE_ANTHROPIC_API_KEY",
             custom_endpoint: true,
@@ -142,7 +135,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::Gemini => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "gemini-api",
             endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/",
             credential: "GEMINI_API_KEY",
             custom_endpoint: false,
@@ -150,7 +142,6 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         },
         ProviderPreset::Nous => ProviderProfile {
             kind: InferenceProviderKind::Openai,
-            name: "nous-api",
             endpoint: "https://inference-api.nousresearch.com/v1",
             credential: "OPENAI_API_KEY",
             custom_endpoint: false,

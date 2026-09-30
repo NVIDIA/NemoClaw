@@ -27,7 +27,6 @@ use crate::{
     settings::SettingQuestion,
 };
 
-const PROVIDER_API: &str = "/spec/inferenceProviders/0/api";
 const ROUTE_SELECTION: &str = "route:selection";
 const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
 const RUNTIME_PROVIDER: &str = "/spec/sandboxes/0/runtime/provider";

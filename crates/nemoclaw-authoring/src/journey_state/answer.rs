@@ -15,7 +15,10 @@ impl JourneyState {
         let resolution = self.resolve(capabilities)?;
         let question = if let Some(question) = resolution.question(id) {
             question.clone()
-        } else if self.decisions.accepted.contains(id) {
+        } else if matches!(
+            self.decision_status(id),
+            DecisionStatus::Accepted | DecisionStatus::Omitted
+        ) {
             self.revisitable_question(capabilities, id)?
         } else {
             return Err(diagnostic("journey", "This question is not active."));
@@ -280,6 +283,25 @@ impl JourneyState {
                     .authored
                     .put_sdk_field(&format!("{path}/{}", escape_pointer(&selected)), None)?;
                 Some(Value::String(selected))
+            }
+            QuestionTarget::WorkflowSetting { .. } => {
+                previous.definition.ask.insert(id.into());
+                native_value(
+                    &previous.authored.values,
+                    previous.position.selected_route,
+                    id,
+                )
+                .cloned()
+            }
+            QuestionTarget::ModelSetting { .. } => {
+                let route = previous.position.selected_route.ok_or_else(|| {
+                    diagnostic("journey", "Select a route before model settings.")
+                })?;
+                let key = (route, id.to_owned());
+                previous.decisions.accepted_model_settings.remove(&key);
+                previous.decisions.omitted_model_settings.remove(&key);
+                previous.definition.ask.insert(id.into());
+                native_value(&previous.authored.values, Some(route), id).cloned()
             }
             QuestionTarget::SdkField { path, .. }
                 if sdk_field_schema_for(&self.authored.values, path).is_some()

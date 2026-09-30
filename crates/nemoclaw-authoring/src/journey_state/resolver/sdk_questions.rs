@@ -7,6 +7,7 @@ impl QuestionResolver<'_> {
     pub(super) fn collect_sdk_questions(
         &self,
         assessment: &PartialAssessment,
+        policy: &QuestionPolicy<'_>,
         work: &mut ResolutionWork,
     ) {
         let questions = &mut work.questions;
@@ -62,22 +63,11 @@ impl QuestionResolver<'_> {
                 omitted.push(field.clone());
                 continue;
             }
-            let Some((mut schema, required)) = sdk_field_schema_for(&self.authored.values, field)
+            let Some((schema, required)) = sdk_field_schema_for(&self.authored.values, field)
             else {
                 continue;
             };
-            if field == PROVIDER_API
-                && self.definition.ask.contains(INFERENCE_PRESET)
-                && let Some(preset) = self.current_preset()
-            {
-                schema["enum"] = Value::Array(
-                    preset
-                        .apis()
-                        .iter()
-                        .map(|api| serde_json::to_value(api).expect("SDK API serializes"))
-                        .collect(),
-                );
-            }
+            let schema = policy.sdk_schema(field, schema);
             let value = self.authored.values.pointer(field);
             let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
             if value.is_none() || !valid || !self.decisions.accepted.contains(field) {
@@ -135,6 +125,7 @@ impl QuestionResolver<'_> {
             if self.authored.values.pointer(parent).is_none() {
                 continue;
             }
+            let schema = policy.sdk_schema(issue.path(), schema);
             let choices = finite_choices(&schema);
             if !scalar_question(&schema, &choices) {
                 collect_required_leaf_questions(

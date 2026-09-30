@@ -1926,13 +1926,13 @@ fn route_preset_changes_only_the_selected_external_provider() {
     );
     assert_eq!(
         state.values().pointer("/spec/inferenceProviders/1/name"),
-        Some(&json!("openai-api"))
+        Some(&json!("hosted"))
     );
     assert_eq!(
         state
             .values()
             .pointer("/spec/sandboxes/0/agent/inference/routes/1/providerRef"),
-        Some(&json!("openai-api"))
+        Some(&json!("hosted"))
     );
     assert_eq!(
         state
@@ -2220,7 +2220,7 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     );
     assert_eq!(
         state.values().pointer("/spec/inferenceProviders/0/name"),
-        Some(&json!("anthropic-prod"))
+        Some(&json!("nvidia-prod"))
     );
     assert_eq!(
         state.values().pointer("/spec/inferenceProviders/0/api"),
@@ -2242,7 +2242,7 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
         state
             .values()
             .pointer("/spec/sandboxes/0/agent/inference/routes/0/providerRef"),
-        Some(&json!("anthropic-prod"))
+        Some(&json!("nvidia-prod"))
     );
     assert_eq!(
         state.values().pointer(model),
@@ -2251,7 +2251,7 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let resolved = state.resolve(&capabilities).unwrap();
     assert!(resolved.question(name).is_none());
     assert!(resolved.question(api).is_some());
-    assert!(resolved.question(provider_name).is_some());
+    assert!(resolved.question(provider_name).is_none());
     assert!(resolved.question(model).is_some());
     assert!(resolved.materialized_document().is_none());
     assert!(
@@ -2264,9 +2264,6 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
         .unwrap();
     state
         .answer(&capabilities, model, Some(json!("claude-sonnet-4-6")))
-        .unwrap();
-    state
-        .answer(&capabilities, provider_name, Some(json!("anthropic-prod")))
         .unwrap();
     assert!(
         state

@@ -95,9 +95,6 @@ impl super::resolver::QuestionResolver<'_> {
     pub(super) fn route_model_path(&self) -> Option<String> {
         self.selection().route_model_path()
     }
-    pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
-        self.selection().route_provider()
-    }
     pub(super) fn provider_path(&self) -> Option<String> {
         self.selection().provider_path()
     }
