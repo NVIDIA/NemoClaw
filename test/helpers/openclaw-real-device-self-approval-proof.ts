@@ -1391,6 +1391,7 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
   const adminScopes = ["operator.admin", "operator.read", "operator.write"];
   for (const outcome of [
     "admin",
+    "remote-admin",
     "other-device",
     "missing-identity",
     "unreadable-identity",
@@ -1400,7 +1401,7 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
   ] as const) {
     const events: string[] = [];
     const approved = !["baseline", "missing"].includes(outcome);
-    const confirmationRequired = outcome === "admin" || outcome === "confirmation-denied";
+    const confirmationRequired = ["admin", "remote-admin", "confirmation-denied"].includes(outcome);
     const options = { json: true, url: "wss://reviewed-gateway.example" };
     let cached = {
       storedToken: "previous-token",
@@ -1438,8 +1439,23 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
           return outcome === "missing-identity" ? null : { deviceId: "calling-device" };
         },
         resolveApprovePairingGatewayContext: async () => ({}),
-        approvePairingWithFallback: async () => {
+        approvePairingWithFallback: async (
+          _opts: unknown,
+          _id: string,
+          context: Record<string, unknown>,
+        ) => {
           events.push("approve-exact-request");
+          if (outcome !== "remote-admin")
+            context.nemoclawLocallyApprovedDevice = {
+              deviceId: outcome === "other-device" ? "other-device" : "calling-device",
+              tokens: {
+                operator: {
+                  role: "operator",
+                  token: "rotated-token",
+                  scopes: approved ? adminScopes : ["operator.write"],
+                },
+              },
+            };
           return outcome === "missing"
             ? null
             : {
@@ -1454,6 +1470,7 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
           url: string;
           scopes: string[];
           timeoutMs: number;
+          token?: string;
           sharedStateMode?: string;
         }) => {
           requireLiveProof(
@@ -1461,6 +1478,11 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
             "approval confirmation changed gateway or timeout",
           );
           requireJsonEqual(call.scopes, ["operator.admin"], "approval confirmation scope");
+          if (call.sharedStateMode !== "read-only")
+            requireLiveProof(
+              call.token === (outcome === "remote-admin" ? undefined : "rotated-token"),
+              "local approval confirmation did not use its newly issued token",
+            );
           events.push(call.method);
           if (outcome === "confirmation-denied") throw new Error("confirmation denied");
           const next = receiveToken(cached, adminScopes);
@@ -1473,7 +1495,13 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
         formatCliCommand: (value: string) => value,
         findQueryPendingNodeApprovalNotices: () => [],
         defaultRuntime: {
-          writeJson: () => events.push("output"),
+          writeJson: (value: unknown) => {
+            requireLiveProof(
+              !JSON.stringify(value).includes("rotated-token"),
+              "approval output exposed the private token",
+            );
+            events.push("output");
+          },
           error: () => events.push("error"),
           exit: (code: number) => events.push(`exit-${code}`),
         },

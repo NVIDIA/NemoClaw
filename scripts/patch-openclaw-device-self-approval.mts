@@ -2660,10 +2660,22 @@ const ADMIN_CONFIRM_READONLY_REPLACEMENT = ADMIN_CONFIRM_SILENT_IDENTITY_REPLACE
   "catch {}",
   'catch { throw new Error("Admin approval completed, but its token handoff could not read the local device identity. Repair local OpenClaw state, then retry the intended admin command."); }',
 );
-const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_READONLY_REPLACEMENT.replace(
+const ADMIN_CONFIRM_TRANSPORT_REPLACEMENT = ADMIN_CONFIRM_READONLY_REPLACEMENT.replace(
   'await callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
   'await callGatewayFromCliWithTransport("device.pair.list", opts, {}, { label: "Devices device.pair.list", defaultTimeoutMs: DEFAULT_DEVICES_TIMEOUT_MS, scopes: [ADMIN_SCOPE] });',
 );
+const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_TRANSPORT_REPLACEMENT.replace(
+  '\t\t\tawait callGatewayFromCliWithTransport("device.pair.list", opts, {},',
+  [
+    "\t\t\tconst nemoclawApprovedDevice = approvalContext.nemoclawLocallyApprovedDevice;",
+    "\t\t\tconst nemoclawApprovedOperator = nemoclawApprovedDevice?.tokens?.operator;",
+    '\t\t\tconst nemoclawApprovedToken = nemoclawApprovedDevice?.deviceId === nemoclawApprovingIdentity.deviceId && nemoclawApprovedOperator?.role === "operator" && !nemoclawApprovedOperator.revokedAtMs && nemoclawApprovedOperator.scopes?.includes(ADMIN_SCOPE) && typeof nemoclawApprovedOperator.token === "string" ? nemoclawApprovedOperator.token.trim() : void 0;',
+    '\t\t\tawait callGatewayFromCliWithTransport("device.pair.list", nemoclawApprovedToken ? { ...opts, token: nemoclawApprovedToken, password: void 0 } : opts, {},',
+  ].join("\n"),
+);
+const ADMIN_APPROVAL_RESULT_TARGET =
+  'if (approved.status === "forbidden") throw new Error(formatDevicePairingForbiddenMessage(approved), { cause: error });';
+const ADMIN_APPROVAL_RESULT_REPLACEMENT = `${ADMIN_APPROVAL_RESULT_TARGET}\n\t\tcontext.nemoclawLocallyApprovedDevice = approved.device; // nemoclaw: retain approved token privately for confirmation`;
 const ADMIN_CONFIRM_FUNCTION = "async function runDevicesApproveCommand(requestId, opts) {";
 const ADMIN_CONFIRM_SPEC: FileSpec = {
   id: "explicit-admin-token-confirmation",
@@ -2673,6 +2685,20 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
     return source.includes(ADMIN_CONFIRM_FUNCTION);
   },
   patch(source, file) {
+    const retained = countOccurrences(source, ADMIN_APPROVAL_RESULT_REPLACEMENT);
+    if (
+      countOccurrences(source, ADMIN_APPROVAL_RESULT_TARGET) !== 2 ||
+      (retained !== 0 && retained !== 2)
+    )
+      return {
+        source,
+        status: "no-match",
+        error: `explicit admin token handoff in ${file}: local approval result changed`,
+      };
+    const retainedSource =
+      retained === 2
+        ? source
+        : source.replaceAll(ADMIN_APPROVAL_RESULT_TARGET, ADMIN_APPROVAL_RESULT_REPLACEMENT);
     const gatewayCall = listJsFiles(distDir)
       .map((candidate) => fs.readFileSync(candidate, "utf8"))
       .find((candidate) =>
@@ -2695,6 +2721,7 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
     const previousIdentity = [
       ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT,
       ADMIN_CONFIRM_READONLY_REPLACEMENT,
+      ADMIN_CONFIRM_TRANSPORT_REPLACEMENT,
     ].find((replacement) => countOccurrences(source, replacement) === 1);
     if (source.includes(ADMIN_CONFIRM_MARKER)) {
       if (
@@ -2702,14 +2729,17 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
         countOccurrences(source, ADMIN_CONFIRM_REPLACEMENT) === 1 &&
         countOccurrences(source, importedFunction) === 1
       )
-        return { source, status: "already-applied" };
+        return {
+          source: retainedSource,
+          status: retained === 2 ? "already-applied" : "would-apply",
+        };
       if (
         countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
         previousIdentity &&
         countOccurrences(source, importedFunction) === 1
       )
         return {
-          source: source.replace(previousIdentity, ADMIN_CONFIRM_REPLACEMENT),
+          source: retainedSource.replace(previousIdentity, ADMIN_CONFIRM_REPLACEMENT),
           status: "would-apply",
         };
       if (!previous || countOccurrences(source, ADMIN_CONFIRM_MARKER) !== 1)
@@ -2726,7 +2756,7 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
         error: `explicit admin token handoff in ${file}: partial identity import`,
       };
     const imported = replaceExactlyOnce(
-      source,
+      retainedSource,
       ADMIN_CONFIRM_FUNCTION,
       importedFunction,
       "explicit admin token identity reader",
