@@ -47,7 +47,7 @@ describe("config export command", () => {
     mocks.createLiveExportSnapshotReader.mockReset().mockReturnValue(mocks.snapshotReader);
     mocks.observeStableExportSource.mockReset().mockResolvedValue({
       ok: true,
-      source: { sandboxName: "alpha" },
+      source: { sandboxName: "alpha", inference: { provider: "openai-api" } },
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
@@ -78,11 +78,49 @@ describe("config export command", () => {
     ).resolves.toBeUndefined();
     expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
     expect(mocks.buildExportConfig).toHaveBeenCalledWith(
-      { sandboxName: "alpha" },
+      { sandboxName: "alpha", inference: { provider: "openai-api" } },
       expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
     );
     expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
     expect(mocks.publishExportFile).not.toHaveBeenCalled();
+  });
+
+  it("warns on stderr after Gemini YAML stdout without changing the YAML (#12035)", async () => {
+    mocks.observeStableExportSource.mockResolvedValue({
+      ok: true,
+      source: { sandboxName: "alpha", inference: { provider: "gemini-api" } },
+      attempts: 1,
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      _: string,
+      callback?: (error?: Error | null) => void,
+    ) => {
+      callback?.();
+      return true;
+    }) as typeof process.stdout.write);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd());
+    expect(stdout).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
+    expect(stderr.mock.calls.flat().join("")).toContain("V1 Gemini deployment support is pending");
+    expect(mocks.publishExportFile).not.toHaveBeenCalled();
+  });
+
+  it("reports pending V1 support in the Gemini JSON file result (#12035)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    mocks.observeStableExportSource.mockResolvedValue({
+      ok: true,
+      source: { sandboxName: "alpha", inference: { provider: "gemini-api" } },
+      attempts: 1,
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const result = await ConfigExportCommand.run(
+      ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
+      process.cwd(),
+    );
+    expect(result).toMatchObject({ v1Support: "pending" });
+    expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ v1Support: "pending" });
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it("rejects JSON on YAML stdout before reading source state (#10938)", async () => {

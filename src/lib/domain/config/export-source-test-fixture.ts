@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { verifyExportSource } from "./verify-export-source";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { GEMINI_ENDPOINT_URL } from "../../inference/provider-models";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
   buildManagedStartupProfile,
@@ -225,6 +226,60 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
       globalPolicyVersion: 0,
     },
     ...overrides,
+  };
+}
+
+export function geminiSnapshot(): ObservedExportSnapshot {
+  const base = snapshot();
+  const model = "gemini-3.6-flash";
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "gemini-api",
+    model,
+    "openai-completions",
+  );
+  return {
+    ...base,
+    registry: entry({
+      provider: "gemini-api",
+      model,
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: GEMINI_ENDPOINT_URL,
+      credentialEnv: "GEMINI_API_KEY",
+      workload: managedWorkload(
+        profileInput({
+          inference: {
+            routeProvider: route.providerKey,
+            upstreamProvider: "gemini-api",
+            model,
+            routedBaseUrl: route.inferenceBaseUrl,
+            upstreamEndpointUrl: null,
+            api: "openai-completions",
+            primaryModelRef: route.primaryModelRef,
+            compatibility: route.inferenceCompat ?? {},
+          },
+        }),
+      ),
+    }),
+    inference: {
+      ...base.inference,
+      provider: "gemini-api",
+      model,
+      api: "openai-completions",
+      endpoint: GEMINI_ENDPOINT_URL,
+      credentialEnv: "GEMINI_API_KEY",
+      endpointEvidence: {
+        endpoint: GEMINI_ENDPOINT_URL,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "gemini-api",
+          id: "gemini-provider-id",
+          resourceVersion: "8",
+        },
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+      },
+    },
   };
 }
 

@@ -77,7 +77,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
       );
     const target = this.exportTarget(flags.output, flags.force, json);
     const [
-      { runConfigExport },
+      { runConfigExport, GEMINI_V1_SUPPORT_NOTICE },
       { observeStableExportSource },
       { createLiveExportSnapshotReader },
       { publishExportFile },
@@ -106,6 +106,10 @@ export default class ConfigExportCommand extends NemoClawCommand {
     );
     if (!outcome.ok) this.error(formatConfigExportFailure(outcome.failure));
     const { completion } = outcome;
+    const v1Support =
+      completion.kind === "stdout" ? completion.v1Support : completion.result.v1Support;
+    if (v1Support === "pending" && !json)
+      process.stderr.write(`Warning: ${GEMINI_V1_SUPPORT_NOTICE}\n`);
     return completion.kind === "file" ? completion.result : undefined;
   }
 }

@@ -51,8 +51,9 @@ function inferenceProvider(
         source.inference.serving.backend === "ollama" ? OLLAMA_SERVICE_NAME : VLLM_SERVICE_NAME,
     };
   }
-  const driver: "anthropic" | "openai" =
-    source.inference.api === "anthropic-messages" ? "anthropic" : "openai";
+  let driver: "anthropic" | "openai" | "google" = "openai";
+  if (source.inference.provider === "gemini-api") driver = "google";
+  else if (source.inference.api === "anthropic-messages") driver = "anthropic";
   const provider = {
     name,
     provider: driver,

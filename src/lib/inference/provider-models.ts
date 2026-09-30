@@ -17,6 +17,7 @@ import type { ModelCatalogFetchResult, ModelValidationResult } from "../onboard/
 const { normalizeCredentialValue } = require("../credentials/store");
 
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
+export const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 export const GEMINI_NATIVE_MODELS_ENDPOINT_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 export const GEMINI_MODEL_CATALOG_MAX_PAGES = 25;

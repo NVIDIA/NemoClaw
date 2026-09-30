@@ -27,7 +27,7 @@ const teamDocumentName = parseNemoClawConfigDocumentName("team");
 const documentUid = parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000");
 
 function dependencies(): ConfigExportDependencies {
-  const observation = { sandboxName: "alpha" } as never;
+  const observation = { sandboxName: "alpha", inference: { provider: "openai-api" } } as never;
   const config = { kind: "NemoClawConfig" } as never;
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
@@ -44,6 +44,36 @@ function dependencies(): ConfigExportDependencies {
 }
 
 describe("runConfigExport", () => {
+  it("marks Gemini stdout and file results as pending V1 support (#12035)", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.observe).mockResolvedValue({
+      ok: true,
+      source: { sandboxName: "alpha", inference: { provider: "gemini-api" } } as never,
+      attempts: 1,
+    });
+    const stdout = await runConfigExport(
+      { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
+      deps,
+    );
+    const file = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: alphaDocumentName,
+        target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+      },
+      deps,
+    );
+    expect(stdout).toEqual({ ok: true, completion: { kind: "stdout", v1Support: "pending" } });
+    expect(file).toMatchObject({
+      ok: true,
+      completion: { kind: "file", result: { v1Support: "pending" } },
+    });
+    expect(
+      file.ok &&
+        file.completion.kind === "file" &&
+        Check(ConfigExportResultSchema, file.completion.result),
+    ).toBe(true);
+  });
   it("writes canonical YAML for a stdout target", async () => {
     const deps = dependencies();
     await expect(

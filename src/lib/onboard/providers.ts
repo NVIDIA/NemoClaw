@@ -23,6 +23,7 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const { isProviderKeyCredentialCandidate } = require("../inference/provider-key/contract");
+const { GEMINI_ENDPOINT_URL } = require("../inference/provider-models");
 const {
   matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
@@ -42,7 +43,6 @@ const { HERMES_PROVIDER_NAME } = require("./inference-providers/hermes-provider-
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
-const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
