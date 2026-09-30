@@ -3659,7 +3659,7 @@ export function validateNativePodmanSetupAction(
   if (!start) return ["native Podman setup action must start the runtime"];
   if (
     asRecord(inputs.toolchain).default !== "native-6.1" ||
-    asRecord(inputs["isolate-docker-cli"]).default !== "true" ||
+    inputs["isolate-docker-cli"] !== undefined ||
     asRecord(artifact?.env).TOOLCHAIN_PROFILE !== "${{ inputs.toolchain }}" ||
     !stringValue(artifact?.run).includes("native-6.1)") ||
     !stringValue(artifact?.run).includes("portable-5.7)") ||
@@ -3753,7 +3753,7 @@ export function validateNativePodmanSetupAction(
   }
   const isolationRun = stringValue(isolate?.run);
   if (
-    isolate?.if !== "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}" ||
+    isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
     steps.at(-1) !== isolate ||
     !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
     !isolationRun.includes('runtime_state_path="$restore_root/runtime.json"') ||

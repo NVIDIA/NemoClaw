@@ -688,6 +688,7 @@ describe("native Podman E2E setup boundary", () => {
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
+    expect(setupAction.inputs).not.toHaveProperty("isolate-docker-cli");
     expect(setupRuntime?.env).toMatchObject({
       CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
     });
@@ -715,7 +716,6 @@ describe("native Podman E2E setup boundary", () => {
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
       enabled: "true",
       toolchain: "portable-5.7",
-      "isolate-docker-cli": "true",
     });
     expect(setup?.uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8",

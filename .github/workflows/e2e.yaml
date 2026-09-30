@@ -5434,7 +5434,6 @@ jobs:
           cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
           enabled: "true"
           toolchain: portable-5.7
-          isolate-docker-cli: "true"
 
       - name: Run Portable Hermes finalization live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
