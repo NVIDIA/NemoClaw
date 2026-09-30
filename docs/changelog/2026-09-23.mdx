@@ -6,8 +6,20 @@
 ## v0.0.129
 
 NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
-It also strengthens host OS reporting and Windows WSL GPU verification.
+It also supports publisher-managed Docker images pinned by digest and strengthens host OS reporting and Windows WSL GPU verification.
 
+- Docker onboarding for OpenClaw and Hermes accepts a publisher-managed image with `nemoclaw onboard --from-image <repository>@sha256:<digest>`.
+  NemoClaw validates the image platform, non-root user, `/sandbox` working directory, executable, any agent metadata, and tool-disclosure declaration before it creates a sandbox.
+  It inspects a local image before it pulls, and Docker's configured credentials provide private-registry access.
+  In non-interactive onboarding, use `NEMOCLAW_FROM_IMAGE` and a sandbox name.
+  Related change: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-onboard) for image requirements and recovery limits.
+- Sandboxes created with `--from-image` retain their recorded digest through resume, rebuild, and snapshot clone.
+  NemoClaw revalidates the image before a rebuild or clone changes a sandbox.
+  Cleanup retains the published image, and `nemoclaw upgrade-sandboxes` lists the sandbox as pinned without automatically rebuilding it.
+  After you update NemoClaw, run `nemoclaw <sandbox> rebuild` to recreate the sandbox from its recorded digest.
+  Related change: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) for the update behavior.
 - Fresh OpenClaw sandboxes created with a custom Dockerfile apply the selected OpenShell inference route through OpenClaw's native configuration before onboarding completes.
   If the selected model differs from the image's model, OpenClaw uses its own defaults for any inherited context-window and output-token limits.
   Related change: [PR #12421](https://github.com/NVIDIA/NemoClaw/pull/12421).
