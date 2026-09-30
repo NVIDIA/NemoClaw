@@ -908,10 +908,8 @@ COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade stale bases. Reuse is restricted to matching provenance from an
-# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
-# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
-# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# OPENCLAW_VERSION is the NemoClaw runtime build target; enforce the blueprint minimum.
+# Reuse matching official digest-pinned bases; reinstall other verified locked graphs.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
 RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
