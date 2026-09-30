@@ -183,6 +183,7 @@ function sameCancellationRecovery(
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   hostMounts?: SandboxHostMount[];
 }
 
@@ -388,7 +389,11 @@ export interface SessionUpdates {
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   externalComponentActivation?: ExternalComponentActivationIncomplete | null;
-  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  metadata?: {
+    gatewayName?: string;
+    fromDockerfile?: string | null;
+    fromImage?: string | null;
+  };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
 }
@@ -712,6 +717,7 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    fromImage: readString(value.fromImage),
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }
@@ -1048,6 +1054,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      fromImage: overrides.metadata?.fromImage ?? null,
       ...(overrides.metadata?.hostMounts?.length
         ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
         : {}),
@@ -1807,6 +1814,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
         typeof updates.metadata.fromDockerfile === "string"
           ? updates.metadata.fromDockerfile
           : null,
+      fromImage: typeof updates.metadata.fromImage === "string" ? updates.metadata.fromImage : null,
     };
   }
   return safe;

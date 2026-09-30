@@ -107,9 +107,11 @@ import {
   prepareManagedSnapshotProfileRestore,
   prepareSandboxHostLocalInferenceDestroyAuthority,
   prepareSandboxRuntimeRestore,
+  preflightExternalImageRebuild,
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
+  resolveSandboxWorkloadRuntimeCapabilities,
   retirePreparedHostLocalInferenceAuthority,
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
@@ -1512,6 +1514,27 @@ async function runSnapshotRestoreUnlocked(
           `  Source sandbox '${sandboxName}' changed OpenShell gateways while waiting to restore. Retry the command.`,
         );
         snapshotExit(1);
+      }
+      if (lockedSourceEntry.workload?.kind === "external-image") {
+        try {
+          const runtimeProvider = requireCurrentSnapshotRuntimeProvider(lockedSourceEntry);
+          preflightExternalImageRebuild({
+            agentName: lockedSourceEntry.agent ?? null,
+            expectedToolDisclosure: lockedSourceEntry.toolDisclosure ?? "progressive",
+            receipt: lockedSourceEntry.workload,
+            runtime: resolveSandboxWorkloadRuntimeCapabilities({
+              driverName: runtimeProvider.identity.id,
+            }),
+            provider: runtimeProvider,
+          });
+        } catch (error) {
+          console.error(
+            `  Cannot preflight external image for snapshot restore: ${
+              error instanceof Error ? error.message : String(error)
+            }.`,
+          );
+          snapshotExit(1);
+        }
       }
       const lockedGatewayPort = resolveGatewayPortFromName(lockedGatewayName);
       if (lockedGatewayPort === null) {
