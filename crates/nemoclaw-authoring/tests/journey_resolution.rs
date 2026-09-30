@@ -97,6 +97,41 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
 }
 
 #[test]
+fn exact_and_scope_guidance_share_one_inference_api_question() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let path = "/spec/inferenceProviders/0/api";
+    let mut state = JourneyDefinition::new("same-api-decision", base)
+        .ask([path])
+        .ask([JourneyScope::InferenceApi])
+        .start(&capabilities)
+        .unwrap();
+
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert_eq!(
+        resolution
+            .questions()
+            .iter()
+            .filter(|question| question.id() == path)
+            .count(),
+        1,
+        "one SDK field must be one decision even with two selectors"
+    );
+    state
+        .answer(&capabilities, path, Some(json!("openai-completions")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question(path)
+            .is_none()
+    );
+}
+
+#[test]
 fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
     let capabilities = Capabilities::available();
     let base =

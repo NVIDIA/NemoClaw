@@ -704,6 +704,7 @@ impl JourneyState {
         {
             let path = format!("{provider}/api");
             if !self.accepted.contains(&path)
+                && !questions.iter().any(|question| question.id == path)
                 && let Some((mut schema, required)) = sdk_field_schema(&path)
             {
                 if let Some(preset) = self.current_preset() {
