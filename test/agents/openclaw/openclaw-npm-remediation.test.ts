@@ -21,6 +21,7 @@ import {
   OPENCLAW_UNDICI_PATCHES,
   patchInstalledOpenClawUndici,
   patchVerifiedOfficialPluginUndici,
+  UndiciPatchRecoveryError,
   buildRemediatedOpenClawArchive,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
@@ -1215,6 +1216,57 @@ describe("official OpenClaw bundled Undici patch", () => {
       f.restorePins();
     }
   });
+  it.each([
+    ["@openclaw/slack", "package.json"],
+    ["@openclaw/slack", "package-lock.json"],
+    ["@openclaw/discord", "package.json"],
+    ["@openclaw/discord", "package-lock.json"],
+  ] as const)(
+    "reports the retained %s backup after rolling back a failed %s write",
+    (packageName, file) => {
+      const f = replacementFixture(packageName);
+      const exited = spawnSync(process.execPath, ["-e", ""]);
+      expect(exited.status).toBe(0);
+      const workspace = interruptReplacement(f, exited.pid);
+      fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
+      const npmRoot = fs.realpathSync(f.npmRoot);
+      const manifestPath = path.join(npmRoot, "package.json");
+      const lockPath = path.join(npmRoot, "package-lock.json");
+      const writeError = new Error("ENOSPC: recovery metadata write failed");
+      const failWrite = () => {
+        throw writeError;
+      };
+      const writes = {
+        "package.json": [failWrite, fs.writeFileSync],
+        "package-lock.json": [fs.writeFileSync, failWrite],
+      }[file];
+      vi.mocked(writeFileSync)
+        .mockImplementationOnce(writes[0]!)
+        .mockImplementationOnce(writes[1]!);
+      try {
+        let failure: unknown;
+        try {
+          patchInstalledOpenClawUndici(f);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeInstanceOf(UndiciPatchRecoveryError);
+        expect(failure).toMatchObject({
+          cause: writeError,
+          message: expect.stringContaining(JSON.stringify(fs.realpathSync(workspace))),
+        });
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(hashPackageTree(path.join(workspace, "original"))).toBe(f.patch.affectedTree);
+        expect(readJson(manifestPath)).toEqual(f.project);
+        expect(readJson(lockPath)).toEqual(f.lock);
+        patchInstalledOpenClawUndici(f);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(fs.existsSync(workspace)).toBe(false);
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
   it("preserves an unverified retained workspace beside a fixed bundle", () => {
     const f = replacementFixture("@openclaw/slack");
     const exited = spawnSync(process.execPath, ["-e", ""]);
@@ -1333,7 +1385,7 @@ describe("official OpenClaw bundled Undici patch", () => {
       .mockImplementationOnce(fs.renameSync);
     try {
       expect(() => patchInstalledOpenClawUndici(f)).toThrow(
-        "rollback failed; recovery workspace retained",
+        "recovery is incomplete; recovery workspace retained",
       );
       const workspaces = fs
         .readdirSync(f.npmRoot)

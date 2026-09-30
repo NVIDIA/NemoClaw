@@ -1705,7 +1705,7 @@ export class UndiciPatchRecoveryError extends Error {
   constructor(workspace?: string, options?: ErrorOptions) {
     super(
       workspace
-        ? `Undici patch rollback failed; recovery workspace retained at ${JSON.stringify(workspace)}. Preserve this directory and report the failure to a maintainer.`
+        ? `Undici patch recovery is incomplete; recovery workspace retained at ${JSON.stringify(workspace)}. Preserve this directory and report the failure to a maintainer.`
         : "Original Undici bundle restored after interruption; retry the operation",
       options,
     );
@@ -1887,6 +1887,8 @@ export function patchInstalledOpenClawUndici(options: {
         "Undici patch metadata rollback failed; no recovery backup remains",
       );
     }
+    if (recoveredWorkspace)
+      throw new UndiciPatchRecoveryError(recoveredWorkspace, { cause: error });
     throw error;
   } finally {
     if (!retainBackup) rmSync(workspace, { recursive: true, force: true });
