@@ -531,6 +531,31 @@ jobs:
             scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
+      - name: Select PR dependency identities for the trusted audit
+        shell: python
+        env:
+          AUDIT_CANDIDATE_ROOT: ${{ github.workspace }}
+        run: |
+          import json, os
+          from pathlib import Path
+          trusted_file = Path(".trusted-reviewed-npm-audit/ci/reviewed-npm-audit.json")
+          trusted = json.loads(trusted_file.read_text())
+          candidate = json.loads((Path(os.environ["AUDIT_CANDIDATE_ROOT"]) / "ci/reviewed-npm-audit.json").read_text())
+          for section in ("archivePackages", "lockedGraphs"):
+              key = lambda item: item["id"] if section == "lockedGraphs" else item["packageSpec"].rsplit("@", 1)[0]
+              proposed = {key(item): item for item in candidate[section]}
+              assert len(proposed) == len(candidate[section])
+              assert set(proposed) == {key(item) for item in trusted[section]}
+              for reviewed in trusted[section]:
+                  update = proposed[key(reviewed)]
+                  assert update["packageSpec"].rsplit("@", 1)[0] == reviewed["packageSpec"].rsplit("@", 1)[0]
+                  fields = ["label", "packageSpec", "integrity", "tarballUrl"]
+                  if section == "lockedGraphs":
+                      fields.append("lockSha256")
+                  for field in fields:
+                      reviewed[field] = update[field]
+          trusted_file.write_text(json.dumps(trusted, indent=2) + "\n")
+
       - name: Audit reviewed production npm graphs
         uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
         with:
