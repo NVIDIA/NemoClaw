@@ -10,7 +10,6 @@ use nemoclaw_sdk::{
     services::installers::ollama::proxy::MODEL, services::installers::ollama::proxy::STORAGE,
     services::installers::ollama::proxy::supports,
 };
-pub(crate) mod artifacts;
 mod backend;
 pub use backend::ProxyBackend;
 pub(crate) mod proxy;

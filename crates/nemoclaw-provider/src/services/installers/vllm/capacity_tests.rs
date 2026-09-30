@@ -1,82 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::*;
-use crate::docker::fixture::Fixture;
-use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
-fn observed() -> RuntimeObservation {
-    let fixtures: Vec<Value> =
-        serde_json::from_str(include_str!("../../../managed/reference.json")).unwrap();
-    RuntimeObservation {
-        spec: serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap(),
-        id: "binding".into(),
-        container_id: "container".into(),
-        data_path: "/data".into(),
-        running: true,
-        started_at: "2026-09-14T00:00:00Z".into(),
-    }
-}
-#[tokio::test]
-async fn runtime_status_requires_complete_current_data_and_never_mutates() {
-    let response = Arc::new(Mutex::new((
-        200,
-        json!({"phase":"ready","detail":"","updated":"2026-09-14T00:01:00Z","pid":123}),
-    )));
-    let state = response.clone();
-    let fixture = Fixture::start(move |r| {
-        assert_eq!(r.method, "GET");
-        assert!(r.path.starts_with("/containers/container/archive?"));
-        let (code, value) = &*state.lock().unwrap();
-        let body = if *code == 200 {
-            crate::docker::archive(&[("status.json", &serde_json::to_vec(value).unwrap(), 0o600)])
-                .unwrap()
-        } else {
-            b"{}".to_vec()
-        };
-        Some((*code, body))
-    })
-    .await;
-    let engine = Engine::connect(&fixture.endpoint).unwrap();
-    let mut o = observed();
-    assert_eq!(engine.runtime_status(&o).await.unwrap().phase, "ready");
-    response.lock().unwrap().1["updated"] = json!("2026-09-13T00:00:00Z");
-    assert_eq!(
-        engine.runtime_status(&o).await.unwrap().phase,
-        "initializing"
-    );
-    for value in [
-        json!({}),
-        json!({"phase":"surprise","updated":"2026-09-14T00:01:00Z","detail":"","pid":123}),
-        json!({"phase":"ready","updated":"bad","detail":"","pid":123}),
-    ] {
-        *response.lock().unwrap() = (200, value);
-        assert!(engine.runtime_status(&o).await.is_err());
-    }
-    *response.lock().unwrap() = (404, json!({}));
-    assert!(engine.runtime_status(&o).await.is_err());
-    o.started_at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-    assert_eq!(
-        engine.runtime_status(&o).await.unwrap().phase,
-        "initializing"
-    );
-    for code in [401, 403, 500] {
-        response.lock().unwrap().0 = code;
-        assert!(engine.runtime_status(&o).await.is_err());
-    }
-    o.started_at = "invalid".into();
-    assert!(engine.runtime_status(&o).await.is_err());
-}
 
-use super::super::capacity::verify_stat;
+use super::verify_stat;
 use nemoclaw_runtime::snapshot::VerifiedFile;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
 #[test]
 fn artifact_manifests_require_matching_identity_and_unchanged_regular_files() {
-    let service = crate::services::installers::vllm::configured_service(&observed().spec).unwrap();
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../managed/reference.json")).unwrap();
+    let spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    let service = crate::services::installers::vllm::configured_service(&spec).unwrap();
     let recipe = service.recipe.as_ref().unwrap();
     let manifest = recipe.snapshot.as_ref().unwrap().clone();
-    let modified = timestamp("2026-09-14T00:00:00.123456789Z")
+    let modified = OffsetDateTime::parse("2026-09-14T00:00:00.123456789Z", &Rfc3339)
         .unwrap()
         .unix_timestamp_nanos() as u64;
     let mut local = nemoclaw_runtime::snapshot::ModelManifest::new(&manifest);

@@ -5,6 +5,4 @@ pub use nemoclaw_sdk::{
     services::installers::vllm::SERVICE_KIND, services::installers::vllm::STORAGE_KIND,
     services::installers::vllm::configured_service,
 };
-mod artifacts;
-pub use artifacts::RuntimeStatus;
 mod capacity;
