@@ -65,6 +65,72 @@ function restoreRunScript(): string {
   );
 }
 
+function setupRunScript(): string {
+  const action = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
+    runs: { steps: Array<{ name?: string; run?: string }> };
+  };
+  return String(
+    action.runs.steps.find(({ name }) => name === "Start native Podman runtime")?.run ?? "",
+  );
+}
+
+function interruptedSetupHarness(cleanupRoot: string): string {
+  const source = setupRunScript();
+  const start = source.indexOf("setup_completed=false");
+  const trapEndMarker = "trap 'exit 143' TERM";
+  const trapEnd = source.indexOf("\nfi", source.indexOf(trapEndMarker, start));
+  const trapBoundary = source
+    .slice(start, trapEnd + "\nfi".length)
+    .replace(
+      '[[ "$CLEANUP_FIXTURE" == /usr/local/libexec/nemoclaw/* ]]',
+      `[[ "$CLEANUP_FIXTURE" == ${shellQuote(cleanupRoot)}/* ]]`,
+    );
+  return [
+    "sudo() {",
+    '  if [[ "${1:-}" == "-n" ]]; then shift; fi',
+    '  if [[ "${1:-}" == "stat" ]]; then printf \'0:0:555\\n\'; return; fi',
+    '  "$@"',
+    "}",
+    trapBoundary,
+    'exit "$SETUP_FAILURE_STATUS"',
+  ].join("\n");
+}
+
+async function runInterruptedSetupFixture(ownerContext: ProcessOwner, cleanupExitStatus: number) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-setup-trap-"));
+  const cleanupRoot = path.join(root, "cleanup");
+  const runnerTemp = path.join(root, "runner-temp");
+  const cleanupFixture = path.join(cleanupRoot, "restore");
+  const cleanupCount = path.join(runnerTemp, "cleanup-count");
+  const dockerState = path.join(runnerTemp, "docker-state");
+  fs.mkdirSync(cleanupRoot, { recursive: true });
+  fs.mkdirSync(runnerTemp, { recursive: true });
+  fs.writeFileSync(dockerState, "isolated\n");
+  writeExecutable(
+    cleanupFixture,
+    `#!/bin/bash
+set -euo pipefail
+count=0
+[[ ! -f "$RUNNER_TEMP/cleanup-count" ]] || count="$(cat "$RUNNER_TEMP/cleanup-count")"
+printf '%s\n' "$((count + 1))" >"$RUNNER_TEMP/cleanup-count"
+printf 'restored\n' >"$RUNNER_TEMP/docker-state"
+exit ${String(cleanupExitStatus)}
+`,
+  );
+  const result = await runCommand(
+    ownerContext,
+    "bash",
+    ["--noprofile", "--norc", "-c", interruptedSetupHarness(cleanupRoot)],
+    {
+      ...process.env,
+      CLEANUP_FIXTURE: cleanupFixture,
+      RUNNER_TEMP: runnerTemp,
+      SETUP_FAILURE_STATUS: "42",
+    },
+  );
+  return { cleanupCount, dockerState, result, root };
+}
+
 type RestoreFixtureKind = "valid" | "regular-file" | "symlink";
 
 type CommandResult = {
@@ -649,7 +715,7 @@ describe("native Podman E2E setup boundary", () => {
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
       enabled: "true",
       toolchain: "portable-5.7",
-      "isolate-docker-cli": "false",
+      "isolate-docker-cli": "true",
     });
     expect(setup?.uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8",
@@ -665,7 +731,9 @@ describe("native Podman E2E setup boundary", () => {
     expect(live?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
     expect(live?.run).toContain("nvidia-smi --query-gpu=name");
     expect(live?.run).toContain("podman build");
-    expect(live?.run).toContain("test/e2e/live/portable-profile-rootless-linux.test.ts");
+    expect(live?.run).toMatch(
+      /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
+    );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
     expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
     expect(setupIndex).toBeGreaterThanOrEqual(0);
@@ -674,6 +742,26 @@ describe("native Podman E2E setup boundary", () => {
     expect(fixtureRemovalIndex).toBeGreaterThan(restoreIndex);
     expect(JSON.stringify(job)).not.toContain("NVIDIA_API_KEY");
     expect(JSON.stringify(job)).not.toContain("NVIDIA_INFERENCE_API_KEY");
+  });
+
+  it.concurrent("runs interrupted setup cleanup once and preserves the authoritative failure status", async (context) => {
+    const restored = await runInterruptedSetupFixture(context, 0);
+    const restoreFailed = await runInterruptedSetupFixture(context, 73);
+
+    try {
+      expect(restored.result.status, restored.result.stderr).toBe(42);
+      expect(fs.readFileSync(restored.cleanupCount, "utf8").trim()).toBe("1");
+      expect(fs.readFileSync(restored.dockerState, "utf8").trim()).toBe("restored");
+      expect(restoreFailed.result.status).toBe(73);
+      expect(restoreFailed.result.stderr).toContain(
+        "Native Podman setup failed and runner restoration also failed",
+      );
+      expect(fs.readFileSync(restoreFailed.cleanupCount, "utf8").trim()).toBe("1");
+      expect(fs.readFileSync(restoreFailed.dockerState, "utf8").trim()).toBe("restored");
+    } finally {
+      fs.rmSync(restored.root, { force: true, recursive: true });
+      fs.rmSync(restoreFailed.root, { force: true, recursive: true });
+    }
   });
 
   it("provides Podman authority without impersonating Docker", () => {

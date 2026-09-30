@@ -5434,7 +5434,7 @@ jobs:
           cleanup-fixture: /usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}
           enabled: "true"
           toolchain: portable-5.7
-          isolate-docker-cli: "false"
+          isolate-docker-cli: "true"
 
       - name: Run Portable Hermes finalization live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5483,7 +5483,7 @@ jobs:
             --file agents/hermes/Dockerfile.base \
             --tag localhost/nemoclaw-hermes-base:portable-e2e \
             .
-          npx tsx tools/e2e/live-vitest-invocation.mts run
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/portable-profile-rootless-linux.test.ts
 
       - name: Upload Portable Hermes finalization artifacts
