@@ -101,7 +101,7 @@
       "integrity": "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "71f87f397d8f628c40daefb0cc80d7b35a3be0353884f8275824a46568dc3113"
+      "lockSha256": "35ef2225c7b1cb56d989dd150c67961ed07668e75f4c75b168bfe567fd2b285a"
     },
     {
       "id": "mcporter-runtime",
@@ -134,5 +134,9 @@
       "directory": "tools/mcp-tool-discovery-runtime",
       "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
     }
-  ]
+  ],
+  "archiveUndiciPatchInputs": {
+    "remediationSha256": "678540677bd3f8014e78b20291fe806c95b3727850eb5a721d517cc3da6e8230",
+    "messagingApplierSha256": "326c1825a88b25a27e6b58cfa5355f69caf9b7579cb4da9536b83221ed8c46ee"
+  }
 }

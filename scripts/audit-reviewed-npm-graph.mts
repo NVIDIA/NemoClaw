@@ -56,7 +56,12 @@ type LockedGraph = LockedGraphIdentity &
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
   }>;
+type ArchiveUndiciPatchInputs = Readonly<{
+  remediationSha256: string;
+  messagingApplierSha256: string;
+}>;
 type AuditConfig = Readonly<{
+  archiveUndiciPatchInputs?: ArchiveUndiciPatchInputs;
   archivePackages: readonly ReviewedPackage[];
   archiveGraphId: string;
   archiveTarVersion: "7.5.21";
@@ -217,6 +222,12 @@ export function parseAuditConfig(contents: string): AuditConfig {
   const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(contents);
   if (
     parsed.schemaVersion !== 2 ||
+    (parsed.archiveUndiciPatchInputs !== undefined &&
+      (!parsed.archiveUndiciPatchInputs ||
+        typeof parsed.archiveUndiciPatchInputs.remediationSha256 !== "string" ||
+        typeof parsed.archiveUndiciPatchInputs.messagingApplierSha256 !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(parsed.archiveUndiciPatchInputs.remediationSha256) ||
+        !/^[0-9a-f]{64}$/u.test(parsed.archiveUndiciPatchInputs.messagingApplierSha256))) ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
     typeof parsed.archiveGraphId !== "string" ||
     !parsed.archiveGraphId ||
@@ -278,7 +289,9 @@ export function parseAuditConfig(contents: string): AuditConfig {
           (!isLockedGraphIdentity(graph.replacement) ||
             exactPackageName(graph.replacement.packageSpec) !==
               exactPackageName(graph.packageSpec) ||
-            graph.replacement.packageSpec === graph.packageSpec ||
+            (graph.replacement.packageSpec === graph.packageSpec &&
+              (graph.replacement.integrity !== graph.integrity ||
+                graph.replacement.tarballUrl !== graph.tarballUrl)) ||
             graph.replacement.lockSha256 === graph.lockSha256)),
     ) ||
     new Set(parsed.lockedGraphs.map(({ id }) => id)).size !== parsed.lockedGraphs.length
@@ -292,13 +305,51 @@ function readConfig(): AuditConfig {
   return parseAuditConfig(fs.readFileSync(CONFIG_PATH, "utf-8"));
 }
 
-export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
+/** Select the patched graph only for the independently reviewed implementation and caller. */
+export function hasReviewedArchiveUndiciPatch(
+  targetRoot: string,
+  reviewed: ArchiveUndiciPatchInputs | undefined,
+): boolean {
+  if (!reviewed) return false;
+  const inputs = [
+    ["scripts/lib/openclaw-npm-remediation.mts", reviewed.remediationSha256],
+    [
+      "src/lib/messaging/applier/build/messaging-build-applier.mts",
+      reviewed.messagingApplierSha256,
+    ],
+  ] as const;
+  for (const [relativePath, expected] of inputs) {
+    const file = resolvePathWithinRoot(targetRoot, relativePath, "reviewed Undici patch input");
+    let fd: number;
+    try {
+      fd = fs.openSync(
+        file,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error("Undici patch input must be a regular file");
+      if (createHash("sha256").update(fs.readFileSync(fd)).digest("hex") !== expected) return false;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  return true;
+}
+
+export function reviewedArchiveGraphManifest(archiveTarVersion: unknown, patchUndici = false) {
   if (archiveTarVersion !== "7.5.21") {
     throw new Error("reviewed archive graph tar version must be exactly 7.5.21");
   }
   return {
     name: "nemoclaw-reviewed-production-graph",
-    overrides: { tar: archiveTarVersion, openclaw: { undici: "8.10.2" } },
+    overrides: {
+      tar: archiveTarVersion,
+      ...(patchUndici ? { openclaw: { undici: "8.10.2" } } : {}),
+    },
     private: true,
     version: "1.0.0",
   } as const;
@@ -323,16 +374,17 @@ export function stageReviewedArchiveForInstall(
   return `.${path.sep}${relativeArchivePath}`;
 }
 
-function materializeArchiveGraph(
+export function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
   archiveTarVersion: "7.5.21",
+  patchUndici: boolean,
 ): string {
   const graphDirectory = path.join(tempRoot, "reviewed-archive-graph");
   fs.mkdirSync(graphDirectory);
   fs.writeFileSync(
     path.join(graphDirectory, "package.json"),
-    `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
+    `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion, patchUndici), null, 2)}\n`,
   );
   const archives = packages.map((reviewed, index) => {
     const archive = packReviewedNpmArchive({
@@ -357,7 +409,10 @@ function materializeArchiveGraph(
   for (const packageName of Object.keys(
     OPENCLAW_UNDICI_PATCHES,
   ) as (keyof typeof OPENCLAW_UNDICI_PATCHES)[]) {
-    if (packages.some(({ packageSpec }) => packageSpec === `${packageName}@2026.9.1`)) {
+    if (
+      patchUndici &&
+      packages.some(({ packageSpec }) => packageSpec === `${packageName}@2026.9.1`)
+    ) {
       patchInstalledOpenClawUndici({ npmRoot: graphDirectory, packageName });
     }
   }
@@ -1019,6 +1074,7 @@ function main(): void {
       config.archivePackages,
       tempRoot,
       config.archiveTarVersion,
+      hasReviewedArchiveUndiciPatch(TARGET_REPO_ROOT, config.archiveUndiciPatchInputs),
     );
     const archiveResult = runReviewedNpmAudit({
       cacheFile: graphCacheFile(config.archiveGraphId),
