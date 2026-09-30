@@ -7,10 +7,16 @@ on:
   pull_request:
     branches: [v1]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Immutable source revision selected by the aggregate workflow.
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: ci-native-${{ github.ref }}
+  group: ci-native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native:
@@ -39,6 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source-ref || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:

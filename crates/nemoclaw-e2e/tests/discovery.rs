@@ -223,7 +223,7 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
-async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_metadata() {
+async fn compiled_discovery_conditions_reject_mismatch_and_missing_runtime_metadata() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -250,6 +250,11 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
                 3=>return Some((404,br#"{"message":"not found"}"#.to_vec())),
                 _=>{}
             }
+            let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture").runtime;
+            runtime.binaries = catalog.adapters.iter().map(|adapter| {
+                (adapter.adapter_id().into(), vec!["/usr/local/bin/python3.99".into()])
+            }).collect();
+            catalog.runtime = Some(runtime);
             json!({"Id":"sha256:fixture", "Config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog).unwrap()}}})
         };
         Some((200,serde_json::to_vec(&body).unwrap()))
@@ -307,7 +312,7 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
-        assert_eq!(result.status.success(), selected != 1, "{diagnostics}");
+        assert_eq!(result.status.success(), selected == 0, "{diagnostics}");
         if selected == 1 {
             assert!(
                 diagnostics.contains("Resource postcondition failed"),
@@ -315,6 +320,11 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
             );
             assert!(
                 diagnostics.contains("sandbox/assistant: adapter/nvidia.fabric.openclaw"),
+                "{diagnostics}"
+            );
+        } else if selected >= 2 {
+            assert!(
+                diagnostics.contains("image runtime metadata is unavailable"),
                 "{diagnostics}"
             );
         }

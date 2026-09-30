@@ -38,7 +38,13 @@ async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_u
     });
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
+    fs::copy(
+        provider,
+        root.join(nemoclaw_sdk::bundle::executable(
+            "terraform-provider-nemoclaw",
+        )),
+    )
+    .unwrap();
     fs::write(root.join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(root).unwrap())).unwrap();
     let graph = json!({"terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},"provider":{"nemoclaw":{}},"data":{"nemoclaw_inference_capabilities":{"current":{"endpoint":endpoint,"api":"openai-responses"}}},"output":{"observation":{"value":"${data.nemoclaw_inference_capabilities.current.observation_json}"}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
@@ -74,6 +80,8 @@ async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_u
     server.await.unwrap();
 }
 
+// Deployment planning uses the Unix-only isolated image-engine transport.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated HTTP and gateway fixtures"]
 async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_uncertainty() {
@@ -132,6 +140,7 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
             Document::parse(include_bytes!("../../../examples/fabric-openclaw.yaml").as_slice())
                 .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         document.spec.inference_providers[0].provider = provider;
         document.spec.inference_providers[0].api = Some(api);
         document.spec.inference_providers[0].endpoint = endpoint.clone();

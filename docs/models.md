@@ -233,7 +233,7 @@ Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
 No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
-The [runtime reporter](../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [supervisor](../crates/nemoclaw-runtime/src/execution/supervisor.rs), and [provider artifact reader](../crates/nemoclaw-provider/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
+The [runtime reporter](../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [supervisor](../crates/nemoclaw-runtime/src/execution/supervisor.rs), and [provider status reader](../crates/nemoclaw-provider/src/services/status.rs) define these diagnostics and failure boundaries.
 
 ## Configure Nemotron on an AMD64 GPU Host
 
