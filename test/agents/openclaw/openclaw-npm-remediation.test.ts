@@ -1161,6 +1161,76 @@ describe("official OpenClaw bundled Undici patch", () => {
       f.restorePins();
     }
   });
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "finishes metadata and removes the interrupted workspace for a fixed %s bundle",
+    (packageName) => {
+      const f = replacementFixture(packageName);
+      const exited = spawnSync(process.execPath, ["-e", ""]);
+      const workspace = interruptReplacement(f, exited.pid);
+      fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
+      try {
+        patchInstalledOpenClawUndici(f);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(readJson(path.join(f.npmRoot, "package.json"))).toMatchObject({
+          overrides: { [packageName]: { undici: f.patch.version } },
+        });
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toMatchObject({
+          packages: {
+            [f.location]: { version: f.patch.version, integrity: f.patch.integrity },
+          },
+        });
+        expect(fs.existsSync(workspace)).toBe(false);
+        expect(packReviewedNpmArchive).not.toHaveBeenCalled();
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+  it("preserves a fixed bundle and its recovery workspace while the writer is active", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const workspace = interruptReplacement(f, process.pid);
+    fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("still running");
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+      expect(hashPackageTree(path.join(workspace, "original"))).toBe(f.patch.affectedTree);
+      expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("retains an interrupted fixed bundle workspace when metadata cannot be written", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    const workspace = interruptReplacement(f, exited.pid);
+    fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
+    vi.mocked(writeFileSync).mockImplementation(() => {
+      throw new Error("ENOSPC");
+    });
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+      expect(hashPackageTree(path.join(workspace, "original"))).toBe(f.patch.affectedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("preserves an unverified retained workspace beside a fixed bundle", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    const workspace = interruptReplacement(f, exited.pid);
+    fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "original", "unexpected.js"), "changed");
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed Undici recovery bundle");
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+      expect(fs.readFileSync(path.join(workspace, "original", "unexpected.js"), "utf8")).toBe(
+        "changed",
+      );
+    } finally {
+      f.restorePins();
+    }
+  });
   it("does not restore a bundle while its patch process is still running", () => {
     const f = replacementFixture("@openclaw/slack");
     const workspace = interruptReplacement(f, process.pid);

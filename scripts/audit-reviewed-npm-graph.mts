@@ -374,7 +374,7 @@ export function stageReviewedArchiveForInstall(
   return `.${path.sep}${relativeArchivePath}`;
 }
 
-function materializeArchiveGraph(
+export function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
   archiveTarVersion: "7.5.21",

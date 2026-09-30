@@ -2,12 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
+  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
+});
+import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import {
+  OPENCLAW_UNDICI_PATCHES,
+  hashPackageTree,
+} from "../../../scripts/lib/openclaw-npm-remediation.mts";
 import {
   reviewedArchiveGraphManifest,
+  materializeArchiveGraph,
   hasReviewedArchiveUndiciPatch,
   parseAuditConfig,
   stageReviewedArchiveForInstall,
@@ -129,6 +141,82 @@ describe("reviewed archive graph materialization", () => {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
   });
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "materializes the reviewed %s bundle and lock after matching the patch inputs",
+    (packageName) => {
+      const f = archivePatchFixture();
+      const patch = OPENCLAW_UNDICI_PATCHES[packageName];
+      const originalPins = { ...patch };
+      const affected = path.join(f.root, "affected");
+      const replacement = path.join(f.root, "replacement/package");
+      const archivePath = path.join(f.root, "replacement.tgz");
+      const officialArchive = path.join(f.root, "official.tgz");
+      const location = `node_modules/${packageName}/node_modules/undici`;
+      try {
+        fs.mkdirSync(affected, { recursive: true });
+        fs.mkdirSync(replacement, { recursive: true });
+        fs.writeFileSync(
+          path.join(affected, "package.json"),
+          JSON.stringify({ name: "undici", version: patch.affected }),
+        );
+        fs.writeFileSync(
+          path.join(replacement, "package.json"),
+          JSON.stringify({ name: "undici", version: patch.version }),
+        );
+        patch.affectedTree = hashPackageTree(affected);
+        patch.fixedTree = hashPackageTree(replacement);
+        execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
+        fs.writeFileSync(officialArchive, "synthetic official archive");
+        // Stand in for npm installation; the materializer and bundled patch execute unchanged.
+        fs.writeFileSync(
+          path.join(f.root, "npm"),
+          [
+            `#!${process.execPath}`,
+            'const fs = require("node:fs"); const path = require("node:path");',
+            'if (process.argv[2] !== "install") process.exit(1);',
+            `const plugin = path.join(process.cwd(), "node_modules", ${JSON.stringify(packageName)});`,
+            'fs.mkdirSync(path.join(plugin, "node_modules"), { recursive: true });',
+            `fs.writeFileSync(path.join(plugin, "package.json"), ${JSON.stringify(JSON.stringify({ name: packageName, version: "2026.9.1" }))});`,
+            `fs.cpSync(${JSON.stringify(affected)}, path.join(plugin, "node_modules/undici"), { recursive: true });`,
+            `fs.writeFileSync("package-lock.json", ${JSON.stringify(JSON.stringify({ lockfileVersion: 3, packages: { [location]: { version: patch.affected } } }))});`,
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        vi.stubEnv("PATH", `${f.root}${path.delimiter}${process.env.PATH}`);
+        vi.mocked(packReviewedNpmArchive).mockImplementation((request) => ({
+          archivePath: request.packageSpec.startsWith("undici@") ? archivePath : officialArchive,
+          rootDirectory: f.root,
+        }));
+        const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
+        const graph = materializeArchiveGraph(
+          [
+            {
+              packageSpec: `${packageName}@2026.9.1`,
+              label: "synthetic official plugin",
+              integrity: "sha512-fixture",
+              tarballUrl: "https://registry.npmjs.org/fixture.tgz",
+            },
+          ],
+          f.root,
+          "7.5.21",
+          selected,
+        );
+        expect(hashPackageTree(path.join(graph, location))).toBe(patch.fixedTree);
+        const lock = JSON.parse(fs.readFileSync(path.join(graph, "package-lock.json"), "utf8"));
+        expect(lock.packages[location]).toMatchObject({
+          version: patch.version,
+          integrity: patch.integrity,
+          resolved: `https://registry.npmjs.org/undici/-/undici-${patch.version}.tgz`,
+        });
+      } finally {
+        Object.assign(patch, originalPins);
+        vi.mocked(packReviewedNpmArchive).mockReset();
+        vi.unstubAllEnvs();
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     {
       name: "missing caller",
