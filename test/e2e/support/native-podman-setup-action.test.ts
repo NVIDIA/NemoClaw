@@ -718,7 +718,7 @@ describe("native Podman E2E setup boundary", () => {
       toolchain: "portable-5.7",
     });
     expect(setup?.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@5bd2a18d20f3d26e17bd27cc370ba2cf5dee938f",
     );
     expect(live).toMatchObject({
       env: {

@@ -435,7 +435,7 @@ jobs:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@5bd2a18d20f3d26e17bd27cc370ba2cf5dee938f
         with:
           enabled: ${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}
 
