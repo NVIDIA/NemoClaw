@@ -24,67 +24,9 @@ import {
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
-  patchOpenClawUndiciDependency,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
-
-function writeUndiciFixture(name: string, previous: string, bundled: boolean): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-undici-remediation-"));
-  temporaryDirectories.push(directory);
-  const files = {
-    "package.json": {
-      name,
-      version: "2026.9.1",
-      dependencies: { undici: previous, unrelated: "1.0.0" },
-      bundleDependencies: bundled ? ["undici"] : [],
-    },
-    ...(bundled
-      ? { "node_modules/undici/package.json": { name: "undici", version: previous } }
-      : {}),
-  };
-  for (const [filename, value] of Object.entries(files)) {
-    const target = path.join(directory, filename);
-    mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, `${JSON.stringify(value)}\n`);
-  }
-  return directory;
-}
-
-describe("OpenClaw Undici security update", () => {
-  it.each([
-    ["openclaw", "8.10.0", "8.10.2", false],
-    ["@openclaw/discord", "8.10.0", "8.10.2", true],
-    ["@openclaw/slack", "7.29.0", "7.29.1", true],
-  ] as const)(
-    "updates the reviewed %s dependency without changing its major",
-    (name, previous, next, bundled) => {
-      const directory = writeUndiciFixture(name, previous, bundled);
-      patchOpenClawUndiciDependency(directory, `${name}@2026.9.1`);
-      expect(
-        JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")).dependencies,
-      ).toEqual({
-        undici: next,
-        unrelated: "1.0.0",
-      });
-    },
-  );
-
-  it.each([
-    ["openclaw", "8.9.0", false],
-    ["@openclaw/discord", "8.10.0", false],
-  ] as const)(
-    "rejects changed %s dependency or bundle layouts before writing",
-    (name, previous, bundled) => {
-      const directory = writeUndiciFixture(name, previous, bundled);
-      const before = hashPackageTree(directory);
-      expect(() => patchOpenClawUndiciDependency(directory, `${name}@2026.9.1`)).toThrow(
-        "contract changed",
-      );
-      expect(hashPackageTree(directory)).toBe(before);
-    },
-  );
-});
 
 function writeFixture(axiosVersion = "1.16.0"): string {
   const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-npm-remediation-"));

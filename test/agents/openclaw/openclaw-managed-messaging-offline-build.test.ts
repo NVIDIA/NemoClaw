@@ -78,7 +78,6 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
-      "undici@8.10.0": "8.10.2",
       "@openclaw/discord@2026.9.1": {
         "@discord/embedded-app-sdk@2.5.0": {
           uuid: bundledVersion(

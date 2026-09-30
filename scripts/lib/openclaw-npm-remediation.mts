@@ -10,17 +10,15 @@ import {
   cpSync,
   existsSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -29,16 +27,8 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  undici?: Readonly<{
-    name: string;
-    previous: string;
-    version: string;
-    integrity: string;
-    node: string;
-    bundled: boolean;
-  }>;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici" | "undici-security";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.1";
+  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -136,52 +126,6 @@ const OTEL_CORE_INTEGRITY =
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
-  // Retire these after a reviewed OpenClaw release ships patched Undici dependencies and bundles.
-  "openclaw@2026.9.1": {
-    kind: "undici-security",
-    version: "2026.9.1",
-    undici: {
-      name: "openclaw",
-      previous: "8.10.0",
-      version: "8.10.2",
-      bundled: false,
-      integrity:
-        "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
-      node: ">=22.19.0",
-    },
-    expectedPatchedTreeIntegrity:
-      "sha512-XLwwECWs8nL8/WJ/PplTcL0GyG6VGt0nN8K9idVv3/lKZiMAsJM1aw7SKj68b9Co9UD2iEhWfQKaGC6Pgoeniw==",
-  },
-  "@openclaw/discord@2026.9.1": {
-    kind: "undici-security",
-    version: "2026.9.1",
-    undici: {
-      name: "@openclaw/discord",
-      previous: "8.10.0",
-      version: "8.10.2",
-      bundled: true,
-      integrity:
-        "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
-      node: ">=22.19.0",
-    },
-    expectedPatchedTreeIntegrity:
-      "sha512-UFBks0k94yKmtnD/D6I908I5vQwlUSohBFdjLdHFhf3cS0SeBpTDMoflBixsj6C3I/QWg6xhBPWJD1o4riDtsQ==",
-  },
-  "@openclaw/slack@2026.9.1": {
-    kind: "undici-security",
-    version: "2026.9.1",
-    undici: {
-      name: "@openclaw/slack",
-      previous: "7.29.0",
-      version: "7.29.1",
-      bundled: true,
-      integrity:
-        "sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==",
-      node: ">=20.18.1",
-    },
-    expectedPatchedTreeIntegrity:
-      "sha512-iLZXmYOy8g++8oqMEP95lCYLH0OgD5jm0QiqoEQTMYgMiMPrBRjwpX406n5SKIqTYW8bnTGDlTVoTEjMO/dJYQ==",
-  },
   "@openclaw/diagnostics-otel@2026.6.10": {
     expectedPatchedMetadataIntegrity:
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
@@ -1180,69 +1124,6 @@ function packReplacement(
   });
 }
 
-export function patchOpenClawUndiciDependency(packageDirectory: string, packageSpec: string): void {
-  const target = REMEDIATIONS[packageSpec]?.undici;
-  if (!target) throw new Error(`No Undici security update is defined for ${packageSpec}`);
-  const manifestPath = join(packageDirectory, "package.json");
-  const manifest = readJson(manifestPath);
-  requirePackageIdentity(manifest, target.name, "2026.9.1", packageSpec);
-  const bundledPath = join(packageDirectory, "node_modules", "undici");
-  const bundles = manifest.bundleDependencies ?? manifest.bundledDependencies ?? [];
-  if (
-    manifest.dependencies?.undici !== target.previous ||
-    !Array.isArray(bundles) ||
-    bundles.includes("undici") !== target.bundled ||
-    existsSync(bundledPath) !== target.bundled ||
-    existsSync(join(packageDirectory, "npm-shrinkwrap.json"))
-  ) {
-    throw new Error(`${packageSpec} Undici dependency contract changed after review`);
-  }
-  if (target.bundled) {
-    requirePackageIdentity(
-      readJson(join(bundledPath, "package.json")),
-      "undici",
-      target.previous,
-      packageSpec,
-    );
-  }
-  manifest.dependencies.undici = target.version;
-  writeJson(manifestPath, manifest);
-}
-
-function remediateSecurityUndici(
-  sourcePackage: string,
-  packageSpec: string,
-  remediationRoot: string,
-  env: NodeJS.ProcessEnv,
-): void {
-  const target = REMEDIATIONS[packageSpec]?.undici;
-  if (!target) throw new Error(`No Undici security update is defined for ${packageSpec}`);
-  const replacement = packReplacement(
-    `undici@${target.version}`,
-    target.integrity,
-    `https://registry.npmjs.org/undici/-/undici-${target.version}.tgz`,
-    remediationRoot,
-    env,
-  );
-  const directory = extractArchive(
-    replacement.archivePath,
-    join(remediationRoot, "undici"),
-    remediationRoot,
-    env,
-  );
-  const manifest = readJson(join(directory, "package.json"));
-  requirePackageIdentity(manifest, "undici", target.version, "Undici security update");
-  if (
-    Object.keys(manifest.dependencies ?? {}).length !== 0 ||
-    manifest.engines?.node !== target.node
-  ) {
-    throw new Error(`undici@${target.version} package contract changed after review`);
-  }
-  patchOpenClawUndiciDependency(sourcePackage, packageSpec);
-  if (target.bundled)
-    copyReplacementPackage(directory, join(sourcePackage, "node_modules", "undici"));
-}
-
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -1268,9 +1149,7 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "undici-security") {
-    remediateSecurityUndici(sourcePackage, request.packageSpec, remediationRoot, env);
-  } else if (remediation.kind === "core") {
+  if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
       FS_SAFE_INTEGRITY,
@@ -1746,122 +1625,6 @@ export function remediateReviewedOpenClawPluginArchive(
     expectedPatchedMetadataIntegrity: remediation.expectedPatchedMetadataIntegrity,
     expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
-}
-
-/** Apply a dependency override from private, verified archive extraction trees. */
-export function replaceInstalledOfficialUndici(
-  packageSpec: string,
-  installedDirectory: string,
-  originalDirectory: string,
-  patchedDirectory: string,
-): boolean {
-  const target = REMEDIATIONS[packageSpec]?.undici;
-  if (!target?.bundled) throw new Error(`No official bundled remediation for ${packageSpec}`);
-  const nodeModules = join(installedDirectory, "node_modules");
-  const installed = join(nodeModules, "undici");
-  for (const directory of [installedDirectory, nodeModules, installed]) {
-    if (!lstatSync(directory).isDirectory()) {
-      throw new Error(`${packageSpec} installed dependency path must be a real directory`);
-    }
-  }
-  const manifestPath = join(installedDirectory, "package.json");
-  if (!lstatSync(manifestPath).isFile()) {
-    throw new Error(`${packageSpec} installed manifest must be a real file`);
-  }
-  const manifest = readJson(manifestPath);
-  requirePackageIdentity(manifest, target.name, "2026.9.1", packageSpec);
-  const bundles = manifest.bundleDependencies ?? manifest.bundledDependencies;
-  if (
-    manifest.dependencies?.undici !== target.previous ||
-    !Array.isArray(bundles) ||
-    !bundles.includes("undici")
-  ) {
-    throw new Error(`${packageSpec} installed Undici declaration changed after review`);
-  }
-  const original = join(originalDirectory, "node_modules", "undici");
-  const replacement = join(patchedDirectory, "node_modules", "undici");
-  requirePackageIdentity(
-    readJson(join(original, "package.json")),
-    "undici",
-    target.previous,
-    packageSpec,
-  );
-  requirePackageIdentity(
-    readJson(join(replacement, "package.json")),
-    "undici",
-    target.version,
-    packageSpec,
-  );
-  const installedHash = hashPackageTree(installed);
-  const replacementHash = hashPackageTree(replacement);
-  if (installedHash === replacementHash) return false;
-  if (installedHash !== hashPackageTree(original)) {
-    throw new Error(`${packageSpec} installed Undici bytes differ from the verified archive`);
-  }
-  // Preserve the publisher manifest and npm install record. Swap only the
-  // dependency tree, retaining the old tree if rollback cannot complete.
-  const staging = mkdtempSync(join(nodeModules, ".nemoclaw-undici-"));
-  const staged = join(staging, "patched");
-  const backup = join(staging, "original");
-  try {
-    cpSync(replacement, staged, { recursive: true });
-    if (hashPackageTree(staged) !== replacementHash) {
-      throw new Error(`${packageSpec} staged Undici bytes differ from the reviewed replacement`);
-    }
-    renameSync(installed, backup);
-    try {
-      renameSync(staged, installed);
-    } catch (error) {
-      renameSync(backup, installed);
-      throw error;
-    }
-    rmSync(backup, { recursive: true });
-    return true;
-  } finally {
-    if (!existsSync(backup)) rmSync(staging, { recursive: true, force: true });
-  }
-}
-
-/** Retain official registry provenance while overriding reviewed bundled dependencies. */
-export function remediateInstalledOfficialOpenClawPlugin(
-  request: RemediationRequest & { readonly installedDirectory: unknown },
-): boolean {
-  if (!REMEDIATIONS[request.packageSpec]?.undici?.bundled) return false;
-  if (typeof request.installedDirectory !== "string" || !isAbsolute(request.installedDirectory)) {
-    throw new Error(
-      `${request.packageSpec} official inspection must identify its install directory`,
-    );
-  }
-  const env = request.env ?? process.env;
-  const directory = mkdtempSync(join(request.workingDirectory, "official-dependency-"));
-  try {
-    const original = extractArchive(
-      request.archivePath,
-      join(directory, "original"),
-      directory,
-      env,
-    );
-    const patched = remediateReviewedOpenClawPluginArchive({
-      ...request,
-      workingDirectory: directory,
-    });
-    if (!patched.remediated)
-      throw new Error(`${request.packageSpec} requires a reviewed remediation`);
-    const replacement = extractArchive(
-      patched.archivePath,
-      join(directory, "patched"),
-      directory,
-      env,
-    );
-    return replaceInstalledOfficialUndici(
-      request.packageSpec,
-      request.installedDirectory,
-      original,
-      replacement,
-    );
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
 }
 
 function isMainModule(): boolean {
