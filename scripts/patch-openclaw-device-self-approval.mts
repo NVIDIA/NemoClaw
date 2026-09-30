@@ -495,6 +495,19 @@ const CLI_TARGET = [
 ].join("\n");
 
 const CLI_HELPER_ANCHOR = "function resolveApprovePairingScopesForRequest(request, paired) {";
+const CLI_SPLIT_SCOPE_ANCHOR = "function resolvePairingCallScopes(operatorScopes) {";
+const CLI_SPLIT_SCOPE_ADAPTER = [
+  "function isKnownNonAdminOperatorScope(scope) {",
+  '\treturn scope !== "operator.admin" && isOperatorScope(scope);',
+  "}",
+  CLI_HELPER_ANCHOR,
+  "\tconst operatorScopes = resolvePendingOperatorApprovalScopes(request, paired);",
+  "\tif (operatorScopes.length === 0) return;",
+  "\tconst out = new Set([PAIRING_SCOPE]);",
+  CLI_TARGET,
+  "}",
+  "",
+].join("\n");
 const CLI_HELPER = [
   "function resolveNemoClawCanonicalPairingDescriptor(name) {",
   "\tconst nemoclawRawDescriptor = process.env[name];",
@@ -1650,6 +1663,8 @@ const STATE_SQLITE_PENDING_REPLACEMENT = [
   "\t\tconst nemoclawSelfApprovalScopes = resolveNemoClawSelfApprovalScopes(pendingRecord, options?.callerScopes, options?.nemoclawSelfApprovalIdentity);",
   "\t\tconst autoApproveScopes = options?.autoApproveNewDeviceScopes;",
 ].join("\n");
+const STATE_SQLITE_APPROVAL_CALLBACK =
+  "\treturn await withPendingDevicePairingApproval(requestId, options, baseDir, (state, pendingRecord, existing) => {";
 const STATE_SQLITE_CALLER_REPLACEMENT = STATE_CALLER_REPLACEMENT;
 const STATE_SQLITE_COMMIT_TARGET = [
   "\t\t\t}),",
@@ -1744,8 +1759,30 @@ const STATE_SQLITE_AUTH_UPDATE_REPLACEMENT = [
 ].join("\n");
 
 function patchCurrentDevicesCli(source: string, file: string): PatchResult {
+  // 2026.9.2 shares its native scope resolver with token management. Keep that
+  // resolver intact and attach bounded self-approval only to the approval path.
+  let normalized = source;
+  if (!source.includes(CLI_HELPER_ANCHOR) && source.includes(CLI_SPLIT_SCOPE_ANCHOR)) {
+    for (const [target, replacement] of [
+      [CLI_SPLIT_SCOPE_ANCHOR, `${CLI_SPLIT_SCOPE_ADAPTER}${CLI_SPLIT_SCOPE_ANCHOR}`],
+      [
+        "scopes: resolvePairingCallScopes(resolvePendingOperatorApprovalScopes(request, lookupPairedDevice(indexPairedDevices(list.paired), request)))",
+        "scopes: resolveApprovePairingScopesForRequest(request, lookupPairedDevice(indexPairedDevices(list.paired), request))",
+      ],
+    ] as const) {
+      const adapted = replaceExactlyOnce(
+        normalized,
+        target,
+        replacement,
+        "split approval-scope adapter",
+        file,
+      );
+      if (adapted.error) return { source, status: "no-match", error: adapted.error };
+      normalized = adapted.source;
+    }
+  }
   let result: ReplacementResult = replaceExactlyOnce(
-    source,
+    normalized,
     CLI_HELPER_ANCHOR,
     `${CLI_HELPER_SQLITE}${CLI_HELPER_ANCHOR}`,
     "bounded SQLite devices CLI classifier anchor",
@@ -1804,8 +1841,14 @@ function patchCurrentPairingState(source: string, file: string): PatchResult {
     file,
   );
   if (result.error) return { source, status: "no-match", error: result.error };
+  const pendingTarget = source.includes(STATE_SQLITE_APPROVAL_CALLBACK)
+    ? `${STATE_SQLITE_APPROVAL_CALLBACK}\n\t\tconst autoApproveScopes = options?.autoApproveNewDeviceScopes;`
+    : STATE_SQLITE_PENDING_TARGET;
+  const pendingReplacement = source.includes(STATE_SQLITE_APPROVAL_CALLBACK)
+    ? `${STATE_SQLITE_APPROVAL_CALLBACK}\n\t\tconst nemoclawSelfApprovalScopes = resolveNemoClawSelfApprovalScopes(pendingRecord, options?.callerScopes, options?.nemoclawSelfApprovalIdentity);\n\t\tconst autoApproveScopes = options?.autoApproveNewDeviceScopes;`
+    : STATE_SQLITE_PENDING_REPLACEMENT;
   for (const [target, replacement, label] of [
-    [STATE_SQLITE_PENDING_TARGET, STATE_SQLITE_PENDING_REPLACEMENT, "SQLite pending target"],
+    [pendingTarget, pendingReplacement, "SQLite pending target"],
     [STATE_CALLER_TARGET, STATE_SQLITE_CALLER_REPLACEMENT, "SQLite caller-scope target"],
     [STATE_SQLITE_COMMIT_TARGET, STATE_SQLITE_COMMIT_REPLACEMENT, "SQLite approval target"],
     [
@@ -1987,10 +2030,17 @@ const BASE_FILE_SPECS: FileSpec[] = [
       return (
         (source.includes("async function approvePairingWithFallback(opts, requestId)") ||
           source.includes("async function approvePairingWithFallback(opts, requestId, context)")) &&
-        source.includes("function resolveApprovePairingScopesForRequest(request, paired)") &&
+        (source.includes(CLI_HELPER_ANCHOR) ||
+          (sqliteLayout &&
+            source.includes(CLI_SPLIT_SCOPE_ANCHOR) &&
+            source.includes("function resolvePendingOperatorApprovalScopes(request, paired)"))) &&
         source.includes('callGatewayCli("device.pair.approve"') &&
         (sqliteLayout ? CLI_SELECTOR_SQLITE_DEPENDENCIES : CLI_SELECTOR_DEPENDENCIES).every(
-          (dependency) => source.includes(dependency),
+          (dependency) =>
+            source.includes(dependency) ||
+            (dependency === "isKnownNonAdminOperatorScope" &&
+              source.includes(CLI_SPLIT_SCOPE_ANCHOR) &&
+              source.includes("isOperatorScope")),
         )
       );
     },
@@ -2357,11 +2407,15 @@ const BASE_FILE_SPECS: FileSpec[] = [
         ((source.includes("const withLock = createAsyncLock();") &&
           source.includes('await persistState(state, baseDir, "both")')) ||
           source.includes(STATE_SQLITE_PERSIST_CALL_TARGET) ||
-          (source.includes(STATE_MARKER) && source.includes("approveDevicePairingWithOptions")))
+          (source.includes(STATE_MARKER) &&
+            (source.includes("approveDevicePairingWithOptions") ||
+              source.includes(STATE_SQLITE_APPROVAL_CALLBACK))))
       );
     },
     patch(source, file) {
-      const sqliteLayout = source.includes("approveDevicePairingWithOptions");
+      const sqliteLayout =
+        source.includes("approveDevicePairingWithOptions") ||
+        source.includes(STATE_SQLITE_APPROVAL_CALLBACK);
       if (sqliteLayout) {
         const markerCount = countOccurrences(source, STATE_MARKER);
         if (markerCount === 1) return { source, status: "already-applied" };

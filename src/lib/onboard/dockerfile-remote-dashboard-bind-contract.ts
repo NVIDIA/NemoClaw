@@ -89,6 +89,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The same reviewed install with npm forced offline for every optional
   // plugin command; it still preserves the generated dashboard config.
   "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
+  // The same offline optional-plugin install with reviewed 2026.9.2 pins.
+  "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",

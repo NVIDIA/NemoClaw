@@ -77,6 +77,11 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
     ),
   );
   if (sqliteGatewayLayout) {
+    const dispatcherSignature = sources.some(({ source }) =>
+      source.includes("async function handleGatewayRequest(opts, diagnostics)"),
+    )
+      ? "async function handleGatewayRequest(opts, diagnostics)"
+      : "async function handleGatewayRequest(opts)";
     const producer = requireExactlyOneDistSource(sources, "SQLite device-token session producer", [
       'const loadGatewayServerMethods = createLazyPromise(() => import("./authenticated-request-dispatch.server-methods.runtime.js"))',
       "const nextClient = {",
@@ -87,7 +92,7 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
     ]);
     const dispatcher = requireExactlyOneDistSource(sources, "SQLite gateway request dispatcher", [
       "function createLazyCoreHandlers(params)",
-      "async function handleGatewayRequest(opts)",
+      dispatcherSignature,
       'devices: () => import("./devices-',
     ]);
     const handler = requireExactlyOneDistSource(sources, "SQLite device pairing gateway handler", [
@@ -123,7 +128,7 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
       [
         "function createLazyCoreHandlers(params)",
         `devices: () => import("./${path.basename(handler.file)}")`,
-        "async function handleGatewayRequest(opts)",
+        dispatcherSignature,
       ],
       "SQLite dispatcher-to-device-handler linkage",
     );
@@ -299,7 +304,11 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
           "const requestedStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
           "const hasExplicitAuth = Boolean(context.explicitAuth.token || context.explicitAuth.password);",
           "const useStoredDeviceAuth = requestedStoredDeviceAuth && !hasExplicitAuth;",
-          "skipImplicitAuth: useStoredDeviceAuth,",
+          gatewayCall.source.includes(
+            "skipImplicitAuth: useStoredDeviceAuth || opts.skipImplicitAuth === true,",
+          )
+            ? "skipImplicitAuth: useStoredDeviceAuth || opts.skipImplicitAuth === true,"
+            : "skipImplicitAuth: useStoredDeviceAuth,",
           "storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope, opts.sharedStateMode);",
           "opts.requiredStoredDeviceAuthScopes",
           "scopes: requestedStoredDeviceAuth && hasExplicitAuth && opts.requiredStoredDeviceAuthScopes ? opts.requiredStoredDeviceAuthScopes : useStoredDeviceAuth ? void 0 : scopes,",
@@ -1190,7 +1199,7 @@ const exactlyOne = (pattern, label, sourceMarker) => {
   return pathToFileURL(path.join(dist, files[0])).href;
 };
 const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
-const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairingWithOptions"));
+const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)"));
 const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]js$/, "stored auth", "function loadDeviceAuth"));
 if (typeof pairing.h !== "function" || typeof pairing.c !== "function" || typeof approval.n !== "function" || typeof auth.l !== "function" || typeof auth.r !== "function") {
   throw new Error("reviewed SQLite device-pairing exports missing");
@@ -1619,7 +1628,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     sqlitePairingLayout
       ? [
           "nemoclaw: validate bounded self-approval inside pairing lock",
-          "approveDevicePairingWithOptions",
+          "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)",
           "nemoclawSelfApprovalIdentity",
         ]
       : [
@@ -1631,6 +1640,21 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const deviceHandlerFile = requireRealDeviceTokenAuthLinkage(sources);
   if (sqlitePairingLayout) {
+    if (pairingStateSource.source.includes("async function withPendingDevicePairingApproval")) {
+      requireOrderedMarkers(
+        pairingStateSource.source,
+        [
+          "async function withPendingDevicePairingApproval",
+          "return await withDevicePairingLock(async () => {",
+          "const state = await loadDevicePairingState(baseDir);",
+          "return approve(state, pending, existing);",
+          "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)",
+          "return await withPendingDevicePairingApproval(requestId, options, baseDir, (state, pendingRecord, existing) => {",
+          "const nemoclawSelfApprovalScopes = resolveNemoClawSelfApprovalScopes(pendingRecord,",
+        ],
+        "self-approval classifier remains inside the native pairing lock",
+      );
+    }
     proveRealOpenClawAgentScopes(options.dist);
     await proveRealOpenClawAdminApprovalHandoff(options.dist);
     requireExactlyOneDistSource(sources, "patched atomic SQLite pairing persistence runtime", [
