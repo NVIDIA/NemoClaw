@@ -319,7 +319,7 @@ $$nemoclaw headless-agent policy add --from-file ./presets/internal-status.yaml 
 $$nemoclaw headless-agent policy list
 ```
 
-`--yes` skips the confirmation prompt but does not skip schema, destination, or SSRF validation. NemoClaw merges the validated content into the current OpenShell policy and stores no second copy in the sandbox registry. Snapshot clone and rebuild carry the complete current OpenShell policy forward. Keep the source YAML in your configuration repository so operators can review and intentionally reapply changes. For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
+`--yes` skips the confirmation prompt but does not skip schema, destination, or SSRF validation. NemoClaw merges the validated content into the current OpenShell policy and stores no second copy in the sandbox registry. Rebuild carries the complete current OpenShell policy forward. Keep the source YAML in your configuration repository so operators can review and intentionally reapply changes. For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
 
 An SSH command without `-t`, a service unit, and a CI job have no terminal on stdin, so the preset picker cannot run there. Pass the preset name, `--from-file`, or `--from-dir` in such a session. `policy add` and `policy remove` skip their confirmation prompts without a terminal on stdin, so neither needs `--yes` or `NEMOCLAW_NON_INTERACTIVE=1`.
 
