@@ -606,26 +606,28 @@ impl JourneyState {
             .ask_scopes
             .contains(&JourneyScope::RouteModels)
         {
-            if let Some(path) = self.route_model_path()
-                && !self.accepted.contains(&path)
-                && !questions.iter().any(|question| question.id == path)
-                && let Some((schema, required)) = sdk_field_schema(&path)
-            {
-                let value = self.values.pointer(&path);
-                questions.push(JourneyQuestion {
-                    kind: JourneyQuestionKind::InferenceModel,
-                    reopened_because: None,
-                    id: path,
-                    reason: if value.is_some() {
-                        JourneyQuestionReason::ExplicitAsk
-                    } else {
-                        JourneyQuestionReason::Missing
-                    },
-                    required,
-                    choices: Vec::new(),
-                    suggestion: value.cloned(),
-                    schema,
-                });
+            if let Some(path) = self.route_model_path() {
+                if let Some(existing) = questions.iter_mut().find(|question| question.id == path) {
+                    existing.kind = JourneyQuestionKind::InferenceModel;
+                } else if !self.accepted.contains(&path)
+                    && let Some((schema, required)) = sdk_field_schema(&path)
+                {
+                    let value = self.values.pointer(&path);
+                    questions.push(JourneyQuestion {
+                        kind: JourneyQuestionKind::InferenceModel,
+                        reopened_because: None,
+                        id: path,
+                        reason: if value.is_some() {
+                            JourneyQuestionReason::ExplicitAsk
+                        } else {
+                            JourneyQuestionReason::Missing
+                        },
+                        required,
+                        choices: Vec::new(),
+                        suggestion: value.cloned(),
+                        schema,
+                    });
+                }
             }
             if let Some(routes) = routes_path(&self.values)
                 .and_then(|path| self.values.pointer(&path))

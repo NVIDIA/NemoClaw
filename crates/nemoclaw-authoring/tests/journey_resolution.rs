@@ -132,6 +132,30 @@ fn exact_and_scope_guidance_share_one_inference_api_question() {
 }
 
 #[test]
+fn exact_and_scope_guidance_keep_route_model_question_kind() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let state = JourneyDefinition::new("same-model-decision", base)
+        .ask([path])
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+
+    let resolution = state.resolve(&capabilities).unwrap();
+    let matches = resolution
+        .questions()
+        .iter()
+        .filter(|question| question.id() == path)
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].kind(), JourneyQuestionKind::InferenceModel);
+    assert!(matches[0].allows_custom_answer());
+}
+
+#[test]
 fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
     let capabilities = Capabilities::available();
     let base =
