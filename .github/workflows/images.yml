@@ -13,10 +13,16 @@ on:
       - ruff.toml
       - .github/workflows/images.yml
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Immutable source revision selected by the aggregate workflow.
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: agent-images-${{ github.ref }}
+  group: agent-images-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   images:
@@ -38,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source-ref || github.sha }}
           persist-credentials: false
       - name: Validate image selection and Dockerfile instructions
         run: |
