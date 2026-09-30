@@ -4671,6 +4671,7 @@ run_requested_openclaw_post_upgrade_doctor() {
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
   local ready_owner=""
   local gate_attempt late_attempt
+  local late_hold_seen="${1:-}"
 
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
@@ -4704,13 +4705,20 @@ EOF
   # start cannot report the hold as ready, so wait for the host to restart the
   # sandbox or change the request, then apply the normal checks to the change.
   if [ "$marker_value" = "$backup_expected" ]; then
+    if [ -n "$late_hold_seen" ]; then
+      echo "[SECURITY] Refusing repeated late OpenClaw maintenance hold" >&2
+      return 1
+    fi
     echo "[setup] OpenClaw maintenance hold arrived after startup began; waiting for restart" >&2
     late_attempt=0
     while [ "$late_attempt" -lt 600 ]; do
       late_attempt=$((late_attempt + 1))
       sleep 1
-      if [ -L "$marker" ] || [ "$(head -n 1 "$marker" 2>/dev/null)" != "$backup_expected" ]; then
-        run_requested_openclaw_post_upgrade_doctor
+      marker_value=""
+      if [ ! -f "$marker" ] || [ -L "$marker" ] \
+        || ! IFS= read -r marker_value <"$marker" \
+        || [ "$marker_value" != "$backup_expected" ]; then
+        run_requested_openclaw_post_upgrade_doctor late-hold
         return
       fi
     done

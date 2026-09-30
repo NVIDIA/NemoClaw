@@ -235,6 +235,7 @@ function runLateBackupRequest(
   f: ReturnType<typeof fixture>,
   hostSteps: string[],
   lateAttempts = 600,
+  entry = "",
 ) {
   const waiting = path.join(f.root, "late-wait-started");
   const script = [
@@ -244,7 +245,7 @@ function runLateBackupRequest(
     ),
     `sleep() { : >${JSON.stringify(waiting)}; /bin/sleep 0.01; }`,
     `(${[waitFor(waiting), ...hostSteps].join("; ")}) >/dev/null 2>&1 &`,
-    "run_requested_openclaw_post_upgrade_doctor",
+    `run_requested_openclaw_post_upgrade_doctor ${entry}`,
   ];
   return spawnSync("bash", ["-c", script.join("\n")], {
     encoding: "utf8",
@@ -385,6 +386,43 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.stderr).toContain(
         "Timed out waiting for restart after a late maintenance hold",
       );
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not block when a FIFO replaces a late backup request", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const fifo = `${f.marker}.fifo`;
+      const result = runLateBackupRequest(source, f, [
+        `mkfifo -m 600 ${JSON.stringify(fifo)}`,
+        `mv -f -- ${JSON.stringify(fifo)} ${JSON.stringify(f.marker)}`,
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Refusing unsafe post-upgrade doctor marker");
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a backup request that returns after a late hold changed", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = runLateBackupRequest(source, f, [], 600, "late-hold");
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Refusing repeated late OpenClaw maintenance hold");
+      expect(result.stderr).not.toContain("waiting for restart");
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
     } finally {
