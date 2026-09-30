@@ -282,3 +282,25 @@ fn offline_catalog_absence_does_not_prevent_an_independent_rename() {
             .is_empty()
     );
 }
+
+#[test]
+fn missing_adapter_schema_keeps_independent_deployment_questions_available() {
+    let capabilities = Capabilities::from_harnesses([]);
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let state = JourneyDefinition::new("offline-deployment", base)
+        .ask([JourneyScope::DeploymentFields])
+        .start(&capabilities)
+        .unwrap();
+
+    let resolution = state.resolve(&capabilities).unwrap();
+    assert!(resolution.question("/spec/gateway/image").is_some());
+    assert!(
+        resolution
+            .unverified()
+            .iter()
+            .any(|reason| reason.contains("adapter schema unverified"))
+    );
+    assert!(resolution.materialized_document().is_none());
+}

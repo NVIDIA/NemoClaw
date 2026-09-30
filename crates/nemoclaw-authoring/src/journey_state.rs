@@ -836,112 +836,112 @@ impl JourneyState {
                 schema: serde_json::json!({"type":"string"}),
             });
         } else if let Some(harness) = chosen {
-            let Some(schema) = adapter_schema(capabilities, harness)? else {
-                unverified.push(format!("adapter schema unverified for '{harness}'"));
-                return Ok(self.resolution(questions, omitted, warnings, unverified, assessment));
-            };
-            let settings_path = format!(
-                "{}/settings",
-                active_harness
-                    .as_deref()
-                    .expect("chosen harness has an owner")
-            );
-            let supplied_settings = self.values.pointer(&settings_path);
-            let settings = supplied_settings
-                .cloned()
-                .unwrap_or_else(|| Value::Object(Map::new()));
-            let mut fields = Vec::new();
-            crate::settings::collect(schema, schema, &settings, "", false, &mut fields, 0)?;
-            let root_id = format!("adapter:{harness}:");
-            if self.definition.ask.contains(&root_id)
-                && !self.accepted.contains(&root_id)
-                && !fields.iter().any(|field| field.path.is_empty())
-            {
-                fields.clear();
-                fields.push(SettingQuestion {
-                    path: String::new(),
-                    title: "Adapter settings".into(),
-                    description: "Review the adapter settings object.".into(),
-                    required: true,
-                    schema: schema.clone(),
-                    choices: Vec::new(),
-                    suggestion: (schema_accepts(schema, &settings) == Some(true))
-                        .then_some(settings.clone()),
-                });
-            }
-            let active_setting_ids = fields
-                .iter()
-                .map(|field| format!("adapter:{harness}:{}", field.path))
-                .collect::<BTreeSet<_>>();
-            for field in fields {
-                let id = format!("adapter:{harness}:{}", field.path);
-                let value = if field.path.is_empty() && supplied_settings.is_none() {
-                    None
-                } else {
-                    settings.pointer(&field.path)
-                };
-                if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
-                    if field.required {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("required setting '{id}' cannot be omitted"),
-                        ));
-                    }
-                    if value.is_some() {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("supplied setting '{id}' cannot be omitted"),
-                        ));
-                    }
-                    omitted.push(id);
-                    continue;
-                }
-                let valid =
-                    value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
-                if value.is_none()
-                    || !valid
-                    || ((self
-                        .definition
-                        .ask_scopes
-                        .contains(&JourneyScope::ActiveAdapterSettings)
-                        || self.definition.ask.contains(&id))
-                        && !self.accepted.contains(&id))
+            if let Some(schema) = adapter_schema(capabilities, harness)? {
+                let settings_path = format!(
+                    "{}/settings",
+                    active_harness
+                        .as_deref()
+                        .expect("chosen harness has an owner")
+                );
+                let supplied_settings = self.values.pointer(&settings_path);
+                let settings = supplied_settings
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new()));
+                let mut fields = Vec::new();
+                crate::settings::collect(schema, schema, &settings, "", false, &mut fields, 0)?;
+                let root_id = format!("adapter:{harness}:");
+                if self.definition.ask.contains(&root_id)
+                    && !self.accepted.contains(&root_id)
+                    && !fields.iter().any(|field| field.path.is_empty())
                 {
-                    questions.push(JourneyQuestion {
-                        kind: JourneyQuestionKind::Field,
-                        reopened_because: None,
-                        id,
-                        reason: if value.is_some() && !valid {
-                            JourneyQuestionReason::InvalidSupplied
-                        } else if value.is_none() {
-                            JourneyQuestionReason::Missing
-                        } else {
-                            JourneyQuestionReason::ExplicitAsk
-                        },
-                        required: field.required,
-                        choices: field.choices,
-                        suggestion: field.suggestion,
-                        schema: field.schema,
+                    fields.clear();
+                    fields.push(SettingQuestion {
+                        path: String::new(),
+                        title: "Adapter settings".into(),
+                        description: "Review the adapter settings object.".into(),
+                        required: true,
+                        schema: schema.clone(),
+                        choices: Vec::new(),
+                        suggestion: (schema_accepts(schema, &settings) == Some(true))
+                            .then_some(settings.clone()),
                     });
                 }
-            }
-            for selector in self.definition.ask.union(&self.definition.omit) {
-                if adapter_field(selector).is_some_and(|(adapter, _)| adapter == harness)
-                    && !active_setting_ids.contains(selector)
+                let active_setting_ids = fields
+                    .iter()
+                    .map(|field| format!("adapter:{harness}:{}", field.path))
+                    .collect::<BTreeSet<_>>();
+                for field in fields {
+                    let id = format!("adapter:{harness}:{}", field.path);
+                    let value = if field.path.is_empty() && supplied_settings.is_none() {
+                        None
+                    } else {
+                        settings.pointer(&field.path)
+                    };
+                    if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
+                        if field.required {
+                            return Err(diagnostic(
+                                "journey",
+                                &format!("required setting '{id}' cannot be omitted"),
+                            ));
+                        }
+                        if value.is_some() {
+                            return Err(diagnostic(
+                                "journey",
+                                &format!("supplied setting '{id}' cannot be omitted"),
+                            ));
+                        }
+                        omitted.push(id);
+                        continue;
+                    }
+                    let valid = value
+                        .is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
+                    if value.is_none()
+                        || !valid
+                        || ((self
+                            .definition
+                            .ask_scopes
+                            .contains(&JourneyScope::ActiveAdapterSettings)
+                            || self.definition.ask.contains(&id))
+                            && !self.accepted.contains(&id))
+                    {
+                        questions.push(JourneyQuestion {
+                            kind: JourneyQuestionKind::Field,
+                            reopened_because: None,
+                            id,
+                            reason: if value.is_some() && !valid {
+                                JourneyQuestionReason::InvalidSupplied
+                            } else if value.is_none() {
+                                JourneyQuestionReason::Missing
+                            } else {
+                                JourneyQuestionReason::ExplicitAsk
+                            },
+                            required: field.required,
+                            choices: field.choices,
+                            suggestion: field.suggestion,
+                            schema: field.schema,
+                        });
+                    }
+                }
+                for selector in self.definition.ask.union(&self.definition.omit) {
+                    if adapter_field(selector).is_some_and(|(adapter, _)| adapter == harness)
+                        && !active_setting_ids.contains(selector)
+                    {
+                        warnings.push(format!(
+                            "{selector} is not applicable in the current adapter settings schema"
+                        ));
+                    }
+                }
+                if questions
+                    .iter()
+                    .all(|question| !question.id.starts_with("adapter:"))
+                    && schema_accepts(schema, &settings) != Some(true)
                 {
-                    warnings.push(format!(
-                        "{selector} is not applicable in the current adapter settings schema"
+                    unverified.push(format!(
+                        "adapter '{harness}' settings do not satisfy the complete Fabric schema"
                     ));
                 }
-            }
-            if questions
-                .iter()
-                .all(|question| !question.id.starts_with("adapter:"))
-                && schema_accepts(schema, &settings) != Some(true)
-            {
-                unverified.push(format!(
-                    "adapter '{harness}' settings do not satisfy the complete Fabric schema"
-                ));
+            } else {
+                unverified.push(format!("adapter schema unverified for '{harness}'"));
             }
         }
 
