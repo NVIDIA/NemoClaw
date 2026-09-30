@@ -13,6 +13,14 @@ describe("resolveMaxTokensField", () => {
     },
   );
 
+  it.each(["gpt-6", "gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "openai/gpt-6.1-sol"])(
+    "selects max_completion_tokens for GPT-6 family model %s",
+    (model) => {
+      expect(resolveMaxTokensField(model)).toBe("max_completion_tokens");
+      expect(requiresMaxCompletionTokensField(model)).toBe(true);
+    },
+  );
+
   it.each(["o1", "o1-mini", "o3", "o3-mini", "o4-mini"])(
     "selects max_completion_tokens for OpenAI reasoning model %s",
     (model) => {
