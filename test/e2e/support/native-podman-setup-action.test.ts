@@ -27,6 +27,7 @@ const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
+  if?: string;
   name?: string;
   uses?: string;
   run?: string;
