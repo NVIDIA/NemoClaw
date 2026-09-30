@@ -227,6 +227,8 @@ export interface SandboxGpuCreateFlowInput {
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
   managedImage?: boolean;
+  /** Publisher-owned exact-digest image; readiness failures include compatibility guidance. */
+  externalImage?: boolean;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Verify the exact sandbox created by each attempt before runtime activation,

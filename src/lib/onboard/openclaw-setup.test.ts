@@ -171,6 +171,10 @@ describe("OpenClaw sandbox setup", () => {
     const initializeOpenclawInferenceRoute = vi.fn(async () => {
       order.push("initialize");
     });
+    const settleOpenclawPairingBeforeRestart = vi.fn(async () => {
+      order.push("pair");
+      return true;
+    });
     const setup = createOpenclawSetup({
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
@@ -190,9 +194,10 @@ describe("OpenClaw sandbox setup", () => {
       "openai-completions",
       true,
       "nemoclaw-19090",
+      settleOpenclawPairingBeforeRestart,
     );
 
-    expect(order).toEqual(["configure", "initialize"]);
+    expect(order).toEqual(["configure", "pair", "initialize"]);
     expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "selected/model",
@@ -201,6 +206,33 @@ describe("OpenClaw sandbox setup", () => {
       "nemoclaw-19090",
       undefined,
     );
+  });
+
+  it("withholds the custom-image restart when post-config pairing does not settle (#11932)", async () => {
+    const initializeOpenclawInferenceRoute = vi.fn(async () => undefined);
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox: vi.fn(async () => undefined),
+      initializeOpenclawInferenceRoute,
+      restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+      shouldRestartNativeGateway: () => false,
+    });
+
+    await expect(
+      setup(
+        "spark-box",
+        "selected/model",
+        "compatible-endpoint",
+        undefined,
+        "openai-completions",
+        true,
+        "nemoclaw-19090",
+        async () => false,
+      ),
+    ).rejects.toThrow(/pairing did not settle after configuration/u);
+
+    expect(initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
