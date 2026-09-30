@@ -849,6 +849,32 @@ describe("stopAll", () => {
     },
   );
 
+  it.skipIf(process.platform !== "darwin")(
+    "does not signal a different macOS process after the initial identity check",
+    () => {
+      const subprocess = childProcess.spawn("/bin/sleep", ["20"], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("unrelated test process has no PID");
+        })();
+
+      try {
+        expect(
+          signalCloudflaredForPlatform(
+            pid,
+            "SIGTERM",
+            "darwin",
+            () => "/tmp/cloudflared tunnel run",
+          ),
+        ).toBe("not-cloudflared");
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      } finally {
+        process.kill(pid, "SIGKILL");
+      }
+    },
+  );
+
   it("preserves the PID when identity becomes unreadable before SIGKILL", () => {
     const { control, signals } = scriptedControl({
       alive: [true, true],
