@@ -82,7 +82,7 @@ fn review_scroll_reveals_later_yaml_without_changing_the_document() {
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let first = terminal.backend().to_string();
     for _ in 0..12 {
-        wizard.next().unwrap();
+        wizard.next();
     }
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let later = terminal.backend().to_string();
@@ -166,6 +166,15 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
             .as_deref()
             .unwrap()
             .contains("ambiguous setting schemas")
+    );
+    wizard.next();
+    wizard.previous();
+    let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(
+        screen.contains("Press ← to go back"),
+        "missing recovery hint: {screen}"
     );
 }
 

@@ -82,7 +82,7 @@ impl JourneyWizard {
         } else if let Err(error) = &current {
             lines.push(Line::from(terminal_text(&error.to_string())));
             lines.push(Line::from(
-                "The questionnaire cannot continue. Press Esc to cancel.",
+                "The questionnaire cannot continue. Press ← to go back or Esc to cancel.",
             ));
         } else if let Ok(Some(question)) = current {
             lines.push(Line::from(Span::styled(

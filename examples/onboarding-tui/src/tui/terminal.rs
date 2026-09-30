@@ -76,16 +76,15 @@ pub(crate) async fn run(
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
+        // Resolver failures are rendered by the view; keep the loop alive so
+        // the user can go back instead of exiting the TUI.
         if let Some(bundle) = bundle
-            && wizard
-                .question()?
-                .as_ref()
-                .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
-            && let Some(document) = wizard
-                .state
-                .resolve(&wizard.capabilities)?
-                .assessment()
-                .document()
+            && wizard.question().is_ok_and(|question| {
+                question
+                    .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+            })
+            && let Ok(resolution) = wizard.state.resolve(&wizard.capabilities)
+            && let Some(document) = resolution.assessment().document()
             && let Ok(request) =
                 inference_request_for_document(document, wizard.state.current_route())
             && !attempted_requests.contains(&request)
@@ -139,7 +138,7 @@ pub(crate) async fn run(
             return Err(Error::Cancelled.into());
         }
         if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if let Some(question) = wizard.question()? {
+            if let Ok(Some(question)) = wizard.question() {
                 if question.required() {
                     wizard.error = Some("This question is required.".into());
                 } else if let Err(error) = wizard.submit(None) {
@@ -152,10 +151,9 @@ pub(crate) async fn run(
             if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_answer {
                 let document = wizard
                     .state
-                    .resolve(&wizard.capabilities)?
-                    .assessment()
-                    .document()
-                    .cloned();
+                    .resolve(&wizard.capabilities)
+                    .ok()
+                    .and_then(|resolution| resolution.assessment().document().cloned());
                 if let (Some(bundle), Some(document)) = (bundle, document) {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
@@ -213,13 +211,13 @@ pub(crate) async fn run(
             KeyCode::Esc => return Ok(None),
             KeyCode::Enter => {
                 if wizard.started
-                    && wizard.question()?.is_none()
+                    && matches!(wizard.question(), Ok(None))
                     && let Some(bundle) = bundle
                     && let Some(document) = wizard
                         .state
-                        .resolve(&wizard.capabilities)?
-                        .materialized_document()
-                        .cloned()
+                        .resolve(&wizard.capabilities)
+                        .ok()
+                        .and_then(|resolution| resolution.materialized_document().cloned())
                 {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
@@ -252,8 +250,8 @@ pub(crate) async fn run(
                 wizard.advance();
             }
             KeyCode::Left => wizard.back(),
-            KeyCode::Up => wizard.previous()?,
-            KeyCode::Down => wizard.next()?,
+            KeyCode::Up => wizard.previous(),
+            KeyCode::Down => wizard.next(),
             KeyCode::Backspace => {
                 wizard.input.pop();
             }

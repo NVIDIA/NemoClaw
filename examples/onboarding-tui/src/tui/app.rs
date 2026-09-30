@@ -106,31 +106,34 @@ impl JourneyWizard {
         }
     }
 
-    pub(super) fn previous(&mut self) -> Result<(), Diagnostics> {
-        if self.started && self.question()?.is_none() {
-            self.review_scroll = self.review_scroll.saturating_sub(1);
-        } else if let Some(question) = self.question()?
-            && !question.choices().is_empty()
-        {
-            self.selected = self.choice_index(&question).saturating_sub(1);
-            self.selection_changed = true;
+    // A resolver failure has no choices to move through; the view shows it.
+    pub(super) fn previous(&mut self) {
+        match self.question() {
+            Ok(None) if self.started => {
+                self.review_scroll = self.review_scroll.saturating_sub(1);
+            }
+            Ok(Some(question)) if !question.choices().is_empty() => {
+                self.selected = self.choice_index(&question).saturating_sub(1);
+                self.selection_changed = true;
+            }
+            _ => {}
         }
-        Ok(())
     }
 
-    pub(super) fn next(&mut self) -> Result<(), Diagnostics> {
-        if self.started && self.question()?.is_none() {
-            self.review_scroll = self.review_scroll.saturating_add(1);
-        } else if let Some(question) = self.question()?
-            && !question.choices().is_empty()
-        {
-            self.selected = (self.choice_index(&question) + 1).min(
-                question.choices().len()
-                    - usize::from(question.required() && !question.allows_custom_answer()),
-            );
-            self.selection_changed = true;
+    pub(super) fn next(&mut self) {
+        match self.question() {
+            Ok(None) if self.started => {
+                self.review_scroll = self.review_scroll.saturating_add(1);
+            }
+            Ok(Some(question)) if !question.choices().is_empty() => {
+                self.selected = (self.choice_index(&question) + 1).min(
+                    question.choices().len()
+                        - usize::from(question.required() && !question.allows_custom_answer()),
+                );
+                self.selection_changed = true;
+            }
+            _ => {}
         }
-        Ok(())
     }
 
     pub(super) fn suggested_input(&self, question: &JourneyQuestion) -> String {
