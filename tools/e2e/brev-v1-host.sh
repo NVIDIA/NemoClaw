@@ -29,8 +29,7 @@ prepare() {
   [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || exit 1
   echo "::group::Provision Brev workspace ${INSTANCE_NAME}"
   brev search cpu --arch x86_64 --min-vcpu 8 --min-ram 32 --min-disk 100 --sort price \
-    | brev create "${INSTANCE_NAME}" \
-        --startup-script @tools/e2e/brev-v1-startup.sh --detached
+    | brev create "${INSTANCE_NAME}" --detached
   brev refresh || true
   echo "::endgroup::"
   echo "Waiting for Brev SSH"
@@ -40,15 +39,14 @@ prepare() {
     if test $((attempt % 5)) -eq 0; then brev refresh || true; fi
     sleep 10
   done
-  echo "Brev SSH is ready; waiting for host prerequisites"
-  for attempt in $(seq 1 120); do
-    if ssh -T "${INSTANCE_NAME}" 'test -f /var/run/nemoclaw-brev-v1-ready'; then break; fi
-    if test $((attempt % 10)) -eq 0; then
-      ssh -T "${INSTANCE_NAME}" 'tail -20 /tmp/nemoclaw-brev-v1-startup.log 2>/dev/null || true' || true
-    fi
-    if test "${attempt}" -eq 120; then echo "Brev startup did not become ready" >&2; exit 1; fi
-    sleep 10
-  done
+  echo "Brev SSH is ready; installing host prerequisites"
+  # Run the checked-in bootstrap synchronously: a provider may accept a startup
+  # hook without executing it. Do not run both paths or replay a disconnected
+  # install; cleanup owns any partially prepared VM.
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" 'bash -s' \
+    < tools/e2e/brev-v1-startup.sh
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" \
+    'test -f /var/run/nemoclaw-brev-v1-ready'
   echo "Host prerequisites are ready"
   # The startup script can run as root without knowing which account Brev
   # will use for SSH. Brev may also multiplex SSH connections, so explicitly
