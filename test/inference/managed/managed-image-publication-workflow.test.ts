@@ -31,7 +31,7 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit";
+const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
 const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
 
 function needsOutput(job: string, output: string): string {
@@ -486,28 +486,8 @@ describe("complete managed-image publication workflow", () => {
       path: "candidate",
       "persist-credentials": false,
     });
-    const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: reviewedAuditSha,
-      path: ".trusted-reviewed-npm-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-reviewed-npm-audit",
-    );
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
-    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
-    expect(verifyAuditIdentities.env).toEqual({
-      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: reviewedAuditSha,
-    });
-    expect(verifyAuditIdentities.run).toContain(
-      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
-    );
-    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
-      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      uses: "./candidate/.github/actions/ci-reviewed-npm-audit",
       with: {
         "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",

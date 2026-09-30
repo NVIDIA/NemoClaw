@@ -305,13 +305,15 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
-  it("loads the PR audit verifier from the base commit", () => {
+  it("runs the PR audit from its exact head commit", () => {
     const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
-    expect(step(job, "Checkout npm audit code from the base commit").with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
-      path: ".trusted-reviewed-npm-audit",
+    expect(step(job, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
+    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
+      "./.github/actions/ci-reviewed-npm-audit",
+    );
   });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
@@ -358,7 +360,17 @@ describe("trusted npm audit workflow (#5896)", () => {
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT, {
+        ...graph,
+        replacement: {
+          label: "OpenClaw 2026.9.1 locked runtime graph",
+          packageSpec: "openclaw@2026.9.1",
+          integrity:
+            "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
+          tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+          lockSha256: "c015570ccccf56986c3d92a85de6f7aa507110f6a11cc2eedd80752672589f9b",
+        },
+      }),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);

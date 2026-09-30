@@ -134,9 +134,5 @@
       "directory": "tools/mcp-tool-discovery-runtime",
       "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
     }
-  ],
-  "archiveUndiciPatchInputs": {
-    "remediationSha256": "678540677bd3f8014e78b20291fe806c95b3727850eb5a721d517cc3da6e8230",
-    "messagingApplierSha256": "326c1825a88b25a27e6b58cfa5355f69caf9b7579cb4da9536b83221ed8c46ee"
-  }
+  ]
 }

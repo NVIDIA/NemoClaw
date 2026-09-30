@@ -1,47 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
-vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>()),
-  patchVerifiedOfficialPluginUndici: vi.fn(),
+vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", () => ({
   remediateReviewedOpenClawPluginArchive: vi.fn(() => {
     throw new Error("Official npm installs must not remediate a discarded archive.");
   }),
 }));
-vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
-  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
-});
 
 import {
   applyMessagingBuildPhase,
-  fatalMessagingBuildDiagnostic,
   readMessagingBuildPlanFromEnv,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
-
-import {
-  hashPackageTree,
-  OPENCLAW_UNDICI_PATCHES,
-  patchVerifiedOfficialPluginUndici,
-  UndiciPatchRecoveryError,
-} from "../../../scripts/lib/openclaw-npm-remediation.mts";
-import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
-
-beforeEach(async () => {
-  vi.mocked(patchVerifiedOfficialPluginUndici).mockReset();
-  const actual = await vi.importActual<
-    typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
-  >("../../../scripts/lib/reviewed-npm-archive.mts");
-  vi.mocked(packReviewedNpmArchive).mockReset().mockImplementation(actual.packReviewedNpmArchive);
-});
 
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/built-ins";
 import type { ChannelManifest } from "../../../src/lib/messaging/manifest/types";
@@ -83,7 +59,7 @@ function officialPluginFixture(channelId: string) {
       'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
       'if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { setInterval(() => {}, 1000); return; }',
-      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false" && !(process.env.OPENCLAW_PATCH_REJECT_FILE && fs.existsSync(process.env.OPENCLAW_PATCH_REJECT_FILE)), diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH, resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
+      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
       "process.exit(42);",
       "",
     ].join("\n"),
@@ -118,13 +94,7 @@ function officialPluginFixture(channelId: string) {
     OPENCLAW_PACKED_DIRECTORIES: packedDirectories,
     OPENCLAW_PLUGIN_INTEGRITY: pkg.integrityByVersion!["2026.9.1"]!,
     OPENCLAW_PLUGIN_ID: pluginId,
-    OPENCLAW_PLUGIN_INSTALL_PATH: path.join(
-      tmp,
-      "state/npm/projects/plugin/node_modules",
-      packageSpec.split("@2026")[0]!,
-    ),
     OPENCLAW_PLUGIN_SPEC: packageSpec,
-    OPENCLAW_STATE_DIR: path.join(tmp, "state"),
     OPENCLAW_PLUGIN_TARBALL: pkg.tarballUrlByVersion!["2026.9.1"]!,
     OPENCLAW_VERSION: "2026.9.1",
     npm_config_offline: "false",
@@ -138,89 +108,6 @@ function officialPluginFixture(channelId: string) {
 function remainingPackedDirectories(file: string): string[] {
   return fs.readFileSync(file, "utf8").trim().split("\n").filter(fs.existsSync);
 }
-
-it.each(["slack", "discord"] as const)(
-  "patches the inspected %s project through the real installed-plugin patcher",
-  async (channelId) => {
-    const { tmp, env, serializedPlan, tracePath, packedDirectories } =
-      officialPluginFixture(channelId);
-    const packageName = `@openclaw/${channelId}` as const;
-    const patch = OPENCLAW_UNDICI_PATCHES[packageName];
-    const originalPins = { ...patch };
-    const plugin = env.OPENCLAW_PLUGIN_INSTALL_PATH;
-    const npmRoot = path.resolve(plugin, "../../..");
-    const installed = path.join(plugin, "node_modules/undici");
-    const replacement = path.join(tmp, "replacement/package");
-    const location = `node_modules/${packageName}/node_modules/undici`;
-    const project = { name: "official-plugin-project", private: true };
-    const lock = { lockfileVersion: 3, packages: { [location]: { version: patch.affected } } };
-    fs.mkdirSync(installed, { recursive: true });
-    fs.mkdirSync(replacement, { recursive: true });
-    fs.writeFileSync(
-      path.join(plugin, "package.json"),
-      JSON.stringify({ name: packageName, version: "2026.9.1" }),
-    );
-    fs.writeFileSync(
-      path.join(installed, "package.json"),
-      JSON.stringify({ name: "undici", version: patch.affected }),
-    );
-    fs.writeFileSync(
-      path.join(replacement, "package.json"),
-      JSON.stringify({ name: "undici", version: patch.version }),
-    );
-    fs.writeFileSync(path.join(npmRoot, "package.json"), JSON.stringify(project));
-    fs.writeFileSync(path.join(npmRoot, "package-lock.json"), JSON.stringify(lock));
-    const archivePath = path.join(tmp, "replacement.tgz");
-    execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
-    const actualPatcher = await vi.importActual<
-      typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")
-    >("../../../scripts/lib/openclaw-npm-remediation.mts");
-    const actualArchive = await vi.importActual<
-      typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
-    >("../../../scripts/lib/reviewed-npm-archive.mts");
-    // Synthetic package pins keep real path validation, extraction, replacement, and metadata writes.
-    patch.affectedTree = hashPackageTree(installed);
-    patch.fixedTree = hashPackageTree(replacement);
-    vi.mocked(patchVerifiedOfficialPluginUndici).mockImplementation(
-      actualPatcher.patchVerifiedOfficialPluginUndici,
-    );
-    vi.mocked(packReviewedNpmArchive).mockImplementation((request) =>
-      request.packageSpec === `undici@${patch.version}`
-        ? { archivePath, rootDirectory: tmp }
-        : actualArchive.packReviewedNpmArchive(request),
-    );
-    try {
-      expect(applyMessagingBuildPhase(serializedPlan, "agent-install", env)).toEqual([]);
-      expect(hashPackageTree(installed)).toBe(patch.fixedTree);
-      expect(JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8"))).toEqual({
-        ...project,
-        overrides: { [packageName]: { undici: patch.version } },
-      });
-      expect(JSON.parse(fs.readFileSync(path.join(npmRoot, "package-lock.json"), "utf8"))).toEqual({
-        lockfileVersion: 3,
-        packages: {
-          [location]: {
-            version: patch.version,
-            resolved: `https://registry.npmjs.org/undici/-/undici-${patch.version}.tgz`,
-            integrity: patch.integrity,
-          },
-        },
-      });
-      expect(fs.readFileSync(tracePath, "utf8").match(/openclaw\|plugins\|inspect/g)).toHaveLength(
-        2,
-      );
-      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
-      expect(fs.readdirSync(npmRoot).sort()).toEqual([
-        "node_modules",
-        "package-lock.json",
-        "package.json",
-      ]);
-    } finally {
-      Object.assign(patch, originalPins);
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  },
-);
 
 const CLI_ARGS = [
   path.resolve(
@@ -308,81 +195,3 @@ it("bounds a hung official-plugin inspection and removes its packed archive", ()
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }, 75_000);
-
-it.each(["slack", "discord"])(
-  "rechecks %s official provenance after patching bundled Undici",
-  (channelId) => {
-    const { tmp, env, serializedPlan, tracePath, packedDirectories } =
-      officialPluginFixture(channelId);
-    const rejected = path.join(tmp, "reject-after-patch");
-    try {
-      vi.mocked(patchVerifiedOfficialPluginUndici).mockReturnValueOnce(true);
-      expect(applyMessagingBuildPhase(serializedPlan, "agent-install", env)).toEqual([]);
-      expect(patchVerifiedOfficialPluginUndici).toHaveBeenNthCalledWith(1, {
-        packageSpec: env.OPENCLAW_PLUGIN_SPEC,
-        installPath: env.OPENCLAW_PLUGIN_INSTALL_PATH,
-        env: { ...env, NPM_CONFIG_IGNORE_SCRIPTS: "true", npm_config_ignore_scripts: "true" },
-      });
-      expect(fs.readFileSync(tracePath, "utf8").match(/openclaw\|plugins\|inspect/g)).toHaveLength(
-        2,
-      );
-      vi.mocked(patchVerifiedOfficialPluginUndici).mockImplementationOnce(() => {
-        fs.writeFileSync(rejected, "patched");
-        return true;
-      });
-      expect(() =>
-        applyMessagingBuildPhase(serializedPlan, "agent-install", {
-          ...env,
-          OPENCLAW_PATCH_REJECT_FILE: rejected,
-        }),
-      ).toThrow("did not retain trusted exact registry provenance");
-      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
-      vi.mocked(patchVerifiedOfficialPluginUndici).mockClear();
-      expect(() =>
-        applyMessagingBuildPhase(serializedPlan, "agent-install", {
-          ...env,
-          OPENCLAW_TRUSTED: "false",
-        }),
-      ).toThrow("did not retain trusted exact registry provenance");
-      expect(patchVerifiedOfficialPluginUndici).not.toHaveBeenCalled();
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  },
-);
-
-it.each([
-  { channelId: "slack", retained: false },
-  { channelId: "slack", retained: true },
-  { channelId: "discord", retained: false },
-  { channelId: "discord", retained: true },
-])(
-  "reports $channelId recovery with retained backup=$retained without exposing the failure",
-  ({ channelId, retained }) => {
-    const { tmp, env, serializedPlan, packedDirectories } = officialPluginFixture(channelId);
-    const canary = "OPENAI_API_KEY=recovery-diagnostic-canary";
-    const workspace = path.join(tmp, ".nemoclaw-undici-ABC123");
-    try {
-      const recovery = new UndiciPatchRecoveryError(retained ? workspace : undefined, {
-        cause: new Error(canary),
-      });
-      vi.mocked(patchVerifiedOfficialPluginUndici).mockImplementationOnce(() => {
-        throw recovery;
-      });
-      let diagnostic = "";
-      try {
-        applyMessagingBuildPhase(serializedPlan, "agent-install", env);
-      } catch (error) {
-        diagnostic = fatalMessagingBuildDiagnostic(error);
-      }
-      expect(diagnostic).toBe(recovery.message);
-      expect(diagnostic).not.toContain(canary);
-      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
-      expect(fatalMessagingBuildDiagnostic(new Error(canary))).toBe(
-        "Messaging build applier failed.",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  },
-);

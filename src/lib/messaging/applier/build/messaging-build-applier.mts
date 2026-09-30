@@ -19,11 +19,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  UndiciPatchRecoveryError,
-  patchVerifiedOfficialPluginUndici,
-  remediateReviewedOpenClawPluginArchive,
-} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -809,16 +805,22 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         commandEnv,
       );
       if (officialPluginId) {
-        const record = inspectTrustedOfficialNpmInstall(install, officialPluginId, commandEnv);
-        if (
-          patchVerifiedOfficialPluginUndici({
-            packageSpec: install.npmPackageSpec!,
-            installPath: record.installPath,
-            env: installEnv,
-          })
-        ) {
-          inspectTrustedOfficialNpmInstall(install, officialPluginId, commandEnv);
+        let inspection: string;
+        try {
+          inspection = runCommand(
+            ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
+            commandEnv,
+            { emitOutput: false, timeoutMs: 60_000 },
+          );
+        } catch (error) {
+          throw new OfficialPluginProvenanceError(
+            officialPluginId,
+            error instanceof MessagingBuildCommandTimeoutError
+              ? "inspection timed out"
+              : "inspection failed",
+          );
         }
+        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -1409,33 +1411,11 @@ function officialPluginIdFromManifest(spec: string, env: Env): string | undefine
   return manifest?.runtime?.openclaw?.channelName;
 }
 
-function inspectTrustedOfficialNpmInstall(
-  install: OpenClawPluginInstall,
-  pluginId: string,
-  env: Env,
-): JsonObject {
-  let inspection: string;
-  try {
-    inspection = runCommand(["openclaw", "plugins", "inspect", pluginId, "--json"], env, {
-      emitOutput: false,
-      timeoutMs: 60_000,
-    });
-  } catch (error) {
-    throw new OfficialPluginProvenanceError(
-      pluginId,
-      error instanceof MessagingBuildCommandTimeoutError
-        ? "inspection timed out"
-        : "inspection failed",
-    );
-  }
-  return verifyTrustedOfficialNpmInstall(install, pluginId, inspection);
-}
-
 function verifyTrustedOfficialNpmInstall(
   install: OpenClawPluginInstall,
   pluginId: string,
   inspectOutput: string,
-): JsonObject {
+): void {
   let inspected: unknown;
   try {
     inspected = JSON.parse(inspectOutput);
@@ -1459,7 +1439,6 @@ function verifyTrustedOfficialNpmInstall(
       "did not retain trusted exact registry provenance",
     );
   }
-  return record;
 }
 
 function packVerifiedOpenClawPluginArchive(
@@ -2197,8 +2176,7 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-export function fatalMessagingBuildDiagnostic(error: unknown): string {
-  if (error instanceof UndiciPatchRecoveryError) return error.message;
+function fatalMessagingBuildDiagnostic(error: unknown): string {
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }

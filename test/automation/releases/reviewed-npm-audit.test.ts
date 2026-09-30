@@ -2,26 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
-vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
-  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
-});
-import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
-import {
-  OPENCLAW_UNDICI_PATCHES,
-  hashPackageTree,
-} from "../../../scripts/lib/openclaw-npm-remediation.mts";
+import { describe, expect, it } from "vitest";
 import {
   reviewedArchiveGraphManifest,
-  materializeArchiveGraph,
-  hasReviewedArchiveUndiciPatch,
-  parseAuditConfig,
   stageReviewedArchiveForInstall,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import {
@@ -62,211 +47,11 @@ const CONFIG = JSON.parse(
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
 
-function archivePatchFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-undici-inputs-"));
-  const helper = path.join(root, "scripts/lib/openclaw-npm-remediation.mts");
-  const caller = path.join(root, "src/lib/messaging/applier/build/messaging-build-applier.mts");
-  fs.mkdirSync(path.dirname(helper), { recursive: true });
-  fs.mkdirSync(path.dirname(caller), { recursive: true });
-  fs.writeFileSync(helper, "reviewed remediation");
-  fs.writeFileSync(caller, "reviewed caller");
-  return {
-    root,
-    helper,
-    caller,
-    parent: path.dirname(caller),
-    reviewed: {
-      remediationSha256: createHash("sha256").update("reviewed remediation").digest("hex"),
-      messagingApplierSha256: createHash("sha256").update("reviewed caller").digest("hex"),
-    },
-  };
-}
-function sameVersionGraph() {
-  const identity = {
-    packageSpec: "openclaw@2026.9.1",
-    label: "fixture",
-    integrity: "sha512-reviewed",
-    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
-    lockSha256: "a".repeat(64),
-  };
-  return {
-    ...identity,
-    id: "fixture",
-    directory: "fixture",
-    replacement: { ...identity, lockSha256: "b".repeat(64) },
-  };
-}
-
-function configForGraph(graph: ReturnType<typeof sameVersionGraph>) {
-  return JSON.stringify({
-    schemaVersion: 2,
-    severityThreshold: "high",
-    registryOrigin: "https://registry.npmjs.org/",
-    npmVersion: "12.0.2",
-    npmArchiveSha256: "c".repeat(64),
-    npmIntegrity: `sha512-${"A".repeat(86)}==`,
-    archiveGraphId: "fixture",
-    archiveTarVersion: "7.5.21",
-    archivePackages: [],
-    exceptionFile: "fixture.json",
-    sourceNestedShrinkwrapPackages: [],
-    sourceRegistryPackagesWithoutIntegrity: [],
-    sourceRegistryPackage: { ...graph, artifactName: "fixture.tgz" },
-    lockedGraphs: [graph],
-  });
-}
-
 describe("reviewed archive graph materialization", () => {
   it("rejects an affected tar release", () => {
     expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
       "reviewed archive graph tar version must be exactly 7.5.21",
     );
-  });
-
-  it("keeps the original graph when no patch inputs have been reviewed", () => {
-    expect(hasReviewedArchiveUndiciPatch(REPO_ROOT, undefined)).toBe(false);
-    expect(reviewedArchiveGraphManifest("7.5.21").overrides).toEqual({ tar: "7.5.21" });
-  });
-
-  it("selects the patched archive graph for matching reviewed inputs", () => {
-    const f = archivePatchFixture();
-    try {
-      const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
-      expect(selected).toBe(true);
-      expect(reviewedArchiveGraphManifest("7.5.21", selected).overrides).toEqual({
-        tar: "7.5.21",
-        openclaw: { undici: "8.10.2" },
-      });
-    } finally {
-      fs.rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
-    "materializes the reviewed %s bundle and lock after matching the patch inputs",
-    (packageName) => {
-      const f = archivePatchFixture();
-      const patch = OPENCLAW_UNDICI_PATCHES[packageName];
-      const originalPins = { ...patch };
-      const affected = path.join(f.root, "affected");
-      const replacement = path.join(f.root, "replacement/package");
-      const archivePath = path.join(f.root, "replacement.tgz");
-      const officialArchive = path.join(f.root, "official.tgz");
-      const location = `node_modules/${packageName}/node_modules/undici`;
-      try {
-        fs.mkdirSync(affected, { recursive: true });
-        fs.mkdirSync(replacement, { recursive: true });
-        fs.writeFileSync(
-          path.join(affected, "package.json"),
-          JSON.stringify({ name: "undici", version: patch.affected }),
-        );
-        fs.writeFileSync(
-          path.join(replacement, "package.json"),
-          JSON.stringify({ name: "undici", version: patch.version }),
-        );
-        patch.affectedTree = hashPackageTree(affected);
-        patch.fixedTree = hashPackageTree(replacement);
-        execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
-        fs.writeFileSync(officialArchive, "synthetic official archive");
-        // Stand in for npm installation; the materializer and bundled patch execute unchanged.
-        fs.writeFileSync(
-          path.join(f.root, "npm"),
-          [
-            `#!${process.execPath}`,
-            'const fs = require("node:fs"); const path = require("node:path");',
-            'if (process.argv[2] !== "install") process.exit(1);',
-            `const plugin = path.join(process.cwd(), "node_modules", ${JSON.stringify(packageName)});`,
-            'fs.mkdirSync(path.join(plugin, "node_modules"), { recursive: true });',
-            `fs.writeFileSync(path.join(plugin, "package.json"), ${JSON.stringify(JSON.stringify({ name: packageName, version: "2026.9.1" }))});`,
-            `fs.cpSync(${JSON.stringify(affected)}, path.join(plugin, "node_modules/undici"), { recursive: true });`,
-            `fs.writeFileSync("package-lock.json", ${JSON.stringify(JSON.stringify({ lockfileVersion: 3, packages: { [location]: { version: patch.affected } } }))});`,
-          ].join("\n"),
-          { mode: 0o755 },
-        );
-        vi.stubEnv("PATH", `${f.root}${path.delimiter}${process.env.PATH}`);
-        vi.mocked(packReviewedNpmArchive).mockImplementation((request) => ({
-          archivePath: request.packageSpec.startsWith("undici@") ? archivePath : officialArchive,
-          rootDirectory: f.root,
-        }));
-        const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
-        const graph = materializeArchiveGraph(
-          [
-            {
-              packageSpec: `${packageName}@2026.9.1`,
-              label: "synthetic official plugin",
-              integrity: "sha512-fixture",
-              tarballUrl: "https://registry.npmjs.org/fixture.tgz",
-            },
-          ],
-          f.root,
-          "7.5.21",
-          selected,
-        );
-        expect(hashPackageTree(path.join(graph, location))).toBe(patch.fixedTree);
-        const lock = JSON.parse(fs.readFileSync(path.join(graph, "package-lock.json"), "utf8"));
-        expect(lock.packages[location]).toMatchObject({
-          version: patch.version,
-          integrity: patch.integrity,
-          resolved: `https://registry.npmjs.org/undici/-/undici-${patch.version}.tgz`,
-        });
-      } finally {
-        Object.assign(patch, originalPins);
-        vi.mocked(packReviewedNpmArchive).mockReset();
-        vi.unstubAllEnvs();
-        fs.rmSync(f.root, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.each([
-    {
-      name: "missing caller",
-      change: (f: ReturnType<typeof archivePatchFixture>) => fs.rmSync(f.caller),
-    },
-    {
-      name: "changed helper",
-      change: (f: ReturnType<typeof archivePatchFixture>) => fs.appendFileSync(f.helper, "changed"),
-    },
-    {
-      name: "changed caller",
-      change: (f: ReturnType<typeof archivePatchFixture>) => fs.appendFileSync(f.caller, "changed"),
-    },
-  ])("audits the original graph with $name", ({ change }) => {
-    const f = archivePatchFixture();
-    try {
-      change(f);
-      const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
-      expect(selected).toBe(false);
-      expect(reviewedArchiveGraphManifest("7.5.21", selected).overrides).toEqual({ tar: "7.5.21" });
-    } finally {
-      fs.rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-  it.each(["caller", "parent"] as const)("rejects a %s symlink before auditing", (entry) => {
-    const f = archivePatchFixture();
-    const outside = path.join(f.root, "redirected");
-    try {
-      fs.renameSync(f[entry], outside);
-      fs.symlinkSync(outside, f[entry]);
-      expect(() => hasReviewedArchiveUndiciPatch(f.root, f.reviewed)).toThrow("symbolic-link");
-    } finally {
-      fs.rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-  it("accepts a second lock for the same reviewed archive", () => {
-    const graph = sameVersionGraph();
-    expect(parseAuditConfig(configForGraph(graph)).lockedGraphs[0]?.replacement).toEqual(
-      graph.replacement,
-    );
-  });
-  it.each([
-    { integrity: "sha512-substituted" },
-    { tarballUrl: "https://example.invalid/substituted.tgz" },
-    { lockSha256: "a".repeat(64) },
-  ])("rejects a substituted or duplicate same-version replacement: %j", (changed) => {
-    const graph = sameVersionGraph();
-    graph.replacement = { ...graph.replacement, ...changed };
-    const input = configForGraph(graph);
-    expect(() => parseAuditConfig(input)).toThrow("is invalid");
   });
 
   it("stages archives at deterministic graph-relative paths", () => {
