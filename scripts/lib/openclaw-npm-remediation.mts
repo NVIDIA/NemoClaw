@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -20,6 +20,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  rmdirSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -1735,6 +1737,117 @@ export class UndiciPatchRecoveryError extends Error {
   }
 }
 
+function requireExitedPatchProcess(owner: JsonObject): void {
+  if (
+    !Number.isSafeInteger(owner.pid) ||
+    owner.pid <= 0 ||
+    (owner.processIdentity !== undefined &&
+      (typeof owner.processIdentity !== "string" ||
+        !/^[a-f0-9-]{36}:\d+$/u.test(owner.processIdentity)))
+  )
+    throw new Error("Invalid Undici recovery process");
+  let exited = false;
+  try {
+    process.kill(owner.pid, 0);
+    if (owner.processIdentity !== undefined) {
+      const current = linuxProcessIdentity(owner.pid);
+      exited = current !== undefined && current !== owner.processIdentity;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    exited = true;
+  }
+  if (!exited) throw new Error(`Undici patch process is still running: ${owner.pid}`);
+}
+
+type PatchLockOwner = {
+  directory: string;
+  token: string;
+  device: number;
+  inode: number;
+  record?: string;
+};
+
+function removePatchLockOwner(owner: PatchLockOwner): void {
+  const current = lstatSync(owner.directory, { throwIfNoEntry: false });
+  if (!current) return;
+  if (!current.isDirectory()) throw new Error("Invalid Undici project lock directory");
+  if (current.dev !== owner.device || current.ino !== owner.inode) return;
+  const filename = join(owner.directory, owner.token);
+  const entry = lstatSync(filename, { throwIfNoEntry: false });
+  if (entry) {
+    if (!entry.isFile() || entry.nlink !== 1) throw new Error("Invalid Undici project lock owner");
+    if (owner.record !== undefined && JSON.stringify(readPatchJson(filename)) !== owner.record) {
+      throw new Error("Undici project lock owner changed");
+    }
+    unlinkSync(filename);
+  }
+  try {
+    // A successor has a different owner file, so rmdir cannot remove its generation.
+    rmdirSync(owner.directory);
+  } catch (error) {
+    if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? ""))
+      throw error;
+  }
+}
+
+function acquireUndiciProjectLock(root: string): () => void {
+  const directory = join(root, ".nemoclaw-undici.lock");
+  const prepared = mkdtempSync(join(root, ".nemoclaw-patch-lock-"));
+  const token = `owner-${randomUUID()}.json`;
+  const generation = lstatSync(prepared);
+  const owner: PatchLockOwner = {
+    directory: prepared,
+    token,
+    device: generation.dev,
+    inode: generation.ino,
+  };
+  try {
+    writeJson(join(prepared, token), {
+      pid: process.pid,
+      processIdentity: linuxProcessIdentity(process.pid),
+    });
+    owner.record = JSON.stringify(readPatchJson(join(prepared, token)));
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        // Publish a complete nonempty generation; rename cannot replace another owner's directory.
+        renameSync(prepared, directory);
+        const claimed = lstatSync(directory);
+        if (
+          !claimed.isDirectory() ||
+          claimed.dev !== generation.dev ||
+          claimed.ino !== generation.ino
+        ) {
+          throw new Error("Undici project lock changed during acquisition");
+        }
+        return () => removePatchLockOwner({ ...owner, directory });
+      } catch (error) {
+        if (!["ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? ""))
+          throw error;
+      }
+      const observed = lstatSync(directory);
+      if (!observed.isDirectory()) throw new Error("Invalid Undici project lock");
+      const owners = readdirSync(directory);
+      if (owners.length === 0) continue;
+      if (owners.length !== 1 || !/^owner-[a-f0-9-]{36}\.json$/u.test(owners[0]!)) {
+        throw new Error("Invalid Undici project lock owner");
+      }
+      const record = readPatchJson(join(directory, owners[0]!));
+      requireExitedPatchProcess(record);
+      removePatchLockOwner({
+        directory,
+        token: owners[0]!,
+        device: observed.dev,
+        inode: observed.ino,
+        record: JSON.stringify(record),
+      });
+    }
+    throw new Error("Undici project lock changed during acquisition; retry the operation");
+  } finally {
+    removePatchLockOwner(owner);
+  }
+}
+
 function recoverInterruptedUndiciPatch(
   root: string,
   installed: string,
@@ -1750,26 +1863,7 @@ function recoverInterruptedUndiciPatch(
     if (!lstatSync(recoveryPath, { throwIfNoEntry: false })) continue;
     const recovery = readPatchJson(recoveryPath);
     if (recovery.packageName !== packageName) continue;
-    if (
-      !Number.isSafeInteger(recovery.pid) ||
-      recovery.pid <= 0 ||
-      (recovery.processIdentity !== undefined &&
-        (typeof recovery.processIdentity !== "string" ||
-          !/^[a-f0-9-]{36}:\d+$/u.test(recovery.processIdentity)))
-    )
-      throw new Error(`Invalid Undici recovery process: ${workspace}`);
-    let exited = false;
-    try {
-      process.kill(recovery.pid, 0);
-      if (recovery.processIdentity !== undefined) {
-        const current = linuxProcessIdentity(recovery.pid);
-        exited = current !== undefined && current !== recovery.processIdentity;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      exited = true;
-    }
-    if (!exited) throw new Error(`Undici patch process is still running: ${recovery.pid}`);
+    requireExitedPatchProcess(recovery);
     const backup = join(workspace, "original");
     if (lstatSync(backup, { throwIfNoEntry: false })) {
       requirePatchDirectory(workspace, ["original"]);
@@ -1802,6 +1896,19 @@ export function patchInstalledOpenClawUndici(options: {
   const patch = OPENCLAW_UNDICI_PATCHES[options.packageName];
   if (!patch) throw new Error("Unsupported OpenClaw Undici patch package");
   const root = realpathSync(options.npmRoot);
+  const release = acquireUndiciProjectLock(root);
+  try {
+    patchOwnedOpenClawUndici(root, options);
+  } finally {
+    release();
+  }
+}
+
+function patchOwnedOpenClawUndici(
+  root: string,
+  options: { packageName: keyof typeof OPENCLAW_UNDICI_PATCHES; env?: NodeJS.ProcessEnv },
+): void {
+  const patch = OPENCLAW_UNDICI_PATCHES[options.packageName];
   const packageDirectory = requirePatchDirectory(root, [
     "node_modules",
     ...options.packageName.split("/"),

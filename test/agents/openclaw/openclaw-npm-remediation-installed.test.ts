@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import fs, { readFileSync, renameSync, writeFileSync } from "node:fs";
+import fs, {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +25,9 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
+    mkdtempSync: vi.fn(actual.mkdtempSync),
+    unlinkSync: vi.fn(actual.unlinkSync),
+    rmSync: vi.fn(actual.rmSync),
     readFileSync: vi.fn(actual.readFileSync),
     renameSync: vi.fn(actual.renameSync),
     writeFileSync: vi.fn(actual.writeFileSync),
@@ -28,9 +38,22 @@ vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) 
     await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
   return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
 });
+import {
+  failMetadataWrites,
+  failBundleRestoration,
+  interleavePatchWorkspace,
+  createProjectLock,
+  createInvalidProjectLock,
+  claimLockDuringRelease,
+  duringWorkspaceCleanup,
+  redirectProjectLock,
+} from "../../helpers/openclaw-undici-faults";
 import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
 
 beforeEach(async () => {
+  vi.mocked(mkdtempSync).mockReset().mockImplementation(fs.mkdtempSync);
+  vi.mocked(rmSync).mockReset().mockImplementation(fs.rmSync);
+  vi.mocked(unlinkSync).mockReset().mockImplementation(fs.unlinkSync);
   vi.mocked(writeFileSync).mockReset().mockImplementation(fs.writeFileSync);
   vi.mocked(renameSync).mockReset().mockImplementation(fs.renameSync);
   vi.mocked(readFileSync).mockReset().mockImplementation(fs.readFileSync);
@@ -405,11 +428,11 @@ describe("official OpenClaw bundled Undici patch", () => {
     const exited = spawnSync(process.execPath, ["-e", ""]);
     const workspace = interruptReplacement(f, exited.pid);
     fs.cpSync(path.join(f.state, "replacement/package"), f.undici, { recursive: true });
-    vi.mocked(writeFileSync).mockImplementation(() => {
-      throw new Error("ENOSPC");
-    });
+    const failure = failMetadataWrites(["project.next", "project.original"], new Error("ENOSPC"));
+    vi.mocked(writeFileSync).mockImplementation(failure.write);
     try {
-      expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(UndiciPatchRecoveryError);
+      expect(failure.reached()).toBe(true);
       expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
       expect(hashPackageTree(path.join(workspace, "original"))).toBe(f.patch.affectedTree);
     } finally {
@@ -433,16 +456,9 @@ describe("official OpenClaw bundled Undici patch", () => {
       const manifestPath = path.join(npmRoot, "package.json");
       const lockPath = path.join(npmRoot, "package-lock.json");
       const writeError = new Error("ENOSPC: recovery metadata write failed");
-      const failWrite = () => {
-        throw writeError;
-      };
-      const writes = {
-        "package.json": [failWrite, fs.writeFileSync],
-        "package-lock.json": [fs.writeFileSync, failWrite],
-      }[file];
-      vi.mocked(writeFileSync)
-        .mockImplementationOnce(writes[0]!)
-        .mockImplementationOnce(writes[1]!);
+      const stagedName = file === "package.json" ? "project.next" : "lock.next";
+      const failureInjection = failMetadataWrites([stagedName], writeError, true);
+      vi.mocked(writeFileSync).mockImplementation(failureInjection.write);
       try {
         let failure: unknown;
         try {
@@ -450,6 +466,7 @@ describe("official OpenClaw bundled Undici patch", () => {
         } catch (error) {
           failure = error;
         }
+        expect(failureInjection.reached()).toBe(true);
         expect(failure).toBeInstanceOf(UndiciPatchRecoveryError);
         expect(failure).toMatchObject({
           cause: writeError,
@@ -636,11 +653,7 @@ describe("official OpenClaw bundled Undici patch", () => {
   it("retains the verified backup when bundle rollback cannot restore it", () => {
     const f = replacementFixture("@openclaw/slack");
     mockLinuxProcessIdentity();
-    vi.mocked(renameSync)
-      .mockImplementation(() => {
-        throw new Error("EACCES: bundle rename failed");
-      })
-      .mockImplementationOnce(fs.renameSync);
+    vi.mocked(renameSync).mockImplementation(failBundleRestoration(fs.realpathSync(f.undici)));
     try {
       expect(() => patchInstalledOpenClawUndici(f)).toThrow(
         "recovery is incomplete; recovery workspace retained",
@@ -666,13 +679,14 @@ describe("official OpenClaw bundled Undici patch", () => {
   });
   it("removes an exhausted rollback workspace before a later interrupted replacement", () => {
     const f = replacementFixture("@openclaw/slack");
-    vi.mocked(writeFileSync)
-      .mockImplementation(() => {
-        throw new Error("ENOSPC: metadata write failed");
-      })
-      .mockImplementationOnce(fs.writeFileSync);
+    const failure = failMetadataWrites(
+      ["project.next", "project.original"],
+      new Error("ENOSPC: metadata write failed"),
+    );
+    vi.mocked(writeFileSync).mockImplementation(failure.write);
     try {
       expect(() => patchInstalledOpenClawUndici(f)).toThrow("rollback failed");
+      expect(failure.reached()).toBe(true);
       expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
       expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
       expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
@@ -794,4 +808,156 @@ describe("OpenClaw Undici metadata recovery", () => {
       f.restorePins();
     }
   });
+});
+
+describe("Undici project transaction ownership", () => {
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "rejects overlapping %s attempts before stale rollback can undo a completed patch",
+    (packageName) => {
+      const f = replacementFixture(packageName);
+      let overlap: unknown;
+      const failure = failMetadataWrites(["lock.next"], new Error("overlap rollback probe"), true);
+      vi.mocked(mkdtempSync).mockImplementation(
+        interleavePatchWorkspace(f.npmRoot, () => {
+          try {
+            patchInstalledOpenClawUndici(f);
+          } catch (error) {
+            overlap = error;
+          }
+          vi.mocked(writeFileSync).mockImplementation(failure.write);
+        }),
+      );
+      try {
+        expect(() => patchInstalledOpenClawUndici(f)).toThrow("overlap rollback probe");
+        expect(overlap).toBeInstanceOf(Error);
+        expect(String(overlap)).toContain("still running");
+        expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+        expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+        patchInstalledOpenClawUndici(f);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(
+          readJson<any>(path.join(f.npmRoot, "package.json")).overrides[packageName].undici,
+        ).toBe(f.patch.version);
+        expect(
+          readJson<any>(path.join(f.npmRoot, "package-lock.json")).packages[f.location].version,
+        ).toBe(f.patch.version);
+        expect(fs.existsSync(path.join(f.npmRoot, ".nemoclaw-undici.lock"))).toBe(false);
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+
+  it("locks the canonical project across plugin names during metadata-only repair", () => {
+    const f = replacementFixture("@openclaw/slack");
+    try {
+      patchInstalledOpenClawUndici(f);
+      const alias = path.join(f.state, "project-alias");
+      fs.symlinkSync(f.npmRoot, alias);
+      let entered = false;
+      let overlap: unknown;
+      vi.mocked(mkdtempSync).mockImplementation(
+        interleavePatchWorkspace(f.npmRoot, () => {
+          entered = true;
+          try {
+            patchInstalledOpenClawUndici({ npmRoot: alias, packageName: "@openclaw/discord" });
+          } catch (error) {
+            overlap = error;
+          }
+        }),
+      );
+      patchInstalledOpenClawUndici(f);
+      expect(entered).toBe(true);
+      expect(String(overlap)).toContain("still running");
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
+
+  it.each(["empty", "exited"])(
+    "recovers a %s project lock without accepting a live writer",
+    (state) => {
+      const f = replacementFixture("@openclaw/slack");
+      const child = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
+      expect(child.status).toBe(0);
+      const directory = createProjectLock(f.npmRoot, state === "exited" ? child.pid : undefined);
+      try {
+        patchInstalledOpenClawUndici(f);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(fs.existsSync(directory)).toBe(false);
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+
+  it.each(["symlink", "malformed"])(
+    "rejects a %s project lock before changing metadata",
+    (kind) => {
+      const f = replacementFixture("@openclaw/slack");
+      const target = path.join(f.state, "foreign-lock");
+      createInvalidProjectLock(f.npmRoot, target, kind);
+      try {
+        expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+        expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+        expect(fs.readFileSync(path.join(target, "foreign"), "utf8")).toBe("retain");
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+
+  it("does not remove a successor that claims the lock during release", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const directory = path.join(f.npmRoot, ".nemoclaw-undici.lock");
+    const successor = "owner-22222222-2222-2222-2222-222222222222.json";
+    vi.mocked(unlinkSync).mockImplementation(claimLockDuringRelease(f.npmRoot, successor));
+    try {
+      patchInstalledOpenClawUndici(f);
+      expect(fs.readdirSync(directory)).toEqual([successor]);
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
+});
+
+it("holds project ownership until the replacement workspace cleanup completes", () => {
+  const f = replacementFixture("@openclaw/slack");
+  let checked = false;
+  vi.mocked(rmSync).mockImplementation(
+    duringWorkspaceCleanup(() => {
+      checked = true;
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("still running");
+    }),
+  );
+  try {
+    patchInstalledOpenClawUndici(f);
+    expect(checked).toBe(true);
+    expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+    expect(fs.existsSync(path.join(f.npmRoot, ".nemoclaw-undici.lock"))).toBe(false);
+  } finally {
+    f.restorePins();
+  }
+});
+
+it("preserves foreign ownership when the project lock becomes a symlink before release", () => {
+  const f = replacementFixture("@openclaw/slack");
+  let foreignOwner = "";
+  vi.mocked(rmSync).mockImplementation(
+    duringWorkspaceCleanup(() => {
+      foreignOwner = redirectProjectLock(f.npmRoot, path.join(f.state, "foreign-lock"));
+    }),
+  );
+  try {
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("Invalid Undici project lock directory");
+    expect(foreignOwner).not.toBe("");
+    expect(readJson(foreignOwner)).toMatchObject({ pid: process.pid });
+    expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+  } finally {
+    f.restorePins();
+  }
 });
