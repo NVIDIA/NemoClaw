@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", required=True, choices=("linux/arm64", "linux/amd64"))
+    parser.add_argument(
+        "--output", help="Buildx output for one labelled image; defaults to local load"
+    )
+    parser.add_argument("--metadata-file", help="Buildx metadata for the exported labelled image")
     parser.add_argument("targets", nargs="+")
     args = parser.parse_args()
     environment = {**os.environ, "AGENT_PLATFORM": args.platform}
@@ -26,6 +30,10 @@ def main():
             env=environment,
         )
     )
+    if args.output and len(plan["target"]) != 1:
+        parser.error("--output requires exactly one image target")
+    if args.metadata_file and not args.output:
+        parser.error("--metadata-file requires --output")
     for name, target in plan["target"].items():
         tags = target.get("tags", [])
         if not tags:
@@ -66,12 +74,34 @@ def main():
                 cwd=ROOT,
             )
             catalog = json.dumps(json.loads(raw), separators=(",", ":"))
-            with tempfile.TemporaryDirectory(prefix="nemoclaw-image-label-") as directory:
-                Path(directory, "Dockerfile").write_text(f"FROM {temporary_tag}\n")
-                command = ["docker", "build", "--label", f"io.nemoclaw.fabric.catalog={catalog}"]
-                for tag in tags:
-                    command.extend(("--tag", tag))
-                subprocess.run([*command, directory], check=True)
+            if args.output:
+                # Reuse cached layers and export the labelled configuration, so
+                # its immutable digest covers the installed discovery metadata.
+                command = [
+                    "docker",
+                    "buildx",
+                    "bake",
+                    name,
+                    "--set",
+                    f"{name}.labels.io.nemoclaw.fabric.catalog={catalog}",
+                    "--set",
+                    f"{name}.output={args.output}",
+                ]
+                if args.metadata_file:
+                    command.extend(("--metadata-file", args.metadata_file))
+                subprocess.run(command, cwd=ROOT, env=environment, check=True)
+            else:
+                with tempfile.TemporaryDirectory(prefix="nemoclaw-image-label-") as directory:
+                    Path(directory, "Dockerfile").write_text(f"FROM {temporary_tag}\n")
+                    command = [
+                        "docker",
+                        "build",
+                        "--label",
+                        f"io.nemoclaw.fabric.catalog={catalog}",
+                    ]
+                    for tag in tags:
+                        command.extend(("--tag", tag))
+                    subprocess.run([*command, directory], check=True)
         finally:
             subprocess.run(
                 ["docker", "image", "rm", temporary_tag], check=False, stdout=subprocess.DEVNULL

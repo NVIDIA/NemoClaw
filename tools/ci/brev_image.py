@@ -52,6 +52,21 @@ def load(root, revision):
         raise ValueError(
             "loaded candidate does not retain the build's repository digest"
         )
+    label = (image.get("Config", {}).get("Labels") or {}).get("io.nemoclaw.fabric.catalog")
+    try:
+        catalog = json.loads(label)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError("candidate image lacks installed Fabric metadata") from error
+    runtime = catalog.get("runtime") if isinstance(catalog, dict) else None
+    binaries = runtime.get("binaries") if isinstance(runtime, dict) else None
+    command = runtime.get("command") if isinstance(runtime, dict) else None
+    openclaw = binaries.get("nvidia.fabric.openclaw") if isinstance(binaries, dict) else None
+    if not all(
+        isinstance(value, list) and value
+        and all(isinstance(item, str) and item for item in value)
+        for value in (command, openclaw)
+    ):
+        raise ValueError("candidate image lacks OpenClaw runtime metadata")
     (root / "image-ref").write_text(manifest["image"] + "\n")
     return manifest["image"]
 
