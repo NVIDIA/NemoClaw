@@ -6,7 +6,7 @@ import { runInferenceSet } from "./inference-set";
 import { createCompatibleProviderCapture, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet live rollback authority", () => {
-  it("restores the route observed before an explicit rerun, not stale registry state", async () => {
+  it("does not reapply or report restoration when the observed route already matches the rejected route", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -75,16 +75,11 @@ describe("runInferenceSet live rollback authority", () => {
 
     await expect(runInferenceSet(request, deps)).rejects.toThrow("first route result unknown");
     await expect(runInferenceSet(request, deps)).rejects.toThrow(
-      /restored to 'compatible-endpoint' \/ 'mock-model'/u,
+      /no distinct prior inference selection to restore/u,
     );
 
     expect(observeInferenceRoute).toHaveBeenCalledTimes(2);
-    expect(setInferenceRoute).toHaveBeenCalledTimes(3);
-    expect(setInferenceRoute.mock.calls[2]?.[0]).toMatchObject({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      route: { provider: "compatible-endpoint", model: "mock-model" },
-      verification: "skip",
-    });
+    expect(setInferenceRoute).toHaveBeenCalledTimes(2);
     expect(probeSandboxRoute).toHaveBeenCalledTimes(3);
   });
 });

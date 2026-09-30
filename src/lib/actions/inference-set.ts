@@ -1316,6 +1316,12 @@ async function runInferenceSetWithoutHostLock(
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
+    if (rollbackRoute.provider === provider && rollbackRoute.model === model) {
+      return (
+        `the route observed immediately before this attempt already selected '${provider}' / '${model}', ` +
+        "so there is no distinct prior inference selection to restore"
+      );
+    }
     const restoreResult = await deps.inferenceRouteMutator.setInferenceRoute({
       target: { kind: "named", gatewayName: preparedRoute.gatewayName },
       route: rollbackRoute,

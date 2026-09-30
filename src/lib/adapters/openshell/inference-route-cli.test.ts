@@ -487,6 +487,42 @@ describe("CLI inference route mutation", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 
+  it.each([
+    ["authentication", "Error: unauthorized token=secret", { kind: "authentication" }],
+    [
+      "gateway identity",
+      "handshake verification failed token=secret",
+      { kind: "transport", reason: "identity_mismatch" },
+    ],
+  ])("keeps status-zero %s output ambiguous", async (_, output, error) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 0, output }),
+      { redactDiagnostic: (value) => value.replaceAll("secret", "[redacted]") },
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error,
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each([
+    ["authentication", "Error: unauthorized", { kind: "authentication" }],
+    [
+      "gateway identity",
+      "handshake verification failed",
+      { kind: "transport", reason: "identity_mismatch" },
+    ],
+  ])("keeps nonzero %s output definite", async (_, output, error) => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 1, output }),
+    ).setInferenceRoute(mutationRequest);
+
+    expect(result).toMatchObject({ ok: false, ambiguous: false, error });
+  });
+
   it("contains a pre-spawn failure as a definite non-application", async () => {
     const capture = vi.fn().mockResolvedValue({
       status: null,

@@ -597,7 +597,7 @@ function mutationError(
           detail,
         ),
       },
-      false,
+      result.status === 0,
     );
   }
   if (/\bhandshake verification failed\b/iu.test(output)) {
@@ -607,7 +607,7 @@ function mutationError(
         reason: "identity_mismatch",
         message: "The selected OpenShell gateway identity does not match the recorded identity.",
       },
-      false,
+      result.status === 0,
     );
   }
   if (
