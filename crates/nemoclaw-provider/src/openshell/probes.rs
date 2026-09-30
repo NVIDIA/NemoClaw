@@ -7,69 +7,6 @@ use std::time::Duration;
 
 const AGENT_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
-    if let Ok(
-        phase @ (proto::SandboxPhase::Error
-        | proto::SandboxPhase::Deleting
-        | proto::SandboxPhase::Stopped
-        | proto::SandboxPhase::Completed),
-    ) = proto::SandboxPhase::try_from(status.phase)
-    {
-        return Err(Error::SandboxStartup {
-            phase: phase.as_str_name(),
-            // Conditions are backend-controlled. Only fixed known reasons may
-            // cross the diagnostic boundary; messages can contain credentials.
-            reason: status
-                .conditions
-                .iter()
-                .find_map(|condition| {
-                    if condition.r#type != "Ready" || condition.status != "False" {
-                        return None;
-                    }
-                    match condition.reason.as_str() {
-                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
-                        "ContainerExited" => Some("ContainerExited"),
-                        "ControlSupervisorStartFailed" => Some("ControlSupervisorStartFailed"),
-                        "IdentityResolutionFailed" => Some("IdentityResolutionFailed"),
-                        _ => None,
-                    }
-                })
-                .unwrap_or("unknown"),
-            exit_code: status
-                .exit_code
-                .map_or_else(|| "unknown".into(), |code| code.to_string()),
-        });
-    }
-    Ok(status.phase)
-}
-
-fn configuration_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
-    if let Some(admission) = &status.configuration_admission
-        && admission.state == proto::ConfigurationAdmissionState::Rejected as i32
-    {
-        // The pinned gateway replaces runtime parser text with public admission
-        // diagnostics. Keep only its fixed vocabulary; never echo unknown text,
-        // policy load_error, credentials, or supervisor instance identifiers.
-        let reason = match admission.error.as_str() {
-            "Effective configuration could not be activated; replace the policy or repair attached providers" => {
-                "Effective configuration could not be activated; replace the policy or repair attached providers"
-            }
-            "Effective provider configuration is invalid; repair credential bindings, attached providers, or their policy layers" => {
-                "Effective provider configuration is invalid; repair credential bindings, attached providers, or their policy layers"
-            }
-            "Effective middleware configuration is invalid; repair the policy middleware bindings or registered services" => {
-                "Effective middleware configuration is invalid; repair the policy middleware bindings or registered services"
-            }
-            "Stored policy structure or safety validation failed; submit a complete valid replacement policy" => {
-                "Stored policy structure or safety validation failed; submit a complete valid replacement policy"
-            }
-            _ => "inspect the sandbox configuration; repair its policy or attached providers",
-        };
-        return Err(ObservationError::SandboxConfigurationRejected { reason }.into());
-    }
-    startup_phase(status)
-}
-
 fn configuration_failure(stage: &str, code: &str, runtime_state: Option<&str>) -> ObservationError {
     // Only fixed public vocabulary crosses the diagnostic boundary.
     let stage = match stage {
@@ -122,45 +59,8 @@ fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
 impl OpenShell {
-    async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
-        let sandbox = self
-            .client
-            .raw_grpc()
-            .get_sandbox(self.request(proto::GetSandboxRequest {
-                name: value(binding, "name").into(),
-                workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
-            }))
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner()
-            .sandbox
-            .ok_or(ObservationError::Incomplete)?;
-        verify_identity(
-            binding,
-            &base(sandbox.metadata.clone(), value(binding, "name"), false)?,
-        )?;
-        let (observed, _) = sandbox_row(
-            proto::SandboxResponse {
-                sandbox: Some(sandbox.clone()),
-                ..Default::default()
-            },
-            value(binding, "name"),
-            false,
-        )?;
-        for field in ["runtime_json", "agent_name", "agent_runtime"] {
-            if binding.get(field) != observed.get(field) {
-                return Err(ObservationError::BindingMismatch.into());
-            }
-        }
-        Ok(sandbox)
-    }
     pub(crate) async fn check_sandbox_phase(&self, binding: &Row) -> Result<(), Error> {
-        startup_phase(
-            self.bound_sandbox(binding)
-                .await?
-                .status
-                .ok_or(ObservationError::Incomplete)?,
-        )?;
+        self.gateway.sandbox_phase(binding, false).await?;
         Ok(())
     }
     pub async fn exec_bound(
@@ -183,76 +83,17 @@ impl OpenShell {
     ) -> Result<(i32, Vec<u8>), Error> {
         tokio::time::timeout(
             Duration::from_secs(u64::from(seconds)),
-            self.exec_stream(binding, command, environment, seconds, stdin),
+            self.gateway
+                .exec(binding, command, environment, seconds, stdin),
         )
         .await
         .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
     }
-    async fn exec_stream(
-        &self,
-        binding: &Row,
-        command: Vec<String>,
-        environment: Row,
-        seconds: u32,
-        stdin: Vec<u8>,
-    ) -> Result<(i32, Vec<u8>), Error> {
-        // Exec is name-addressed upstream; verify the retained identity immediately
-        // before sending and never retry an ambiguous invocation.
-        let sandbox = self.bound_sandbox(binding).await?;
-        let mut request = self.request(proto::ExecSandboxRequest {
-            sandbox: sandbox.metadata.ok_or(ObservationError::Incomplete)?.name,
-            workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
-            command,
-            stdin,
-            no_login_shell: true,
-            environment: environment.into_iter().collect(),
-            execution_timeout: Some(
-                openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
-                    .expect("u32 seconds fit protobuf duration"),
-            ),
-            ..Default::default()
-        });
-        request.set_timeout(Duration::from_secs(u64::from(seconds)));
-        let mut stream = self
-            .client
-            .raw_grpc()
-            .exec_sandbox(request)
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        let mut output = Vec::new();
-        let mut exit = None;
-        while let Some(event) = stream
-            .message()
-            .await
-            .map_err(|error| remote_error(&error))?
-        {
-            if exit.is_some() {
-                return Err(ObservationError::Incomplete.into());
-            }
-            match event.payload.ok_or(ObservationError::Incomplete)? {
-                proto::exec_sandbox_event::Payload::Stdout(chunk) => {
-                    if output.len() + chunk.data.len() > protocol::RESPONSE_LIMIT {
-                        return Err(Error::Conflict("sandbox exec output exceeds limit"));
-                    }
-                    output.extend(chunk.data);
-                }
-                proto::exec_sandbox_event::Payload::Stderr(_) => {}
-                proto::exec_sandbox_event::Payload::Exit(result) => exit = Some(result.exit_code),
-            }
-        }
-        Ok((exit.ok_or(ObservationError::Incomplete)?, output))
-    }
     pub async fn configure_agent(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         let generation = tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                let phase = configuration_phase(
-                    self.bound_sandbox(binding)
-                        .await?
-                        .status
-                        .ok_or(ObservationError::Incomplete)?,
-                )?;
-                if phase == proto::SandboxPhase::Ready as i32
+                let phase = self.gateway.sandbox_phase(binding, true).await?;
+                if phase == SandboxPhase::Ready
                     && let Some(generation) = self.agent_snapshot(binding).await?.generation
                 {
                     return Ok::<_, Error>(generation);
@@ -312,12 +153,8 @@ impl OpenShell {
     pub async fn ready(&self, binding: &Row, cancel: &CancellationToken) -> Result<(), Error> {
         let wait = async {
             loop {
-                let sandbox = self.bound_sandbox(binding).await?;
-                let phase =
-                    configuration_phase(sandbox.status.ok_or(ObservationError::Incomplete)?)?;
-                if phase == proto::SandboxPhase::Ready as i32
-                    && self.configuration(binding).await.is_ok()
-                {
+                let phase = self.gateway.sandbox_phase(binding, true).await?;
+                if phase == SandboxPhase::Ready && self.configuration(binding).await.is_ok() {
                     return Ok(());
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -418,87 +255,5 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "terminal");
         assert_eq!(started.elapsed(), Duration::from_secs(2));
-    }
-
-    #[test]
-    fn startup_failures_name_the_sandbox_and_explain_known_reasons_without_backend_text() {
-        for (reason, guidance) in [
-            (
-                "IdentityResolutionFailed",
-                "check policy.process.run_as_user and run_as_group",
-            ),
-            (
-                "ControlSupervisorStartFailed",
-                "check the sandbox policy and attached providers",
-            ),
-        ] {
-            let failure = startup_phase(proto::SandboxStatus {
-                phase: proto::SandboxPhase::Error as i32,
-                conditions: vec![proto::SandboxCondition {
-                    r#type: "Ready".into(),
-                    status: "False".into(),
-                    reason: reason.into(),
-                    message: "PRIVATE_SENTINEL".into(),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            })
-            .unwrap_err();
-            let direct = failure.to_string();
-            let observation = failure.into_observation();
-            assert_eq!(direct, observation.to_string());
-            let message = crate::resource::observation_message(observation, Some("coder"));
-            for expected in ["sandbox/coder", reason, guidance, "resources retained"] {
-                assert!(message.contains(expected), "{message}");
-            }
-            assert!(!message.contains("PRIVATE_SENTINEL"));
-        }
-    }
-
-    #[test]
-    fn terminal_sandbox_reports_known_failure_without_backend_text() {
-        for (kind, status, reason, expected) in [
-            (
-                "Ready",
-                "False",
-                "ControlSupervisorExited",
-                "ControlSupervisorExited",
-            ),
-            ("Ready", "False", "ContainerExited", "ContainerExited"),
-            (
-                "Ready",
-                "False",
-                "ControlSupervisorStartFailed",
-                "ControlSupervisorStartFailed",
-            ),
-            (
-                "Ready",
-                "False",
-                "IdentityResolutionFailed",
-                "IdentityResolutionFailed",
-            ),
-            ("Ready", "False", "secret-sentinel", "unknown"),
-            ("Ready", "True", "ControlSupervisorExited", "unknown"),
-            ("Other", "False", "ControlSupervisorExited", "unknown"),
-        ] {
-            let error = startup_phase(proto::SandboxStatus {
-                phase: proto::SandboxPhase::Error as i32,
-                conditions: vec![proto::SandboxCondition {
-                    r#type: kind.into(),
-                    status: status.into(),
-                    reason: reason.into(),
-                    message: "secret-sentinel".into(),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            })
-            .unwrap_err()
-            .into_observation()
-            .to_string();
-            assert!(error.contains(&format!("reason {expected}")), "{error}");
-            assert!(error.contains("exit code unknown"));
-            assert!(error.contains("resources retained"));
-            assert!(!error.contains("secret-sentinel"));
-        }
     }
 }

@@ -33,10 +33,13 @@ Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/m
 ## OpenShell SDK Boundary
 
 NemoClaw's [OpenShell adapter](../../crates/nemoclaw-provider/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+Reconciliation calls a private, domain-shaped gateway boundary for observations, mutations, sandbox state, and exec.
+The connected implementation owns the pinned `OpenShellClient`, protobuf conversion, transport errors, and the choice between a high-level SDK operation and its supported raw client.
+The boundary does not mirror gRPC methods or create a second public client API.
 NemoClaw uses the SDK's public operations directly where they cover the deployment contract.
 Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wait_deleted`; it checks ownership before deletion and requires confirmed absence afterward.
 Teardown does not require the sandbox's old image, command, or policy to remain intact.
-The reconciliation code retains the SDK's raw API only for operations or fields missing from the high-level interface, without a separate raw-client wrapper.
+The connected implementation retains the SDK's raw API only for operations or fields missing from the high-level interface.
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
 NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
 
