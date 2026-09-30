@@ -102,7 +102,7 @@ impl JourneyState {
         evidence: Option<&DiscoveryEvidence>,
         facts: &AuthoringFacts,
     ) -> Result<(), Diagnostics> {
-        if !self.accepted.contains(HARNESS) {
+        if !self.decisions.accepted.contains(HARNESS) {
             return Err(diagnostic(
                 "delegation",
                 "Choose a harness before delegating settings.",
@@ -143,7 +143,7 @@ impl JourneyState {
         }
         let model = self
             .route_model_path()
-            .and_then(|path| self.values.pointer(&path))
+            .and_then(|path| self.authored.values.pointer(&path))
             .and_then(Value::as_str)
             .ok_or_else(|| {
                 diagnostic("delegation", "Choose a model before delegating settings.")

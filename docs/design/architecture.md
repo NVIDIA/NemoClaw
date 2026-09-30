@@ -99,7 +99,8 @@ Settings, model, and target schemas remain owner contracts.
 A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
 
 `JourneyDefinition` combines a sparse template with deliberate `ask` and `omit` guidance.
-`JourneyState` resolves active questions from that guidance, the SDK schema, and the current Fabric descriptor after each answer.
+`JourneyState` owns sparse authored values, a decision record, and the current journey position.
+Its read-only question resolver derives active questions from guidance, the SDK schema, and the current Fabric descriptor after each answer.
 An answer is validated before it changes state; a provider API or endpoint change reopens affected model questions while retaining the previous model as a suggestion.
 Unrelated accepted answers remain intact.
 Delegation accepts remaining suggestions only with current compatible target and endpoint evidence.

@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl JourneyState {
+impl QuestionResolver<'_> {
     pub(super) fn collect_adapter_questions(
         &self,
         capabilities: &Capabilities,
@@ -13,8 +13,9 @@ impl JourneyState {
         let omitted = &mut work.omitted;
         let warnings = &mut work.warnings;
         let unverified = &mut work.unverified;
-        let active_harness = harness_path(&self.values).or_else(|| {
+        let active_harness = harness_path(&self.authored.values).or_else(|| {
             (self
+                .position
                 .selected_forms
                 .get("/spec/sandboxes/0")
                 .is_some_and(|form| form == "harness"))
@@ -22,11 +23,12 @@ impl JourneyState {
         });
         let chosen = active_harness
             .as_ref()
-            .and_then(|path| self.values.pointer(&format!("{path}/kind")))
+            .and_then(|path| self.authored.values.pointer(&format!("{path}/kind")))
             .and_then(Value::as_str);
         let harness_open = active_harness.is_some()
             && (chosen.is_none()
-                || (self.definition.ask.contains(HARNESS) && !self.accepted.contains(HARNESS)));
+                || (self.definition.ask.contains(HARNESS)
+                    && !self.decisions.accepted.contains(HARNESS)));
         let reachable: Vec<&str> = if harness_open {
             capabilities
                 .harnesses()
@@ -89,7 +91,7 @@ impl JourneyState {
                         .as_deref()
                         .expect("chosen harness has an owner")
                 );
-                let supplied_settings = self.values.pointer(&settings_path);
+                let supplied_settings = self.authored.values.pointer(&settings_path);
                 let settings = supplied_settings
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Map::new()));
@@ -97,7 +99,7 @@ impl JourneyState {
                 crate::settings::collect(schema, schema, &settings, "", false, &mut fields, 0)?;
                 let root_id = format!("adapter:{harness}:");
                 if self.definition.ask.contains(&root_id)
-                    && !self.accepted.contains(&root_id)
+                    && !self.decisions.accepted.contains(&root_id)
                     && !fields.iter().any(|field| field.path.is_empty())
                 {
                     fields.clear();
@@ -123,7 +125,7 @@ impl JourneyState {
                     } else {
                         settings.pointer(&field.path)
                     };
-                    if self.definition.omit.contains(&id) || self.omitted.contains(&id) {
+                    if self.definition.omit.contains(&id) || self.decisions.omitted.contains(&id) {
                         if field.required {
                             return Err(diagnostic(
                                 "journey",
@@ -148,7 +150,7 @@ impl JourneyState {
                             .ask_scopes
                             .contains(&JourneyScope::ActiveAdapterSettings)
                             || self.definition.ask.contains(&id))
-                            && !self.accepted.contains(&id))
+                            && !self.decisions.accepted.contains(&id))
                     {
                         questions.push(JourneyQuestion {
                             kind: JourneyQuestionKind::Field,

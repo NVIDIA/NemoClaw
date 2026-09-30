@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl JourneyState {
+impl QuestionResolver<'_> {
     pub(super) fn collect_deployment_questions(
         &self,
         inspect_values: &Value,
@@ -22,7 +22,7 @@ impl JourneyState {
                 active_harness.as_deref(),
                 active_routes.as_deref(),
             )? {
-                if self.accepted.contains(&field.path)
+                if self.decisions.accepted.contains(&field.path)
                     || questions.iter().any(|question| question.id == field.path)
                 {
                     continue;

@@ -3,22 +3,29 @@
 
 use super::*;
 
-impl JourneyState {
-    pub(super) fn route_model_path(&self) -> Option<String> {
-        let index = self.selected_route?;
+/// Read-only interpretation of the current route and its provider.
+struct SelectionView<'a> {
+    values: &'a Value,
+    decisions: &'a DecisionRecord,
+    position: &'a JourneyPosition,
+}
+
+impl SelectionView<'_> {
+    fn route_model_path(&self) -> Option<String> {
+        let index = self.position.selected_route?;
         Some(format!(
             "{}/{index}/overrides/model",
-            routes_path(&self.values)?
+            routes_path(self.values)?
         ))
     }
 
-    pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
-        let route = self.selected_route?;
+    fn route_provider(&self) -> Option<(usize, usize)> {
+        let route = self.position.selected_route?;
         let reference = self
             .values
             .pointer(&format!(
                 "{}/{route}/providerRef",
-                routes_path(&self.values)?
+                routes_path(self.values)?
             ))?
             .as_str()?;
         let providers = self
@@ -31,14 +38,14 @@ impl JourneyState {
         (providers[provider].get("serviceRef").is_none()).then_some((route, provider))
     }
 
-    pub(super) fn provider_path(&self) -> Option<String> {
+    fn provider_path(&self) -> Option<String> {
         self.route_provider()
             .map(|(_, provider)| format!("/spec/inferenceProviders/{provider}"))
     }
 
-    pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
+    fn current_preset(&self) -> Option<ProviderPreset> {
         let (route, provider_index) = self.route_provider()?;
-        if let Some(preset) = self.selected_presets.get(&route).copied() {
+        if let Some(preset) = self.decisions.selected_presets.get(&route).copied() {
             return Some(preset);
         }
         let provider = self
@@ -55,5 +62,49 @@ impl JourneyState {
                     preset.profile().kind == kind && preset.profile().custom_endpoint
                 })
             })
+    }
+}
+
+impl JourneyState {
+    fn selection(&self) -> SelectionView<'_> {
+        SelectionView {
+            values: &self.authored.values,
+            decisions: &self.decisions,
+            position: &self.position,
+        }
+    }
+    pub(super) fn route_model_path(&self) -> Option<String> {
+        self.selection().route_model_path()
+    }
+    pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
+        self.selection().route_provider()
+    }
+    pub(super) fn provider_path(&self) -> Option<String> {
+        self.selection().provider_path()
+    }
+    pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
+        self.selection().current_preset()
+    }
+}
+
+impl super::resolver::QuestionResolver<'_> {
+    fn selection(&self) -> SelectionView<'_> {
+        SelectionView {
+            values: &self.authored.values,
+            decisions: self.decisions,
+            position: self.position,
+        }
+    }
+    pub(super) fn route_model_path(&self) -> Option<String> {
+        self.selection().route_model_path()
+    }
+    pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
+        self.selection().route_provider()
+    }
+    pub(super) fn provider_path(&self) -> Option<String> {
+        self.selection().provider_path()
+    }
+    pub(super) fn current_preset(&self) -> Option<ProviderPreset> {
+        self.selection().current_preset()
     }
 }

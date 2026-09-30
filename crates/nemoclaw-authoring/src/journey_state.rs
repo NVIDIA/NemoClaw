@@ -158,23 +158,24 @@ impl JourneyResolution {
     }
 }
 
-/// Mutable answers and explicit omissions over a journey definition's sparse base.
+/// How a question has been handled in this run. Supplied values may still be
+/// unreviewed when the definition deliberately asks for confirmation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecisionStatus {
+    Unreviewed,
+    Accepted,
+    Omitted,
+    Reopened { because: String },
+}
+
+/// One mutable authoring run. Values, decisions, and navigation have distinct
+/// owners; resolution reads them without changing the run.
 #[derive(Clone, Debug)]
 pub struct JourneyState {
     definition: JourneyDefinition,
-    values: Value,
-    accepted: BTreeSet<String>,
-    reopened_by: BTreeMap<String, String>,
-    selected_forms: BTreeMap<String, String>,
-    omitted: BTreeSet<String>,
-    inactive_settings: BTreeMap<String, Value>,
-    selected_presets: BTreeMap<usize, ProviderPreset>,
-    accepted_presets: BTreeSet<usize>,
-    accepted_model_settings: BTreeSet<(usize, String)>,
-    omitted_model_settings: BTreeSet<(usize, String)>,
-    generated_gateway_engine: bool,
-    selected_route: Option<usize>,
-    completed_routes: BTreeSet<usize>,
+    authored: AuthoredValues,
+    decisions: DecisionRecord,
+    position: JourneyPosition,
 }
 
 impl JourneyState {
@@ -188,50 +189,52 @@ impl JourneyState {
             .then_some(0);
         Self {
             definition,
-            values,
-            accepted: BTreeSet::new(),
-            reopened_by: BTreeMap::new(),
-            selected_forms: BTreeMap::new(),
-            omitted: BTreeSet::new(),
-            inactive_settings: BTreeMap::new(),
-            selected_presets: BTreeMap::new(),
-            accepted_presets: BTreeSet::new(),
-            accepted_model_settings: BTreeSet::new(),
-            omitted_model_settings: BTreeSet::new(),
-            generated_gateway_engine: false,
-            selected_route,
-            completed_routes: BTreeSet::new(),
+            authored: AuthoredValues::new(values),
+            decisions: DecisionRecord::default(),
+            position: JourneyPosition::new(selected_route),
         }
     }
 
     pub fn values(&self) -> &Value {
-        &self.values
+        &self.authored.values
+    }
+
+    /// Decision status for the currently selected route when the ID is route-scoped.
+    pub fn decision_status(&self, id: &str) -> DecisionStatus {
+        self.decisions.status(id, self.position.selected_route)
+    }
+
+    /// Recompute the applicable questions from this run without changing it.
+    pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
+        resolver::QuestionResolver::new(self, capabilities).resolve()
     }
 
     pub fn current_route(&self) -> Option<&str> {
-        let index = self.selected_route?;
-        self.values
-            .pointer(&format!("{}/{index}/name", routes_path(&self.values)?))
+        let index = self.position.selected_route?;
+        self.authored
+            .values
+            .pointer(&format!(
+                "{}/{index}/name",
+                routes_path(&self.authored.values)?
+            ))
             .and_then(Value::as_str)
     }
 }
 
-mod adapter_questions;
 mod answer;
-mod deployment_questions;
+mod authored_values;
+mod decision_record;
 mod evidence;
-mod inference_questions;
+mod journey_position;
 mod mutation;
-mod native_questions;
 mod paths;
-mod resolve;
-mod schema_questions;
-mod sdk_questions;
+mod resolver;
 mod selection;
 
+use authored_values::AuthoredValues;
+use decision_record::DecisionRecord;
+use journey_position::JourneyPosition;
 use paths::{
     escape_pointer, harness_kind, harness_path, native_value, routes_path, scalar_question,
     settings_path,
 };
-use resolve::ResolutionWork;
-use schema_questions::collect_required_leaf_questions;

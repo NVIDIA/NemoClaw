@@ -19,13 +19,16 @@ No separate journey YAML format is needed for this prototype.
 | --- | --- |
 | Deployment template | Supplied desired-state values, which may omit required fields during authoring. |
 | Journey definition | A partial template, `ask` and `omit` guidance, and target prerequisites. |
-| Journey state | Supplied values, answers, explicit omissions, and provenance of defaults or observations. |
+| Journey state | One mutable run containing authored values, a decision record, and the current route or form position. |
+| Decision record | Accepted, omitted, and reopened decisions, separate from values supplied in the template. |
+| Question resolver | A read-only interpretation of the current run against the definition and SDK and Fabric schemas. |
 | Question | One currently applicable unresolved decision, with choices and a suggestion where known. |
 | Validation result | Invalid supplied value, pending decision, SDK-valid document, or target compatibility still unverified. |
 
 `JourneyDefinition` owns the sparse template and its question guidance.
-The minimum-inline fixture fixes topology in the partial document; the definition's guidance decides which supplied values to revisit, and `JourneyState` derives missing leaf questions from the SDK and Fabric schemas.
-The example TUI and tree preview start the same `JourneyState` resolver from it.
+The minimum-inline fixture fixes topology in the partial document; the definition's guidance decides which supplied values to revisit.
+`JourneyState` owns sparse authored values, the decision record, and route or form position; a read-only `QuestionResolver` derives missing leaf questions from the SDK and Fabric schemas.
+The example TUI and tree preview use the same resolver through `JourneyState::resolve` and submit answers through `JourneyState::answer`.
 A resolved question identifies its domain kind so terminal presentation can request model discovery and offer custom model text without inferring meaning from a document path.
 The SDK owns complete document validation; Fabric owns adapter compatibility; target probes supply evidence without changing authored intent.
 
@@ -126,7 +129,7 @@ The minimum-values case still stops at the unresolved SDK frontier.
 | Design decision | Prototype behavior | Remaining gap |
 | --- | --- | --- |
 | One journey definition combines sparse values and guidance | `JourneyDefinition` owns the partial document, exact field guidance, schema-discovered scopes, omissions, and an optional target compatibility prerequisite; it starts `JourneyState` and prints its bounded preview. | Conditional guidance and prerequisites beyond engine and image compatibility are not represented yet. |
-| One resolver owns question selection and answers | The executable TUI uses `JourneyState` for every question and answer, including routes, native settings, deployment fields, and evidence-gated bulk acceptance | Automatic discovery of every missing SDK requirement remains outside the bounded single-sandbox surface. |
+| One run separates question selection from answer transitions | A read-only `QuestionResolver` selects current questions; `JourneyState::answer` validates and applies a decision, while `AuthoredValues`, `DecisionRecord`, and `JourneyPosition` own their respective state. The TUI uses this API for routes, native settings, deployment fields, and evidence-gated bulk acceptance. | Automatic discovery of every missing SDK requirement remains outside the bounded single-sandbox surface; question IDs still encode several decision kinds as strings. |
 | Constraints come from SDK and Fabric | SDK field schemas validate asked values; Fabric schemas determine active settings and detect invalid native model combinations; `Document::parse` is the final SDK gate | The preset is curated authoring policy. SDK conditional branches without a shared required constant discriminator still need a partial evaluator. |
 | Asked supplied values are suggestions | The resolver retains supplied values and asks for acceptance; explicit dependency changes name the answer that reopened a question | A changed external schema can invalidate a value without a specific earlier answer to name. |
 | Visual inspection uses the same resolver | The tree prints current questions and branches over finite choices returned by the resolver | It still has an explicit unresolved frontier and cannot claim to enumerate the full journey. |

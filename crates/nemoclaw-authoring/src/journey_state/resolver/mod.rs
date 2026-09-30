@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use schema_questions::collect_required_leaf_questions;
+
+mod adapter_questions;
+mod deployment_questions;
+mod inference_questions;
+mod native_questions;
+mod schema_questions;
+mod sdk_questions;
 
 /// Questions and diagnostics accumulated by one resolution pass.
 #[derive(Default)]
@@ -12,14 +20,34 @@ pub(super) struct ResolutionWork {
     pub(super) unverified: Vec<String>,
 }
 
-impl JourneyState {
-    /// Resolve identity, harness, guided SDK field guidance, and top-level adapter
-    /// settings. Unasked SDK requirements and conditional Fabric branches remain explicit.
-    pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
+/// Pure interpretation of one session snapshot against a catalog snapshot.
+/// It cannot accept answers or mutate authored values.
+pub(super) struct QuestionResolver<'a> {
+    pub(super) definition: &'a JourneyDefinition,
+    pub(super) authored: &'a AuthoredValues,
+    pub(super) decisions: &'a DecisionRecord,
+    pub(super) position: &'a JourneyPosition,
+    capabilities: &'a Capabilities,
+}
+
+impl<'a> QuestionResolver<'a> {
+    pub(super) fn new(state: &'a JourneyState, capabilities: &'a Capabilities) -> Self {
+        Self {
+            definition: &state.definition,
+            authored: &state.authored,
+            decisions: &state.decisions,
+            position: &state.position,
+            capabilities,
+        }
+    }
+
+    pub(super) fn resolve(&self) -> Result<JourneyResolution, Diagnostics> {
+        let capabilities = self.capabilities;
         self.definition.validate_guidance(capabilities)?;
         for field in &self.definition.omit {
             if field.starts_with('/')
-                && sdk_field_schema_for(&self.values, field).is_some_and(|(_, required)| required)
+                && sdk_field_schema_for(&self.authored.values, field)
+                    .is_some_and(|(_, required)| required)
             {
                 return Err(diagnostic(
                     "journey",
@@ -27,7 +55,7 @@ impl JourneyState {
                 ));
             }
         }
-        let assessment = PartialDocument::from_value(self.values.clone()).assess();
+        let assessment = PartialDocument::from_value(self.authored.values.clone()).assess();
         let mut work = ResolutionWork::default();
         self.collect_sdk_questions(&assessment, &mut work);
         self.collect_inference_questions(&mut work);
@@ -43,7 +71,7 @@ impl JourneyState {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|_| diagnostic("journey", "Cannot read deployment configuration."))?;
-        let inspect_values = inspect_values.as_ref().unwrap_or(&self.values);
+        let inspect_values = inspect_values.as_ref().unwrap_or(&self.authored.values);
         self.collect_deployment_questions(inspect_values, &mut work)?;
         self.collect_native_questions(
             inspect_values,
@@ -71,7 +99,9 @@ impl JourneyState {
         assessment: PartialAssessment,
     ) -> JourneyResolution {
         for field in &self.definition.omit {
-            if field.starts_with('/') && sdk_field_schema_for(&self.values, field).is_some() {
+            if field.starts_with('/')
+                && sdk_field_schema_for(&self.authored.values, field).is_some()
+            {
                 omitted.push(field.clone());
             }
         }
@@ -81,8 +111,9 @@ impl JourneyState {
         if self.definition.ask.contains(INFERENCE_PRESET)
             && self.route_provider().is_some()
             && !self
+                .position
                 .selected_route
-                .is_some_and(|route| self.accepted_presets.contains(&route))
+                .is_some_and(|route| self.decisions.accepted_presets.contains(&route))
         {
             let provider = self.provider_path().expect("external provider");
             let model = self.route_model_path().expect("selected route");
@@ -90,18 +121,22 @@ impl JourneyState {
                 !question.id.starts_with(&format!("{provider}/")) && question.id != model
             });
         } else if self
+            .position
             .selected_route
-            .and_then(|route| self.selected_presets.get(&route))
+            .and_then(|route| self.decisions.selected_presets.get(&route))
             .is_some_and(|preset| preset.profile().custom_endpoint)
-            && self
-                .provider_path()
-                .is_some_and(|path| !self.accepted.contains(&format!("{path}/endpoint")))
+            && self.provider_path().is_some_and(|path| {
+                !self
+                    .decisions
+                    .accepted
+                    .contains(&format!("{path}/endpoint"))
+            })
             && let Some(model) = self.route_model_path()
         {
             questions.retain(|question| question.id != model);
         }
         for question in &mut questions {
-            question.reopened_because = self.reopened_by.get(question.id()).cloned();
+            question.reopened_because = self.decisions.reopened_by.get(question.id()).cloned();
         }
         questions.sort_by_key(|question| {
             (

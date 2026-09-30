@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    Capabilities, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason, JourneyScope,
-    PartialDocument,
+    Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
+    JourneyScope, PartialDocument,
 };
 use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
@@ -2431,6 +2431,13 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         resolved.question(model).unwrap().reopened_because(),
         Some(api)
     );
+    assert_eq!(
+        state.decision_status(model),
+        DecisionStatus::Reopened {
+            because: api.into()
+        }
+    );
+    assert_eq!(state.decision_status(name), DecisionStatus::Accepted);
     assert!(resolved.question(name).is_none());
     assert_eq!(
         state.values().pointer(model),

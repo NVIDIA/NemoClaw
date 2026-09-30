@@ -4,8 +4,9 @@
 //! Frontend-independent authoring of NemoClaw desired-state documents.
 //!
 //! A [`JourneyDefinition`] combines sparse desired-state values with question
-//! guidance. Its [`JourneyState`] resolves applicable questions and produces a
-//! validated SDK document when all required authoring decisions are complete.
+//! guidance. A [`JourneyState`] owns authored values, accepted decisions, and
+//! journey position. Its read-only resolver derives current questions and
+//! produces a validated SDK document when authoring decisions are complete.
 //! Credential references never require loading credential values.
 //! Prompts, rendering, file I/O, and deployment execution belong to consumers.
 
@@ -36,7 +37,8 @@ pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
 };
 pub use journey_state::{
-    JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason, JourneyResolution, JourneyState,
+    DecisionStatus, JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason, JourneyResolution,
+    JourneyState,
 };
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;

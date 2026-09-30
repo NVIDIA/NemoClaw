@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl JourneyState {
+impl QuestionResolver<'_> {
     pub(super) fn collect_native_questions(
         &self,
         inspect_values: &Value,
@@ -22,7 +22,7 @@ impl JourneyState {
                 inspect_values,
                 document,
                 capabilities,
-                self.selected_route,
+                self.position.selected_route,
             )? {
                 if field.path == "model:" {
                     unverified.push(
@@ -32,7 +32,11 @@ impl JourneyState {
                     continue;
                 }
                 active_native_ids.insert(field.path.clone());
-                let value = native_value(&self.values, self.selected_route, &field.path);
+                let value = native_value(
+                    &self.authored.values,
+                    self.position.selected_route,
+                    &field.path,
+                );
                 let valid =
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
                 if self.definition.omit.contains(&field.path) {
@@ -51,18 +55,21 @@ impl JourneyState {
                     omitted.push(field.path);
                     continue;
                 }
-                let route_key = self.selected_route.map(|route| (route, field.path.clone()));
+                let route_key = self
+                    .position
+                    .selected_route
+                    .map(|route| (route, field.path.clone()));
                 let accepted = if field.path.starts_with("model:") {
                     route_key
                         .as_ref()
-                        .is_some_and(|key| self.accepted_model_settings.contains(key))
+                        .is_some_and(|key| self.decisions.accepted_model_settings.contains(key))
                 } else {
-                    self.accepted.contains(&field.path)
+                    self.decisions.accepted.contains(&field.path)
                 };
                 let omitted_route = route_key
                     .as_ref()
-                    .is_some_and(|key| self.omitted_model_settings.contains(key));
-                if self.omitted.contains(&field.path) || omitted_route {
+                    .is_some_and(|key| self.decisions.omitted_model_settings.contains(key));
+                if self.decisions.omitted.contains(&field.path) || omitted_route {
                     omitted.push(field.path);
                 } else if (value.is_some() && !valid)
                     || (value.is_none() && field.required)
