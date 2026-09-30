@@ -15,7 +15,7 @@ import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
-  collectOnboardFailureDockerDiagnostics,
+  collectOnboardFailureRuntimeDiagnostics,
   externalImageActivationAgents,
   externalImageActivationMatches,
   externalImageActivationOnboardArgs,
@@ -23,6 +23,7 @@ import {
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
+  normalizeExternalImageRuntimeId,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
   summarizeOnboardFailureStartupSignals,
@@ -179,10 +180,10 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
-  it("adopts public OpenClaw and Hermes digests only through Docker", () => {
+  it("adopts public OpenClaw and Hermes digests through Docker and Podman", () => {
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
     expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);
-    expect(externalImageActivationAgents("podman")).toEqual([]);
+    expect(externalImageActivationAgents("podman")).toEqual(["openclaw", "hermes"]);
     expect(externalImageActivationOnboardArgs(reference, "openclaw", "ext-img-openclaw")).toEqual([
       "onboard",
       "--from-image",
@@ -199,7 +200,16 @@ describe("managed image activation failure diagnostics", () => {
     ]);
   });
 
-  it("binds external-image success to disclosure, receipt, Docker identity, and cleanup", () => {
+  it("normalizes the immutable image identity returned by each runtime", () => {
+    const digest = "b".repeat(64);
+    expect(normalizeExternalImageRuntimeId("docker", `sha256:${digest}\n`)).toBe(
+      `sha256:${digest}`,
+    );
+    expect(normalizeExternalImageRuntimeId("podman", `${digest}\n`)).toBe(`sha256:${digest}`);
+    expect(normalizeExternalImageRuntimeId("podman", "not-an-image-id")).toBe("not-an-image-id");
+  });
+
+  it("binds external-image success to disclosure, receipt, runtime identity, and cleanup", () => {
     const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
     const imageId = `sha256:${"b".repeat(64)}`;
     const evidence = {
@@ -591,7 +601,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     });
 
     try {
-      await collectOnboardFailureDockerDiagnostics(
+      await collectOnboardFailureRuntimeDiagnostics(
         artifacts,
         { command } as never,
         "openclaw",
