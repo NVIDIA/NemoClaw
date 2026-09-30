@@ -23,6 +23,8 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     }),
     openclawReady: vi.fn(async () => false),
     controlPlaneReady: vi.fn(async () => true),
+    openclawGatewayStarted: vi.fn(async () => true as boolean | null),
+    openclawGatewaySettled: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -46,6 +48,8 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
       waitForSandboxControlPlaneReady: calls.controlPlaneReady,
+      waitForStartedOpenclawGatewayProcess: calls.openclawGatewayStarted,
+      settleStartedOpenclawGatewayForConfiguration: calls.openclawGatewaySettled,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -335,6 +339,7 @@ describe("handleAgentSetupState", () => {
       "openai-completions",
       false,
       "nemoclaw-19090",
+      undefined,
     );
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
@@ -402,8 +407,73 @@ describe("handleAgentSetupState", () => {
       "openai-completions",
       true,
       "nemoclaw-19090",
+      undefined,
     );
     expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("settles external-image pairing after config sync and before route restart (#11932)", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => {
+        order.push("started");
+        return true;
+      }),
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => {
+        order.push("paired");
+        return true;
+      }),
+      setupOpenclaw: vi.fn(async (...args) => {
+        order.push("configured");
+        await args[7]?.();
+      }),
+    });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      initializeNativeInferenceRoute: true,
+      settleOpenclawStartupBeforeConfiguration: true,
+    });
+
+    expect(order).toEqual(["started", "configured", "paired"]);
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
+  it("does not change external-image config when its gateway startup is unproven (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => false),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/startup did not settle before configuration/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("withholds route restart when pairing does not settle after config sync (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => false),
+      setupOpenclaw: vi.fn(async (...args) => {
+        expect(await args[7]?.()).toBe(false);
+        throw new Error("External-image OpenClaw pairing did not settle after configuration");
+      }),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/pairing did not settle after configuration/u);
+
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("rejects an identity change before reading a fresh custom-image route (#12033)", async () => {
