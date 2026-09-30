@@ -1684,6 +1684,24 @@ function readPatchJson(filename: string): JsonObject {
   }
 }
 
+function replacePatchMetadata(
+  filename: string,
+  contents: Buffer | JsonObject,
+  workspace: string,
+  stagedName: string,
+): void {
+  const target = lstatSync(filename);
+  if (!target.isFile() || target.isSymbolicLink())
+    throw new Error(`Patch metadata is not a regular file: ${filename}`);
+  const staged = join(workspace, stagedName);
+  writeFileSync(
+    staged,
+    Buffer.isBuffer(contents) ? contents : `${JSON.stringify(contents, null, 2)}\n`,
+    { mode: target.mode & 0o777 },
+  );
+  renameSync(staged, filename);
+}
+
 function linuxProcessIdentity(pid: number): string | undefined {
   try {
     const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
@@ -1867,8 +1885,8 @@ export function patchInstalledOpenClawUndici(options: {
       replaced = true;
       renameSync(replacement, installed);
     }
-    writeJson(manifestPath, project);
-    writeJson(lockPath, lock);
+    replacePatchMetadata(manifestPath, project, workspace, "project.next");
+    replacePatchMetadata(lockPath, lock, workspace, "lock.next");
     if (hashPackageTree(installed) !== patch.fixedTree)
       throw new Error("Installed Undici patch verification failed");
     if (recoveredWorkspace) rmSync(recoveredWorkspace, { recursive: true, force: true });
@@ -1879,8 +1897,8 @@ export function patchInstalledOpenClawUndici(options: {
         renameSync(backup, installed);
         replaced = false;
       }
-      writeFileSync(manifestPath, originalManifest);
-      writeFileSync(lockPath, originalLock);
+      replacePatchMetadata(manifestPath, originalManifest, workspace, "project.original");
+      replacePatchMetadata(lockPath, originalLock, workspace, "lock.original");
     } catch (rollbackError) {
       retainBackup = replaced;
       const recoveryWorkspace = retainBackup ? workspace : recoveredWorkspace;
