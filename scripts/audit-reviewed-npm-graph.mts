@@ -8,7 +8,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
+import {
+  OPENCLAW_UNDICI_PATCHES,
+  patchInstalledOpenClawUndici,
+  remediateReviewedOpenClawPluginArchive,
+} from "./lib/openclaw-npm-remediation.mts";
 import { canonicalAuditReceipt, createAuditReceipt } from "./lib/npm-audit-receipt.mts";
 import { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 import {
@@ -294,7 +298,7 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   }
   return {
     name: "nemoclaw-reviewed-production-graph",
-    overrides: { tar: archiveTarVersion },
+    overrides: { tar: archiveTarVersion, openclaw: { undici: "8.10.2" } },
     private: true,
     version: "1.0.0",
   } as const;
@@ -350,6 +354,13 @@ function materializeArchiveGraph(
     ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
+  for (const packageName of Object.keys(
+    OPENCLAW_UNDICI_PATCHES,
+  ) as (keyof typeof OPENCLAW_UNDICI_PATCHES)[]) {
+    if (packages.some(({ packageSpec }) => packageSpec === `${packageName}@2026.9.1`)) {
+      patchInstalledOpenClawUndici({ npmRoot: graphDirectory, packageName });
+    }
+  }
   return graphDirectory;
 }
 

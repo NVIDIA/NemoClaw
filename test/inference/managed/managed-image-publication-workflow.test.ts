@@ -32,7 +32,7 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "d60ee0bb36e582f83846f41a1b7e94719fcd89f6";
+const reviewedAuditSha = "edfcedf29c5b13c016cfb40df3c35420cabcc036";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;

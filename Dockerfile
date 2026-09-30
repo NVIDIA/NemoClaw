@@ -65,9 +65,8 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 FROM scratch AS managed-startup-runtime-builder
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
-# Fetch immutable reviewed archives outside RUN instructions. The protected
-# GPU rebuild imports these checksum-addressed source records from the
-# amd64 build cache, while every package-materialization RUN remains offline.
+# GPU builds import checksum-pinned archives from the amd64 cache.
+# Package installs stay offline.
 FROM scratch AS wechat-npm-archives
 
 ADD --checksum=sha256:467e8047f7114e45944961fcd3eda9421843c9c65db61ea24176e252ab800ee4 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz /openclaw-weixin-2.4.9.tgz
@@ -522,7 +521,9 @@ ADD --chmod=0444 --checksum=sha256:f3fb42099ea7a0efa2753b3e770fa0d505714e1c7d75f
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-5
 
 ADD --chmod=0444 --checksum=sha256:65834dc9ce7ecceff4334a14796c85960cbf665d09364698bf3196ceed04d677 https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz /uint8array-extras-1.5.0.tgz
+ADD --chmod=0444 --checksum=sha256:93b3abe22a9d2858938b5f3829a9fd8952392348ffed9057662ae846e2e46d54 https://registry.npmjs.org/undici/-/undici-7.29.1.tgz /undici-7.29.1.tgz
 ADD --chmod=0444 --checksum=sha256:9d72c56c17ad2b3d66f006d53945374cc0d2bc68f322439495b972269f4de6bc https://registry.npmjs.org/undici/-/undici-8.10.0.tgz /undici-8.10.0.tgz
+ADD --chmod=0444 --checksum=sha256:740638ae32d78d2646a6727950e365fa26b6fa87913fa096e60ed4afeb4634aa https://registry.npmjs.org/undici/-/undici-8.10.2.tgz /undici-8.10.2.tgz
 ADD --chmod=0444 --checksum=sha256:07a721cb2cd0dd798c24757de34d14e8b640ff8fddef85d662e00b392562a1f2 https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz /undici-types-8.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:e4bfbbe867144ff24f73198367479378c8b6cffc798a2ec0756a81097606908e https://registry.npmjs.org/unicorn-magic/-/unicorn-magic-0.3.0.tgz /unicorn-magic-0.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:2dfb5e06d1d4bf1fe9f0fa7f633c4a2fde04d8b41cf0b9bd249a42561d5edfb6 https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz /unpipe-1.0.0.tgz
@@ -881,9 +882,8 @@ RUN test -f /usr/local/bin/node \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
-# Reviewed-archive invariants (#5896): the dedicated build stage materializes
-# the committed lock, seeds resolver metadata, and re-packs every archive offline
-# before this root-owned immutable cache enters the final image.
+# The build stage installs the lock, seeds metadata, and re-packs offline
+# before copying this root-owned immutable cache (#5896).
 COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
 COPY --from=openclaw-patch-payload / /
 
@@ -907,10 +907,9 @@ COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade stale bases. Reuse is restricted to matching provenance from an
-# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
-# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
-# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# Only matching official digest-pinned bases reuse graphs; other bases reinstall.
+# OPENCLAW_VERSION must meet the blueprint minimum. Archive SRI, basename,
+# local-only installation, and cleanup checks remain required.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
 RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \

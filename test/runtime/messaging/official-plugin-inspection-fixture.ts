@@ -17,6 +17,7 @@ export const officialPluginInspections = Object.fromEntries(
             plugin: { id, trustedOfficialInstall: true },
             install: {
               source: "npm",
+              installPath: `/sandbox/.openclaw/npm/projects/${id}/node_modules/@openclaw/${id}`,
               resolvedSpec: spec,
               integrity: pkg.integrityByVersion?.["2026.9.1"],
             },

@@ -35,6 +35,7 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
   return {
     ...original,
+    patchVerifiedOfficialPluginUndici: vi.fn(),
     remediateReviewedOpenClawPluginArchive: remediateReviewedArchive,
   };
 });

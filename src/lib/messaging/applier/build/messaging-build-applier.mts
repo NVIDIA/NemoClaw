@@ -19,7 +19,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  patchVerifiedOfficialPluginUndici,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -805,22 +808,16 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         commandEnv,
       );
       if (officialPluginId) {
-        let inspection: string;
-        try {
-          inspection = runCommand(
-            ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
-            commandEnv,
-            { emitOutput: false, timeoutMs: 60_000 },
-          );
-        } catch (error) {
-          throw new OfficialPluginProvenanceError(
-            officialPluginId,
-            error instanceof MessagingBuildCommandTimeoutError
-              ? "inspection timed out"
-              : "inspection failed",
-          );
+        const record = inspectTrustedOfficialNpmInstall(install, officialPluginId, commandEnv);
+        if (
+          patchVerifiedOfficialPluginUndici({
+            packageSpec: install.npmPackageSpec!,
+            installPath: record.installPath,
+            env: installEnv,
+          })
+        ) {
+          inspectTrustedOfficialNpmInstall(install, officialPluginId, commandEnv);
         }
-        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -1411,11 +1408,33 @@ function officialPluginIdFromManifest(spec: string, env: Env): string | undefine
   return manifest?.runtime?.openclaw?.channelName;
 }
 
+function inspectTrustedOfficialNpmInstall(
+  install: OpenClawPluginInstall,
+  pluginId: string,
+  env: Env,
+): JsonObject {
+  let inspection: string;
+  try {
+    inspection = runCommand(["openclaw", "plugins", "inspect", pluginId, "--json"], env, {
+      emitOutput: false,
+      timeoutMs: 60_000,
+    });
+  } catch (error) {
+    throw new OfficialPluginProvenanceError(
+      pluginId,
+      error instanceof MessagingBuildCommandTimeoutError
+        ? "inspection timed out"
+        : "inspection failed",
+    );
+  }
+  return verifyTrustedOfficialNpmInstall(install, pluginId, inspection);
+}
+
 function verifyTrustedOfficialNpmInstall(
   install: OpenClawPluginInstall,
   pluginId: string,
   inspectOutput: string,
-): void {
+): JsonObject {
   let inspected: unknown;
   try {
     inspected = JSON.parse(inspectOutput);
@@ -1439,6 +1458,7 @@ function verifyTrustedOfficialNpmInstall(
       "did not retain trusted exact registry provenance",
     );
   }
+  return record;
 }
 
 function packVerifiedOpenClawPluginArchive(
