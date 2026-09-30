@@ -650,7 +650,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm for trusted E2E planning
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Install trusted E2E planner dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -4034,7 +4034,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Install reviewed npm for trusted OpenShell verification
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Checkout trusted OpenShell dev tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5319,7 +5319,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Reinstall reviewed npm after Node reassertion
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Recover Docker CLI before native Podman E2E
         if: ${{ matrix.runtime_provider == 'podman' }}
@@ -5506,7 +5506,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Dispatch exact commit to Jetson through operator backend
         env:

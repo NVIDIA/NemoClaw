@@ -175,7 +175,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Validate staging QA source
         shell: bash
@@ -560,7 +560,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Prepare same-run mcporter audit evidence
         if: matrix.agent == 'openclaw'
@@ -1087,7 +1087,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1197,7 +1197,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1523,7 +1523,7 @@ jobs:
       # published-base contract with the rest of the release cohort.
       - name: Install reviewed npm
         if: github.event_name == 'pull_request'
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Install trusted-event reviewed npm
         if: github.event_name != 'pull_request'
