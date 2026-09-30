@@ -441,7 +441,10 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     assert_eq!(
         plan.deferred,
-        ["OpenShell registration and sandbox require the managed gateway"]
+        [
+            "Gateway version and compute-driver compatibility remain unverified until its provider observation completes.",
+            "OpenShell registration and sandbox require the managed gateway",
+        ]
     );
     assert!(plan.retained.is_empty());
     assert!(plan.health.is_empty());
