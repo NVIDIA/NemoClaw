@@ -1774,12 +1774,12 @@ export function patchInstalledOpenClawUndici(options: {
       throw new Error("Installed Undici patch verification failed");
   } catch (error) {
     try {
-      writeFileSync(manifestPath, originalManifest);
-      writeFileSync(lockPath, originalLock);
       if (replaced) {
         rmSync(installed, { recursive: true, force: true });
         renameSync(backup, installed);
       }
+      writeFileSync(manifestPath, originalManifest);
+      writeFileSync(lockPath, originalLock);
     } catch (rollbackError) {
       retainBackup = true;
       throw new AggregateError(

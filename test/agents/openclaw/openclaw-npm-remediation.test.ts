@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import {
+import { execFileSync, spawnSync } from "node:child_process";
+import fs, {
   chmodSync,
   cpSync,
   existsSync,
@@ -15,8 +15,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  OPENCLAW_UNDICI_PATCHES,
+  patchInstalledOpenClawUndici,
+  patchVerifiedOfficialPluginUndici,
   buildRemediatedOpenClawArchive,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
@@ -25,6 +28,25 @@ import {
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
+});
+vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
+  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
+});
+import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
+
+beforeEach(async () => {
+  vi.mocked(writeFileSync).mockReset().mockImplementation(fs.writeFileSync);
+  const actual = await vi.importActual<
+    typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
+  >("../../../scripts/lib/reviewed-npm-archive.mts");
+  vi.mocked(packReviewedNpmArchive).mockReset().mockImplementation(actual.packReviewedNpmArchive);
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -884,4 +906,141 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
+});
+
+const roots: string[] = [];
+function fixture(packageName: keyof typeof OPENCLAW_UNDICI_PATCHES = "@openclaw/slack") {
+  const state = fs.mkdtempSync(path.join(tmpdir(), "openclaw-undici-patch-"));
+  roots.push(state);
+  const npmRoot = path.join(state, "npm/projects/plugin");
+  const plugin = path.join(npmRoot, "node_modules", packageName);
+  const undici = path.join(plugin, "node_modules/undici");
+  fs.mkdirSync(undici, { recursive: true });
+  fs.writeFileSync(
+    path.join(plugin, "package.json"),
+    JSON.stringify({ name: packageName, version: "2026.9.1" }),
+  );
+  fs.writeFileSync(
+    path.join(undici, "package.json"),
+    JSON.stringify({ name: "undici", version: OPENCLAW_UNDICI_PATCHES[packageName].affected }),
+  );
+  return { state, npmRoot, plugin, undici, packageName };
+}
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("official OpenClaw bundled Undici patch", () => {
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "rejects changed %s bundle contents even when the affected version matches",
+    (packageName) => {
+      const f = fixture(packageName);
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed bundled Undici tree");
+      expect(JSON.parse(fs.readFileSync(path.join(f.undici, "package.json"), "utf8")).version).toBe(
+        OPENCLAW_UNDICI_PATCHES[packageName].affected,
+      );
+      expect(fs.readdirSync(f.npmRoot)).toEqual(["node_modules"]);
+    },
+  );
+  it("rejects a forged fixed-version manifest without accepting the package as patched", () => {
+    const f = fixture();
+    fs.writeFileSync(
+      path.join(f.undici, "package.json"),
+      JSON.stringify({ name: "undici", version: "7.29.1" }),
+    );
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed bundled Undici tree");
+  });
+  it("rejects a different OpenClaw release before modifying its dependencies", () => {
+    const f = fixture();
+    fs.writeFileSync(
+      path.join(f.plugin, "package.json"),
+      JSON.stringify({ name: f.packageName, version: "2026.9.5" }),
+    );
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("2026.9.1");
+  });
+  it("rejects a bundled dependency redirected through a symlink", () => {
+    const f = fixture();
+    const outside = path.join(f.state, "outside");
+    fs.renameSync(f.undici, outside);
+    fs.symlinkSync(outside, f.undici);
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("real directory");
+    expect(fs.existsSync(path.join(outside, "package.json"))).toBe(true);
+  });
+  it("rejects a symlink inside the installed dependency before changing files", () => {
+    const f = fixture();
+    fs.symlinkSync(path.join(f.plugin, "package.json"), path.join(f.undici, "linked.json"));
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+    expect(fs.lstatSync(path.join(f.undici, "linked.json")).isSymbolicLink()).toBe(true);
+  });
+  it("rejects inspection paths outside the managed npm projects", () => {
+    const f = fixture();
+    const outside = path.join(f.state, "other");
+    fs.mkdirSync(outside);
+    expect(() =>
+      patchVerifiedOfficialPluginUndici({
+        packageSpec: "@openclaw/slack@2026.9.1",
+        installPath: path.join(outside, "node_modules/@openclaw/slack"),
+        env: { OPENCLAW_STATE_DIR: f.state },
+      }),
+    ).toThrow("escaped");
+  });
+  it("requires an absolute path from official plugin inspection", () => {
+    expect(() =>
+      patchVerifiedOfficialPluginUndici({
+        packageSpec: "@openclaw/slack@2026.9.1",
+        installPath: "relative",
+        env: {},
+      }),
+    ).toThrow("absolute install path");
+  });
+  it.each(["@openclaw/msteams@2026.9.1", "@openclaw/slack@2026.9.5"])(
+    "leaves %s outside the patch scope untouched",
+    (packageSpec) => {
+      expect(
+        patchVerifiedOfficialPluginUndici({ packageSpec, installPath: undefined, env: {} }),
+      ).toBe(false);
+    },
+  );
+  it("restores the original bundle before metadata rollback when writes fail", () => {
+    const f = fixture();
+    const patch = OPENCLAW_UNDICI_PATCHES[f.packageName];
+    const originalPins = { ...patch };
+    const manifestPath = path.join(fs.realpathSync(f.npmRoot), "package.json");
+    const lockPath = path.join(f.npmRoot, "package-lock.json");
+    const originalManifest = { name: "fixture", private: true };
+    fs.writeFileSync(manifestPath, JSON.stringify(originalManifest));
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          [`node_modules/${f.packageName}/node_modules/undici`]: { version: patch.affected },
+        },
+      }),
+    );
+    const replacement = path.join(f.state, "replacement/package");
+    fs.mkdirSync(replacement, { recursive: true });
+    fs.writeFileSync(
+      path.join(replacement, "package.json"),
+      JSON.stringify({ name: "undici", version: patch.version }),
+    );
+    const archivePath = path.join(f.state, "replacement.tgz");
+    execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
+    // Pin synthetic trees to exercise real file replacement without downloading npm packages.
+    patch.affectedTree = hashPackageTree(f.undici);
+    patch.fixedTree = hashPackageTree(replacement);
+    vi.mocked(packReviewedNpmArchive).mockReturnValue({ archivePath, rootDirectory: f.state });
+    vi.mocked(writeFileSync).mockImplementation(() => {
+      throw new Error("ENOSPC: metadata write failed");
+    });
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(
+        "rollback failed; recovery workspace retained",
+      );
+      expect(hashPackageTree(f.undici)).toBe(patch.affectedTree);
+      expect(JSON.parse(fs.readFileSync(manifestPath, "utf8"))).toEqual(originalManifest);
+    } finally {
+      Object.assign(patch, originalPins);
+    }
+  });
 });

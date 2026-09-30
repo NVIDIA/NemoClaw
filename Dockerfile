@@ -882,8 +882,7 @@ RUN test -f /usr/local/bin/node \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
-# The build stage installs the lock, seeds metadata, and re-packs offline
-# before copying this root-owned immutable cache (#5896).
+# Reviewed-archive invariants (#5896): locked install, metadata seeding, offline re-packing, root-owned immutable cache.
 COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
 COPY --from=openclaw-patch-payload / /
 
@@ -907,9 +906,9 @@ COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Only matching official digest-pinned bases reuse graphs; other bases reinstall.
-# OPENCLAW_VERSION must meet the blueprint minimum. Archive SRI, basename,
-# local-only installation, and cleanup checks remain required.
+# Matching official digest-pinned bases reuse graphs; others reinstall.
+# OPENCLAW_VERSION is the NemoClaw runtime build target; enforce the blueprint minimum.
+# Keep archive SRI, basename, local-only install, and cleanup checks.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
 RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
