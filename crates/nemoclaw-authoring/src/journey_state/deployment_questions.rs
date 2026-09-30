@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+
+impl JourneyState {
+    pub(super) fn collect_deployment_questions(
+        &self,
+        inspect_values: &Value,
+        work: &mut ResolutionWork,
+    ) -> Result<(), Diagnostics> {
+        let questions = &mut work.questions;
+        if self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::DeploymentFields)
+        {
+            let active_harness = harness_path(inspect_values);
+            let active_routes = routes_path(inspect_values);
+            for field in crate::deployment::deployment_questions_for_values(
+                inspect_values,
+                active_harness.as_deref(),
+                active_routes.as_deref(),
+            )? {
+                if self.accepted.contains(&field.path)
+                    || questions.iter().any(|question| question.id == field.path)
+                {
+                    continue;
+                }
+                questions.push(JourneyQuestion {
+                    kind: JourneyQuestionKind::Field,
+                    reopened_because: None,
+                    id: field.path,
+                    reason: JourneyQuestionReason::ExplicitAsk,
+                    required: field.required,
+                    choices: field.choices,
+                    suggestion: field.suggestion,
+                    schema: field.schema,
+                });
+            }
+        }
+        Ok(())
+    }
+}
