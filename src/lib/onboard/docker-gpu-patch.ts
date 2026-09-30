@@ -175,16 +175,25 @@ function patchedContainerIdFromContext(
 }
 
 function snapshotInspectDeps(
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture">,
-): Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> {
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  >,
+): Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"> {
   // `depsWithDefaults` spreads the caller's `deps`, so passing an explicit
   // `dockerCapture: undefined` would shadow the module's default Docker
   // adapter and disable downstream `docker ps`/`inspect`/`logs` capture.
   // Build the inner deps object with only the keys the caller actually
   // supplied so defaults stay in place.
-  const inner: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> = {};
+  const inner: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  > = {};
   if (deps.runCaptureOpenshell) inner.runCaptureOpenshell = deps.runCaptureOpenshell;
   if (deps.dockerCapture) inner.dockerCapture = deps.dockerCapture;
+  if (deps.openShellGpuDiagnostics) {
+    inner.openShellGpuDiagnostics = deps.openShellGpuDiagnostics;
+  }
   return inner;
 }
 
@@ -199,7 +208,10 @@ function classificationMatchesSelectedMode(
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  > & {
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
     additionalSummaryLines?: readonly string[];
@@ -269,7 +281,10 @@ export function printDockerGpuPatchFailureAndExit(
 export function printDockerGpuReadinessFailure(
   sandboxName: string,
   selectedMode: DockerGpuPatchMode | null,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  > & {
     context?: DockerGpuPatchFailureContext | null;
     additionalSummaryLines?: readonly string[];
   },
@@ -304,7 +319,10 @@ export function printDockerGpuProofFailure(
   sandboxName: string,
   error: unknown,
   selectedMode: DockerGpuPatchMode | null,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  > & {
     context?: DockerGpuPatchFailureContext | null;
     additionalSummaryLines?: readonly string[];
   },

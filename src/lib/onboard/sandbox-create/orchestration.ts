@@ -1671,7 +1671,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       assessHost,
       baseImageResolutionFlow,
       cliDisplayName,
-      cliName,
       completeOrdinaryOnboardSandboxCreation,
       confirmRecreateForSelectionDrift,
       createOnboardCreatedSandboxCompletion,
@@ -1680,6 +1679,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       dashboardRuntime,
       dcodeAutoApprovalFlow,
       detectMessagingCredentialRotation,
+      openShellGpuDiagnostics,
       ensureAgentFixedForward,
       ensureDashboardForward,
       filterEnabledChannelsByAgent,
@@ -3029,6 +3029,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           onboardSession.markRetainedSandboxRecovery,
         ),
       );
+    let selectedOpenShellGpuDiagnostics = openShellGpuDiagnostics;
     const runCreateFlow = async (
       createRequest: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest,
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
@@ -3037,6 +3038,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       effectivePolicySourcePath?: string,
       runDeferredProviderEffects?: (context: VerifiedSandboxCreateEffectsContext) => Promise<void>,
     ) => {
+      const createFlowOpenShellGpuDiagnostics = hermesPortableReadyRunner
+        ? sandboxGpuCreateFlow.createHermesPortableGpuDiagnostics(
+            sandboxName,
+            GATEWAY_NAME,
+            hermesPortableReadyRunner,
+          )
+        : openShellGpuDiagnostics;
       assertCreateLifecycleJournal({
         portableLifecycle: agentCreateInput.hermesPortableLifecycle,
         runtimeGeneration: recreateRuntime.targetGeneration ?? null,
@@ -3266,6 +3274,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             {
               commandExecutor: sandboxCommandExecutor,
+              openShellGpuDiagnostics: createFlowOpenShellGpuDiagnostics,
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
               runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
               sandboxObserver: createCliOpenShellSandboxObserverFromRunner(
@@ -3277,6 +3286,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
+          selectedOpenShellGpuDiagnostics = createFlowOpenShellGpuDiagnostics;
           persistFinalHandoffAcknowledgement(created.runtimePatch);
           return created;
         },
@@ -3380,6 +3390,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload,
       note,
       sandboxCommandExecutor,
+      selectedOpenShellGpuDiagnostics,
     );
     // Managed bootstrap can invalidate OpenShell's cached Ready state after it
     // replaces the container. Registry publication stays bound to the durable

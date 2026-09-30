@@ -128,6 +128,11 @@ export interface CreatedSandboxCompletionOptions {
     readonly provider: string;
     readonly dockerDriverGateway: boolean;
     readonly verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+    readonly openShellGpuDiagnostics?: NonNullable<
+      Parameters<
+        typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+      >[2]["openShellGpuDiagnostics"]
+    >;
     readonly runCaptureOpenshell: NonNullable<
       Parameters<
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
@@ -367,6 +372,7 @@ export function createCreatedSandboxCompletionActions(
         dockerDriverGateway: options.gpu.dockerDriverGateway,
         selectedRoute: created.route,
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+        openShellGpuDiagnostics: options.gpu.openShellGpuDiagnostics,
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
         log: console.log,
       },
@@ -698,6 +704,7 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  openShellGpuDiagnostics?: CreatedSandboxCompletionOptions["gpu"]["openShellGpuDiagnostics"],
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -769,6 +776,7 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         dockerDriverGateway,
         verifyDirectSandboxGpu,
+        openShellGpuDiagnostics,
         runCaptureOpenshell,
         persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
         persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
