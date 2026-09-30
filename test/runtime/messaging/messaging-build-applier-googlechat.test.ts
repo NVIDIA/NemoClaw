@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +15,11 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     throw new Error("Official npm installs must not remediate a discarded archive.");
   }),
 }));
+vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
+  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
+});
 
 import {
   applyMessagingBuildPhase,
@@ -23,11 +28,20 @@ import {
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 import {
+  hashPackageTree,
+  OPENCLAW_UNDICI_PATCHES,
   patchVerifiedOfficialPluginUndici,
   UndiciPatchRecoveryError,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
 
-beforeEach(() => vi.mocked(patchVerifiedOfficialPluginUndici).mockReset());
+beforeEach(async () => {
+  vi.mocked(patchVerifiedOfficialPluginUndici).mockReset();
+  const actual = await vi.importActual<
+    typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
+  >("../../../scripts/lib/reviewed-npm-archive.mts");
+  vi.mocked(packReviewedNpmArchive).mockReset().mockImplementation(actual.packReviewedNpmArchive);
+});
 
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/built-ins";
 import type { ChannelManifest } from "../../../src/lib/messaging/manifest/types";
@@ -106,10 +120,11 @@ function officialPluginFixture(channelId: string) {
     OPENCLAW_PLUGIN_ID: pluginId,
     OPENCLAW_PLUGIN_INSTALL_PATH: path.join(
       tmp,
-      "npm/projects/plugin/node_modules",
+      "state/npm/projects/plugin/node_modules",
       packageSpec.split("@2026")[0]!,
     ),
     OPENCLAW_PLUGIN_SPEC: packageSpec,
+    OPENCLAW_STATE_DIR: path.join(tmp, "state"),
     OPENCLAW_PLUGIN_TARBALL: pkg.tarballUrlByVersion!["2026.9.1"]!,
     OPENCLAW_VERSION: "2026.9.1",
     npm_config_offline: "false",
@@ -123,6 +138,89 @@ function officialPluginFixture(channelId: string) {
 function remainingPackedDirectories(file: string): string[] {
   return fs.readFileSync(file, "utf8").trim().split("\n").filter(fs.existsSync);
 }
+
+it.each(["slack", "discord"] as const)(
+  "patches the inspected %s project through the real installed-plugin patcher",
+  async (channelId) => {
+    const { tmp, env, serializedPlan, tracePath, packedDirectories } =
+      officialPluginFixture(channelId);
+    const packageName = `@openclaw/${channelId}` as const;
+    const patch = OPENCLAW_UNDICI_PATCHES[packageName];
+    const originalPins = { ...patch };
+    const plugin = env.OPENCLAW_PLUGIN_INSTALL_PATH;
+    const npmRoot = path.resolve(plugin, "../../..");
+    const installed = path.join(plugin, "node_modules/undici");
+    const replacement = path.join(tmp, "replacement/package");
+    const location = `node_modules/${packageName}/node_modules/undici`;
+    const project = { name: "official-plugin-project", private: true };
+    const lock = { lockfileVersion: 3, packages: { [location]: { version: patch.affected } } };
+    fs.mkdirSync(installed, { recursive: true });
+    fs.mkdirSync(replacement, { recursive: true });
+    fs.writeFileSync(
+      path.join(plugin, "package.json"),
+      JSON.stringify({ name: packageName, version: "2026.9.1" }),
+    );
+    fs.writeFileSync(
+      path.join(installed, "package.json"),
+      JSON.stringify({ name: "undici", version: patch.affected }),
+    );
+    fs.writeFileSync(
+      path.join(replacement, "package.json"),
+      JSON.stringify({ name: "undici", version: patch.version }),
+    );
+    fs.writeFileSync(path.join(npmRoot, "package.json"), JSON.stringify(project));
+    fs.writeFileSync(path.join(npmRoot, "package-lock.json"), JSON.stringify(lock));
+    const archivePath = path.join(tmp, "replacement.tgz");
+    execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
+    const actualPatcher = await vi.importActual<
+      typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")
+    >("../../../scripts/lib/openclaw-npm-remediation.mts");
+    const actualArchive = await vi.importActual<
+      typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
+    >("../../../scripts/lib/reviewed-npm-archive.mts");
+    // Synthetic package pins keep real path validation, extraction, replacement, and metadata writes.
+    patch.affectedTree = hashPackageTree(installed);
+    patch.fixedTree = hashPackageTree(replacement);
+    vi.mocked(patchVerifiedOfficialPluginUndici).mockImplementation(
+      actualPatcher.patchVerifiedOfficialPluginUndici,
+    );
+    vi.mocked(packReviewedNpmArchive).mockImplementation((request) =>
+      request.packageSpec === `undici@${patch.version}`
+        ? { archivePath, rootDirectory: tmp }
+        : actualArchive.packReviewedNpmArchive(request),
+    );
+    try {
+      expect(applyMessagingBuildPhase(serializedPlan, "agent-install", env)).toEqual([]);
+      expect(hashPackageTree(installed)).toBe(patch.fixedTree);
+      expect(JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8"))).toEqual({
+        ...project,
+        overrides: { [packageName]: { undici: patch.version } },
+      });
+      expect(JSON.parse(fs.readFileSync(path.join(npmRoot, "package-lock.json"), "utf8"))).toEqual({
+        lockfileVersion: 3,
+        packages: {
+          [location]: {
+            version: patch.version,
+            resolved: `https://registry.npmjs.org/undici/-/undici-${patch.version}.tgz`,
+            integrity: patch.integrity,
+          },
+        },
+      });
+      expect(fs.readFileSync(tracePath, "utf8").match(/openclaw\|plugins\|inspect/g)).toHaveLength(
+        2,
+      );
+      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
+      expect(fs.readdirSync(npmRoot).sort()).toEqual([
+        "node_modules",
+        "package-lock.json",
+        "package.json",
+      ]);
+    } finally {
+      Object.assign(patch, originalPins);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
 
 const CLI_ARGS = [
   path.resolve(
