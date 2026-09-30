@@ -10,15 +10,17 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -1750,6 +1752,122 @@ export function remediateReviewedOpenClawPluginArchive(
     expectedPatchedMetadataIntegrity: remediation.expectedPatchedMetadataIntegrity,
     expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
+}
+
+/** Apply a dependency override from private, verified archive extraction trees. */
+export function replaceInstalledOfficialUndici(
+  packageSpec: string,
+  installedDirectory: string,
+  originalDirectory: string,
+  patchedDirectory: string,
+): boolean {
+  const target = UNDICI_SECURITY_TARGETS[packageSpec];
+  if (!target?.bundled) throw new Error(`No official bundled remediation for ${packageSpec}`);
+  const nodeModules = join(installedDirectory, "node_modules");
+  const installed = join(nodeModules, "undici");
+  for (const directory of [installedDirectory, nodeModules, installed]) {
+    if (!lstatSync(directory).isDirectory()) {
+      throw new Error(`${packageSpec} installed dependency path must be a real directory`);
+    }
+  }
+  const manifestPath = join(installedDirectory, "package.json");
+  if (!lstatSync(manifestPath).isFile()) {
+    throw new Error(`${packageSpec} installed manifest must be a real file`);
+  }
+  const manifest = readJson(manifestPath);
+  requirePackageIdentity(manifest, target.name, "2026.9.1", packageSpec);
+  const bundles = manifest.bundleDependencies ?? manifest.bundledDependencies;
+  if (
+    manifest.dependencies?.undici !== target.previous ||
+    !Array.isArray(bundles) ||
+    !bundles.includes("undici")
+  ) {
+    throw new Error(`${packageSpec} installed Undici declaration changed after review`);
+  }
+  const original = join(originalDirectory, "node_modules", "undici");
+  const replacement = join(patchedDirectory, "node_modules", "undici");
+  requirePackageIdentity(
+    readJson(join(original, "package.json")),
+    "undici",
+    target.previous,
+    packageSpec,
+  );
+  requirePackageIdentity(
+    readJson(join(replacement, "package.json")),
+    "undici",
+    target.version,
+    packageSpec,
+  );
+  const installedHash = hashPackageTree(installed);
+  const replacementHash = hashPackageTree(replacement);
+  if (installedHash === replacementHash) return false;
+  if (installedHash !== hashPackageTree(original)) {
+    throw new Error(`${packageSpec} installed Undici bytes differ from the verified archive`);
+  }
+  // Preserve the publisher manifest and npm install record. Swap only the
+  // dependency tree, retaining the old tree if rollback cannot complete.
+  const staging = mkdtempSync(join(nodeModules, ".nemoclaw-undici-"));
+  const staged = join(staging, "patched");
+  const backup = join(staging, "original");
+  try {
+    cpSync(replacement, staged, { recursive: true });
+    if (hashPackageTree(staged) !== replacementHash) {
+      throw new Error(`${packageSpec} staged Undici bytes differ from the reviewed replacement`);
+    }
+    renameSync(installed, backup);
+    try {
+      renameSync(staged, installed);
+    } catch (error) {
+      renameSync(backup, installed);
+      throw error;
+    }
+    rmSync(backup, { recursive: true });
+    return true;
+  } finally {
+    if (!existsSync(backup)) rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/** Retain official registry provenance while overriding reviewed bundled dependencies. */
+export function remediateInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & { readonly installedDirectory: unknown },
+): boolean {
+  if (!UNDICI_SECURITY_TARGETS[request.packageSpec]?.bundled) return false;
+  if (typeof request.installedDirectory !== "string" || !isAbsolute(request.installedDirectory)) {
+    throw new Error(
+      `${request.packageSpec} official inspection must identify its install directory`,
+    );
+  }
+  const env = request.env ?? process.env;
+  const directory = mkdtempSync(join(request.workingDirectory, "official-dependency-"));
+  try {
+    const original = extractArchive(
+      request.archivePath,
+      join(directory, "original"),
+      directory,
+      env,
+    );
+    const patched = remediateReviewedOpenClawPluginArchive({
+      ...request,
+      workingDirectory: directory,
+    });
+    if (!patched.remediated)
+      throw new Error(`${request.packageSpec} requires a reviewed remediation`);
+    const replacement = extractArchive(
+      patched.archivePath,
+      join(directory, "patched"),
+      directory,
+      env,
+    );
+    return replaceInstalledOfficialUndici(
+      request.packageSpec,
+      request.installedDirectory,
+      original,
+      replacement,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function isMainModule(): boolean {

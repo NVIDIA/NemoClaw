@@ -15,7 +15,7 @@ export type LockedGraphFixture<T> = Readonly<{
 export function openClawReplacementGraphFixture<T extends { readonly lockSha256: string }>(
   repoRoot: string,
   graph: T,
-): LockedGraphFixture<T> {
+): LockedGraphFixture<Omit<T, "lockSha256"> & { readonly lockSha256: string }> {
   const encodedLock = fs
     .readFileSync(
       path.join(repoRoot, "test/fixtures/openclaw-2026.9.1-package-lock.json.gz.base64"),

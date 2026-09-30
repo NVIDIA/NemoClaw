@@ -19,7 +19,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  remediateInstalledOfficialOpenClawPlugin,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -805,22 +808,22 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         commandEnv,
       );
       if (officialPluginId) {
-        let inspection: string;
-        try {
-          inspection = runCommand(
-            ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
-            commandEnv,
-            { emitOutput: false, timeoutMs: 60_000 },
-          );
-        } catch (error) {
-          throw new OfficialPluginProvenanceError(
-            officialPluginId,
-            error instanceof MessagingBuildCommandTimeoutError
-              ? "inspection timed out"
-              : "inspection failed",
-          );
+        const installedDirectory = inspectTrustedOfficialNpmInstall(
+          install,
+          officialPluginId,
+          commandEnv,
+        );
+        if (
+          remediateInstalledOfficialOpenClawPlugin({
+            archivePath: packed.archivePath,
+            env: installEnv,
+            installedDirectory,
+            packageSpec: packed.packageSpec,
+            workingDirectory: packed.rootDir,
+          })
+        ) {
+          inspectTrustedOfficialNpmInstall(install, officialPluginId, commandEnv);
         }
-        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
@@ -1411,11 +1414,33 @@ function officialPluginIdFromManifest(spec: string, env: Env): string | undefine
   return manifest?.runtime?.openclaw?.channelName;
 }
 
+function inspectTrustedOfficialNpmInstall(
+  install: OpenClawPluginInstall,
+  pluginId: string,
+  env: Env,
+): unknown {
+  let inspection: string;
+  try {
+    inspection = runCommand(["openclaw", "plugins", "inspect", pluginId, "--json"], env, {
+      emitOutput: false,
+      timeoutMs: 60_000,
+    });
+  } catch (error) {
+    throw new OfficialPluginProvenanceError(
+      pluginId,
+      error instanceof MessagingBuildCommandTimeoutError
+        ? "inspection timed out"
+        : "inspection failed",
+    );
+  }
+  return verifyTrustedOfficialNpmInstall(install, pluginId, inspection);
+}
+
 function verifyTrustedOfficialNpmInstall(
   install: OpenClawPluginInstall,
   pluginId: string,
   inspectOutput: string,
-): void {
+): unknown {
   let inspected: unknown;
   try {
     inspected = JSON.parse(inspectOutput);
@@ -1439,12 +1464,13 @@ function verifyTrustedOfficialNpmInstall(
       "did not retain trusted exact registry provenance",
     );
   }
+  return record.installPath;
 }
 
 function packVerifiedOpenClawPluginArchive(
   install: OpenClawPluginInstall,
   env: Env,
-): { readonly archivePath: string; readonly rootDir: string } {
+): { readonly archivePath: string; readonly rootDir: string; readonly packageSpec: string } {
   if (!install.npmPackageSpec) {
     throw new MessagingBuildApplierError(
       `OpenClaw plugin spec ${install.spec} must use an npm: package with committed integrity pin`,
@@ -1468,7 +1494,11 @@ function packVerifiedOpenClawPluginArchive(
     tarballUrl: install.tarballUrl,
   });
   if (officialPluginIdFromManifest(install.spec, env)) {
-    return { archivePath: archive.archivePath, rootDir: archive.rootDirectory };
+    return {
+      archivePath: archive.archivePath,
+      rootDir: archive.rootDirectory,
+      packageSpec: install.npmPackageSpec,
+    };
   }
   const exactPackage = requireExactNpmPackageSpec(install.spec, install.npmPackageSpec);
   const remediated = remediateReviewedOpenClawPluginArchive({
@@ -1480,6 +1510,7 @@ function packVerifiedOpenClawPluginArchive(
   return {
     archivePath: remediated.archivePath,
     rootDir: archive.rootDirectory,
+    packageSpec: exactPackage.packageSpec,
   };
 }
 
