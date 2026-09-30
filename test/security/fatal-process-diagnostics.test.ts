@@ -61,7 +61,7 @@ describe("fatal process diagnostics", () => {
 
     expect(result.status).toBe(2);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Messaging build applier rejected invalid or unsafe input.");
+    expect(result.stderr).toContain("Messaging build applier failed.");
     expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
   });
 
@@ -99,7 +99,7 @@ describe("fatal process diagnostics", () => {
       expect(result.status).toBe(2);
       expect(result.stdout).toContain("+ openclaw doctor --fix --non-interactive");
       expect(result.stdout).not.toContain(CREDENTIAL_CANARY);
-      expect(result.stderr).toContain("Messaging build applier command failed.");
+      expect(result.stderr).toContain("Messaging build applier failed.");
       expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
