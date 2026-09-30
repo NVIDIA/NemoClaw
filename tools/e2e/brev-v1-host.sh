@@ -7,6 +7,23 @@ set -euo pipefail
 # Reject a broader target before any remote operation.
 [[ "${INSTANCE_NAME}" =~ ^nclaw-v1-[0-9]+-[0-9]+$ ]] || exit 1
 
+# Refresh can fail transiently while an existing SSH route still works. Retry
+# only this read: replaying a disconnected lifecycle command could run it twice.
+read_remote_home() {
+  local attempt home
+  for attempt in $(seq 1 6); do
+    brev refresh >&2 || true
+    if home="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" 'printf %s "$HOME"')"; then
+      [[ "${home}" == /* ]] || { echo "Invalid remote home" >&2; return 1; }
+      printf '%s' "${home}"
+      return 0
+    fi
+    if test "${attempt}" -lt 6; then sleep 10; fi
+  done
+  echo "Brev SSH home read failed after 6 attempts" >&2
+  return 1
+}
+
 prepare() {
   revision="$(git rev-parse HEAD)"
   [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || exit 1
@@ -39,7 +56,7 @@ prepare() {
   ssh -T "${INSTANCE_NAME}" 'sudo usermod -aG docker "$(id -un)"'
   ssh -T "${INSTANCE_NAME}" 'sg docker -c "docker info >/dev/null"'
   # shellcheck disable=SC2029
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   # shellcheck disable=SC2029
   ssh -T "${INSTANCE_NAME}" "install -d -m 700 '${remote_root}/source' '${remote_root}/bundle'"
@@ -49,8 +66,7 @@ prepare() {
 }
 
 load_image() {
-  brev refresh
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate-image/ "${INSTANCE_NAME}:${remote_root}/image-candidate/"
   ssh -T "${INSTANCE_NAME}" "sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' load-image\""
@@ -58,8 +74,7 @@ load_image() {
 
 qualify() {
   test -n "${NVIDIA_INFERENCE_API_KEY:?set NVIDIA_INFERENCE_API_KEY}"
-  brev refresh
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate/bundle/ "${INSTANCE_NAME}:${remote_root}/bundle/"
   rsync -a candidate/brev-test "${INSTANCE_NAME}:${remote_root}/brev-test"
