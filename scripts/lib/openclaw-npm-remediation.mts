@@ -1719,12 +1719,7 @@ function recoverInterruptedUndiciPatch(
   packageName: keyof typeof OPENCLAW_UNDICI_PATCHES,
 ): string | undefined {
   const entry = lstatSync(installed, { throwIfNoEntry: false });
-  if (
-    entry &&
-    (!entry.isDirectory() ||
-      hashPackageTree(installed) !== OPENCLAW_UNDICI_PATCHES[packageName].fixedTree)
-  )
-    return;
+  const installedTree = entry?.isDirectory() ? hashPackageTree(installed) : undefined;
   const retained: string[] = [];
   for (const name of readdirSync(root)) {
     if (!/^\.nemoclaw-undici-[A-Za-z0-9]{6}$/u.test(name)) continue;
@@ -1753,14 +1748,23 @@ function recoverInterruptedUndiciPatch(
       exited = true;
     }
     if (!exited) throw new Error(`Undici patch process is still running: ${recovery.pid}`);
-    const backup = requirePatchDirectory(workspace, ["original"]);
-    if (hashPackageTree(backup) !== OPENCLAW_UNDICI_PATCHES[packageName].affectedTree)
-      throw new Error(`Unreviewed Undici recovery bundle: ${workspace}`);
+    const backup = join(workspace, "original");
+    if (lstatSync(backup, { throwIfNoEntry: false })) {
+      requirePatchDirectory(workspace, ["original"]);
+      if (hashPackageTree(backup) !== OPENCLAW_UNDICI_PATCHES[packageName].affectedTree)
+        throw new Error(`Unreviewed Undici recovery bundle: ${workspace}`);
+    } else if (installedTree !== OPENCLAW_UNDICI_PATCHES[packageName].affectedTree) {
+      throw new Error(`Missing Undici recovery bundle: ${workspace}`);
+    }
     retained.push(workspace);
   }
   if (retained.length === 0) return;
   if (retained.length !== 1) throw new Error("Multiple Undici recovery bundles require inspection");
   const workspace = retained[0]!;
+  if (installedTree === OPENCLAW_UNDICI_PATCHES[packageName].affectedTree) {
+    rmSync(workspace, { recursive: true, force: true });
+    return;
+  }
   if (entry) return workspace;
   renameSync(join(workspace, "original"), installed);
   rmSync(workspace, { recursive: true, force: true });

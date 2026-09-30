@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type CompositeAction, readYaml } from "../../helpers/e2e-workflow-contract";
+import {
+  type CompositeAction,
+  type WorkflowJob,
+  readYaml,
+} from "../../helpers/e2e-workflow-contract";
 import { execTimeout } from "../../helpers/timeouts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -311,6 +315,41 @@ exit 2`);
     const probes = calls.filter((args) => args.includes("/bin/sh"));
     expect(probes[0]).toContain(remoteDigest);
     expect(probes.at(-1)).toContain("nemoclaw-hermes-base-local");
+  });
+
+  it("builds the Hermes final image with the daemon that owns the resolved local base", () => {
+    const workflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/sandbox-images.yaml",
+    );
+    const build = workflow.jobs["build-hermes-sandbox-image"]?.steps?.find(
+      (step) => step.name === "Build Hermes production image",
+    );
+    const bin = fakeDocker(`printf "%s\\0" "$@" > "$DOCKER_LOG"`);
+    const dockerLog = path.join(bin, "docker.log");
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", build?.run ?? "exit 99"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        DOCKER_LOG: dockerLog,
+        HERMES_BASE_IMAGE: "nemoclaw-hermes-base-local",
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(dockerLog, "utf8").split("\0").filter(Boolean)).toEqual([
+      "build",
+      "--builder",
+      "default",
+      "-f",
+      "agents/hermes/Dockerfile",
+      "--build-arg",
+      "BASE_IMAGE=nemoclaw-hermes-base-local",
+      "-t",
+      "nemoclaw-hermes-production",
+      ".",
+    ]);
   });
 
   it("pulls a remote image and accepts a compatible glibc version", () => {
