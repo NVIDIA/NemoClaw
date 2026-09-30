@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
-mod journey_tui;
+mod tui;
 use nemoclaw_authoring::{Capabilities, new_deployment_uid};
 use nemoclaw_authoring::{JourneyDefinition, JourneyScope, JourneyState, PartialDocument};
 use nemoclaw_sdk::{CancellationToken, Error, config::MAX_DOCUMENT_BYTES};
@@ -46,7 +46,7 @@ pub async fn author_with_bundle(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(document) = journey_tui::run(capabilities, state, cancel, bundle).await? else {
+    let Some(document) = tui::run(capabilities, state, cancel, bundle).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {
@@ -139,7 +139,7 @@ mod tests {
     fn tui_accepts_a_resolved_question_through_journey_state() {
         let capabilities = Capabilities::available();
         let state = load_journey(Source::Defaults, &capabilities).unwrap();
-        let mut wizard = journey_tui::JourneyWizard::new(capabilities, state);
+        let mut wizard = tui::JourneyWizard::new(capabilities, state);
         assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
         wizard
             .submit(Some(serde_json::json!("guided-deployment")))

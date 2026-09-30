@@ -1,0 +1,243 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use super::labels::display_value;
+use nemoclaw_authoring::{
+    AuthoringFacts, Capabilities, Diagnostics, DiscoveryEvidence, JourneyQuestion, JourneyState,
+};
+use nemoclaw_sdk::config::Document;
+use serde_json::Value;
+
+pub(crate) struct JourneyWizard {
+    pub(super) capabilities: Capabilities,
+    pub(super) state: JourneyState,
+    pub(super) history: Vec<JourneyState>,
+    pub(super) selected: usize,
+    pub(super) selection_changed: bool,
+    pub(super) custom_answer: bool,
+    pub(super) facts: AuthoringFacts,
+    pub(super) discovery: Option<DiscoveryEvidence>,
+    pub(super) input: String,
+    pub(super) error: Option<String>,
+    pub(super) started: bool,
+    pub(super) accepted: bool,
+    pub(super) review_scroll: u16,
+}
+
+impl JourneyWizard {
+    pub(crate) fn new(capabilities: Capabilities, state: JourneyState) -> Self {
+        Self {
+            capabilities,
+            state,
+            history: Vec::new(),
+            selected: 0,
+            selection_changed: false,
+            custom_answer: false,
+            facts: AuthoringFacts::default(),
+            discovery: None,
+            input: String::new(),
+            error: None,
+            started: false,
+            accepted: false,
+            review_scroll: 0,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn state(&self) -> &JourneyState {
+        &self.state
+    }
+
+    pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
+        Ok(self
+            .state
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
+            .next_question()
+            .cloned())
+    }
+
+    pub(super) fn choice_index(&self, question: &JourneyQuestion) -> usize {
+        if self.selection_changed {
+            return self.selected;
+        }
+        question
+            .suggestion()
+            .and_then(|suggested| {
+                question
+                    .choices()
+                    .iter()
+                    .position(|choice| choice == suggested)
+            })
+            .unwrap_or_else(|| {
+                if question.required() {
+                    0
+                } else {
+                    question.choices().len()
+                }
+            })
+    }
+
+    pub(crate) fn submit(&mut self, answer: Option<Value>) -> Result<(), Diagnostics> {
+        let question = self
+            .question()?
+            .expect("submit requires an active question");
+        let previous = self.state.clone();
+        self.state
+            .answer(&self.capabilities, question.id(), answer)?;
+        self.history.push(previous);
+        self.selected = 0;
+        self.selection_changed = false;
+        self.custom_answer = false;
+        self.input.clear();
+        self.error = None;
+        Ok(())
+    }
+
+    pub(super) fn back(&mut self) {
+        if let Some(previous) = self.history.pop() {
+            self.state = previous;
+            self.selected = 0;
+            self.selection_changed = false;
+            self.custom_answer = false;
+            self.input.clear();
+            self.error = None;
+        } else {
+            self.started = false;
+        }
+    }
+
+    pub(super) fn previous(&mut self) -> Result<(), Diagnostics> {
+        if self.started && self.question()?.is_none() {
+            self.review_scroll = self.review_scroll.saturating_sub(1);
+        } else if let Some(question) = self.question()?
+            && !question.choices().is_empty()
+        {
+            self.selected = self.choice_index(&question).saturating_sub(1);
+            self.selection_changed = true;
+        }
+        Ok(())
+    }
+
+    pub(super) fn next(&mut self) -> Result<(), Diagnostics> {
+        if self.started && self.question()?.is_none() {
+            self.review_scroll = self.review_scroll.saturating_add(1);
+        } else if let Some(question) = self.question()?
+            && !question.choices().is_empty()
+        {
+            self.selected = (self.choice_index(&question) + 1).min(
+                question.choices().len()
+                    - usize::from(question.required() && !question.allows_custom_answer()),
+            );
+            self.selection_changed = true;
+        }
+        Ok(())
+    }
+
+    pub(super) fn suggested_input(&self, question: &JourneyQuestion) -> String {
+        question
+            .suggestion()
+            .map_or_else(String::new, display_value)
+    }
+
+    pub(super) fn answer_from_input(
+        &self,
+        question: &JourneyQuestion,
+    ) -> Result<Option<Value>, String> {
+        if !question.choices().is_empty() {
+            if question.allows_custom_answer() && self.custom_answer {
+                return if self.input.trim().is_empty() {
+                    Err("Enter a model identifier.".into())
+                } else {
+                    Ok(Some(Value::String(self.input.clone())))
+                };
+            }
+            return Ok(question.choices().get(self.choice_index(question)).cloned());
+        }
+        let raw = if self.input.is_empty() {
+            self.suggested_input(question)
+        } else {
+            self.input.clone()
+        };
+        if raw.trim().is_empty() {
+            return if question.required() {
+                Err("A value is required.".into())
+            } else {
+                Ok(None)
+            };
+        }
+        if question.schema()["type"] == "string"
+            || (question.schema()["type"].is_null()
+                && question.schema().get("oneOf").is_none()
+                && question.schema().get("anyOf").is_none())
+        {
+            Ok(Some(Value::String(raw)))
+        } else {
+            serde_json::from_str(&raw)
+                .map(Some)
+                .map_err(|error| format!("Enter a JSON value: {error}"))
+        }
+    }
+
+    pub(super) fn advance(&mut self) {
+        if !self.started {
+            self.started = true;
+            return;
+        }
+        let resolution = match self.state.resolve_with_evidence(
+            &self.capabilities,
+            &self.facts,
+            self.discovery.as_ref(),
+        ) {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let Some(question) = resolution.next_question().cloned() else {
+            if resolution.ready_document().is_some() {
+                self.accepted = true;
+            } else {
+                let issues = resolution
+                    .assessment()
+                    .issues()
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
+                    .collect::<Vec<_>>();
+                self.error = Some(format!(
+                    "Cannot save yet: {} {} {}",
+                    resolution.unverified().join("; "),
+                    issues.join("; "),
+                    resolution
+                        .target_assessment()
+                        .map(|assessment| assessment.reasons.join("; "))
+                        .unwrap_or_default()
+                ));
+            }
+            return;
+        };
+        if question.allows_custom_answer()
+            && !question.choices().is_empty()
+            && self.choice_index(&question) == question.choices().len()
+            && !self.custom_answer
+        {
+            self.custom_answer = true;
+            self.input.clear();
+            return;
+        }
+        let result = self
+            .answer_from_input(&question)
+            .and_then(|value| self.submit(value).map_err(|error| error.to_string()));
+        if let Err(error) = result {
+            self.error = Some(error);
+        }
+    }
+
+    pub(super) fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
+        self.state
+            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
+            .ready_document()
+            .cloned()
+            .ok_or_else(|| "the journey is not complete".into())
+    }
+}
