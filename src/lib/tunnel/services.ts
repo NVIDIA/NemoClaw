@@ -215,7 +215,7 @@ try:
         print("unavailable")
         raise SystemExit(0)
 
-    tokens = command_line.replace(b"\\0", b" ").split()
+    tokens = command_line.replace(b"\0", b" ").split()
     if not any(os.path.basename(os.fsdecode(token)) == "cloudflared" for token in tokens):
         print("not-cloudflared")
         raise SystemExit(0)
