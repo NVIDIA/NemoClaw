@@ -1040,6 +1040,12 @@ const AUTH_INLINE_APPROVAL_REPLACEMENT = AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIO
   ].join("\n"),
 );
 
+const HANDLER_DEVICE_TOKEN_TARGET =
+  '\tconst deviceToken = typeof client?.connect?.auth?.token === "string" ? client.connect.auth.token.trim() : "";';
+const HANDLER_DEVICE_TOKEN_REPLACEMENT = [
+  '\tconst explicitDeviceToken = typeof client?.connect?.auth?.deviceToken === "string" ? client.connect.auth.deviceToken.trim() : "";',
+  '\tconst deviceToken = explicitDeviceToken || (typeof client?.connect?.auth?.token === "string" ? client.connect.auth.token.trim() : "");',
+].join("\n");
 const HANDLER_HELPER = [
   "function resolveNemoClawSelfApprovalIdentity(pending, authz, client) {",
   "\tif (authz.isAdminCaller || client?.isDeviceTokenAuth !== true) return null;",
@@ -1051,7 +1057,7 @@ const HANDLER_HELPER = [
   '\tconst clientRole = typeof client?.connect?.role === "string" ? client.connect.role.trim() : "";',
   '\tconst clientId = typeof client?.connect?.client?.id === "string" ? client.connect.client.id.trim() : "";',
   '\tconst clientMode = typeof client?.connect?.client?.mode === "string" ? client.connect.client.mode.trim() : "";',
-  '\tconst deviceToken = typeof client?.connect?.auth?.token === "string" ? client.connect.auth.token.trim() : "";',
+  HANDLER_DEVICE_TOKEN_REPLACEMENT,
   '\tconst pendingClientId = typeof pending?.clientId === "string" ? pending.clientId.trim() : "";',
   '\tconst pendingClientMode = typeof pending?.clientMode === "string" ? pending.clientMode.trim() : "";',
   "\tif (",
@@ -2380,7 +2386,20 @@ const BASE_FILE_SPECS: FileSpec[] = [
       );
     },
     patch(source, file) {
-      if (source.includes(HANDLER_MARKER)) return { source, status: "already-applied" };
+      if (source.includes(HANDLER_MARKER)) {
+        if (!source.includes(HANDLER_DEVICE_TOKEN_TARGET))
+          return { source, status: "already-applied" };
+        const upgraded = replaceExactlyOnce(
+          source,
+          HANDLER_DEVICE_TOKEN_TARGET,
+          HANDLER_DEVICE_TOKEN_REPLACEMENT,
+          "gateway authenticated device credential",
+          file,
+        );
+        return upgraded.error
+          ? { source, status: "no-match", error: upgraded.error }
+          : { source: upgraded.source, status: "would-apply" };
+      }
       let result = replaceExactlyOnce(
         source,
         HANDLER_HELPER_ANCHOR,

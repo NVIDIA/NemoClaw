@@ -1201,6 +1201,17 @@ const exactlyOne = (pattern, label, sourceMarker) => {
 const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
 const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir)"));
 const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]js$/, "stored auth", "function loadDeviceAuth"));
+const { deviceHandlers } = await import(exactlyOne(/^devices-[^.]+[.]js$/, "device handlers", '"device.pair.approve": async'));
+const clientSource = fs.readFileSync(new URL(exactlyOne(/^client-[^.]+[.]js$/, "client authentication", "function buildGatewayConnectAuth(selected)")), "utf8");
+const clientLines = clientSource.split(String.fromCharCode(10));
+const authFunctions = ["normalized", "selectGatewayConnectAuth", "buildGatewayConnectAuth"].map((name) => {
+  const start = clientLines.findIndex((line) => line.startsWith("function " + name + "("));
+  const end = clientLines.findIndex((line, index) => index > start && line === "}");
+  if (start < 0 || end < start) throw new Error("native client authentication function missing: " + name);
+  return clientLines.slice(start, end + 1).join(String.fromCharCode(10));
+});
+const { runInNewContext } = await import("node:vm");
+const nativeConnectAuth = runInNewContext(authFunctions.join(String.fromCharCode(10)) + "; token => buildGatewayConnectAuth(selectGatewayConnectAuth({ storedToken: token }))");
 if (typeof pairing.h !== "function" || typeof pairing.c !== "function" || typeof approval.n !== "function" || typeof auth.l !== "function" || typeof auth.r !== "function") {
   throw new Error("reviewed SQLite device-pairing exports missing");
 }
@@ -1238,12 +1249,25 @@ const identity = {
   clientMode: "cli",
   deviceToken: initialToken.token,
 };
-const upgraded = await approval.n(upgrade.requestId, {
-  callerScopes: ["operator.pairing"],
-  nemoclawSelfApprovalIdentity: identity,
-}, stateDir);
-if (upgraded?.status !== "approved") throw new Error("bounded SQLite self-approval failed");
-const nextToken = upgraded.device?.tokens?.operator;
+const approveThroughGateway = async (isDeviceTokenAuth) => {
+  let response;
+  await deviceHandlers["device.pair.approve"]({
+    params: { requestId: upgrade.requestId },
+    client: { isDeviceTokenAuth, connect: {
+      role: "operator", scopes: ["operator.pairing"],
+      device: { id: deviceId, publicKey }, client: { id: "cli", mode: "cli" },
+      auth: nativeConnectAuth(initialToken.token),
+    } },
+    context: { logGateway: { info() {}, warn() {} }, broadcast() {} },
+    respond: (ok, payload, error) => { response = { ok, payload, error }; },
+  });
+  return response;
+};
+if ((await approveThroughGateway(false))?.ok !== false) throw new Error("shared auth was allowed to self-approve");
+const upgraded = await approveThroughGateway(true);
+if (upgraded?.ok !== true) throw new Error("bounded SQLite gateway self-approval failed: " + upgraded?.error?.message);
+const approvedDevice = (await pairing.c(stateDir)).paired.find((device) => device.deviceId === deviceId);
+const nextToken = approvedDevice?.tokens?.operator;
 const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
 if (!nextToken?.token || nextToken.token === initialToken.token || JSON.stringify([...nextToken.scopes].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("bounded SQLite token rotation invalid");
 const afterList = await pairing.c(stateDir);
