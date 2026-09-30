@@ -1,16 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::{
-    CancellationToken, Deployment,
-    config::{ComputeDriver, Document},
-};
+use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
+
+fn cluster_document(reader: impl std::io::Read) -> Document {
+    let document = Document::parse(reader).unwrap();
+    assert!(!document.spec.sandboxes.is_empty());
+    for sandbox in &document.spec.sandboxes {
+        assert!(
+            sandbox.runtime.provider.is_kubernetes(),
+            "live cluster tests require Kubernetes or OpenShift"
+        );
+    }
+    document
+}
+
+#[test]
+fn live_manifest_accepts_cluster_profiles_and_rejects_local_engines() {
+    for yaml in [
+        include_str!("../../../examples/kubernetes/managed-development.yaml"),
+        include_str!("../../../examples/openshift/managed-development.yaml"),
+    ] {
+        assert_eq!(cluster_document(yaml.as_bytes()).spec.sandboxes.len(), 3);
+    }
+    for provider in ["docker", "podman"] {
+        let yaml = include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml")
+            .replace("provider: docker", &format!("provider: {provider}"));
+        Document::parse(yaml.as_bytes()).unwrap();
+        assert!(std::panic::catch_unwind(|| cluster_document(yaml.as_bytes())).is_err());
+    }
+}
 
 fn resource_ids(directory: &Path) -> BTreeMap<String, String> {
     let mut ids = BTreeMap::new();
@@ -41,7 +66,7 @@ fn resource_ids(directory: &Path) -> BTreeMap<String, String> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "invokes the model of an explicitly selected existing owned Kubernetes deployment"]
+#[ignore = "invokes the model of an explicitly selected existing owned cluster deployment"]
 async fn owned_kubernetes_agent_response_from_retained_state() {
     let config = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_KUBERNETES_CONFIG").expect("explicit config required"),
@@ -51,11 +76,7 @@ async fn owned_kubernetes_agent_response_from_retained_state() {
             .expect("explicit retained state required"),
     );
     assert!(config.is_absolute() && state.is_absolute());
-    let document = Document::parse(fs::File::open(config).unwrap()).unwrap();
-    assert!(!document.spec.sandboxes.is_empty());
-    for sandbox in &document.spec.sandboxes {
-        assert_eq!(sandbox.runtime.provider, ComputeDriver::Kubernetes);
-    }
+    let document = cluster_document(fs::File::open(config).unwrap());
     assert!(state.join("intent.json").is_file());
     for (sandbox, response) in nemoclaw_e2e::verify_agents(&document, &state).await {
         println!("Verified agent response for {sandbox}: {response}");
@@ -63,7 +84,7 @@ async fn owned_kubernetes_agent_response_from_retained_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "mutates an explicitly configured owned Kubernetes gateway and invokes its model"]
+#[ignore = "mutates an explicitly configured owned cluster gateway and invokes its model"]
 async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys() {
     let config = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_KUBERNETES_CONFIG").expect("explicit config required"),
@@ -75,10 +96,8 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("verified bundle required"));
     assert!(config.is_absolute() && state.is_absolute() && bundle.is_absolute());
-    let document = Document::parse(fs::File::open(config).unwrap()).unwrap();
-    assert!(!document.spec.sandboxes.is_empty());
+    let document = cluster_document(fs::File::open(config).unwrap());
     for sandbox in &document.spec.sandboxes {
-        assert_eq!(sandbox.runtime.provider, ComputeDriver::Kubernetes);
         assert_eq!(
             document.sandbox_harness(sandbox).unwrap().kind.as_str(),
             "nvidia.fabric.openclaw"

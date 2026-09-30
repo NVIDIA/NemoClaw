@@ -14,13 +14,15 @@ Do not run all ignored tests against a shared deployment.
 For the complete local kind test, use the [single-command runner](kubernetes-kind.md#run-the-complete-test) with `NVIDIA_INFERENCE_API_KEY`.
 The following procedure supplies deployment inputs manually for an existing test cluster.
 
-The [Kubernetes lifecycle test](../../crates/nemoclaw-e2e/tests/kubernetes_live.rs) accepts an external gateway or the explicit managed development gateway on a cluster owned by the test operator.
+The [Kubernetes lifecycle test](../../crates/nemoclaw-e2e/tests/kubernetes_live.rs) accepts Kubernetes and OpenShift profiles with an external gateway or the explicit managed development gateway on a cluster owned by the test operator.
 It does not create a cluster.
 The external path requires no local Kubernetes tools; the managed path requires the explicit kubeconfig and client tools in the [managed gateway procedure](../kubernetes.md#provision-a-managed-development-gateway).
 Use the [existing-cluster prerequisites](../kubernetes.md#cluster-prerequisites) or the optional [local kind fixture](kubernetes-kind.md) to prepare the platform.
 
-Provide one or more OpenClaw sandboxes with `harness.kind: nvidia.fabric.openclaw`, `runtime.provider: kubernetes`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
+Provide one or more OpenClaw sandboxes with `harness.kind: nvidia.fabric.openclaw`, `runtime.provider: kubernetes` or `openshift`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
 The three-agent [managed development example](../../examples/kubernetes/managed-development.yaml) can be used after replacing its deployment and cluster inputs.
+For OpenShift, use its [managed development example](../../examples/openshift/managed-development.yaml) and satisfy the [OpenShift prerequisites](../openshift.md#prepare-the-cluster-and-image).
+The test names and `NEMOCLAW_TEST_KUBERNETES_*` inputs remain the same for both profiles; the manifest selects the distribution.
 Supply the YAML's credential environment references to the test process using the [shared credential mechanism](../kubernetes.md#supply-credentials-as-on-docker).
 The test creates every declared sandbox and the provider registrations, verifies a real model response from each agent, requires a no-op plan, exports through the CLI with an unchanged configuration digest, and reapplies without changes.
 It verifies that sandbox and managed platform resource IDs remain unchanged across export and reapply, then destroys every owned sandbox and provider registration on success.
