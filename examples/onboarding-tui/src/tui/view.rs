@@ -17,8 +17,6 @@ use ratatui::{
 
 const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
 const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
-const DEEP_GREEN: Color = Color::Rgb(15, 35, 18);
-const PROGRESS_GREEN: Color = Color::Rgb(82, 135, 49);
 const DIM: Color = Color::Rgb(82, 121, 84);
 const MUTED: Color = Color::Rgb(126, 145, 128);
 const WHITE: Color = Color::Rgb(238, 245, 238);
@@ -74,7 +72,7 @@ impl JourneyWizard {
             Constraint::Length(8),
             Constraint::Length(1),
             Constraint::Min(10),
-            Constraint::Length(3),
+            Constraint::Length(2),
         ])
         .split(body);
         self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
@@ -116,12 +114,15 @@ impl JourneyWizard {
             terminal_text(&label(question)),
             Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
         )];
-        if let Some((position, total)) = self.progress() {
-            title.extend([
-                Span::raw("  "),
-                Span::styled(format!("⟦ {position}/{total} ⟧"), Style::new().fg(DIM)),
-            ]);
-        }
+        // The resolver reveals later questions as answers arrive, so there is
+        // no stable total to show.
+        title.extend([
+            Span::raw("  "),
+            Span::styled(
+                format!("⟦ {} ⟧", self.history.len() + 1),
+                Style::new().fg(DIM),
+            ),
+        ]);
         let mut lines = vec![Line::from(title), Line::from("")];
         if let Some(description) = question.schema()["description"].as_str() {
             lines.push(Line::from(Span::styled(
@@ -266,7 +267,7 @@ impl JourneyWizard {
         choosing: bool,
         optional: bool,
     ) {
-        let rows = Layout::vertical([Constraint::Length(1); 3]).split(area);
+        let rows = Layout::vertical([Constraint::Length(1); 2]).split(area);
         let controls = if !self.started {
             "Enter  begin     Esc  exit".to_owned()
         } else if reviewing {
@@ -297,32 +298,6 @@ impl JourneyWizard {
                 rows[1],
             );
         }
-        if let Some((position, total)) = self.progress().filter(|_| asking) {
-            let width = rows[2].width as usize;
-            let filled = width.saturating_mul(position) / total;
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("▄".repeat(filled), Style::new().fg(PROGRESS_GREEN)),
-                    Span::styled(
-                        "▄".repeat(width.saturating_sub(filled)),
-                        Style::new().fg(DEEP_GREEN),
-                    ),
-                ])),
-                rows[2],
-            );
-        }
-    }
-
-    /// Answered questions plus the questions the resolver still has open.
-    fn progress(&self) -> Option<(usize, usize)> {
-        let remaining = self
-            .state
-            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())
-            .ok()?
-            .questions()
-            .len();
-        let answered = self.history.len();
-        (remaining > 0).then_some((answered + 1, answered + remaining))
     }
 
     fn render_logo(&self, frame: &mut Frame<'_>, area: Rect, brand: Option<BrandImage>) {
