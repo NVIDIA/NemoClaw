@@ -2836,6 +2836,16 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
       (step) => step.uses === E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference,
     );
     if (setupIndex < 0) continue;
+    const setupInputs = asRecord(jobSteps[setupIndex]!.with);
+    const preservesDockerCli = setupInputs["isolate-docker-cli"] === "false";
+    if (jobName === "portable-hermes-finalization" && !preservesDockerCli) {
+      errors.push(
+        "portable-hermes-finalization must retain the Docker client for its Podman compatibility proof",
+      );
+    }
+    if (jobName !== "portable-hermes-finalization" && preservesDockerCli) {
+      errors.push(`${jobName} must not retain the Docker client during native Podman execution`);
+    }
     const restores = jobSteps
       .map((step, index) => ({ index, step }))
       .filter(
@@ -3659,7 +3669,7 @@ export function validateNativePodmanSetupAction(
   if (!start) return ["native Podman setup action must start the runtime"];
   if (
     asRecord(inputs.toolchain).default !== "native-6.1" ||
-    inputs["isolate-docker-cli"] !== undefined ||
+    asRecord(inputs["isolate-docker-cli"]).default !== "true" ||
     asRecord(artifact?.env).TOOLCHAIN_PROFILE !== "${{ inputs.toolchain }}" ||
     !stringValue(artifact?.run).includes("native-6.1)") ||
     !stringValue(artifact?.run).includes("portable-5.7)") ||
@@ -3753,7 +3763,7 @@ export function validateNativePodmanSetupAction(
   }
   const isolationRun = stringValue(isolate?.run);
   if (
-    isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
+    isolate?.if !== "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}" ||
     steps.at(-1) !== isolate ||
     !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
     !isolationRun.includes('runtime_state_path="$restore_root/runtime.json"') ||

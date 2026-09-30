@@ -648,6 +648,13 @@ describe("native Podman E2E setup boundary", () => {
     const setupRuntime = setupAction.runs.steps.find(
       (step) => step.name === "Start native Podman runtime",
     );
+    const dockerCliIsolation = setupAction.runs.steps.find(
+      (step) => step.name === "Remove Docker CLI from native Podman execution",
+    );
+    const liveSource = fs.readFileSync(
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "utf8",
+    );
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
     const trustedCheckout = job.steps?.find(
       (step) => step.name === "Check out trusted workflow cleanup authority",
@@ -688,7 +695,10 @@ describe("native Podman E2E setup boundary", () => {
     });
     expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
     expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
-    expect(setupAction.inputs).not.toHaveProperty("isolate-docker-cli");
+    expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
+    expect(dockerCliIsolation?.if).toBe(
+      "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}",
+    );
     expect(setupRuntime?.env).toMatchObject({
       CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
     });
@@ -716,6 +726,7 @@ describe("native Podman E2E setup boundary", () => {
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
       enabled: "true",
       toolchain: "portable-5.7",
+      "isolate-docker-cli": "false",
     });
     expect(setup?.uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@5bd2a18d20f3d26e17bd27cc370ba2cf5dee938f",
@@ -731,6 +742,16 @@ describe("native Podman E2E setup boundary", () => {
     expect(live?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
     expect(live?.run).toContain("nvidia-smi --query-gpu=name");
     expect(live?.run).toContain("podman build");
+    expect(
+      liveSource.indexOf(
+        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+      ),
+    ).toBeGreaterThanOrEqual(0);
+    expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
+      liveSource.indexOf(
+        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+      ),
+    );
     expect(live?.run).toMatch(
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
     );

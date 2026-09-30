@@ -13,6 +13,10 @@ inputs:
     description: Select the reviewed Podman toolchain contract.
     required: false
     default: native-6.1
+  isolate-docker-cli:
+    description: Remove the Docker client after disabling the Docker daemon.
+    required: false
+    default: "true"
   cleanup-fixture:
     description: Optional immutable workflow-owned restore script used if runtime setup is interrupted.
     required: false
@@ -489,7 +493,7 @@ runs:
         trap - EXIT INT TERM
 
     - name: Remove Docker CLI from native Podman execution
-      if: ${{ inputs.enabled == 'true' }}
+      if: ${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
