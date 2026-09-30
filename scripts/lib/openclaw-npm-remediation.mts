@@ -1684,6 +1684,43 @@ function readPatchJson(filename: string): JsonObject {
   }
 }
 
+function recoverInterruptedUndiciPatch(
+  root: string,
+  installed: string,
+  packageName: keyof typeof OPENCLAW_UNDICI_PATCHES,
+): void {
+  if (lstatSync(installed, { throwIfNoEntry: false })) return;
+  const retained: string[] = [];
+  for (const name of readdirSync(root)) {
+    if (!/^\.nemoclaw-undici-[A-Za-z0-9]{6}$/u.test(name)) continue;
+    const workspace = requirePatchDirectory(root, [name]);
+    const recoveryPath = join(workspace, "recovery.json");
+    if (!lstatSync(recoveryPath, { throwIfNoEntry: false })) continue;
+    const recovery = readPatchJson(recoveryPath);
+    if (recovery.packageName !== packageName) continue;
+    if (!Number.isSafeInteger(recovery.pid) || recovery.pid <= 0)
+      throw new Error(`Invalid Undici recovery process: ${workspace}`);
+    let exited = false;
+    try {
+      process.kill(recovery.pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      exited = true;
+    }
+    if (!exited) throw new Error(`Undici patch process is still running: ${recovery.pid}`);
+    const backup = requirePatchDirectory(workspace, ["original"]);
+    if (hashPackageTree(backup) !== OPENCLAW_UNDICI_PATCHES[packageName].affectedTree)
+      throw new Error(`Unreviewed Undici recovery bundle: ${workspace}`);
+    retained.push(workspace);
+  }
+  if (retained.length === 0) return;
+  if (retained.length !== 1) throw new Error("Multiple Undici recovery bundles require inspection");
+  const workspace = retained[0]!;
+  renameSync(join(workspace, "original"), installed);
+  rmSync(workspace, { recursive: true, force: true });
+  throw new Error("Original Undici bundle restored after interruption; retry the operation");
+}
+
 /** Patch the installed bundle after the caller verifies the official npm install. */
 export function patchInstalledOpenClawUndici(options: {
   npmRoot: string;
@@ -1699,7 +1736,9 @@ export function patchInstalledOpenClawUndici(options: {
   ]);
   const manifest = readPatchJson(join(packageDirectory, "package.json"));
   requirePackageIdentity(manifest, options.packageName, "2026.9.1", "OpenClaw Undici patch owner");
-  const installed = requirePatchDirectory(packageDirectory, ["node_modules", "undici"]);
+  const dependencies = requirePatchDirectory(packageDirectory, ["node_modules"]);
+  recoverInterruptedUndiciPatch(root, join(dependencies, "undici"), options.packageName);
+  const installed = requirePatchDirectory(dependencies, ["undici"]);
   const installedManifest = readPatchJson(join(installed, "package.json"));
   const tree = hashPackageTree(installed);
   const fixed = installedManifest.version === patch.version && tree === patch.fixedTree;
@@ -1764,6 +1803,11 @@ export function patchInstalledOpenClawUndici(options: {
       );
       if (hashPackageTree(replacement) !== patch.fixedTree)
         throw new Error("Unreviewed Undici replacement tree");
+      // Record the owner before either rename so a retry can distinguish an exited writer.
+      writeJson(join(workspace, "recovery.json"), {
+        packageName: options.packageName,
+        pid: process.pid,
+      });
       renameSync(installed, backup);
       replaced = true;
       renameSync(replacement, installed);

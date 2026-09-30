@@ -31,8 +31,8 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "e52edf152e10f532ac5f676c8894230318c62e52";
+const reviewedAuditAction = "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit";
+const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -147,7 +147,7 @@ describe("complete managed-image publication workflow", () => {
       "Audit exact PR production npm graphs",
     );
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction + reviewedAuditSha);
+    expect(prAudit.uses).toBe(reviewedAuditAction);
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -538,7 +538,8 @@ describe("complete managed-image publication workflow", () => {
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
-    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
+    expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
