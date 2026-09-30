@@ -1142,6 +1142,46 @@ describe("official OpenClaw bundled Undici patch", () => {
       }
     },
   );
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "removes an exited %s workspace recorded before the first rename",
+    (packageName) => {
+      const f = replacementFixture(packageName);
+      const exited = spawnSync(process.execPath, ["-e", ""]);
+      const workspace = interruptReplacement(f, exited.pid);
+      fs.renameSync(path.join(workspace, "original"), f.undici);
+      try {
+        patchInstalledOpenClawUndici(f);
+        expect(fs.existsSync(workspace)).toBe(false);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(readJson(path.join(f.npmRoot, "package.json"))).toMatchObject({
+          overrides: { [packageName]: { undici: f.patch.version } },
+        });
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toMatchObject({
+          packages: { [f.location]: { version: f.patch.version, integrity: f.patch.integrity } },
+        });
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "rejects an active %s writer before the first rename",
+    (packageName) => {
+      const f = replacementFixture(packageName);
+      const workspace = interruptReplacement(f, process.pid);
+      fs.renameSync(path.join(workspace, "original"), f.undici);
+      try {
+        expect(() => patchInstalledOpenClawUndici(f)).toThrow("still running");
+        expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+        expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+        expect(fs.existsSync(workspace)).toBe(true);
+        expect(packReviewedNpmArchive).not.toHaveBeenCalled();
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
   it("restores an interrupted replacement before permitting a fresh retry", () => {
     const f = replacementFixture("@openclaw/slack");
     const exited = spawnSync(process.execPath, ["-e", ""]);
