@@ -1099,6 +1099,45 @@ fn invalid_complete_native_model_settings_cannot_reach_review() {
 }
 
 #[test]
+fn invalid_native_settings_block_review_without_native_prompt_guidance() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut guided = JourneyDefinition::new("make-invalid-native", base)
+        .ask([JourneyScope::NativeSettings])
+        .start(&capabilities)
+        .unwrap();
+    guided
+        .answer(
+            &capabilities,
+            "model:/api",
+            Some(json!("openai-completions")),
+        )
+        .unwrap();
+    let invalid_base = PartialDocument::from_yaml(guided.values().to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("express-invalid-native", invalid_base)
+        .omit([
+            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/home",
+            "adapter:nvidia.fabric.openclaw:/native_config",
+            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        ])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+
+    assert!(resolution.assessment().document().is_some());
+    assert!(resolution.materialized_document().is_none());
+    assert!(
+        resolution.question("model:/api").is_some() || !resolution.unverified().is_empty(),
+        "invalid Fabric configuration must remain visible without prompt guidance"
+    );
+}
+
+#[test]
 fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
     use nemoclaw_authoring::{AuthoringFacts, EndpointEvidence, inference_request_for_document};
     use nemoclaw_sdk::{

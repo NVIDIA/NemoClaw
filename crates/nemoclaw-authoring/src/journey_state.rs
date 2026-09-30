@@ -951,20 +951,11 @@ impl JourneyState {
             .contains(&JourneyScope::NativeSettings)
             || self.definition.ask.iter().any(|field| native_field(field))
             || self.definition.omit.iter().any(|field| native_field(field));
-        let inspect_values = if self
-            .definition
-            .ask_scopes
-            .contains(&JourneyScope::DeploymentFields)
-            || native_guidance
-        {
-            assessment
-                .document()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(|_| diagnostic("deployment", "Cannot read deployment configuration."))?
-        } else {
-            None
-        };
+        let inspect_values = assessment
+            .document()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|_| diagnostic("journey", "Cannot read deployment configuration."))?;
         let inspect_values = inspect_values.as_ref().unwrap_or(&self.values);
         if self
             .definition
@@ -995,7 +986,7 @@ impl JourneyState {
                 });
             }
         }
-        if native_guidance {
+        {
             let mut active_native_ids = BTreeSet::new();
             for field in native_questions_for_values(
                 inspect_values,
@@ -1070,11 +1061,13 @@ impl JourneyState {
                     });
                 }
             }
-            for field in self.definition.ask.union(&self.definition.omit) {
-                if native_field(field) && !active_native_ids.contains(field) {
-                    warnings.push(format!(
-                        "{field} is not applicable in the current native settings schema"
-                    ));
+            if native_guidance {
+                for field in self.definition.ask.union(&self.definition.omit) {
+                    if native_field(field) && !active_native_ids.contains(field) {
+                        warnings.push(format!(
+                            "{field} is not applicable in the current native settings schema"
+                        ));
+                    }
                 }
             }
         }
