@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   reviewedArchiveGraphManifest,
+  hasReviewedArchiveUndiciPatch,
+  parseAuditConfig,
   stageReviewedArchiveForInstall,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import {
@@ -47,11 +50,135 @@ const CONFIG = JSON.parse(
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
 
+function archivePatchFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-undici-inputs-"));
+  const helper = path.join(root, "scripts/lib/openclaw-npm-remediation.mts");
+  const caller = path.join(root, "src/lib/messaging/applier/build/messaging-build-applier.mts");
+  fs.mkdirSync(path.dirname(helper), { recursive: true });
+  fs.mkdirSync(path.dirname(caller), { recursive: true });
+  fs.writeFileSync(helper, "reviewed remediation");
+  fs.writeFileSync(caller, "reviewed caller");
+  return {
+    root,
+    helper,
+    caller,
+    parent: path.dirname(caller),
+    reviewed: {
+      remediationSha256: createHash("sha256").update("reviewed remediation").digest("hex"),
+      messagingApplierSha256: createHash("sha256").update("reviewed caller").digest("hex"),
+    },
+  };
+}
+function sameVersionGraph() {
+  const identity = {
+    packageSpec: "openclaw@2026.9.1",
+    label: "fixture",
+    integrity: "sha512-reviewed",
+    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+    lockSha256: "a".repeat(64),
+  };
+  return {
+    ...identity,
+    id: "fixture",
+    directory: "fixture",
+    replacement: { ...identity, lockSha256: "b".repeat(64) },
+  };
+}
+
+function configForGraph(graph: ReturnType<typeof sameVersionGraph>) {
+  return JSON.stringify({
+    schemaVersion: 2,
+    severityThreshold: "high",
+    registryOrigin: "https://registry.npmjs.org/",
+    npmVersion: "12.0.2",
+    npmArchiveSha256: "c".repeat(64),
+    npmIntegrity: `sha512-${"A".repeat(86)}==`,
+    archiveGraphId: "fixture",
+    archiveTarVersion: "7.5.21",
+    archivePackages: [],
+    exceptionFile: "fixture.json",
+    sourceNestedShrinkwrapPackages: [],
+    sourceRegistryPackagesWithoutIntegrity: [],
+    sourceRegistryPackage: { ...graph, artifactName: "fixture.tgz" },
+    lockedGraphs: [graph],
+  });
+}
+
 describe("reviewed archive graph materialization", () => {
   it("rejects an affected tar release", () => {
     expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
       "reviewed archive graph tar version must be exactly 7.5.21",
     );
+  });
+
+  it("keeps the original graph when no patch inputs have been reviewed", () => {
+    expect(hasReviewedArchiveUndiciPatch(REPO_ROOT, undefined)).toBe(false);
+    expect(reviewedArchiveGraphManifest("7.5.21").overrides).toEqual({ tar: "7.5.21" });
+  });
+
+  it("selects the patched archive graph for matching reviewed inputs", () => {
+    const f = archivePatchFixture();
+    try {
+      const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
+      expect(selected).toBe(true);
+      expect(reviewedArchiveGraphManifest("7.5.21", selected).overrides).toEqual({
+        tar: "7.5.21",
+        openclaw: { undici: "8.10.2" },
+      });
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    {
+      name: "missing caller",
+      change: (f: ReturnType<typeof archivePatchFixture>) => fs.rmSync(f.caller),
+    },
+    {
+      name: "changed helper",
+      change: (f: ReturnType<typeof archivePatchFixture>) => fs.appendFileSync(f.helper, "changed"),
+    },
+    {
+      name: "changed caller",
+      change: (f: ReturnType<typeof archivePatchFixture>) => fs.appendFileSync(f.caller, "changed"),
+    },
+  ])("audits the original graph with $name", ({ change }) => {
+    const f = archivePatchFixture();
+    try {
+      change(f);
+      const selected = hasReviewedArchiveUndiciPatch(f.root, f.reviewed);
+      expect(selected).toBe(false);
+      expect(reviewedArchiveGraphManifest("7.5.21", selected).overrides).toEqual({ tar: "7.5.21" });
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+  it.each(["caller", "parent"] as const)("rejects a %s symlink before auditing", (entry) => {
+    const f = archivePatchFixture();
+    const outside = path.join(f.root, "redirected");
+    try {
+      fs.renameSync(f[entry], outside);
+      fs.symlinkSync(outside, f[entry]);
+      expect(() => hasReviewedArchiveUndiciPatch(f.root, f.reviewed)).toThrow("symbolic-link");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+  it("accepts a second lock for the same reviewed archive", () => {
+    const graph = sameVersionGraph();
+    expect(parseAuditConfig(configForGraph(graph)).lockedGraphs[0]?.replacement).toEqual(
+      graph.replacement,
+    );
+  });
+  it.each([
+    { integrity: "sha512-substituted" },
+    { tarballUrl: "https://example.invalid/substituted.tgz" },
+    { lockSha256: "a".repeat(64) },
+  ])("rejects a substituted or duplicate same-version replacement: %j", (changed) => {
+    const graph = sameVersionGraph();
+    graph.replacement = { ...graph.replacement, ...changed };
+    const input = configForGraph(graph);
+    expect(() => parseAuditConfig(input)).toThrow("is invalid");
   });
 
   it("stages archives at deterministic graph-relative paths", () => {

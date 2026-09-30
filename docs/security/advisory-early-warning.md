@@ -93,6 +93,12 @@ The same #7338 sign-off gate applies to this work.
 
 ## Provenance Recorded for Each Audit
 
+The reviewed policy accepts original and dependency-patched OpenClaw 2026.9.1 lockfiles while preserving the official package version, archive URL, and integrity.
+For archive audits, patched dependencies are selected only when the candidate's remediation source and messaging build caller match both policy-recorded SHA-256 hashes.
+The audit runs its own reviewed remediation implementation; it does not execute those candidate files.
+Missing files or mismatched hashes select the original archive graph.
+Symbolic links and nonregular input files stop the audit.
+
 Each npm audit report has a `*.provenance.json` sidecar.
 The sidecars include `coverage/reviewed-npm-audit/` artifacts and `npm-audit.provenance.json` for the WeChat locked runtime graph audit.
 A configured cache reuses a response only when the package and lock bytes, the pinned npm identity (version, SHA-512 SRI, and archive SHA-256), fixed Yarn audit registry origin, command arguments, and parser identity match.

@@ -1,22 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import {
+import { execFileSync, spawnSync } from "node:child_process";
+import fs, {
   chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  OPENCLAW_UNDICI_PATCHES,
+  patchInstalledOpenClawUndici,
+  patchVerifiedOfficialPluginUndici,
   buildRemediatedOpenClawArchive,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
@@ -25,6 +29,30 @@ import {
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: vi.fn(actual.renameSync),
+    writeFileSync: vi.fn(actual.writeFileSync),
+  };
+});
+vi.mock("../../../scripts/lib/reviewed-npm-archive.mts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../scripts/lib/reviewed-npm-archive.mts")>();
+  return { ...actual, packReviewedNpmArchive: vi.fn(actual.packReviewedNpmArchive) };
+});
+import { packReviewedNpmArchive } from "../../../scripts/lib/reviewed-npm-archive.mts";
+
+beforeEach(async () => {
+  vi.mocked(writeFileSync).mockReset().mockImplementation(fs.writeFileSync);
+  vi.mocked(renameSync).mockReset().mockImplementation(fs.renameSync);
+  const actual = await vi.importActual<
+    typeof import("../../../scripts/lib/reviewed-npm-archive.mts")
+  >("../../../scripts/lib/reviewed-npm-archive.mts");
+  vi.mocked(packReviewedNpmArchive).mockReset().mockImplementation(actual.packReviewedNpmArchive);
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -884,4 +912,321 @@ describe("OpenClaw npm remediation", () => {
       ),
     ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
+});
+
+const roots: string[] = [];
+function fixture(packageName: keyof typeof OPENCLAW_UNDICI_PATCHES = "@openclaw/slack") {
+  const state = fs.mkdtempSync(path.join(tmpdir(), "openclaw-undici-patch-"));
+  roots.push(state);
+  const npmRoot = path.join(state, "npm/projects/plugin");
+  const plugin = path.join(npmRoot, "node_modules", packageName);
+  const undici = path.join(plugin, "node_modules/undici");
+  fs.mkdirSync(undici, { recursive: true });
+  fs.writeFileSync(
+    path.join(plugin, "package.json"),
+    JSON.stringify({ name: packageName, version: "2026.9.1" }),
+  );
+  fs.writeFileSync(
+    path.join(undici, "package.json"),
+    JSON.stringify({ name: "undici", version: OPENCLAW_UNDICI_PATCHES[packageName].affected }),
+  );
+  return { state, npmRoot, plugin, undici, packageName };
+}
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+function replacementFixture(packageName: keyof typeof OPENCLAW_UNDICI_PATCHES) {
+  const f = fixture(packageName);
+  const patch = OPENCLAW_UNDICI_PATCHES[packageName];
+  const originalPins = { ...patch };
+  const location = `node_modules/${packageName}/node_modules/undici`;
+  const project = { name: "fixture", private: true };
+  const lock = { lockfileVersion: 3, packages: { [location]: { version: patch.affected } } };
+  fs.writeFileSync(path.join(f.npmRoot, "package.json"), JSON.stringify(project));
+  fs.writeFileSync(path.join(f.npmRoot, "package-lock.json"), JSON.stringify(lock));
+  const replacement = path.join(f.state, "replacement/package");
+  fs.mkdirSync(replacement, { recursive: true });
+  fs.writeFileSync(
+    path.join(replacement, "package.json"),
+    JSON.stringify({ name: "undici", version: patch.version }),
+  );
+  const archivePath = path.join(f.state, "replacement.tgz");
+  execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(replacement), "package"]);
+  // Synthetic pins retain real archive extraction and tree verification without npm downloads.
+  patch.affectedTree = hashPackageTree(f.undici);
+  patch.fixedTree = hashPackageTree(replacement);
+  vi.mocked(packReviewedNpmArchive).mockReturnValue({ archivePath, rootDirectory: f.state });
+  return {
+    ...f,
+    patch,
+    project,
+    lock,
+    location,
+    restorePins: () => Object.assign(patch, originalPins),
+  };
+}
+
+function interruptReplacement(f: ReturnType<typeof replacementFixture>, pid: number) {
+  const workspace = fs.mkdtempSync(path.join(f.npmRoot, ".nemoclaw-undici-"));
+  fs.writeFileSync(
+    path.join(workspace, "recovery.json"),
+    JSON.stringify({ packageName: f.packageName, pid }),
+  );
+  fs.renameSync(f.undici, path.join(workspace, "original"));
+  return workspace;
+}
+
+describe("official OpenClaw bundled Undici patch", () => {
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "rejects changed %s bundle contents even when the affected version matches",
+    (packageName) => {
+      const f = fixture(packageName);
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed bundled Undici tree");
+      expect(JSON.parse(fs.readFileSync(path.join(f.undici, "package.json"), "utf8")).version).toBe(
+        OPENCLAW_UNDICI_PATCHES[packageName].affected,
+      );
+      expect(fs.readdirSync(f.npmRoot)).toEqual(["node_modules"]);
+    },
+  );
+  it("rejects a forged fixed-version manifest without accepting the package as patched", () => {
+    const f = fixture();
+    fs.writeFileSync(
+      path.join(f.undici, "package.json"),
+      JSON.stringify({ name: "undici", version: "7.29.1" }),
+    );
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed bundled Undici tree");
+  });
+  it("rejects a different OpenClaw release before modifying its dependencies", () => {
+    const f = fixture();
+    fs.writeFileSync(
+      path.join(f.plugin, "package.json"),
+      JSON.stringify({ name: f.packageName, version: "2026.9.5" }),
+    );
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("2026.9.1");
+  });
+  it("rejects a bundled dependency redirected through a symlink", () => {
+    const f = fixture();
+    const outside = path.join(f.state, "outside");
+    fs.renameSync(f.undici, outside);
+    fs.symlinkSync(outside, f.undici);
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow("real directory");
+    expect(fs.existsSync(path.join(outside, "package.json"))).toBe(true);
+  });
+  it("rejects a symlink inside the installed dependency before changing files", () => {
+    const f = fixture();
+    fs.symlinkSync(path.join(f.plugin, "package.json"), path.join(f.undici, "linked.json"));
+    expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+    expect(fs.lstatSync(path.join(f.undici, "linked.json")).isSymbolicLink()).toBe(true);
+  });
+  it("rejects inspection paths outside the managed npm projects", () => {
+    const f = fixture();
+    const outside = path.join(f.state, "other");
+    fs.mkdirSync(outside);
+    expect(() =>
+      patchVerifiedOfficialPluginUndici({
+        packageSpec: "@openclaw/slack@2026.9.1",
+        installPath: path.join(outside, "node_modules/@openclaw/slack"),
+        env: { OPENCLAW_STATE_DIR: f.state },
+      }),
+    ).toThrow("escaped");
+  });
+  it("requires an absolute path from official plugin inspection", () => {
+    expect(() =>
+      patchVerifiedOfficialPluginUndici({
+        packageSpec: "@openclaw/slack@2026.9.1",
+        installPath: "relative",
+        env: {},
+      }),
+    ).toThrow("absolute install path");
+  });
+  it.each(["@openclaw/msteams@2026.9.1", "@openclaw/slack@2026.9.5"])(
+    "leaves %s outside the patch scope untouched",
+    (packageSpec) => {
+      expect(
+        patchVerifiedOfficialPluginUndici({ packageSpec, installPath: undefined, env: {} }),
+      ).toBe(false);
+    },
+  );
+  it.each(["@openclaw/slack", "@openclaw/discord"] as const)(
+    "patches %s and persists matching metadata without leaving a workspace",
+    (packageName) => {
+      const f = replacementFixture(packageName);
+      try {
+        patchInstalledOpenClawUndici(f);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+        expect(readJson(path.join(f.undici, "package.json"))).toEqual({
+          name: "undici",
+          version: f.patch.version,
+        });
+        expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual({
+          ...f.project,
+          overrides: { [packageName]: { undici: f.patch.version } },
+        });
+        expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual({
+          lockfileVersion: 3,
+          packages: {
+            [f.location]: {
+              version: f.patch.version,
+              resolved: `https://registry.npmjs.org/undici/-/undici-${f.patch.version}.tgz`,
+              integrity: f.patch.integrity,
+            },
+          },
+        });
+        expect(fs.readdirSync(f.npmRoot).sort()).toEqual([
+          "node_modules",
+          "package-lock.json",
+          "package.json",
+        ]);
+        patchInstalledOpenClawUndici(f);
+        expect(packReviewedNpmArchive).toHaveBeenCalledTimes(1);
+        expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+  it("restores an interrupted replacement before permitting a fresh retry", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    expect(exited.status).toBe(0);
+    const workspace = interruptReplacement(f, exited.pid);
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(
+        "Original Undici bundle restored after interruption; retry the operation",
+      );
+      expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+      expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+      expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+      expect(fs.existsSync(workspace)).toBe(false);
+      expect(packReviewedNpmArchive).not.toHaveBeenCalled();
+      patchInstalledOpenClawUndici(f);
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("does not restore a bundle while its patch process is still running", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const workspace = interruptReplacement(f, process.pid);
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(
+        "Undici patch process is still running",
+      );
+      expect(fs.existsSync(f.undici)).toBe(false);
+      expect(hashPackageTree(path.join(workspace, "original"))).toBe(f.patch.affectedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("retains an unverified recovery bundle without installing it", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    const workspace = interruptReplacement(f, exited.pid);
+    fs.writeFileSync(path.join(workspace, "original", "unexpected.js"), "changed");
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("Unreviewed Undici recovery bundle");
+      expect(fs.existsSync(f.undici)).toBe(false);
+      expect(fs.existsSync(path.join(workspace, "original", "unexpected.js"))).toBe(true);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it.each(["workspace", "original", "record"])(
+    "rejects a recovery %s symlink without following it",
+    (entry) => {
+      const f = replacementFixture("@openclaw/slack");
+      const exited = spawnSync(process.execPath, ["-e", ""]);
+      const workspace = interruptReplacement(f, exited.pid);
+      const target =
+        entry === "workspace"
+          ? workspace
+          : path.join(workspace, entry === "record" ? "recovery.json" : "original");
+      const outside = path.join(f.state, "outside");
+      fs.renameSync(target, outside);
+      fs.symlinkSync(outside, target);
+      try {
+        expect(() => patchInstalledOpenClawUndici(f)).toThrow();
+        expect(fs.existsSync(f.undici)).toBe(false);
+        expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+        expect(fs.existsSync(outside)).toBe(true);
+      } finally {
+        f.restorePins();
+      }
+    },
+  );
+  it("retains ambiguous recovery bundles for inspection", () => {
+    const f = replacementFixture("@openclaw/slack");
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    const workspace = interruptReplacement(f, exited.pid);
+    const duplicate = fs.mkdtempSync(path.join(f.npmRoot, ".nemoclaw-undici-"));
+    fs.cpSync(workspace, duplicate, { recursive: true });
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("Multiple Undici recovery bundles");
+      expect(fs.existsSync(f.undici)).toBe(false);
+      expect(fs.existsSync(path.join(workspace, "original"))).toBe(true);
+      expect(fs.existsSync(path.join(duplicate, "original"))).toBe(true);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("retains the verified backup when bundle rollback cannot restore it", () => {
+    const f = replacementFixture("@openclaw/slack");
+    vi.mocked(renameSync)
+      .mockImplementation(() => {
+        throw new Error("EACCES: bundle rename failed");
+      })
+      .mockImplementationOnce(fs.renameSync);
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(
+        "rollback failed; recovery workspace retained",
+      );
+      const workspaces = fs
+        .readdirSync(f.npmRoot)
+        .filter((name) => name.startsWith(".nemoclaw-undici-"));
+      expect(workspaces).toHaveLength(1);
+      expect(hashPackageTree(path.join(f.npmRoot, workspaces[0]!, "original"))).toBe(
+        f.patch.affectedTree,
+      );
+      expect(fs.existsSync(f.undici)).toBe(false);
+      expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+      expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+    } finally {
+      f.restorePins();
+    }
+  });
+  it("removes an exhausted rollback workspace before a later interrupted replacement", () => {
+    const f = replacementFixture("@openclaw/slack");
+    vi.mocked(writeFileSync)
+      .mockImplementation(() => {
+        throw new Error("ENOSPC: metadata write failed");
+      })
+      .mockImplementationOnce(fs.writeFileSync);
+    try {
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow("rollback failed");
+      expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+      expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+      expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+      expect(fs.readdirSync(f.npmRoot).sort()).toEqual([
+        "node_modules",
+        "package-lock.json",
+        "package.json",
+      ]);
+      vi.mocked(writeFileSync).mockImplementation(fs.writeFileSync);
+      const exited = spawnSync(process.execPath, ["-e", ""]);
+      expect(exited.status).toBe(0);
+      const workspace = interruptReplacement(f, exited.pid);
+      expect(() => patchInstalledOpenClawUndici(f)).toThrow(
+        "Original Undici bundle restored after interruption; retry the operation",
+      );
+      expect(fs.existsSync(workspace)).toBe(false);
+      expect(hashPackageTree(f.undici)).toBe(f.patch.affectedTree);
+      expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+      expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+      patchInstalledOpenClawUndici(f);
+      expect(hashPackageTree(f.undici)).toBe(f.patch.fixedTree);
+    } finally {
+      f.restorePins();
+    }
+  });
 });
