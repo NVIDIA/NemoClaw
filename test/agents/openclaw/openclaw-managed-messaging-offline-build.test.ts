@@ -78,14 +78,14 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
-      "@openclaw/discord@2026.9.1": {
+      "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
           uuid: bundledVersion(
             "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
           ),
         },
       },
-      "@openclaw/whatsapp@2026.9.1": {
+      "@openclaw/whatsapp@2026.9.2": {
         "baileys@7.0.0-rc14": {
           "file-type": bundledVersion(
             "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",

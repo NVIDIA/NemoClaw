@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "2026.9.1";
+const VERSION = "2026.9.2";
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -54,7 +54,7 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   // The Dockerfile restricts these pins to explicitly selected legacy E2E fixtures.
   if (["2026.3.11", "2026.4.24"].includes(metadata.version)) return;
-  if (metadata.version !== VERSION) {
+  if (metadata.version !== VERSION && metadata.version !== "2026.9.1") {
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   }
   const target = path.join(distDir, "cli", "gateway-lifecycle.runtime.js");

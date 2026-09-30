@@ -360,17 +360,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, {
-        ...graph,
-        replacement: {
-          label: "OpenClaw 2026.9.1 locked runtime graph",
-          packageSpec: "openclaw@2026.9.1",
-          integrity:
-            "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
-          tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
-          lockSha256: "c015570ccccf56986c3d92a85de6f7aa507110f6a11cc2eedd80752672589f9b",
-        },
-      }),
+      openClawReplacementGraphFixture(REPO_ROOT, graph),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
