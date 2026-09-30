@@ -167,10 +167,21 @@ function readProcessCommandLine(pid: number): string | null {
 }
 
 function commandLineNamesCloudflared(commandLine: string): boolean {
-  return commandLine
-    .split(/\0|\s+/)
-    .filter(Boolean)
-    .some((token) => /^(?:cloudflared)(?:\.exe)?$/i.test(basename(token.replaceAll("\\", "/"))));
+  const records = commandLine.includes("\0")
+    ? commandLine.split("\0").filter(Boolean)
+    : commandLine.split(/\s+/).filter(Boolean);
+  const namesExecutable = (token: string | undefined, name: RegExp): boolean =>
+    token !== undefined && name.test(basename(token.replaceAll("\\", "/")));
+  if (namesExecutable(records[0]?.trim(), /^(?:cloudflared)(?:\.exe)?$/i)) return true;
+
+  // Test fixtures and operator wrappers can launch a cloudflared-named shell
+  // script through its shebang. Accept only the interpreter's script operand,
+  // never an arbitrary later process argument.
+  return records.some(
+    (token, index) =>
+      namesExecutable(token.trim(), /^(?:ba|da|z)?sh$/i) &&
+      namesExecutable(records[index + 1]?.trim(), /^cloudflared$/i),
+  );
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -206,8 +217,7 @@ except (OSError, PermissionError):
 
 try:
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as command_file:
-            command_line = command_file.read()
+        executable = os.readlink(f"/proc/{pid}/exe")
     except FileNotFoundError:
         print("not-running")
         raise SystemExit(0)
@@ -215,8 +225,7 @@ try:
         print("unavailable")
         raise SystemExit(0)
 
-    tokens = command_line.replace(b"\0", b" ").split()
-    if not any(os.path.basename(os.fsdecode(token)) == "cloudflared" for token in tokens):
+    if os.path.basename(executable) != "cloudflared":
         print("not-cloudflared")
         raise SystemExit(0)
 
@@ -256,6 +265,14 @@ function readUint32LittleEndian(buffer, offset) {
 }
 
 function run(argv) {
+  // Apple XNU defines PROC_PIDUNIQIDENTIFIERINFO as selector 17. Its 56-byte
+  // result stores p_idversion at byte 32; audit_token_t stores PID and
+  // pidversion at uint32 slots 5 and 7 respectively.
+  const uniqueInfoSelector = 17;
+  const uniqueInfoSize = 56;
+  const uniqueInfoIdVersionOffset = 32;
+  const auditTokenPidOffset = 20;
+  const auditTokenIdVersionOffset = 28;
   const pid = Number(argv[0]);
   const signalNumber = argv[1] === "SIGKILL" ? 9 : 15;
   const uniqueInfo = $.malloc(56);
@@ -263,14 +280,20 @@ function run(argv) {
   const processPath = $.malloc(4096);
 
   try {
-    if ($.proc_pidinfo(pid, 17, 0, uniqueInfo, 56) !== 56) return "not-running";
+    if ($.proc_pidinfo(pid, uniqueInfoSelector, 0, uniqueInfo, uniqueInfoSize) !== uniqueInfoSize) {
+      return "unavailable";
+    }
 
     for (let index = 0; index < 32; index += 1) auditToken[index] = 0;
-    writeUint32LittleEndian(auditToken, 20, pid);
-    writeUint32LittleEndian(auditToken, 28, readUint32LittleEndian(uniqueInfo, 32));
+    writeUint32LittleEndian(auditToken, auditTokenPidOffset, pid);
+    writeUint32LittleEndian(
+      auditToken,
+      auditTokenIdVersionOffset,
+      readUint32LittleEndian(uniqueInfo, uniqueInfoIdVersionOffset),
+    );
 
     const pathLength = $.proc_pidpath_audittoken(auditToken, processPath, 4096);
-    if (pathLength <= 0) return "not-running";
+    if (pathLength <= 0) return "unavailable";
 
     let executablePath = "";
     for (let index = 0; index < pathLength; index += 1) {

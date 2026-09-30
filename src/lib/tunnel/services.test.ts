@@ -547,6 +547,17 @@ describe("readCloudflaredState", () => {
     expect(state.kind).toBe("stale-pid-process");
   });
 
+  it("does not accept cloudflared appearing only as an unrelated process argument", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    const state = readCloudflaredState(pidDir, {
+      isAlive: () => true,
+      commandLine: () => "/usr/bin/node\0worker.js\0cloudflared",
+      signalCloudflared: () => "signaled",
+    });
+
+    expect(state).toEqual({ kind: "stale-pid-process", pid: 4242 });
+  });
+
   it("returns unverified-pid-process when a live PID cannot be inspected", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
     const state = readCloudflaredState(pidDir, {
@@ -676,7 +687,7 @@ describe("stopAll", () => {
     () => {
       const { control, signals } = scriptedControl({
         alive: [true],
-        cmdlines: ["/usr/bin/node vitest"],
+        cmdlines: ["/usr/bin/node worker.js cloudflared"],
       });
       writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -712,6 +723,24 @@ describe("stopAll", () => {
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
     expect(output).toContain("cloudflared PID 4242 was not stopped");
     expect(output).toContain("Host service cleanup remains incomplete");
+  });
+
+  it("preserves the PID when identity-bound signaling is unavailable", () => {
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "/usr/local/bin/cloudflared tunnel run",
+      signalCloudflared: () => "unavailable",
+    };
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
   });
 
   it("does not send SIGTERM when the PID is recycled after initial validation", () => {
