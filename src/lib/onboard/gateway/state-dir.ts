@@ -96,8 +96,15 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
     let inspected: fs.Stats;
     try {
       inspected = fs.lstatSync(ancestor);
-    } catch {
-      return `the gateway state directory's ancestor '${ancestor}' cannot be inspected`;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const knownCode =
+        code === "ENOENT" ||
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTDIR" ||
+        code === "ELOOP";
+      return `the gateway state directory's ancestor '${ancestor}' cannot be inspected${knownCode ? ` (${code})` : ""}`;
     }
     if (
       !inspected.isDirectory() ||
