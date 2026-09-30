@@ -9,6 +9,7 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", () => ({
+  remediateInstalledOfficialOpenClawPlugin: vi.fn(() => false),
   remediateReviewedOpenClawPluginArchive: vi.fn(() => {
     throw new Error("Official npm installs must not remediate a discarded archive.");
   }),
