@@ -86,6 +86,24 @@ afterEach(() => {
 });
 
 describe("OpenClaw Undici metadata recovery", () => {
+  it("records the writer before downloading and cleans up a failed download", () => {
+    const f = fixture();
+    let owner: unknown;
+    vi.mocked(packReviewedNpmArchive).mockImplementation(({ tempDirectory }) => {
+      owner = readJson(path.join(tempDirectory!, "recovery.json"));
+      throw new Error("download failed");
+    });
+    expect(() => patchInstalledOpenClawUndici({ npmRoot: f.npmRoot, packageName })).toThrow(
+      "download failed",
+    );
+    expect(owner).toMatchObject({ packageName, pid: process.pid });
+    expect(hashPackageTree(f.undici)).toBe(patch.affectedTree);
+    expect(readJson(path.join(f.npmRoot, "package.json"))).toEqual(f.project);
+    expect(readJson(path.join(f.npmRoot, "package-lock.json"))).toEqual(f.lock);
+    expect(
+      fs.readdirSync(f.npmRoot).filter((name) => name.startsWith(".nemoclaw-undici-")),
+    ).toEqual([]);
+  });
   it.each(["project.next", "lock.next"] as const)(
     "keeps both project files parseable when the %s write stops midway",
     (stagedName) => {
@@ -141,5 +159,20 @@ describe("OpenClaw Undici metadata recovery", () => {
     vi.mocked(writeFileSync).mockImplementation(fs.writeFileSync);
     patchInstalledOpenClawUndici({ npmRoot: f.npmRoot, packageName });
     expect(hashPackageTree(f.undici)).toBe(patch.fixedTree);
+  });
+  it("preserves metadata permissions under a restrictive process umask", () => {
+    const f = fixture();
+    const manifest = path.join(f.npmRoot, "package.json");
+    const lock = path.join(f.npmRoot, "package-lock.json");
+    fs.chmodSync(manifest, 0o640);
+    fs.chmodSync(lock, 0o644);
+    const originalUmask = process.umask(0o077);
+    try {
+      patchInstalledOpenClawUndici({ npmRoot: f.npmRoot, packageName });
+      expect(fs.statSync(manifest).mode & 0o777).toBe(0o640);
+      expect(fs.statSync(lock).mode & 0o777).toBe(0o644);
+    } finally {
+      process.umask(originalUmask);
+    }
   });
 });

@@ -141,7 +141,7 @@
     }
   ],
   "archiveUndiciPatchInputs": {
-    "remediationSha256": "678540677bd3f8014e78b20291fe806c95b3727850eb5a721d517cc3da6e8230",
+    "remediationSha256": "2b1c0a5db2ce3c8e82aa1bcd9596255bb693d316a082845aeceff293dc668c68",
     "messagingApplierSha256": "326c1825a88b25a27e6b58cfa5355f69caf9b7579cb4da9536b83221ed8c46ee"
   }
 }

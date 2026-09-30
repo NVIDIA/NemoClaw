@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   constants,
   cpSync,
@@ -1699,6 +1700,7 @@ function replacePatchMetadata(
     Buffer.isBuffer(contents) ? contents : `${JSON.stringify(contents, null, 2)}\n`,
     { mode: target.mode & 0o777 },
   );
+  chmodSync(staged, target.mode & 0o777);
   renameSync(staged, filename);
 }
 
@@ -1859,6 +1861,12 @@ export function patchInstalledOpenClawUndici(options: {
   let retainBackup = false;
   try {
     if (!fixed) {
+      // Record the owner before downloads so retries can remove an exited writer's files.
+      writeJson(join(workspace, "recovery.json"), {
+        packageName: options.packageName,
+        pid: process.pid,
+        processIdentity: linuxProcessIdentity(process.pid),
+      });
       const archive = packReviewedNpmArchive({
         env: options.env,
         expectedIntegrity: patch.integrity,
@@ -1875,12 +1883,6 @@ export function patchInstalledOpenClawUndici(options: {
       );
       if (hashPackageTree(replacement) !== patch.fixedTree)
         throw new Error("Unreviewed Undici replacement tree");
-      // Record the owner before either rename so a retry can distinguish an exited writer.
-      writeJson(join(workspace, "recovery.json"), {
-        packageName: options.packageName,
-        pid: process.pid,
-        processIdentity: linuxProcessIdentity(process.pid),
-      });
       renameSync(installed, backup);
       replaced = true;
       renameSync(replacement, installed);
