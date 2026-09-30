@@ -1722,11 +1722,13 @@ function linuxProcessIdentity(pid: number): string | undefined {
 
 /** Recovery instructions exclude command output and underlying filesystem errors. */
 export class UndiciPatchRecoveryError extends Error {
-  constructor(workspace?: string, options?: ErrorOptions) {
+  constructor(workspace?: string, options?: ErrorOptions & { metadataPackage?: string }) {
     super(
       workspace
         ? `Undici patch recovery is incomplete; recovery workspace retained at ${JSON.stringify(workspace)}. Preserve this directory and report the failure to a maintainer.`
-        : "Original Undici bundle restored after interruption; retry the operation",
+        : options?.metadataPackage
+          ? `Undici patch metadata rollback failed for ${JSON.stringify(options.metadataPackage)}; retry the operation to reconcile package metadata.`
+          : "Original Undici bundle restored after interruption; retry the operation",
       options,
     );
     this.name = "UndiciPatchRecoveryError";
@@ -1906,10 +1908,10 @@ export function patchInstalledOpenClawUndici(options: {
       const recoveryWorkspace = retainBackup ? workspace : recoveredWorkspace;
       const cause = new AggregateError([error, rollbackError]);
       if (recoveryWorkspace) throw new UndiciPatchRecoveryError(recoveryWorkspace, { cause });
-      throw new AggregateError(
-        [error, rollbackError],
-        "Undici patch metadata rollback failed; no recovery backup remains",
-      );
+      throw new UndiciPatchRecoveryError(undefined, {
+        cause,
+        metadataPackage: options.packageName,
+      });
     }
     if (recoveredWorkspace)
       throw new UndiciPatchRecoveryError(recoveredWorkspace, { cause: error });

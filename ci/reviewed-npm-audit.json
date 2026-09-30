@@ -105,7 +105,7 @@
         "label": "OpenClaw 2026.9.1 locked runtime graph",
         "packageSpec": "openclaw@2026.9.1",
         "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
-        "lockSha256": "71f87f397d8f628c40daefb0cc80d7b35a3be0353884f8275824a46568dc3113"
+        "lockSha256": "35ef2225c7b1cb56d989dd150c67961ed07668e75f4c75b168bfe567fd2b285a"
       }
     },
     {
@@ -141,7 +141,7 @@
     }
   ],
   "archiveUndiciPatchInputs": {
-    "remediationSha256": "2b1c0a5db2ce3c8e82aa1bcd9596255bb693d316a082845aeceff293dc668c68",
+    "remediationSha256": "ba520a746d327b05c51c932d6f80f9334ce2ad0ab33880b2c7b8885cbd10b419",
     "messagingApplierSha256": "326c1825a88b25a27e6b58cfa5355f69caf9b7579cb4da9536b83221ed8c46ee"
   }
 }
