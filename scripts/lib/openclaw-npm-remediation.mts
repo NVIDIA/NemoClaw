@@ -1700,12 +1700,31 @@ function linuxProcessIdentity(pid: number): string | undefined {
   }
 }
 
+/** Recovery instructions exclude command output and underlying filesystem errors. */
+export class UndiciPatchRecoveryError extends Error {
+  constructor(workspace?: string, options?: ErrorOptions) {
+    super(
+      workspace
+        ? `Undici patch rollback failed; recovery workspace retained at ${JSON.stringify(workspace)}. Preserve this directory and report the failure to a maintainer.`
+        : "Original Undici bundle restored after interruption; retry the operation",
+      options,
+    );
+    this.name = "UndiciPatchRecoveryError";
+  }
+}
+
 function recoverInterruptedUndiciPatch(
   root: string,
   installed: string,
   packageName: keyof typeof OPENCLAW_UNDICI_PATCHES,
-): void {
-  if (lstatSync(installed, { throwIfNoEntry: false })) return;
+): string | undefined {
+  const entry = lstatSync(installed, { throwIfNoEntry: false });
+  if (
+    entry &&
+    (!entry.isDirectory() ||
+      hashPackageTree(installed) !== OPENCLAW_UNDICI_PATCHES[packageName].fixedTree)
+  )
+    return;
   const retained: string[] = [];
   for (const name of readdirSync(root)) {
     if (!/^\.nemoclaw-undici-[A-Za-z0-9]{6}$/u.test(name)) continue;
@@ -1742,9 +1761,10 @@ function recoverInterruptedUndiciPatch(
   if (retained.length === 0) return;
   if (retained.length !== 1) throw new Error("Multiple Undici recovery bundles require inspection");
   const workspace = retained[0]!;
+  if (entry) return workspace;
   renameSync(join(workspace, "original"), installed);
   rmSync(workspace, { recursive: true, force: true });
-  throw new Error("Original Undici bundle restored after interruption; retry the operation");
+  throw new UndiciPatchRecoveryError();
 }
 
 /** Patch the installed bundle after the caller verifies the official npm install. */
@@ -1763,7 +1783,11 @@ export function patchInstalledOpenClawUndici(options: {
   const manifest = readPatchJson(join(packageDirectory, "package.json"));
   requirePackageIdentity(manifest, options.packageName, "2026.9.1", "OpenClaw Undici patch owner");
   const dependencies = requirePatchDirectory(packageDirectory, ["node_modules"]);
-  recoverInterruptedUndiciPatch(root, join(dependencies, "undici"), options.packageName);
+  const recoveredWorkspace = recoverInterruptedUndiciPatch(
+    root,
+    join(dependencies, "undici"),
+    options.packageName,
+  );
   const installed = requirePatchDirectory(dependencies, ["undici"]);
   const installedManifest = readPatchJson(join(installed, "package.json"));
   const tree = hashPackageTree(installed);
@@ -1843,6 +1867,7 @@ export function patchInstalledOpenClawUndici(options: {
     writeJson(lockPath, lock);
     if (hashPackageTree(installed) !== patch.fixedTree)
       throw new Error("Installed Undici patch verification failed");
+    if (recoveredWorkspace) rmSync(recoveredWorkspace, { recursive: true, force: true });
   } catch (error) {
     try {
       if (replaced) {
@@ -1854,11 +1879,12 @@ export function patchInstalledOpenClawUndici(options: {
       writeFileSync(lockPath, originalLock);
     } catch (rollbackError) {
       retainBackup = replaced;
+      const recoveryWorkspace = retainBackup ? workspace : recoveredWorkspace;
+      const cause = new AggregateError([error, rollbackError]);
+      if (recoveryWorkspace) throw new UndiciPatchRecoveryError(recoveryWorkspace, { cause });
       throw new AggregateError(
         [error, rollbackError],
-        retainBackup
-          ? `Undici patch rollback failed; recovery workspace retained at ${workspace}`
-          : "Undici patch metadata rollback failed; no recovery backup remains",
+        "Undici patch metadata rollback failed; no recovery backup remains",
       );
     }
     throw error;

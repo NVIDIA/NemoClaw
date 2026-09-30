@@ -8,7 +8,8 @@ import path from "node:path";
 
 import { beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", () => ({
+vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>()),
   patchVerifiedOfficialPluginUndici: vi.fn(),
   remediateReviewedOpenClawPluginArchive: vi.fn(() => {
     throw new Error("Official npm installs must not remediate a discarded archive.");
@@ -17,10 +18,14 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", () => ({
 
 import {
   applyMessagingBuildPhase,
+  fatalMessagingBuildDiagnostic,
   readMessagingBuildPlanFromEnv,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
-import { patchVerifiedOfficialPluginUndici } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  patchVerifiedOfficialPluginUndici,
+  UndiciPatchRecoveryError,
+} from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 beforeEach(() => vi.mocked(patchVerifiedOfficialPluginUndici).mockReset());
 
@@ -242,6 +247,42 @@ it.each(["slack", "discord"])(
         }),
       ).toThrow("did not retain trusted exact registry provenance");
       expect(patchVerifiedOfficialPluginUndici).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  { channelId: "slack", retained: false },
+  { channelId: "slack", retained: true },
+  { channelId: "discord", retained: false },
+  { channelId: "discord", retained: true },
+])(
+  "reports $channelId recovery with retained backup=$retained without exposing the failure",
+  ({ channelId, retained }) => {
+    const { tmp, env, serializedPlan, packedDirectories } = officialPluginFixture(channelId);
+    const canary = "OPENAI_API_KEY=recovery-diagnostic-canary";
+    const workspace = path.join(tmp, ".nemoclaw-undici-ABC123");
+    try {
+      const recovery = new UndiciPatchRecoveryError(retained ? workspace : undefined, {
+        cause: new Error(canary),
+      });
+      vi.mocked(patchVerifiedOfficialPluginUndici).mockImplementationOnce(() => {
+        throw recovery;
+      });
+      let diagnostic = "";
+      try {
+        applyMessagingBuildPhase(serializedPlan, "agent-install", env);
+      } catch (error) {
+        diagnostic = fatalMessagingBuildDiagnostic(error);
+      }
+      expect(diagnostic).toBe(recovery.message);
+      expect(diagnostic).not.toContain(canary);
+      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
+      expect(fatalMessagingBuildDiagnostic(new Error(canary))).toBe(
+        "Messaging build applier failed.",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  UndiciPatchRecoveryError,
   patchVerifiedOfficialPluginUndici,
   remediateReviewedOpenClawPluginArchive,
 } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -2196,7 +2197,8 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalMessagingBuildDiagnostic(error: unknown): string {
+export function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof UndiciPatchRecoveryError) return error.message;
   if (error instanceof OfficialPluginProvenanceError) {
     return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }
