@@ -51,7 +51,8 @@ export async function approveOpenClawAdminScope(
     ? await host.command(
         "bash",
         [
-          "-lc",
+          // Host login/logout hooks must not change the approval exit status.
+          "-c",
           adminApprovalConnectScript(
             host.commandPath,
             sandboxName,

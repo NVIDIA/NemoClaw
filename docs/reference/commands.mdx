@@ -381,7 +381,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -1001,6 +1001,32 @@ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLAW_
 ```
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
+
+<AgentOnly variant="openclaw,hermes">
+
+#### `--from-image <repository>@<digest>`
+
+Onboard a published OpenClaw or Hermes image with the Docker runtime without building a Dockerfile.
+Supply an immutable SHA-256 digest with `--from-image`.
+In non-interactive mode, you can instead set `NEMOCLAW_FROM_IMAGE`.
+In non-interactive mode, supply a sandbox name with `--name` or `NEMOCLAW_SANDBOX_NAME`.
+The image publisher owns its content and compatibility with your NemoClaw release.
+
+```bash
+$$nemoclaw onboard --name my-agent --from-image <repository>@sha256:<digest>
+```
+
+The image must match the runtime platform and declare a non-root user, `/sandbox` working directory, and usable entrypoint or command.
+It must contain `NEMOCLAW_TOOL_DISCLOSURE=progressive` or `NEMOCLAW_TOOL_DISCLOSURE=direct`.
+Onboarding adopts that mode when you have not selected one; an explicit conflicting mode fails before creation.
+Configure registry credentials through Docker before onboarding a private image.
+
+Do not combine `--from-image` with `--from` or the Portable profile.
+Resume retains the recorded digest and requires the same `--from-image` value, or the same `NEMOCLAW_FROM_IMAGE` value in non-interactive mode, on the recovery command. To use another digest, start fresh. If a ready same-name sandbox has a different workload, explicitly authorize its replacement with `--recreate-sandbox`.
+Rebuild consumes the same digest without building an image.
+Cleanup retains the published image, and upgrades leave it pinned and publisher-managed.
+
+</AgentOnly>
 
 #### `--name <sandbox>`
 
@@ -3210,6 +3236,10 @@ NemoClaw cannot order a `git describe` version against a different prerelease on
 
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw. NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with. Sandboxes that match the current digest are left alone. NemoClaw also checks the build fingerprint recorded on each managed sandbox image. A sandbox needs upgrade when its agent version is stale, when its recorded NemoClaw image fingerprint differs from the running CLI, or both. When the target version is older than the recorded one (for example after reinstalling with an older `NEMOCLAW_INSTALL_TAG`), the stale listing marks the change with a `(downgrade)` suffix instead of framing it as a routine upgrade. Custom Dockerfile sandboxes are not classified by image drift because rebuilding them onto the default image would drop the custom image. Legacy sandboxes without a recorded fingerprint opt into this check after their next rebuild. A recorded sandbox that is not observed in any phase on its own recorded gateway is reported as not found there, with remediation guidance — this typically means its gateway registration or Docker image was removed (for example by `$$nemoclaw uninstall`, which preserves `sandboxes.json` but removes both).
 
+External-image sandboxes are excluded from agent version and image drift classification.
+The command lists them as pinned, publisher-managed images and does not rebuild them, including with `--auto`.
+After you update NemoClaw, run `$$nemoclaw <name> rebuild` to revalidate the external image and recreate the sandbox from its recorded digest.
+
 ```bash
 $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
@@ -3233,8 +3263,8 @@ The retry is complete when the command exits zero and reports that the sandbox w
 
 Back up registered sandboxes that are running or have an eligible stopped Docker-driver container to `~/.nemoclaw/rebuild-backups/`. A registered docker-driver sandbox whose container is stopped is started for the duration of the backup and returned to its stopped state afterward. If the container cannot be returned to the stopped state, the command fails and reports that the container was left running. Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
-For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation.
+After OpenShell accepts the start, one lifecycle transaction covers readiness, state capture, and returning the sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 ```bash
@@ -3678,7 +3708,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3691,7 +3721,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -3829,7 +3859,7 @@ $$nemoclaw gc [--dry-run] [--yes|-y|--force]
 
 Run `uninstall.sh` to uninstall NemoClaw. The CLI runs the local `uninstall.sh` shipped with the installed npm package. If that local script is missing, the CLI does not auto-fetch a remote copy. It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
 
-When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries. It still deletes the selected sandboxes and attempts to remove the modern local gateway registration. When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations. For a managed dual-Station vLLM runtime, full uninstall revalidates the exact recorded pair and removes both managed containers before starting the remaining uninstall steps. If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying. Pair cleanup can partially complete before an error; verify both Stations before the retry. For an authenticated host-local vLLM runtime, full uninstall verifies the exact named container, NemoClaw ownership label, persisted API key, and authentication fingerprint before removing the container by its inspected ID. When that ownership state is missing, full uninstall removes the reserved `nemoclaw-vllm` container only when Docker reports its NemoClaw managed label and a valid container ID. An unlabeled container or malformed inspection remains in place and stops the remaining uninstall steps. For managed llama.cpp, full uninstall verifies the exact named container and network ownership before removing both resources by their inspected IDs. These host-local checks run before NemoClaw deletes their state. If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery. Host-local cleanup can partially complete before an error. Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall. Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache by default. `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache. This opt-in can delete cached files that other applications installed or use. It preserves the Hugging Face `token` and `stored_tokens` authentication files. NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache. It does not scan arbitrary directories or delete model caches on remote peers. When sibling gateway environments remain, uninstall preserves both model stores even if you pass `--delete-models`. An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero. Cleanup can partially complete before an error, so resolve the reported error and rerun uninstall. It does not use the legacy `gateway destroy` command for that gateway.
+When the gateway is externally supervised, full uninstall refuses bulk sandbox cleanup and exits nonzero before deleting selected sandboxes, provider registrations, or the local gateway registration. It preserves that downstream state. Restore a NemoClaw-managed lifecycle authority and retry. It also preserves the externally supervised process, Docker resources, and OpenShell binaries. For a managed dual-Station vLLM runtime, full uninstall revalidates the exact recorded pair and removes both managed containers before starting the remaining uninstall steps. If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying. Pair cleanup can partially complete before an error; verify both Stations before the retry. For an authenticated host-local vLLM runtime, full uninstall verifies the exact named container, NemoClaw ownership label, persisted API key, and authentication fingerprint before removing the container by its inspected ID. When that ownership state is missing, full uninstall removes the reserved `nemoclaw-vllm` container only when Docker reports its NemoClaw managed label and a valid container ID. An unlabeled container or malformed inspection remains in place and stops the remaining uninstall steps. For managed llama.cpp, full uninstall verifies the exact named container and network ownership before removing both resources by their inspected IDs. These host-local checks run before NemoClaw deletes their state. If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery. Host-local cleanup can partially complete before an error. Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall. Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache by default. `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache. This opt-in can delete cached files that other applications installed or use. It preserves the Hugging Face `token` and `stored_tokens` authentication files. NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache. It does not scan arbitrary directories or delete model caches on remote peers. When sibling gateway environments remain, uninstall preserves both model stores even if you pass `--delete-models`. An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero. Cleanup can partially complete before an error, so resolve the reported error and rerun uninstall.
 
 <AgentOnly variant="openclaw">
 
@@ -4027,7 +4057,9 @@ Decision matrix:
 
 The preserved entries survive uninstall as inert files on disk. Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
 
-The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own. Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration. After uninstall confirms that no sibling gateways remain, it also deletes provider registrations. A NemoClaw-managed gateway also removes the Docker image. For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources. Uninstall warns about this at preserve time. After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it. Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
+The preserved `sandboxes.json` file does not make resources deleted by a completed managed uninstall recoverable on its own. A NemoClaw-managed uninstall deletes the selected sandboxes and attempts to remove the local gateway registration. After it confirms that no sibling gateways remain, it also deletes provider registrations and removes the Docker image. Uninstall warns about this at preserve time. After reinstalling, the installer reports records for deleted resources as not found on their recorded gateway instead of claiming they were recovered. Run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it. Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
+
+For an externally supervised gateway, full uninstall instead preserves the selected sandboxes, provider registrations, local gateway registration, and registry state. Restore NemoClaw-managed lifecycle authority and rerun uninstall. Do not use the stranded-record recovery above unless a managed cleanup path deleted the resource.
 
 #### `$$nemoclaw uninstall` vs. the hosted `uninstall.sh`
 
@@ -4208,7 +4240,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. For NVIDIA Endpoints, NemoClaw ignores a retired configured model and uses the agent default. Otherwise, NemoClaw preserves the explicit model across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or direct exposure. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Protected service ports remain unavailable. New endpoints cannot use port `11435`; recovery can retain a recorded legacy route on that port only after the auth proxy moves to a different free port and no other protected service owns `11435`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and address pinning remain active; wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
