@@ -604,6 +604,66 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("alpha snapshot restore");
   });
 
+  it("rejects an external-image clone before mutating the destination when image identity drifts", async () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const source: f.SandboxRecord = {
+      name: "alpha",
+      agent: "openclaw",
+      imageTag: reference,
+      workload: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+        shared: true,
+      },
+      openshellDriver: "docker",
+      provider: "nvidia",
+      model: "moonshotai/kimi-k2.6",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: "NVIDIA_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "alpha-generation-1",
+    };
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? source : null));
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      agentType: "openclaw",
+    });
+    const dependencies = await import("./snapshot/dependencies");
+    const preflight = vi
+      .spyOn(dependencies, "preflightExternalImageRebuild")
+      .mockImplementation(() => {
+        throw new Error("the inspected image identity does not match the durable receipt");
+      });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(preflight).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        agentName: "openclaw",
+        receipt: source.workload,
+        provider: expect.objectContaining({
+          identity: expect.objectContaining({ id: "docker" }),
+        }),
+      }),
+    );
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(
+      f.runOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+    ).toBe(false);
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot preflight external image for snapshot restore",
+    );
+  });
+
   it("reserves an explicit llama.cpp clone with the original owner and exact gateway authority", async () => {
     const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
     const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(

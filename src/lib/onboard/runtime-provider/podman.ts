@@ -10,6 +10,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
+  type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
@@ -144,7 +145,10 @@ export function createPodmanRuntimeProviderBundle(
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
-  const containerEngineOperations = new Map([
+  const containerEngineOperations = new Map<
+    RuntimeProviderContainerEngineOperation,
+    PodmanContainerEngine
+  >([
     ["host-doctor", hostDoctor],
     ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
     ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
