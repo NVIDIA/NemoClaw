@@ -4,6 +4,7 @@
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -775,8 +776,9 @@ describe("stopAll", () => {
     "signals a verified cloudflared process through a Linux pidfd",
     () => {
       const executable = join(pidDir, "cloudflared");
-      writeFileSync(executable, "#!/bin/sh\nsleep 20\n", { mode: 0o700 });
-      const subprocess = childProcess.spawn(executable, [], { stdio: "ignore" });
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
       const pid =
         subprocess.pid ??
         (() => {
