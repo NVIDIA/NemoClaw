@@ -760,7 +760,12 @@ export function buildManagedInferenceSafeguardCompaction(
           timeoutSeconds: N1X_COMPACTION_TIMEOUT_SECONDS,
         }
       : {}),
-    qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
+    qualityGuard: {
+      ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard,
+      // Temporary N1x mitigation for #12297. Restore the summary audit after
+      // guard-enabled compaction passes N1x recovery and continuity checks.
+      ...(isN1xManagedVllm ? { enabled: false } : {}),
+    },
   };
 }
 

@@ -170,7 +170,7 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     });
   });
 
-  it("gives the N1x managed-vLLM profile its extended compaction time (#11805)", () => {
+  it("disables the N1x summary audit while retaining its extended compaction time (#12297)", () => {
     const config = buildConfig({
       NEMOCLAW_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4",
       NEMOCLAW_PROVIDER_KEY: "inference",
@@ -188,12 +188,12 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
       mode: "safeguard",
       timeoutSeconds: 300,
       recentTurnsPreserve: 1,
-      qualityGuard: { enabled: true, maxRetries: 0 },
+      qualityGuard: { enabled: false, maxRetries: 0 },
       notifyUser: true,
     });
   });
 
-  it("carries the N1x preset through managed startup into generated config (#11805)", () => {
+  it("carries the N1x compaction mitigation through managed startup (#12297)", () => {
     const built = buildManagedStartupOnboardProfile({
       agentName: "openclaw",
       inference: {
@@ -231,7 +231,10 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     expect(mapped.configurationEnvironment.NEMOCLAW_SERVING_PRESET).toBe(
       "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
     );
-    expect(config.agents.defaults.compaction).toMatchObject({ timeoutSeconds: 300 });
+    expect(config.agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 300,
+      qualityGuard: { enabled: false, maxRetries: 0 },
+    });
     expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokens");
     expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokensFloor");
   });
