@@ -20,7 +20,7 @@ spec:
     architecture: arm64
     networkMode: bridge
     ipcMode: host
-    sharedMemoryBytes: 1073741824
+    sharedMemoryBytes: 34359738368
     gpuRequest: all
     devices: []
     ulimits:
@@ -46,12 +46,25 @@ spec:
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len
-        value: 4096
+        value: 16384
+      - name: --dtype
+        value: bfloat16
+      - name: --trust-remote-code
+      - name: --async-scheduling
       - name: --gpu-memory-utilization
-        value: 0.5
+        value: 0.95
       - name: --max-num-seqs
-        value: 1
-      # Numeric settings are schema examples, not a qualified serving configuration.
+        value: 2
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: qwen3_coder
+      - name: --reasoning-parser
+        value: nemotron_v3
+      - name: --limit-mm-per-prompt
+        value: '{"image":2,"video":0}'
+      # Accept inline images without giving the model server arbitrary media URL or host-file access.
+      - name: --allowed-media-domains
+        value: cobalt.invalid
 
   readiness:
     timeoutSeconds: 3600

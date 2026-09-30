@@ -9,7 +9,7 @@ metadata:
   displayName: Cobalt
 
 spec:
-  # These values are inert launch placeholders. Replace them with the released identity before activation.
+  # Bind the released artifact and its size before activation; the serving contract below is intentional.
   id: staging/cobalt
   revision: "0000000000000000000000000000000000000000"
   environmentValue: cobalt
@@ -25,7 +25,7 @@ spec:
   capabilities:
     chatCompletions: true
     streaming: true
-    toolCalls: false
-    structuredOutputs: false
-    reasoning: false
-    multimodal: false
+    toolCalls: true
+    structuredOutputs: true
+    reasoning: true
+    multimodal: true

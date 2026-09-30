@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +11,15 @@ import catalogSchema from "../../../managed-inference/schemas/catalog.schema.jso
 import modelSchema from "../../../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../../../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
-import { getManagedInferenceServingCatalogRegistries } from "../../../src/lib/inference/serving/adapter-registry.js";
+import {
+  getManagedInferenceServingCatalogRegistries,
+  isHostLocalInferenceServingRecipe,
+} from "../../../src/lib/inference/serving/adapter-registry.js";
+import { materializeHostLocalVllmModel } from "../../../src/lib/inference/serving/host-local-vllm-selection.js";
+import {
+  buildVllmServeCommand,
+  VLLM_EXTRA_ARGS_ENV,
+} from "../../../src/lib/inference/vllm-models.js";
 import { compileTrustedServingCatalog } from "../../../src/lib/inference/serving/catalog.js";
 import {
   managedInferenceCatalogFromServingCatalog,
@@ -83,6 +92,35 @@ describe("inactive Cobalt staging", () => {
     expect(listServingProfiles(stagingCatalog(), { readinessReports: [] })).toMatchObject([
       { id: PRESET_ID, compatible: false, incompatibilityReason: "Profile is disabled." },
     ]);
+  });
+
+  it("materializes the fixed BF16 command with bounded media and direct tools", () => {
+    const recipe = stagingCatalog().recipes[0]!;
+    assert.ok(isHostLocalInferenceServingRecipe(recipe), "Expected host-local recipe");
+    const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "station");
+    const command = buildVllmServeCommand(model, {
+      [VLLM_EXTRA_ARGS_ENV]: '["--max-model-len","999999"]',
+    });
+    expect(model).toMatchObject({
+      servedModelId: "cobalt",
+      maxModelLen: 16384,
+      managedBearerAuth: true,
+      fixedServeCommand: true,
+      installFastSafetensors: false,
+      runtime: { gpuMemoryUtilization: 0.95 },
+    });
+    expect(model.runtime?.dockerRunArgs).toContain("34359738368b");
+    expect(command).toContain("--max-model-len 16384");
+    expect(command).toContain("--dtype bfloat16");
+    expect(command).toContain("--enable-auto-tool-choice");
+    expect(command).toContain("--tool-call-parser qwen3_coder");
+    expect(command).toContain("--reasoning-parser nemotron_v3");
+    expect(command).toContain('--limit-mm-per-prompt \'{"image":2,"video":0}\'');
+    expect(command).toContain("--allowed-media-domains cobalt.invalid");
+    expect(command).toContain("HF_HUB_OFFLINE=1");
+    expect(command).not.toMatch(
+      /999999|pip install|--allowed-local-media-path|--speculative-config/,
+    );
   });
 
   it.each([PRESET_ID, "Cobalt on one DGX Station"])(
