@@ -32,11 +32,8 @@ impl QuestionResolver<'_> {
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
                     id: field.path,
-                    reason: if field
-                        .suggestion
-                        .as_ref()
-                        .is_some_and(|value| schema_accepts(&field.schema, value) == Some(false))
-                    {
+                    // A `false` schema marks a supplied key the SDK does not define.
+                    reason: if field.schema == Value::Bool(false) {
                         JourneyQuestionReason::InvalidSupplied
                     } else {
                         JourneyQuestionReason::ExplicitAsk
