@@ -46,8 +46,9 @@ The install refuses package removals, preserving the runner's Docker and contain
 - The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman from the pinned v5.7.0 source commit while
-  reusing the reviewed native helper toolchain. Select it only with the `podman`
-  gateway runtime.
+  reusing the reviewed native helper toolchain. Select it with
+  `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
+  gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
