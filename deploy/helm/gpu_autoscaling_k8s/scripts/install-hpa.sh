@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Install GPU HPA (DCGM → prometheus-adapter → gpu_utilization_percent) and, when
-# ENABLE_ENVOY_LB=1 (default), the Envoy Gateway control plane that load-balances
+# ENABLE_ENVOY_LB=1 (default), the Envoy load balancer that spreads
 # traffic across HPA replicas with LeastRequest. Set ENABLE_ENVOY_LB=0 to skip Envoy
 # and use the metrics-proxy Service only.
 # Script output is HPA-focused only; see ../README.md for full operations.
@@ -367,7 +367,7 @@ EOF
     sleep 5
   done
   kubectl get gatewayclass "${INGRESS_CLASS}" >/dev/null 2>&1 || {
-    echo "Envoy Gateway installed but GatewayClass ${INGRESS_CLASS} not found — Gateway cannot route traffic" >&2
+    echo "Envoy load balancer installed but GatewayClass ${INGRESS_CLASS} not found — Envoy cannot route traffic" >&2
     exit 1
   }
 }
@@ -430,7 +430,7 @@ else
   if hpa_common_envoy_lb_enabled; then
     ensure_envoy_gateway
   else
-    echo "ENABLE_ENVOY_LB=0: skipping Envoy Gateway install; inference uses the metrics-proxy Service only." >&2
+    echo "ENABLE_ENVOY_LB=0: skipping Envoy load balancer install; inference uses the metrics-proxy Service only." >&2
   fi
 fi
 

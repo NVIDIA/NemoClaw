@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Configure OpenShell's gateway-scoped inference route through Envoy Gateway
+# Configure OpenShell's gateway-scoped inference route through the Envoy load balancer
 # (LeastRequest) when ENABLE_ENVOY_LB=1 / a Gateway exists, otherwise through the
 # metrics-proxy Service, then create a sandbox for the agent selected by AGENT_NAME
 # (openclaw | hermes | deepagents) without assigning it a GPU.
@@ -339,7 +339,6 @@ EOF
       sed -i "s/^NEMOCLAW_SANDBOX_NPROC_LIMIT=512$/NEMOCLAW_SANDBOX_NPROC_LIMIT=8192/" \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh
     fi
-    rm -rf /sandbox/.openclaw/npm
   ' >/dev/null 2>&1 || true
 fi
 
@@ -404,7 +403,7 @@ esac
 
 echo "${AGENT_DISPLAY_NAME} sandbox ${SANDBOX_NAME} is ready without a GPU."
 if kubectl get gateway "${INFERENCE_GATEWAY}" -n "${INFERENCE_NAMESPACE}" >/dev/null 2>&1; then
-  echo "Inference routes through OpenShell → Envoy Gateway (LeastRequest) → ${BASE_URL}; only the GPU HPA pods request GPUs."
+  echo "Inference routes through OpenShell → Envoy load balancer (LeastRequest) → ${BASE_URL}; only the GPU HPA pods request GPUs."
 else
   echo "Inference routes through OpenShell → metrics-proxy Service → ${BASE_URL} (Envoy LB disabled); only the GPU HPA pods request GPUs."
 fi

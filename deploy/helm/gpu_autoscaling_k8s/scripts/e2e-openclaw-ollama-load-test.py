@@ -5,8 +5,9 @@
 OpenClaw + Ollama e2e: N end users send prompts into N CPU OpenClaw sandboxes.
 Default N is E2E_USERS=10 (one sandbox per user). GPU inference is Ollama.
 
-Each user talks only to its sandbox's already-running OpenClaw agent (:18789).
+Each user talks only to its sandbox (:18789). 1:1 mapping.
 Do not spawn `openclaw agent -m` (that starts a second Node CLI).
+Inflight defaults split the Job peak (640/pod) across E2E_USERS.
 
     openshell sandbox exec → chat.send on ws://127.0.0.1:18789/ws
 
@@ -42,12 +43,11 @@ FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Same synthetic questions as files/load-generator.ts (not short one-word chats).
 PROMPTS = [
-    "In one sentence, what is an AI agent sandbox?",
-    "Say OK in one word.",
-    "Name one reason to isolate an agent from the GPU node.",
-    "Reply with a single short greeting.",
-    "In one sentence, what does GPU autoscaling do?",
+    "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
+    "Write a long summary of transformer inference on NVIDIA GPUs.",
+    "Describe how Ollama serves models and batches concurrent chat requests.",
 ]
 
 
@@ -218,17 +218,17 @@ async def run_test(args: argparse.Namespace) -> int:
 
     print("=" * 70)
     print("  E2E test: OpenClaw + Ollama")
-    print(f"  {args.users} end users send requests to {args.users} OpenClaw agents")
-    print(f"  {args.users} agents run in {args.users} OpenShell sandboxes on CPU")
+    print(f"  {args.users} end users send requests to {args.users} OpenClaw sandboxes (1:1)")
+    print(f"  {args.users} OpenClaw sandboxes run on CPU")
     print(f"  LLM (Ollama {args.model}) runs on GPUs")
     print("  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs")
     print(f"  Sandboxes: {args.prefix}0000 … {args.prefix}{args.users - 1:04d}")
-    print("  Each user prompts the already-running OpenClaw agent on :18789")
-    print("  Path: end user → CPU agent/sandbox → https://inference.local → Envoy → GPU Ollama HPA")
+    print("  Each user prompts that user's sandbox on :18789")
+    print("  Path: end user → OpenClaw sandbox → https://inference.local → Envoy load balancer → GPU Ollama HPA")
     print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
     print(
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
-        "(keep this small; OpenClaw RAM is the CPU-sandbox limit)"
+        "(1:1 user→sandbox :18789; keep per-sandbox inflight under 128 on 4Gi)"
     )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
@@ -372,18 +372,18 @@ def main() -> int:
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/openclaw-ollama"))
     parser.add_argument("--model", default=os.environ.get("INFERENCE_MODEL", "llama3.2:3b"))
     parser.add_argument("--duration", type=int, default=int(os.environ.get("DURATION_SEC", "900")))
-    parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "180")))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "600")))
     parser.add_argument(
         "--inflight-per-user",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "1")),
-        help="Max concurrent chats per agent. Keep well below Job 640/pod — OpenClaw RAM OOMs the CPU sandbox.",
+        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "40")),
+        help="Max concurrent chats per sandbox. 128 OOM-kills 4Gi OpenClaw.",
     )
     parser.add_argument(
         "--inflight-start",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
-        help="Bootstrap concurrent chats per agent before ramping (1–2 keeps CPU RAM low)",
+        default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "16")),
+        help="Bootstrap concurrent chats per sandbox before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))

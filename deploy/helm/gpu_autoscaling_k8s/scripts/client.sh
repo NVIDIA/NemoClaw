@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# End-user client for the OpenClaw + Ollama e2e. One simulated user per
+# sandbox (1:1). user-i sends chat.send to sandbox openclaw-ollama-e2e-00i
+# on that sandbox's :18789. Clients do not build images, create sandboxes,
+# or start OpenClaw. Run ./scripts/agentscaling.sh first.
+#
+# Default inflight 16→40 per sandbox so five users can keep GPU HPA busy.
+# 128 chats per 4Gi sandbox OOM-kills OpenClaw (exit 137). Users never talk
+# to the Envoy load balancer. OpenShell is only the exec tunnel into each
+# sandbox; it is not the user-facing listener.
+#
+# Usage:
+#   cd deploy/helm/gpu_autoscaling_k8s
+#   E2E_USERS=5 ./scripts/client.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+export PATH="${HOME}/.local/bin:${PATH}"
+export E2E_USERS="${E2E_USERS:-5}"
+export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
+export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
+export INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
+export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
+export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
+export TARGET_PODS="${TARGET_PODS:-8}"
+export DURATION_SEC="${DURATION_SEC:-900}"
+export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
+export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
+export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
+export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-16}"
+export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-40}"
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
+export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
+E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
+
+command -v openshell >/dev/null 2>&1 || fail "missing command: openshell"
+command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
+command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
+
+[[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
+openshell status >/dev/null \
+  || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
+
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenClaw sandboxes (1:1). No sandbox create."
+missing=0
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  if ! kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" >/dev/null 2>&1; then
+    echo "ERROR: sandbox ${name} does not exist (user-${i}). Run ./scripts/agentscaling.sh first." >&2
+    missing=1
+    continue
+  fi
+  echo "  user-${i} → ${name} :18789"
+done
+((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling.sh"
+
+echo "Checking each sandbox listens on :18789 (do not send chat if this fails)"
+unhealthy=0
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  if kubectl exec -n "${OPENSHELL_NAMESPACE}" "${name}" -c agent -- bash -c '
+    for ns in /run/netns/*; do
+      [ -e "$ns" ] || continue
+      code="$(nsenter --net="$ns" curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true)"
+      case "$code" in 200|401) exit 0 ;; esac
+    done
+    exit 1
+  ' >/dev/null 2>&1; then
+    echo "  ${name}: :18789 up"
+  else
+    echo "ERROR: ${name} is Running but OpenClaw is not listening on :18789. Run ./scripts/agentscaling.sh start." >&2
+    unhealthy=1
+  fi
+done
+((unhealthy == 0)) || fail "client will not send chat until every sandbox listens on :18789"
+
+mkdir -p "${E2E_OUTPUT_DIR}"
+cd "${CHART_DIR}"
+exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
+  --users "${E2E_USERS}" \
+  --prefix "${SANDBOX_PREFIX}" \
+  --output "${E2E_OUTPUT_DIR}" \
+  --model "${INFERENCE_MODEL}" \
+  --duration "${DURATION_SEC}" \
+  --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
+  --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \
+  --target-pods "${TARGET_PODS}" \
+  --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
+  --hpa-namespace "${NAMESPACE}" \
+  --hpa-name "${HPA_NAME}" \
+  --scale-down-wait-loops "${SCALE_DOWN_WAIT_LOOPS}"

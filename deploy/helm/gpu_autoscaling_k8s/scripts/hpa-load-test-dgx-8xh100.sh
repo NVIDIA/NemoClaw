@@ -18,7 +18,7 @@
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/hpa-load-test-dgx-8xh100.sh
 # Optional: SKIP_ENVOY_LB_TEST=1 to skip the Envoy distribution check.
-# ENABLE_ENVOY_LB=0 also skips that check (no Envoy Gateway to probe).
+# ENABLE_ENVOY_LB=0 also skips that check (no Envoy load balancer to probe).
 # Latency: HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test-dgx-8xh100.sh
 set -euo pipefail
 

@@ -11,7 +11,7 @@
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/hpa-load-test-brev-4xl40s.sh
 # Optional: SKIP_ENVOY_LB_TEST=1 to skip the Envoy distribution check.
-# ENABLE_ENVOY_LB=0 also skips that check (no Envoy Gateway to probe).
+# ENABLE_ENVOY_LB=0 also skips that check (no Envoy load balancer to probe).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -9,7 +9,7 @@
 #
 # It does not start files/load-generator.ts. Does not source e2e-common.sh
 # (pairing tests force ENABLE_AUTOSCALING=0). Does not reinstall Prometheus,
-# Envoy Gateway, or OpenShell. Does not change the 4× L40S profile. Does not
+# the Envoy load balancer, or OpenShell. Does not change the 4× L40S profile. Does not
 # create or destroy openclaw-e2e-* or hermes-onprem.
 #
 # Do not run this while the OpenClaw e2e owns the GPUs.

@@ -3,15 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # OpenClaw + Ollama e2e 8×H100 saturator: N end users, each with one CPU
-# OpenClaw sandbox and one OpenClaw agent. Users send prompts into those
-# sandboxes; OpenClaw calls inference.local → Envoy → Ollama GPU HPA in
+# OpenClaw sandbox. Users send prompts into those sandboxes; each sandbox
+# calls inference.local → Envoy → Ollama GPU HPA in
 # namespace/release nemoclaw-gpu.
 # Same minReplicas=1 / maxReplicas=8 as hpa-load-test-dgx-8xh100.sh.
 # This does not replace that Job (files/load-generator.ts); keep the Job as
 # the fast HPA-only test. It does not start load-generator.ts. Does not
 # source e2e-common.sh (pairing tests force ENABLE_AUTOSCALING=0). Does not
-# reinstall Prometheus, Envoy Gateway, or OpenShell. Does not add extra
-# OpenShell/Envoy gateways — START_AGENTS starts N OpenClaw agents.
+# reinstall Prometheus, the Envoy load balancer, or OpenShell. Does not add extra
+# OpenShell gateways — START_AGENTS starts N OpenClaw sandboxes.
 # Does not change the 4× L40S profile. Does not use the Deep Agents + vLLM
 # stack (nemoclaw-deepagents-vllm). Hermes + vLLM e2e is
 # test-hermes-e2e-hpa.sh and is not run from this script.
@@ -69,21 +69,33 @@ export E2E_USERS="${E2E_USERS:-10}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
 export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-1Gi}"
+export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
+export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export INFLIGHT_PER_GPU="${INFLIGHT_PER_GPU:-320}"
 export LOAD_MULTIPLIER="${LOAD_MULTIPLIER:-2}"
 export MAX_INFLIGHT_PER_POD="${MAX_INFLIGHT_PER_POD:-640}"
-export MAX_TOKENS="${MAX_TOKENS:-128}"
+# Job questions tokenize at ~38 llama3.2 tokens (Ollama prompt_eval_count).
+# max_tokens is the answer cap; 16× that is a long reply vs the ~38-token ask.
+export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
+export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
+export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 HPA_BASELINE_WAIT_SEC="${HPA_BASELINE_WAIT_SEC:-240}"
-# One in-flight prompt per user keeps the sandbox light (one agent, no extra Node CLI).
-# Do not reuse the Job's BOOTSTRAP_INFLIGHT=160.
-E2E_BOOTSTRAP_INFLIGHT="${E2E_BOOTSTRAP_INFLIGHT:-32}"
-E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+# 1–2 chats per user (typical turn). Path stays user → sandbox → Envoy.
+E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
+E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+if ((E2E_INFLIGHT_PER_USER > 16)); then
+  echo "E2E_INFLIGHT_PER_USER=${E2E_INFLIGHT_PER_USER} is too high for 4Gi OpenClaw RAM. Capping at 16." >&2
+  E2E_INFLIGHT_PER_USER=16
+fi
+if ((E2E_INFLIGHT_START_PER_USER > E2E_INFLIGHT_PER_USER)); then
+  E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_PER_USER}"
+fi
+export E2E_INFLIGHT_START_PER_USER E2E_INFLIGHT_PER_USER
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
-# Start one OpenClaw agent per sandbox (not extra OpenShell/Envoy gateways).
+# Start one OpenClaw sandbox per user (not extra OpenShell gateways).
 # START_GATEWAYS is a deprecated alias for START_AGENTS.
 START_AGENTS="${START_AGENTS:-${START_GATEWAYS:-1}}"
 SKIP_INSTALL_HPA="${SKIP_INSTALL_HPA:-0}"
@@ -157,23 +169,14 @@ elif [[ "${START_AGENTS}" == "1" ]]; then
   E2E_USERS="${E2E_USERS}" "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" start
 fi
 
-echo "E2E test: OpenClaw + Ollama — ${E2E_USERS} end users send requests to ${E2E_USERS} agents"
-echo "  ${E2E_USERS} agents run in ${E2E_USERS} OpenShell sandboxes on CPU; LLM runs on GPUs"
+echo "E2E test: OpenClaw + Ollama — ${E2E_USERS} end users send requests to ${E2E_USERS} sandboxes"
+echo "  ${E2E_USERS} OpenClaw sandboxes run on CPU; LLM runs on GPUs"
 echo "  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs"
 echo "  All ${E2E_USERS} sandboxes share one OpenShell gateway."
+echo "  One sandbox per user; ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY}; inflight ${E2E_INFLIGHT_START_PER_USER}→${E2E_INFLIGHT_PER_USER}; question≈${QUESTION_AVG_TOKENS} tok; max_tokens=${MAX_TOKENS}"
+echo "  Client ./scripts/client.sh (no sandbox create). ./scripts/agentscaling.sh already ran above."
 set +e
-python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
-  --users "${E2E_USERS}" \
-  --prefix "${SANDBOX_PREFIX}" \
-  --output "${E2E_OUTPUT_DIR}" \
-  --model "${INFERENCE_MODEL}" \
-  --duration "${DURATION_SEC}" \
-  --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
-  --target-pods "${TARGET_PODS}" \
-  --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
-  --hpa-namespace "${NAMESPACE}" \
-  --hpa-name "${HPA_NAME}" \
-  --scale-down-wait-loops "${SCALE_DOWN_WAIT_LOOPS}"
+"${SCRIPT_DIR}/client.sh"
 LOAD_RC=$?
 set -e
 
@@ -181,5 +184,5 @@ hpa_common_print_hpa "${NAMESPACE}" || true
 if [[ "${LOAD_RC}" -ne 0 ]]; then
   fail "sandbox saturator failed (exit ${LOAD_RC}); results in ${E2E_OUTPUT_DIR}"
 fi
-echo "OK: OpenClaw + Ollama e2e — ${E2E_USERS} CPU agents in ${E2E_USERS} sandboxes; end-user demand scaled GPU HPA ${NAMESPACE}/${RELEASE} 1→8→1."
-echo "Tear down only these sandboxes with: ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh cleanup"
+echo "OK: OpenClaw + Ollama e2e — ${E2E_USERS} end users → ${E2E_USERS} sandboxes; demand scaled GPU HPA ${NAMESPACE}/${RELEASE} 1→8→1."
+echo "Tear down only these sandboxes with: ./scripts/agentscaling.sh cleanup"

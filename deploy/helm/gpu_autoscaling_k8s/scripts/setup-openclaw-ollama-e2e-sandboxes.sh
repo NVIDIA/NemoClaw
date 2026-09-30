@@ -6,12 +6,12 @@
 # user) for the OpenClaw + Ollama HPA e2e. The model stays on Ollama GPU pods
 # in nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → Ollama HPA.
 #
-# Sandboxes are light CPU front ends (default 1 CPU / 1Gi). They do not run
+# Sandboxes are light CPU front ends (default 1 CPU / 4Gi). They do not run
 # inference; GPUs do. Create skips smoke, supervisor SSH waits, and NVIDIA
 # policy retries. Start is parallel, pins a slim OpenClaw config (nemoclaw
-# plugin only), sets NEMOCLAW_MINIMAL_BOOTSTRAP=1, and strips unused
-# .openclaw/npm plugin trees so start does not walk hundreds of MiB of
-# messaging node_modules. Do not spawn a second Node CLI.
+# plugin only, empty extra channels), sets NEMOCLAW_MINIMAL_BOOTSTRAP=1, and
+# strips unused .openclaw/npm plugin trees so start does not walk hundreds of
+# MiB of messaging node_modules. Do not spawn a second Node CLI.
 #
 # Does not run openshell gateway start, nemoclaw launch, or the metrics-proxy
 # chat-completions Job (hpa-load-test-*.sh). Keep that Job as the fast HPA-only
@@ -104,12 +104,17 @@ export AGENT_SANDBOX_IMAGE
 # E2E sandboxes only proxy prompts. Keep requests small so N pods schedule
 # quickly; pairing/create-agent-sandbox.sh still defaults to 2 CPU / 4Gi.
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-1Gi}"
+# 1Gi/2Gi/4Gi OOM-kill OpenClaw before :18789 binds when leftover Node
+# workers remain (openclaw-devices ~150–220Mi each). 8Gi is the floor
+# that lets one OpenClaw listen for the client.
+export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
+export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
+export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
 export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
 export SKIP_INFERENCE_VERIFY="${SKIP_INFERENCE_VERIFY:-1}"
-export AGENT_START_TIMEOUT_SEC="${AGENT_START_TIMEOUT_SEC:-180}"
+export AGENT_START_TIMEOUT_SEC="${AGENT_START_TIMEOUT_SEC:-300}"
 export OPENSHELL_PROVIDER_NAME="${OPENSHELL_PROVIDER_NAME:-$(agent_common_default_provider_name "${AGENT_NAME}")}"
 
 STATE_DIR="${E2E_STATE_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama-agents}"
@@ -274,15 +279,30 @@ inference_local_ok() {
 
 pin_openclaw_ollama_model() {
   local name="${1:?sandbox}"
+  local out
   [[ -f "${PIN_OPENCLAW_MODEL_PY}" ]] || fail "missing ${PIN_OPENCLAW_MODEL_PY}"
-  kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
-    python3 - "${INFERENCE_MODEL}" <"${PIN_OPENCLAW_MODEL_PY}" >/dev/null
+  out="$(
+    kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
+      python3 - "${INFERENCE_MODEL}" "${MAX_TOKENS:-128}" <"${PIN_OPENCLAW_MODEL_PY}"
+  )" || fail "${name}: OpenClaw pin failed"
+  echo "  ${name}: ${out}"
+}
+
+prune_unused_openclaw_npm() {
+  local name="${1:?sandbox}"
+  # Official image seeds ~378Mi of unused messaging plugin npm trees.
+  # Start walks that tree in normalize_mutable_config_perms. Drop it only
+  # after the pin overwrote .bak / last-good so OpenClaw cannot restore
+  # those plugin entries and npm-install them.
+  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
+    bash -c 'rm -rf /sandbox/.openclaw/npm' >/dev/null
 }
 
 slim_one_sandbox() {
   local name="${1:?sandbox}"
   skip_connect_shell_nproc "${name}"
   pin_openclaw_ollama_model "${name}"
+  prune_unused_openclaw_npm "${name}"
 }
 
 skip_connect_shell_nproc() {
@@ -305,10 +325,6 @@ EOF
       /tmp/nemoclaw-nemotron-inference-fix.js /tmp/nemoclaw-ciao-network-guard.js \
       /tmp/nemoclaw-gateway.pid \
       /tmp/.nemoclaw-start.log.tmp.* /tmp/.nemoclaw-sandbox-safety-net.js.tmp.*
-    # Official image seeds ~378Mi of unused messaging plugin npm trees under
-    # .openclaw/npm. Start walks that tree twice in normalize_mutable_config_perms
-    # and stalls for minutes. E2E only needs the nemoclaw plugin; GPUs do inference.
-    rm -rf /sandbox/.openclaw/npm
   ' >/dev/null
 }
 
@@ -392,16 +408,18 @@ stop_one_agent() {
     fi
     rm -f "${pidfile}"
   fi
-  # Host-side openshell exec can die while openclaw-gateway stays in the
-  # sandbox (AUTH_RATE_LIMITED survives). killall is not always installed;
-  # match the process name from ps. Do not pkill -f the e2e script name.
-  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
-    ps -eo pid=,args= | awk "
-      /openclaw-gateway/ && !/awk/ {print \$1}
-      /E2E_SESSION_KEY/ && !/awk/ {print \$1}
-    " | xargs -r kill 2>/dev/null || true
-  ' >/dev/null 2>&1 || true
-  echo "  ${name}: OpenClaw agent start process stopped"
+  # Image/e2e leftovers keep extra nemoclaw-start + openclaw copies. Pin then
+  # races those processes, which restore bak.1 plugin entries and hold the
+  # startup-migration lock. Match OpenClaw processes only; do not pkill -f
+  # the host e2e script name.
+  # Copy the killer into the pod. Do not put process-name patterns in
+  # kubectl exec argv: awk would match this exec and abort the stop.
+  local killer="${CHART_DIR}/files/e2e-stop-openclaw.sh"
+  [[ -f "${killer}" ]] || fail "missing ${killer}"
+  kubectl cp "${killer}" "${E2E_SANDBOX_NS}/${name}:/tmp/e2e-stop-openclaw.sh" -c agent >/dev/null 2>&1 || true
+  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
+    sh /tmp/e2e-stop-openclaw.sh >/dev/null 2>&1 || true
+  echo "  ${name}: leftover OpenClaw/Node processes stopped"
 }
 
 count_from_existing() {
@@ -423,7 +441,7 @@ start_agents() {
   local count="${1:?count}"
   local i name started_at="${SECONDS}"
   local -a names=() pending=() already=() finish_pids=() finish_names=() failed=()
-  echo "Starting ${count} OpenClaw agents in parallel (${SANDBOX_PREFIX}0000…). Cluster still has one OpenShell gateway and one Envoy Gateway."
+  echo "Starting ${count} OpenClaw agents in parallel (${SANDBOX_PREFIX}0000…). Cluster still has one OpenShell gateway and one Envoy load balancer."
   echo "  Light CPU sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY}); GPUs do inference."
   echo "  One agent per sandbox (nemoclaw-start, NEMOCLAW_MINIMAL_BOOTSTRAP=1). Not sequential :18789 waits."
   echo "  pointing OpenShell inference backend at Envoy dataplane pod IP (not ClusterIP)"
@@ -495,8 +513,9 @@ bringup_one() {
   else
     create_one_sandbox "${name}" || return 1
   fi
-  slim_one_sandbox "${name}" || return 1
+  # Stop leftover OpenClaw before pin, or bak.1 / sqlite restores plugins.
   stop_one_agent "${name}" >/dev/null || true
+  slim_one_sandbox "${name}" || return 1
   launch_one_agent "${name}"
   wait_names_healthy "${name}" || return 1
 }

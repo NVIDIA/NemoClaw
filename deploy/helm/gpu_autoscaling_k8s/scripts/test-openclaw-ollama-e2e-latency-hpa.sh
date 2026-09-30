@@ -77,7 +77,7 @@ export E2E_USERS="${E2E_USERS:-10}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
 export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-1Gi}"
+export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
 # Match the Job's completion size so each proxied chat holds the GPU long enough
 # for metrics-proxy's rolling latency_avg (128-sample window) to rise.
 export MAX_TOKENS="${MAX_TOKENS:-128}"

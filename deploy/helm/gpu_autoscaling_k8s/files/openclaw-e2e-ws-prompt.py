@@ -265,10 +265,9 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
     prompts = [
-        prompt or "Say OK in one word.",
-        "In one sentence, what is an AI agent sandbox?",
-        "Name one reason to isolate an agent from the GPU node.",
-        "In one sentence, what does GPU autoscaling do?",
+        prompt or "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
+        "Write a long summary of transformer inference on NVIDIA GPUs.",
+        "Describe how Ollama serves models and batches concurrent chat requests.",
     ]
     stop = threading.Event()
     ok = 0
