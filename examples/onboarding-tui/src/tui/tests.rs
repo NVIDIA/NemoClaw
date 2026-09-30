@@ -26,6 +26,12 @@ fn onboarding_screen_keeps_the_existing_wordmark() {
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let screen = terminal.backend().to_string();
     assert!(screen.contains("███╗"), "missing wordmark: {screen}");
+    assert!(
+        screen
+            .chars()
+            .any(|character| ('\u{2800}'..='\u{28ff}').contains(&character)),
+        "missing the prior logo texture: {screen}"
+    );
 }
 
 #[test]

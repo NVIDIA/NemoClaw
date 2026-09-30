@@ -14,6 +14,24 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+const LOGO_GRADIENT: [Color; 6] = [
+    Color::Rgb(180, 246, 72),
+    Color::Rgb(154, 226, 51),
+    Color::Rgb(128, 205, 31),
+    Color::Rgb(105, 183, 24),
+    Color::Rgb(82, 157, 28),
+    Color::Rgb(61, 128, 31),
+];
+const TEXTURE_GRADIENT: [Color; 7] = [
+    Color::Rgb(35, 75, 38),
+    Color::Rgb(49, 105, 39),
+    Color::Rgb(70, 139, 36),
+    Color::Rgb(95, 174, 31),
+    Color::Rgb(118, 185, 0),
+    Color::Rgb(145, 213, 37),
+    Color::Rgb(174, 238, 72),
+];
+
 impl JourneyWizard {
     #[cfg(test)]
     pub(super) fn render(&self, frame: &mut Frame<'_>) {
@@ -227,9 +245,25 @@ impl JourneyWizard {
                 }
                 spans.push(Span::raw("  "));
             }
-            spans.push(Span::styled(row, Style::new().fg(Color::Rgb(118, 185, 0))));
+            spans.push(Span::styled(row, Style::new().fg(LOGO_GRADIENT[index])));
             lines.push(Line::from(spans));
         }
+        lines.push(texture_line(area.width as usize));
         frame.render_widget(Paragraph::new(lines), area);
     }
+}
+
+fn texture_line(width: usize) -> Line<'static> {
+    const CELLS: [char; 14] = [
+        '⠁', '⠃', '⠇', '⡇', '⣇', '⣧', '⣷', '⣿', '⣾', '⣼', '⣸', '⢸', '⠸', '⠘',
+    ];
+    Line::from(
+        (0..width)
+            .map(|column| {
+                let wave = column % CELLS.len();
+                let color = TEXTURE_GRADIENT[(column / 7) % TEXTURE_GRADIENT.len()];
+                Span::styled(CELLS[wave].to_string(), Style::new().fg(color))
+            })
+            .collect::<Vec<_>>(),
+    )
 }
