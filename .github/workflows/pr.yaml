@@ -532,7 +532,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@d60ee0bb36e582f83846f41a1b7e94719fcd89f6
+        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit

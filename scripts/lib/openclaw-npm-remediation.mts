@@ -27,8 +27,8 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
+  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici" | "undici-security";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.1";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -107,6 +107,47 @@ const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
 const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz";
+const UNDICI_SECURITY_TARGETS: Readonly<
+  Record<
+    string,
+    Readonly<{
+      name: string;
+      previous: string;
+      version: string;
+      integrity: string;
+      node: string;
+      bundled: boolean;
+    }>
+  >
+> = Object.freeze({
+  "openclaw@2026.9.1": {
+    name: "openclaw",
+    previous: "8.10.0",
+    version: "8.10.2",
+    bundled: false,
+    integrity:
+      "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
+    node: ">=22.19.0",
+  },
+  "@openclaw/discord@2026.9.1": {
+    name: "@openclaw/discord",
+    previous: "8.10.0",
+    version: "8.10.2",
+    bundled: true,
+    integrity:
+      "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
+    node: ">=22.19.0",
+  },
+  "@openclaw/slack@2026.9.1": {
+    name: "@openclaw/slack",
+    previous: "7.29.0",
+    version: "7.29.1",
+    bundled: true,
+    integrity:
+      "sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==",
+    node: ">=20.18.1",
+  },
+});
 const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
@@ -126,6 +167,25 @@ const OTEL_CORE_INTEGRITY =
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  // Retire these after a reviewed OpenClaw release ships patched Undici dependencies and bundles.
+  "openclaw@2026.9.1": {
+    kind: "undici-security",
+    version: "2026.9.1",
+    expectedPatchedTreeIntegrity:
+      "sha512-XLwwECWs8nL8/WJ/PplTcL0GyG6VGt0nN8K9idVv3/lKZiMAsJM1aw7SKj68b9Co9UD2iEhWfQKaGC6Pgoeniw==",
+  },
+  "@openclaw/discord@2026.9.1": {
+    kind: "undici-security",
+    version: "2026.9.1",
+    expectedPatchedTreeIntegrity:
+      "sha512-UFBks0k94yKmtnD/D6I908I5vQwlUSohBFdjLdHFhf3cS0SeBpTDMoflBixsj6C3I/QWg6xhBPWJD1o4riDtsQ==",
+  },
+  "@openclaw/slack@2026.9.1": {
+    kind: "undici-security",
+    version: "2026.9.1",
+    expectedPatchedTreeIntegrity:
+      "sha512-iLZXmYOy8g++8oqMEP95lCYLH0OgD5jm0QiqoEQTMYgMiMPrBRjwpX406n5SKIqTYW8bnTGDlTVoTEjMO/dJYQ==",
+  },
   "@openclaw/diagnostics-otel@2026.6.10": {
     expectedPatchedMetadataIntegrity:
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
@@ -1124,6 +1184,69 @@ function packReplacement(
   });
 }
 
+export function patchOpenClawUndiciDependency(packageDirectory: string, packageSpec: string): void {
+  const target = UNDICI_SECURITY_TARGETS[packageSpec];
+  if (!target) throw new Error(`No Undici security update is defined for ${packageSpec}`);
+  const manifestPath = join(packageDirectory, "package.json");
+  const manifest = readJson(manifestPath);
+  requirePackageIdentity(manifest, target.name, "2026.9.1", packageSpec);
+  const bundledPath = join(packageDirectory, "node_modules", "undici");
+  const bundles = manifest.bundleDependencies ?? manifest.bundledDependencies ?? [];
+  if (
+    manifest.dependencies?.undici !== target.previous ||
+    !Array.isArray(bundles) ||
+    bundles.includes("undici") !== target.bundled ||
+    existsSync(bundledPath) !== target.bundled ||
+    existsSync(join(packageDirectory, "npm-shrinkwrap.json"))
+  ) {
+    throw new Error(`${packageSpec} Undici dependency contract changed after review`);
+  }
+  if (target.bundled) {
+    requirePackageIdentity(
+      readJson(join(bundledPath, "package.json")),
+      "undici",
+      target.previous,
+      packageSpec,
+    );
+  }
+  manifest.dependencies.undici = target.version;
+  writeJson(manifestPath, manifest);
+}
+
+function remediateSecurityUndici(
+  sourcePackage: string,
+  packageSpec: string,
+  remediationRoot: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const target = UNDICI_SECURITY_TARGETS[packageSpec];
+  if (!target) throw new Error(`No Undici security update is defined for ${packageSpec}`);
+  const replacement = packReplacement(
+    `undici@${target.version}`,
+    target.integrity,
+    `https://registry.npmjs.org/undici/-/undici-${target.version}.tgz`,
+    remediationRoot,
+    env,
+  );
+  const directory = extractArchive(
+    replacement.archivePath,
+    join(remediationRoot, "undici"),
+    remediationRoot,
+    env,
+  );
+  const manifest = readJson(join(directory, "package.json"));
+  requirePackageIdentity(manifest, "undici", target.version, "Undici security update");
+  if (
+    Object.keys(manifest.dependencies ?? {}).length !== 0 ||
+    manifest.engines?.node !== target.node
+  ) {
+    throw new Error(`undici@${target.version} package contract changed after review`);
+  }
+  patchOpenClawUndiciDependency(sourcePackage, packageSpec);
+  if (target.bundled)
+    copyReplacementPackage(directory, join(sourcePackage, "node_modules", "undici"));
+}
+
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -1149,7 +1272,9 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "core") {
+  if (remediation.kind === "undici-security") {
+    remediateSecurityUndici(sourcePackage, request.packageSpec, remediationRoot, env);
+  } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
       FS_SAFE_INTEGRITY,

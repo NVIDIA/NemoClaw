@@ -12,7 +12,7 @@ export type LockedGraphFixture<T> = Readonly<{
   manifest: Buffer;
 }>;
 
-export function openClawReplacementGraphFixture<T>(
+export function openClawReplacementGraphFixture<T extends { readonly lockSha256: string }>(
   repoRoot: string,
   graph: T,
 ): LockedGraphFixture<T> {
@@ -27,7 +27,8 @@ export function openClawReplacementGraphFixture<T>(
     packages: { "": Record<string, unknown> };
   };
   return {
-    graph,
+    // The historical fixture keeps its original graph when production dependencies advance.
+    graph: { ...graph, lockSha256: createHash("sha256").update(lock).digest("hex") },
     lock,
     manifest: Buffer.from(`${JSON.stringify(parsedLock.packages[""], null, 2)}\n`),
   };

@@ -31,8 +31,7 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "d60ee0bb36e582f83846f41a1b7e94719fcd89f6";
+const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -134,20 +133,20 @@ describe("complete managed-image publication workflow", () => {
       NPM_CONFIG_USERCONFIG: "/dev/null",
     });
 
-    const prAudit = step(
-      required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit"),
-      "Audit reviewed production npm graphs",
-    );
-    const mainAudit = step(
-      required(readWorkflow("main.yaml").jobs?.["reviewed-npm-audit"], "missing main audit"),
-      "Audit reviewed production npm graphs",
-    );
+    const pr = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
+    const prAudit = step(pr, "Audit reviewed production npm graphs");
+    const main = required(readWorkflow("main.yaml").jobs?.["reviewed-npm-audit"], "main audit");
+    const mainAudit = step(main, "Audit reviewed production npm graphs");
     const managedAudit = step(
       managedPrReviewedAudit(readWorkflow("managed-images.yaml")),
       "Audit exact PR production npm graphs",
     );
+    expect(prAudit.uses).toBe(
+      "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+    );
+    const prSource = step(pr, "Checkout npm audit code from the base commit");
+    expect(prSource.with).toMatchObject({ ref: reviewedAuditSha, "persist-credentials": false });
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction + reviewedAuditSha);
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -538,7 +537,8 @@ describe("complete managed-image publication workflow", () => {
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
-    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
+    expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
