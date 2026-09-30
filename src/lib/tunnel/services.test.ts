@@ -27,6 +27,7 @@ import {
   type ProcessControl,
   readCloudflaredState,
   readWindowsProcessCommandLine,
+  signalCloudflaredForPlatform,
   showStatus,
   startAll,
   stopAll,
@@ -730,6 +731,46 @@ describe("stopAll", () => {
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 
+  it.each(["darwin", "win32"] as const)(
+    "stops an identity-confirmed cloudflared process on %s",
+    (platform) => {
+      const signals: Array<{ pid: number; sig: string }> = [];
+
+      expect(
+        signalCloudflaredForPlatform(
+          4242,
+          "SIGTERM",
+          platform,
+          () => (platform === "win32" ? "cloudflared.exe tunnel run" : "cloudflared tunnel run"),
+          (pid, sig) => {
+            signals.push({ pid, sig });
+          },
+        ),
+      ).toBe("signaled");
+      expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
+    },
+  );
+
+  it.each(["darwin", "win32"] as const)(
+    "does not signal a mismatched process on %s",
+    (platform) => {
+      const signals: Array<{ pid: number; sig: string }> = [];
+
+      expect(
+        signalCloudflaredForPlatform(
+          4242,
+          "SIGTERM",
+          platform,
+          () => "/usr/bin/node vitest",
+          (pid, sig) => {
+            signals.push({ pid, sig });
+          },
+        ),
+      ).toBe("not-cloudflared");
+      expect(signals).toEqual([]);
+    },
+  );
+
   it.skipIf(process.platform !== "linux")(
     "signals a verified cloudflared process through a Linux pidfd",
     () => {
@@ -746,6 +787,7 @@ describe("stopAll", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
         stopAll({ pidDir, unloadOllamaModels: () => undefined });
+        expect(() => process.kill(pid, 0)).toThrow();
       } finally {
         logSpy.mockRestore();
         try {

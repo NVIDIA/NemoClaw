@@ -258,10 +258,38 @@ function signalCloudflaredWithPidfd(
   return "unavailable";
 }
 
+type ProcessSignal = (pid: number, sig: "SIGTERM" | "SIGKILL") => void;
+
+/**
+ * Signal cloudflared as close as possible to the identity check on hosts that
+ * do not expose Linux pidfds. Linux retains the stronger handle-bound path;
+ * macOS and Windows re-read identity immediately before the platform signal.
+ */
+export function signalCloudflaredForPlatform(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+  platform: NodeJS.Platform = process.platform,
+  commandLine: (pid: number) => string | null = readProcessCommandLine,
+  signal: ProcessSignal = process.kill,
+): IdentityBoundSignalOutcome {
+  if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
+
+  const identity = commandLine(pid);
+  if (identity === null) return "unavailable";
+  if (!commandLineNamesCloudflared(identity)) return "not-cloudflared";
+
+  try {
+    signal(pid, sig);
+    return "signaled";
+  } catch (error) {
+    return isObjectRecord(error) && error.code === "ESRCH" ? "not-running" : "unavailable";
+  }
+}
+
 const REAL_PROCESS_CONTROL: ProcessControl = {
   isAlive,
   commandLine: readProcessCommandLine,
-  signalCloudflared: signalCloudflaredWithPidfd,
+  signalCloudflared: signalCloudflaredForPlatform,
 };
 
 function extractTryCloudflareUrl(log: string): string | null {
