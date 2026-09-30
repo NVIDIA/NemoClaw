@@ -6,7 +6,7 @@
   "description": "Locked production dependency graph for the OpenClaw runtime",
   "license": "Apache-2.0",
   "dependencies": {
-    "openclaw": "2026.9.1"
+    "openclaw": "2026.9.2"
   },
   "overrides": {
     "hono": "4.12.34",
