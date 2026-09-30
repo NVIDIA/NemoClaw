@@ -470,6 +470,150 @@ describe("OpenClaw real patched-dist materialization guard", () => {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
   () => {
+    it("remediates the installed official Slack bundle through the real messaging applier", () => {
+      const nodeRuntime = resolveRealOpenClawNodeRuntime();
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-official-plugin-handoff-"));
+      const installed = path.join(tmp, "installed");
+      const trace = path.join(tmp, "inspection.trace");
+      const manifestSnapshot = path.join(tmp, "publisher-manifest.json");
+      const lock = JSON.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "agents/openclaw/managed-image-messaging-runtime/package-lock.json"),
+          "utf8",
+        ),
+      );
+      const integrity = lock.packages["node_modules/@openclaw/slack"].integrity;
+      const spec = "@openclaw/slack@2026.9.1";
+      const bin = path.join(tmp, "bin");
+      const fixture = path.join(tmp, "official-installer.cjs");
+      try {
+        fs.mkdirSync(bin);
+        fs.writeFileSync(
+          fixture,
+          `
+const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
+const { spawnSync, execFileSync } = require("node:child_process");
+(async () => {
+  const args = process.argv.slice(2), env = process.env;
+  if (args[0] === "plugins" && args[1] === "install") {
+    if (args[4] !== "npm:" + env.PROOF_SPEC) throw new Error("Unexpected official install target");
+    const packed = spawnSync("npm", ["pack", env.PROOF_SPEC, "--ignore-scripts", "--pack-destination", env.PROOF_ROOT, "--json"], {encoding: "utf8"});
+    if (packed.status !== 0) throw new Error(packed.stderr);
+    const { singleNpmPackResult } = await import(env.PROOF_ARCHIVE_MODULE);
+    const entry = singleNpmPackResult(JSON.parse(packed.stdout));
+    const archive = path.join(env.PROOF_ROOT, path.basename(entry.filename));
+    const sri = "sha512-" + crypto.createHash("sha512").update(fs.readFileSync(archive)).digest("base64");
+    if (sri !== env.PROOF_INTEGRITY) throw new Error("Original archive identity changed");
+    fs.mkdirSync(env.PROOF_INSTALLED);
+    execFileSync("tar", ["-xzf", archive, "--strip-components=1", "-C", env.PROOF_INSTALLED]);
+    fs.copyFileSync(path.join(env.PROOF_INSTALLED, "package.json"), env.PROOF_MANIFEST);
+    return;
+  }
+  if (args[0] === "plugins" && args[1] === "inspect" && args[2] === "slack") {
+    const version = JSON.parse(fs.readFileSync(path.join(env.PROOF_INSTALLED, "node_modules/undici/package.json"), "utf8")).version;
+    fs.appendFileSync(env.PROOF_TRACE, version + "\\n");
+    process.stdout.write(JSON.stringify({plugin:{id:"slack",trustedOfficialInstall:true},install:{source:"npm",resolvedSpec:env.PROOF_SPEC,integrity:env.PROOF_INTEGRITY,installPath:env.PROOF_INSTALLED}}));
+    return;
+  }
+  throw new Error("Unexpected OpenClaw fixture command");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`,
+        );
+        fs.writeFileSync(
+          path.join(bin, "openclaw"),
+          `#!/bin/sh\nexec ${shellQuote(nodeRuntime.executable)} ${shellQuote(fixture)} "$@"\n`,
+          { mode: 0o700 },
+        );
+        const plan = {
+          schemaVersion: 1,
+          sandboxName: "proof",
+          agent: "openclaw",
+          channels: [{ channelId: "slack", active: true }],
+          credentialBindings: [],
+          agentRender: [],
+          buildSteps: [
+            {
+              channelId: "slack",
+              kind: "package-install",
+              outputId: "openclawPluginPackage",
+              required: true,
+              value: { manager: "openclaw-plugin", spec: `npm:${spec}`, pin: true },
+            },
+          ],
+        };
+        fs.symlinkSync(nodeRuntime.executable, path.join(bin, "node"));
+        const env = {
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          HOME: tmp,
+          TMPDIR: tmp,
+          NPM_CONFIG_USERCONFIG: "/dev/null",
+          NPM_CONFIG_CACHE: path.join(tmp, "cache"),
+          NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
+          npm_config_fetch_retries: process.env.npm_config_fetch_retries,
+          npm_config_fetch_retry_mintimeout: process.env.npm_config_fetch_retry_mintimeout,
+          npm_config_fetch_retry_maxtimeout: process.env.npm_config_fetch_retry_maxtimeout,
+          OPENCLAW_VERSION: "2026.9.1",
+          NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          PROOF_ROOT: tmp,
+          PROOF_INSTALLED: installed,
+          PROOF_TRACE: trace,
+          PROOF_SPEC: spec,
+          PROOF_INTEGRITY: integrity,
+          PROOF_MANIFEST: manifestSnapshot,
+          PROOF_ARCHIVE_MODULE: pathToFileURL(
+            path.join(REPO_ROOT, "scripts/lib/reviewed-npm-archive.mts"),
+          ).href,
+        };
+        const npmVersion = spawnSync("npm", ["--version"], {
+          env,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        requireSpawnSuccess(npmVersion, "probe official-plugin proof npm runtime");
+        requireRuntimeEqual(
+          npmVersion.stdout.trim(),
+          REVIEWED_NPM_VERSION,
+          "official-plugin proof npm runtime",
+        );
+        const result = spawnSync(
+          nodeRuntime.executable,
+          [
+            path.join(REPO_ROOT, "src/lib/messaging/applier/build/messaging-build-applier.mts"),
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 180_000,
+            maxBuffer: 16 * 1024 * 1024,
+            env,
+          },
+        );
+        requireSpawnSuccess(result, "real applier-to-official-remediator handoff");
+        requireRuntimeEqual(
+          fs.readFileSync(trace, "utf8"),
+          "7.29.0\n7.29.1\n",
+          "installed Undici inspection before and after remediation",
+        );
+        requireRuntimeEqual(
+          JSON.parse(
+            fs.readFileSync(path.join(installed, "node_modules/undici/package.json"), "utf8"),
+          ).version,
+          "7.29.1",
+          "installed official Slack Undici version",
+        );
+        requireRuntimeEqual(
+          sha512Sri(path.join(installed, "package.json")),
+          sha512Sri(manifestSnapshot),
+          "publisher manifest preservation",
+        );
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }, 240_000);
+
     it("materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches", async () => {
       const nodeRuntime = resolveRealOpenClawNodeRuntime();
       console.info(
