@@ -23,6 +23,7 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
   return {
     ...original,
+    remediateInstalledOpenClawPluginPackage: vi.fn(() => true),
     remediateReviewedOpenClawPluginArchive: ({ archivePath }: { archivePath: string }) => ({
       archivePath,
       integrity: "sha512-messaging-integrity-test-remediation",

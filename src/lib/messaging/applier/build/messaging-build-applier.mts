@@ -19,7 +19,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  remediateInstalledOpenClawPluginPackage,
+  remediateReviewedOpenClawPluginArchive,
+} from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -151,6 +154,11 @@ export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze
   registryTarballField: "dist.tarball",
   registryTarballUrl: "must-match-committed-url",
 } as const);
+
+const OPENCLAW_INSTALLED_PLUGIN_REMEDIATIONS: Readonly<Record<string, string>> = Object.freeze({
+  "@openclaw/discord@2026.9.1": "discord",
+  "@openclaw/slack@2026.9.1": "slack",
+});
 
 type HermesUvPackageInstall = {
   readonly spec: string;
@@ -821,6 +829,33 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           );
         }
         verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
+        const packageSpec = install.npmPackageSpec;
+        const remediatedPluginId = packageSpec
+          ? OPENCLAW_INSTALLED_PLUGIN_REMEDIATIONS[packageSpec]
+          : undefined;
+        if (remediatedPluginId && packageSpec) {
+          if (remediatedPluginId !== officialPluginId) {
+            throw new OfficialPluginProvenanceError(
+              officialPluginId,
+              "did not retain trusted exact registry provenance",
+            );
+          }
+          const configuredStateDir = sanitizeOptionalString(env.OPENCLAW_STATE_DIR);
+          const configuredHome = sanitizeOptionalString(env.HOME);
+          const stateDir =
+            configuredStateDir || join(resolve(configuredHome || homedir()), ".openclaw");
+          if (!isAbsolute(stateDir)) {
+            throw new MessagingBuildApplierError(
+              "OPENCLAW_STATE_DIR must be absolute before installed plugin remediation",
+            );
+          }
+          remediateInstalledOpenClawPluginPackage({
+            env: installEnv as NodeJS.ProcessEnv,
+            packageDirectory: join(stateDir, "extensions", officialPluginId),
+            packageSpec,
+            workingDirectory: packed.rootDir,
+          });
+        }
       }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);

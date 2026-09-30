@@ -22,7 +22,8 @@ import {
   officialPluginInspections,
 } from "./official-plugin-inspection-fixture";
 
-const { remediateReviewedArchive } = vi.hoisted(() => ({
+const { remediateInstalledPackage, remediateReviewedArchive } = vi.hoisted(() => ({
+  remediateInstalledPackage: vi.fn(() => true),
   remediateReviewedArchive: vi.fn(({ archivePath }: { archivePath: string }) => ({
     archivePath,
     integrity: "sha512-messaging-test-remediation",
@@ -35,6 +36,7 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
   return {
     ...original,
+    remediateInstalledOpenClawPluginPackage: remediateInstalledPackage,
     remediateReviewedOpenClawPluginArchive: remediateReviewedArchive,
   };
 });
@@ -687,6 +689,12 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|pack|@openclaw/discord@2026.9.1|--pack-destination");
       expect(trace).toContain("plugins|install|--force|--accept-capabilities|npm:@openclaw/");
       expect(trace).toContain("discord@2026.9.1|ignore-scripts=true/true");
+      expect(remediateInstalledPackage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packageSpec: "@openclaw/discord@2026.9.1",
+          packageDirectory: expect.stringMatching(/\/extensions\/discord$/),
+        }),
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1048,6 +1056,12 @@ describe("messaging-build-applier.mts: agent-install", () => {
       );
       expect(trace).toContain("slack@2026.9.1");
       expect(remediateReviewedArchive).not.toHaveBeenCalled();
+      expect(remediateInstalledPackage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packageSpec: "@openclaw/slack@2026.9.1",
+          packageDirectory: expect.stringMatching(/\/extensions\/slack$/),
+        }),
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

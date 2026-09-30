@@ -10,11 +10,13 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -27,8 +29,16 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core" | "undici";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
+  kind:
+    | "axios"
+    | "core"
+    | "current-bundled-undici"
+    | "current-core"
+    | "current-root-undici"
+    | "jaeger"
+    | "legacy-core"
+    | "undici";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.1";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -107,6 +117,14 @@ const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
 const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz";
+const PATCHED_UNDICI_8_VERSION = "8.10.2";
+const PATCHED_UNDICI_8_INTEGRITY =
+  "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==";
+const PATCHED_UNDICI_8_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.2.tgz";
+const PATCHED_UNDICI_7_VERSION = "7.29.1";
+const PATCHED_UNDICI_7_INTEGRITY =
+  "sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==";
+const PATCHED_UNDICI_7_TARBALL = "https://registry.npmjs.org/undici/-/undici-7.29.1.tgz";
 const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
@@ -157,6 +175,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     kind: "undici",
     version: "2026.7.1",
   },
+  "@openclaw/discord@2026.9.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-UFBks0k94yKmtnD/D6I908I5vQwlUSohBFdjLdHFhf3cS0SeBpTDMoflBixsj6C3I/QWg6xhBPWJD1o4riDtsQ==",
+    kind: "current-bundled-undici",
+    version: "2026.9.1",
+  },
   "@openclaw/msteams@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-qk1PXcRU5r/7zWIJlwHGTBmKIuLoBYHhv6hA1w+mYs0H9JX0nBk6WccahcmiWVzu2SsryCQ4Sck6j4Fbu6kcHg==",
@@ -168,6 +192,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
       "sha512-A23af8PA4KuO8vju0viceyj1Y0M7ywF66TxKZZ8rI21L/TSn8RrzqiSaOV4UewV3/PLjDz+lY5lY+qbycOCBfg==",
     kind: "axios",
     version: "2026.7.1",
+  },
+  "@openclaw/slack@2026.9.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-iLZXmYOy8g++8oqMEP95lCYLH0OgD5jm0QiqoEQTMYgMiMPrBRjwpX406n5SKIqTYW8bnTGDlTVoTEjMO/dJYQ==",
+    kind: "current-bundled-undici",
+    version: "2026.9.1",
   },
   "openclaw@2026.6.10": {
     expectedPatchedMetadataIntegrity:
@@ -185,6 +215,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
       "sha512-j/ArEzhwh+FDiIqgKQBFMiDUk5wHOHzGxbvl5hnh2W8X0nTpJ5oW/VzO8T5B7HqI6MVlQp4NLadFveN209TLLg==",
     kind: "current-core",
     version: "2026.7.1",
+  },
+  "openclaw@2026.9.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-XLwwECWs8nL8/WJ/PplTcL0GyG6VGt0nN8K9idVv3/lKZiMAsJM1aw7SKj68b9Co9UD2iEhWfQKaGC6Pgoeniw==",
+    kind: "current-root-undici",
+    version: "2026.9.1",
   },
   "openclaw@2026.3.11": {
     kind: "legacy-core",
@@ -427,6 +463,145 @@ function requireCurrentUndiciReplacement(packageJson: JsonObject, label: string)
       `undici@${CURRENT_UNDICI_VERSION} package contract changed; review the remediation before updating it`,
     );
   }
+}
+
+type BundledUndiciReplacement = Readonly<{
+  currentVersion: string;
+  engine: string;
+  integrity: string;
+  tarball: string;
+  version: string;
+}>;
+
+function bundledUndiciReplacement(packageSpec: string): BundledUndiciReplacement {
+  if (packageSpec === "@openclaw/discord@2026.9.1") {
+    return {
+      currentVersion: "8.10.0",
+      engine: ">=22.19.0",
+      integrity: PATCHED_UNDICI_8_INTEGRITY,
+      tarball: PATCHED_UNDICI_8_TARBALL,
+      version: PATCHED_UNDICI_8_VERSION,
+    };
+  }
+  if (packageSpec === "@openclaw/slack@2026.9.1") {
+    return {
+      currentVersion: "7.29.0",
+      engine: ">=20.18.1",
+      integrity: PATCHED_UNDICI_7_INTEGRITY,
+      tarball: PATCHED_UNDICI_7_TARBALL,
+      version: PATCHED_UNDICI_7_VERSION,
+    };
+  }
+  throw new Error(`No bundled Undici remediation is defined for ${packageSpec}`);
+}
+
+function requireBundledUndiciReplacement(
+  packageJson: JsonObject,
+  replacement: BundledUndiciReplacement,
+  label: string,
+): void {
+  requirePackageIdentity(packageJson, "undici", replacement.version, label);
+  if (
+    (packageJson.dependencies !== undefined &&
+      Object.keys(packageJson.dependencies).length !== 0) ||
+    packageJson.engines?.node !== replacement.engine
+  ) {
+    throw new Error(
+      `undici@${replacement.version} package contract changed; review the remediation before updating it`,
+    );
+  }
+}
+
+export function patchOpenClaw2026_9_1RootUndiciGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.9.1", "OpenClaw package");
+  if (packageJson.dependencies?.undici !== CURRENT_UNDICI_VERSION) {
+    throw new Error("openclaw@2026.9.1 Undici dependency changed after review");
+  }
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    throw new Error("openclaw@2026.9.1 unexpectedly includes a nested shrinkwrap");
+  }
+  packageJson.dependencies.undici = PATCHED_UNDICI_8_VERSION;
+  writeJson(packageJsonPath, packageJson);
+}
+
+function expectedCurrentPluginDependencies(
+  packageSpec: string,
+  currentUndiciVersion: string,
+): JsonObject {
+  if (packageSpec === "@openclaw/discord@2026.9.1") {
+    return {
+      "@discord/embedded-app-sdk": "2.5.0",
+      "@discordjs/voice": "0.19.2",
+      "discord-api-types": "0.38.53",
+      "libopus-wasm": "0.2.0",
+      "mdast-util-from-markdown": "2.0.3",
+      typebox: "1.3.17",
+      undici: currentUndiciVersion,
+      ws: "8.21.3",
+      zod: "4.4.3",
+    };
+  }
+  if (packageSpec === "@openclaw/slack@2026.9.1") {
+    return {
+      "@slack/bolt": "5.0.0",
+      "@slack/socket-mode": "3.0.0",
+      "@slack/types": "3.0.0",
+      "@slack/web-api": "8.0.0",
+      "get-east-asian-width": "1.6.0",
+      typebox: "1.3.17",
+      undici: currentUndiciVersion,
+      ws: "8.21.3",
+      zod: "4.4.3",
+    };
+  }
+  throw new Error(`No bundled Undici remediation is defined for ${packageSpec}`);
+}
+
+export function patchOpenClaw2026_9_1BundledUndiciGraph(
+  packageDirectory: string,
+  packageSpec: string,
+): BundledUndiciReplacement {
+  const replacement = bundledUndiciReplacement(packageSpec);
+  const versionAt = packageSpec.lastIndexOf("@");
+  const expectedName = packageSpec.slice(0, versionAt);
+  const expectedVersion = packageSpec.slice(versionAt + 1);
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, expectedName, expectedVersion, "OpenClaw plugin");
+  const expectedDependencies = expectedCurrentPluginDependencies(
+    packageSpec,
+    replacement.currentVersion,
+  );
+  requireDependencyShape(packageJson, expectedDependencies, packageSpec);
+  if (
+    !Array.isArray(packageJson.bundledDependencies) ||
+    JSON.stringify(packageJson.bundledDependencies) !==
+      JSON.stringify(Object.keys(expectedDependencies)) ||
+    existsSync(join(packageDirectory, "npm-shrinkwrap.json"))
+  ) {
+    throw new Error(`${packageSpec} bundled dependency layout changed after review`);
+  }
+
+  const bundledUndici = readJson(join(packageDirectory, "node_modules", "undici", "package.json"));
+  requirePackageIdentity(
+    bundledUndici,
+    "undici",
+    replacement.currentVersion,
+    `${packageSpec} bundled Undici package`,
+  );
+  if (
+    (bundledUndici.dependencies !== undefined &&
+      Object.keys(bundledUndici.dependencies).length !== 0) ||
+    bundledUndici.engines?.node !== replacement.engine
+  ) {
+    throw new Error(`${packageSpec} bundled Undici layout changed after review`);
+  }
+
+  packageJson.dependencies.undici = replacement.version;
+  writeJson(packageJsonPath, packageJson);
+  return replacement;
 }
 
 function requireCurrentIpAddressReplacement(packageJson: JsonObject): void {
@@ -1169,6 +1344,8 @@ export function buildRemediatedOpenClawPluginArchive(
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "current-root-undici") {
+    patchOpenClaw2026_9_1RootUndiciGraph(sourcePackage);
   } else if (remediation.kind === "current-core") {
     const braceExpansionArchive = packReplacement(
       `brace-expansion@${CURRENT_BRACE_EXPANSION_VERSION}`,
@@ -1267,6 +1444,28 @@ export function buildRemediatedOpenClawPluginArchive(
     requireCurrentIpAddressReplacement(readJson(join(ipAddressPackage, "package.json")));
     requireCurrentTarReplacement(readJson(join(tarPackage, "package.json")));
     patchCurrentOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "current-bundled-undici") {
+    const replacement = bundledUndiciReplacement(request.packageSpec);
+    const undiciArchive = packReplacement(
+      `undici@${replacement.version}`,
+      replacement.integrity,
+      replacement.tarball,
+      remediationRoot,
+      env,
+    );
+    const undiciPackage = extractArchive(
+      undiciArchive.archivePath,
+      join(remediationRoot, "undici"),
+      remediationRoot,
+      env,
+    );
+    requireBundledUndiciReplacement(
+      readJson(join(undiciPackage, "package.json")),
+      replacement,
+      `${request.packageSpec} Undici remediation package`,
+    );
+    patchOpenClaw2026_9_1BundledUndiciGraph(sourcePackage, request.packageSpec);
+    copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
   } else if (remediation.kind === "undici") {
     const undiciArchive = packReplacement(
       `undici@${CURRENT_UNDICI_VERSION}`,
@@ -1605,6 +1804,130 @@ export function buildRemediatedOpenClawArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
   return buildRemediatedOpenClawPluginArchive(request);
+}
+
+function requireRealDirectory(path: string, label: string): string {
+  const resolvedPath = resolve(path);
+  const stats = lstatSync(resolvedPath);
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    realpathSync(resolvedPath) !== resolvedPath
+  ) {
+    throw new Error(`${label} must be a real directory without symbolic links`);
+  }
+  return resolvedPath;
+}
+
+function requireRegularFile(path: string, label: string): void {
+  const stats = lstatSync(path);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular file`);
+  }
+}
+
+function requireInstalledBundledUndiciTree(
+  packageDirectory: string,
+  packageSpec: string,
+): { packageDirectory: string; bundledUndiciDirectory: string } {
+  const realPackageDirectory = requireRealDirectory(
+    packageDirectory,
+    `${packageSpec} installed package`,
+  );
+  requireRegularFile(
+    join(realPackageDirectory, "package.json"),
+    `${packageSpec} installed package manifest`,
+  );
+  const bundledUndiciDirectory = requireRealDirectory(
+    join(realPackageDirectory, "node_modules", "undici"),
+    `${packageSpec} installed bundled Undici package`,
+  );
+  requireRegularFile(
+    join(bundledUndiciDirectory, "package.json"),
+    `${packageSpec} installed bundled Undici manifest`,
+  );
+  return { bundledUndiciDirectory, packageDirectory: realPackageDirectory };
+}
+
+export function replaceInstalledOpenClaw2026_9_1BundledUndici(
+  packageDirectory: string,
+  packageSpec: string,
+  replacementPackageDirectory: string,
+): void {
+  const target = requireInstalledBundledUndiciTree(packageDirectory, packageSpec);
+  const replacement = bundledUndiciReplacement(packageSpec);
+  const replacementDirectory = requireRealDirectory(
+    replacementPackageDirectory,
+    `${packageSpec} Undici remediation package`,
+  );
+  requireRegularFile(
+    join(replacementDirectory, "package.json"),
+    `${packageSpec} Undici remediation package manifest`,
+  );
+  requireBundledUndiciReplacement(
+    readJson(join(replacementDirectory, "package.json")),
+    replacement,
+    `${packageSpec} Undici remediation package`,
+  );
+  patchOpenClaw2026_9_1BundledUndiciGraph(target.packageDirectory, packageSpec);
+  copyReplacementPackage(replacementDirectory, target.bundledUndiciDirectory);
+  const updated = requireInstalledBundledUndiciTree(packageDirectory, packageSpec);
+  requireBundledUndiciReplacement(
+    readJson(join(updated.bundledUndiciDirectory, "package.json")),
+    replacement,
+    `${packageSpec} installed bundled Undici package`,
+  );
+}
+
+export function remediateInstalledOpenClawPluginPackage(request: {
+  packageDirectory: string;
+  env?: NodeJS.ProcessEnv;
+  packageSpec: string;
+  workingDirectory: string;
+}): boolean {
+  const remediation = REMEDIATIONS[request.packageSpec];
+  if (remediation?.kind !== "current-bundled-undici") return false;
+  const env = {
+    ...process.env,
+    ...request.env,
+    NPM_CONFIG_AUDIT: "false",
+    NPM_CONFIG_FUND: "false",
+    NPM_CONFIG_IGNORE_SCRIPTS: "true",
+    NPM_CONFIG_UPDATE_NOTIFIER: "false",
+    npm_config_ignore_scripts: "true",
+  };
+  const packageDirectory = requireInstalledBundledUndiciTree(
+    request.packageDirectory,
+    request.packageSpec,
+  ).packageDirectory;
+
+  const workingDirectory = resolve(request.workingDirectory);
+  mkdirSync(workingDirectory, { recursive: true, mode: 0o700 });
+  const remediationRoot = mkdtempSync(join(workingDirectory, "openclaw-installed-remediation-"));
+  try {
+    const replacement = bundledUndiciReplacement(request.packageSpec);
+    const undiciArchive = packReplacement(
+      `undici@${replacement.version}`,
+      replacement.integrity,
+      replacement.tarball,
+      remediationRoot,
+      env,
+    );
+    const undiciPackage = extractArchive(
+      undiciArchive.archivePath,
+      join(remediationRoot, "undici"),
+      remediationRoot,
+      env,
+    );
+    replaceInstalledOpenClaw2026_9_1BundledUndici(
+      packageDirectory,
+      request.packageSpec,
+      undiciPackage,
+    );
+    return true;
+  } finally {
+    rmSync(remediationRoot, { recursive: true, force: true });
+  }
 }
 
 export function remediateReviewedOpenClawPluginArchive(
