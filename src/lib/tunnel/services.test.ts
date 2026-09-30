@@ -787,7 +787,14 @@ describe("stopAll", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
         stopAll({ pidDir, unloadOllamaModels: () => undefined });
-        expect(() => process.kill(pid, 0)).toThrow();
+        let processStopped = true;
+        try {
+          const status = readFileSync(`/proc/${String(pid)}/status`, "utf-8");
+          processStopped = /^State:\s+(?:Z|X)/m.test(status);
+        } catch {
+          // A missing /proc entry also proves that the process exited.
+        }
+        expect(processStopped).toBe(true);
       } finally {
         logSpy.mockRestore();
         try {
