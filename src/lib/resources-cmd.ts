@@ -274,8 +274,8 @@ export function printHardwareResources(json: boolean): HardwareResources {
 
 export function validateResourceValue(value: string): void {
   const trimmed = value.trim();
-  // Strict validation: only accept integers 1-100 followed by %
-  if (trimmed.endsWith("%") && !/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
+  // Kubernetes quantities never contain "%", so a value with "%" must be a whole-number percentage.
+  if (trimmed.includes("%") && !/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
     throw new Error(`Invalid percentage '${trimmed}': must be an integer between 1% and 100%`);
   }
 }
@@ -338,16 +338,17 @@ export function resolveProfile(profile: ResourceProfile, hw: HardwareResources):
 }
 
 /**
- * Append resource flags to an openshell sandbox create args array.
- * Resolves percentage values against detected hardware before passing.
- * Gracefully degrades: checks `openshell sandbox create --help` for flag
- * support and skips silently if the installed OpenShell doesn't have them.
+ * Append resolved --cpu and --memory flags to an `openshell sandbox create` args array.
+ * Throws on an invalid percentage before it checks OpenShell flag support.
+ * Returns false when `openshell sandbox create --help` fails or lacks --cpu or --memory.
  */
 export function appendResourceFlags(
   args: string[],
   profile: ResourceProfile,
   openshellBinary = "openshell",
 ): boolean {
+  validateResourceValue(profile.cpu);
+  validateResourceValue(profile.memory);
   try {
     const result = spawnSync(openshellBinary, ["sandbox", "create", "--help"], {
       encoding: "utf-8",

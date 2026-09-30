@@ -48,6 +48,7 @@ describe("resources-cmd", () => {
     expect(() => resolveResourceValue("0%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("101%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("12.5%", 16, "cpu")).toThrow("integer between 1% and 100%");
+    expect(() => resolveResourceValue("%25", 16, "cpu")).toThrow("integer between 1% and 100%");
   });
 
   it("resolves profiles against Kubernetes allocatable capacity when available", () => {

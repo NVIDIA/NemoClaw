@@ -111,6 +111,7 @@ describe("selectResourceProfileForSandbox", () => {
       "0%",
     ],
     ["NEMOCLAW_RAM has a fractional part", { NEMOCLAW_RAM: "12.5%" }, "12.5%"],
+    ["NEMOCLAW_CPU has text after the percent sign", { NEMOCLAW_CPU: "101%cpu" }, "101%cpu"],
     [
       "NEMOCLAW_CPU is above the maximum and overrides a named profile",
       { NEMOCLAW_RESOURCE_PROFILE: "developer", NEMOCLAW_CPU: "200%" },
@@ -212,20 +213,31 @@ describe("appendResourceFlagsForProfile", () => {
     );
   });
 
-  it("throws the percentage error without the unsupported-flags note when a value is invalid", () => {
-    const deps = makeDeps();
-    const args = ["sandbox", "create"];
+  it.each([
+    [
+      "CPU is invalid and OpenShell has resource flags",
+      "--cpu --memory",
+      { cpu: "150%", memory: "25%" },
+      "150%",
+    ],
+    [
+      "RAM is invalid and OpenShell lacks resource flags",
+      "usage: openshell sandbox create",
+      { cpu: "25%", memory: "0%" },
+      "0%",
+    ],
+  ])(
+    "throws the percentage error without the unsupported-flags note when %s",
+    (_case, help, profile, value) => {
+      const deps = makeDeps();
+      const args = ["sandbox", "create"];
 
-    expect(() =>
-      appendResourceFlagsForProfile(
-        args,
-        { cpu: "150%", memory: "25%" },
-        writeOpenShell("--cpu --memory"),
-        deps,
-      ),
-    ).toThrow("Invalid percentage '150%': must be an integer between 1% and 100%");
+      expect(() =>
+        appendResourceFlagsForProfile(args, profile, writeOpenShell(help), deps),
+      ).toThrow(`Invalid percentage '${value}': must be an integer between 1% and 100%`);
 
-    expect(args).toEqual(["sandbox", "create"]);
-    expect(deps.note).not.toHaveBeenCalled();
-  });
+      expect(args).toEqual(["sandbox", "create"]);
+      expect(deps.note).not.toHaveBeenCalled();
+    },
+  );
 });
