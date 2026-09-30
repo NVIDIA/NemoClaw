@@ -250,6 +250,46 @@ describe("runAgentJsonPassthrough", () => {
     expect(runDispatch.mock.calls[0]?.[0]).toMatchObject({ output: "capture", tty: false });
   });
 
+  it.each([0, 7])(
+    "preserves exit %i and output for a completed non-replayable tool turn",
+    async (exitCode) => {
+      const payload = JSON.stringify({
+        status: "ok",
+        summary: "completed",
+        result: {
+          payloads: [{ text: "The file contains 4 words." }],
+          meta: {
+            replayInvalid: true,
+            aborted: false,
+            livenessState: "working",
+            stopReason: "stop",
+            completion: { stopReason: "stop", finishReason: "stop" },
+            agentMeta: { terminalReceipt: { successfulToolNames: ["exec"] } },
+          },
+        },
+      });
+      const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+        outcome: { kind: "exited" as const, exitCode },
+        stdout: payload,
+        stderr: "",
+      }));
+      const { exit, proc, stderr, stdout } = makeProc();
+
+      await expect(
+        runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+          getGatewayName: () => null,
+          getOpenshellBinary: () => "openshell",
+          runDispatch,
+          stdinIsTty: () => false,
+        }),
+      ).rejects.toThrow(`__exit:${exitCode}`);
+
+      expect(stdout.join("")).toBe(payload);
+      expect(stderr.join("")).not.toContain("did not complete");
+      expect(exit).toHaveBeenCalledWith(exitCode);
+    },
+  );
+
   it("exits non-zero for a turn the payload marks incomplete, after preserving the trace", async () => {
     const payload = JSON.stringify({
       status: "ok",

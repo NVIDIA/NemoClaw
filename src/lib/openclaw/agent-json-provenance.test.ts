@@ -327,12 +327,20 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["livenessState=abandoned"]);
   });
 
-  it("detects replayInvalid on the run metadata", () => {
-    const raw = JSON.stringify({
-      status: "ok",
-      result: { payloads: [], meta: { replayInvalid: true } },
-    });
-    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["replayInvalid=true"]);
+  it.each(["gateway", "local"])("accepts a completed non-replayable %s turn", (envelope) => {
+    const result = {
+      payloads: [{ text: "The file contains 4 words." }],
+      meta: {
+        replayInvalid: true,
+        aborted: false,
+        livenessState: "working",
+        stopReason: "stop",
+        completion: { stopReason: "stop", finishReason: "stop" },
+        agentMeta: { terminalReceipt: { successfulToolNames: ["exec"] } },
+      },
+    };
+    const raw = JSON.stringify(envelope === "gateway" ? { status: "ok", result } : result);
+    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
   });
 
   it("reads run metadata that sits at the envelope root", () => {

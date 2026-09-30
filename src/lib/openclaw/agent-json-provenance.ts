@@ -390,7 +390,6 @@ function timedOutPhase(meta: UnknownRecord): string | null {
 
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
@@ -399,6 +398,10 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
   const error = meta.error;
   if (isObjectRecord(error) && normalized(error.kind) === INCOMPLETE_TURN_ERROR_KIND) {
     markers.push(`error.kind=${String(error.kind)}`);
+  }
+  // Successful tool side effects can make replay unsafe without failing the turn.
+  if (markers.length > 0 && meta.replayInvalid === true) {
+    markers.push("replayInvalid=true");
   }
   return markers;
 }
