@@ -153,6 +153,9 @@ impl JourneyDefinition {
             {
                 continue;
             }
+            if native_field(field) {
+                continue;
+            }
             let Some((adapter, _)) = adapter_field(field) else {
                 return Err(diagnostic(
                     "journey",
@@ -182,6 +185,9 @@ impl JourneyDefinition {
                         &format!("supplied SDK field '{field}' cannot be omitted"),
                     ));
                 }
+                continue;
+            }
+            if native_field(field) {
                 continue;
             }
             let Some((adapter, pointer)) = adapter_field(field) else {
@@ -247,4 +253,13 @@ pub(crate) fn adapter_field(field: &str) -> Option<(&str, &str)> {
     let suffix = field.strip_prefix("adapter:")?;
     let (adapter, path) = suffix.split_once(':')?;
     (!adapter.is_empty() && (path.is_empty() || path.starts_with('/'))).then_some((adapter, path))
+}
+
+pub(crate) fn native_field(field: &str) -> bool {
+    field == "workflow:/target_id"
+        || field == "workflow:/settings"
+        || field.starts_with("workflow:/settings/")
+        || field
+            .strip_prefix("model:/")
+            .is_some_and(|path| !path.is_empty())
 }

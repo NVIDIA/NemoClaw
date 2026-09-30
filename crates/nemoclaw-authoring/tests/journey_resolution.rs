@@ -956,6 +956,117 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
 }
 
 #[test]
+fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scope() {
+    let mut catalog = FabricCatalog::bundled();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.descriptor["adapter_id"] = json!("fixture.exact-native");
+    adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
+    adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
+    adapter.descriptor["model_schema"] = json!({"type":"object","properties":{"settings":{"type":"object","properties":{
+        "variant":{"type":"string","enum":["quick","thorough"]},
+        "temperature":{"type":"number"}
+    }}}});
+    catalog.adapters = vec![adapter];
+    catalog.targets = vec![json!({"descriptor":{
+        "type":"workflow","id":"fixture.target","adapter_id":"fixture.exact-native",
+        "spec":{"settings_schema":{"type":"object","properties":{
+            "region":{"type":"string","enum":["west","east"]}
+        }}}
+    },"provenance":[]})];
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut supplied: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    supplied["spec"]["sandboxes"][0]["harness"]["kind"] = json!("fixture.exact-native");
+    let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
+    let mut state = JourneyDefinition::new("exact-native", base.clone())
+        .ask(["workflow:/target_id", "model:/variant"])
+        .omit(["workflow:/settings/region"])
+        .start(&capabilities)
+        .unwrap();
+
+    let first = state.resolve(&capabilities).unwrap();
+    assert!(first.question("workflow:/target_id").is_some());
+    assert!(first.question("model:/variant").is_some());
+    assert!(first.question("model:/temperature").is_none());
+    state
+        .answer(
+            &capabilities,
+            "workflow:/target_id",
+            Some(json!("fixture.target")),
+        )
+        .unwrap();
+    let next = state.resolve(&capabilities).unwrap();
+    assert!(next.question("workflow:/settings/region").is_none());
+    assert!(next.omitted().contains(&"workflow:/settings/region".into()));
+    state
+        .answer(&capabilities, "model:/variant", Some(json!("quick")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("model:/variant")
+            .is_none()
+    );
+
+    let mut with_supplied = supplied;
+    with_supplied["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"] =
+        json!({"variant":"quick"});
+    let supplied_model = PartialDocument::from_yaml(with_supplied.to_string().as_bytes()).unwrap();
+    let invalid_omission = JourneyDefinition::new("supplied-model", supplied_model)
+        .omit(["model:/variant"])
+        .start(&capabilities)
+        .unwrap();
+    assert!(
+        invalid_omission
+            .resolve(&capabilities)
+            .unwrap_err()
+            .to_string()
+            .contains("supplied native setting")
+    );
+
+    let mut required_catalog = catalog;
+    required_catalog.targets[0]["descriptor"]["spec"]["settings_schema"]["required"] =
+        json!(["region"]);
+    let required_capabilities = Capabilities::from_catalog(&required_catalog);
+    let mut required_omission = JourneyDefinition::new("required-region", base.clone())
+        .ask(["workflow:/target_id"])
+        .omit(["workflow:/settings/region"])
+        .start(&required_capabilities)
+        .unwrap();
+    required_omission
+        .answer(
+            &required_capabilities,
+            "workflow:/target_id",
+            Some(json!("fixture.target")),
+        )
+        .unwrap();
+    assert!(
+        required_omission
+            .resolve(&required_capabilities)
+            .unwrap_err()
+            .to_string()
+            .contains("required native setting")
+    );
+    let unreachable = JourneyDefinition::new("future-native-field", base)
+        .ask(["model:/future_setting"])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    assert!(unreachable.question("model:/future_setting").is_none());
+    assert!(
+        unreachable
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("model:/future_setting")),
+        "warnings={:?}",
+        unreachable.warnings()
+    );
+}
+
+#[test]
 fn invalid_complete_native_model_settings_cannot_reach_review() {
     let capabilities = Capabilities::available();
     let base =

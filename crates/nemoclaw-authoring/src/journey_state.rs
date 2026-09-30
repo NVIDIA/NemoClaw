@@ -17,7 +17,7 @@ use crate::{
     diagnostics::diagnostic,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
-        adapter_schema,
+        adapter_schema, native_field,
     },
     sdk_schema::{
         finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_possible,
@@ -945,14 +945,17 @@ impl JourneyState {
             }
         }
 
+        let native_guidance = self
+            .definition
+            .ask_scopes
+            .contains(&JourneyScope::NativeSettings)
+            || self.definition.ask.iter().any(|field| native_field(field))
+            || self.definition.omit.iter().any(|field| native_field(field));
         let inspect_values = if self
             .definition
             .ask_scopes
             .contains(&JourneyScope::DeploymentFields)
-            || self
-                .definition
-                .ask_scopes
-                .contains(&JourneyScope::NativeSettings)
+            || native_guidance
         {
             assessment
                 .document()
@@ -992,11 +995,8 @@ impl JourneyState {
                 });
             }
         }
-        if self
-            .definition
-            .ask_scopes
-            .contains(&JourneyScope::NativeSettings)
-        {
+        if native_guidance {
+            let mut active_native_ids = BTreeSet::new();
             for field in native_questions_for_values(
                 inspect_values,
                 assessment.document(),
@@ -1010,9 +1010,26 @@ impl JourneyState {
                     );
                     continue;
                 }
+                active_native_ids.insert(field.path.clone());
                 let value = native_value(&self.values, self.selected_route, &field.path);
                 let valid =
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
+                if self.definition.omit.contains(&field.path) {
+                    if field.required {
+                        return Err(diagnostic(
+                            "journey",
+                            &format!("required native setting '{}' cannot be omitted", field.path),
+                        ));
+                    }
+                    if value.is_some() {
+                        return Err(diagnostic(
+                            "journey",
+                            &format!("supplied native setting '{}' cannot be omitted", field.path),
+                        ));
+                    }
+                    omitted.push(field.path);
+                    continue;
+                }
                 let route_key = self.selected_route.map(|route| (route, field.path.clone()));
                 let accepted = if field.path.starts_with("model:") {
                     route_key
@@ -1026,7 +1043,15 @@ impl JourneyState {
                     .is_some_and(|key| self.omitted_model_settings.contains(key));
                 if self.omitted.contains(&field.path) || omitted_route {
                     omitted.push(field.path);
-                } else if !valid || !accepted {
+                } else if (value.is_some() && !valid)
+                    || (value.is_none() && field.required)
+                    || ((self
+                        .definition
+                        .ask_scopes
+                        .contains(&JourneyScope::NativeSettings)
+                        || self.definition.ask.contains(&field.path))
+                        && !accepted)
+                {
                     questions.push(JourneyQuestion {
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
@@ -1043,6 +1068,13 @@ impl JourneyState {
                         suggestion: field.suggestion,
                         schema: field.schema,
                     });
+                }
+            }
+            for field in self.definition.ask.union(&self.definition.omit) {
+                if native_field(field) && !active_native_ids.contains(field) {
+                    warnings.push(format!(
+                        "{field} is not applicable in the current native settings schema"
+                    ));
                 }
             }
         }
@@ -1244,12 +1276,7 @@ impl JourneyState {
             } else {
                 candidate.omitted.remove(id);
             }
-        } else if self
-            .definition
-            .ask_scopes
-            .contains(&JourneyScope::NativeSettings)
-            && (id.starts_with("workflow:") || id.starts_with("model:"))
-        {
+        } else if native_field(id) {
             candidate.put_native_field(id, value.clone())?;
             if id.starts_with("model:") {
                 let route = candidate.selected_route.ok_or_else(|| {
