@@ -130,4 +130,34 @@ describe("Google Chat tunnel runtime", () => {
     expect(() => options.stopTunnel?.()).toThrow("Google Chat tunnel cleanup is incomplete");
     expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
   });
+
+  it("does not start a route proxy when prior cloudflared cleanup is unverified", async () => {
+    const startAll = vi.fn(async () => undefined);
+    const startGooglechatWebhookProxy = vi.fn(async () => 24680);
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "",
+        readCloudflaredState: () => ({ kind: "unverified-pid-process", pid: 4242 }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll,
+        stopCloudflared: () => false,
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: false,
+          port: null,
+          upstreamPort: null,
+        }),
+        startGooglechatWebhookProxy,
+        stopGooglechatWebhookProxy: vi.fn(),
+      }),
+      sandboxName: "test",
+    });
+
+    await expect(options.startTunnel?.()).rejects.toThrow(
+      "Google Chat tunnel cleanup is incomplete",
+    );
+    expect(startGooglechatWebhookProxy).not.toHaveBeenCalled();
+    expect(startAll).not.toHaveBeenCalled();
+  });
 });

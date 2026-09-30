@@ -179,15 +179,89 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
 export interface ProcessControl {
   isAlive(pid: number): boolean;
   commandLine(pid: number): string | null;
-  signal(pid: number, sig: NodeJS.Signals): void;
+  signalCloudflared(pid: number, sig: "SIGTERM" | "SIGKILL"): IdentityBoundSignalOutcome;
+}
+
+type IdentityBoundSignalOutcome = "signaled" | "not-running" | "not-cloudflared" | "unavailable";
+
+const PIDFD_SIGNAL_SCRIPT = String.raw`
+import os
+import signal
+import sys
+
+if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    print("unavailable")
+    raise SystemExit(0)
+
+pid = int(sys.argv[1])
+signal_name = sys.argv[2]
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    print("not-running")
+    raise SystemExit(0)
+except (OSError, PermissionError):
+    print("unavailable")
+    raise SystemExit(0)
+
+try:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as command_file:
+            command_line = command_file.read()
+    except FileNotFoundError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+
+    tokens = command_line.replace(b"\\0", b" ").split()
+    if not any(os.path.basename(os.fsdecode(token)) == "cloudflared" for token in tokens):
+        print("not-cloudflared")
+        raise SystemExit(0)
+
+    try:
+        signal.pidfd_send_signal(pidfd, getattr(signal, signal_name))
+    except ProcessLookupError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+    print("signaled")
+finally:
+    os.close(pidfd)
+`;
+
+function signalCloudflaredWithPidfd(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "linux") return "unavailable";
+  try {
+    const result = execFileSync("python3", ["-I", "-c", PIDFD_SIGNAL_SCRIPT, String(pid), sig], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
 }
 
 const REAL_PROCESS_CONTROL: ProcessControl = {
   isAlive,
   commandLine: readProcessCommandLine,
-  signal: (pid, sig) => {
-    process.kill(pid, sig);
-  },
+  signalCloudflared: signalCloudflaredWithPidfd,
 };
 
 function extractTryCloudflareUrl(log: string): string | null {
@@ -424,13 +498,16 @@ function stopService(
 
   const pid = state.pid;
 
-  // Send SIGTERM
-  try {
-    pc.signal(pid, "SIGTERM");
-  } catch {
-    // Already dead between the check and the signal
+  const termOutcome = pc.signalCloudflared(pid, "SIGTERM");
+  if (termOutcome === "unavailable") {
+    warn(
+      `${name} PID ${String(pid)} was not stopped because identity-bound signaling is unavailable`,
+    );
+    return false;
+  }
+  if (termOutcome === "not-running" || termOutcome === "not-cloudflared") {
     removePid(pidDir, name);
-    info(`${name} stopped (PID ${String(pid)})`);
+    info(`${name} was not running`);
     return true;
   }
 
@@ -444,25 +521,18 @@ function stopService(
     }
   }
 
-  // Escalate to SIGKILL if still alive. Re-verify identity first: the PID could
-  // have exited and been recycled to an unrelated process during the poll.
   if (pc.isAlive(pid)) {
-    const commandLine = pc.commandLine(pid);
-    if (commandLine === null) {
+    const killOutcome = pc.signalCloudflared(pid, "SIGKILL");
+    if (killOutcome === "unavailable") {
       warn(
-        `${name} PID ${String(pid)} was not force-stopped because its process identity is unavailable`,
+        `${name} PID ${String(pid)} was not force-stopped because identity-bound signaling is unavailable`,
       );
       return false;
     }
-    if (!commandLineNamesCloudflared(commandLine)) {
+    if (killOutcome === "not-running" || killOutcome === "not-cloudflared") {
       removePid(pidDir, name);
       info(`${name} was not running`);
       return true;
-    }
-    try {
-      pc.signal(pid, "SIGKILL");
-    } catch {
-      /* already dead */
     }
   }
 
@@ -765,7 +835,15 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
-  if (!cloudflaredReady) return;
+  if (!cloudflaredReady) {
+    const blockedState = readCloudflaredState(pidDir, processControl);
+    if (blockedState.kind === "unverified-pid-process") {
+      throw new Error(
+        `cloudflared process identity is unavailable for PID ${String(blockedState.pid)}; restore process inspection access, then retry`,
+      );
+    }
+    return;
+  }
 
   // Wait for cloudflared URL
   if (readCloudflaredState(pidDir, processControl).kind === "running") {

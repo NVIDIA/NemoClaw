@@ -384,7 +384,7 @@ describe("stopAll gateway-stop wiring", () => {
       writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
       vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => gatewayOutcome);
       vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
-      const signal = vi.fn();
+      const signalCloudflared = vi.fn(() => "unavailable" as const);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       try {
@@ -395,7 +395,7 @@ describe("stopAll gateway-stop wiring", () => {
           processControl: {
             isAlive: () => true,
             commandLine: () => null,
-            signal,
+            signalCloudflared,
           },
         });
       } finally {
@@ -403,7 +403,7 @@ describe("stopAll gateway-stop wiring", () => {
       }
 
       const logged = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-      expect(signal).not.toHaveBeenCalled();
+      expect(signalCloudflared).not.toHaveBeenCalled();
       expect(logged).toContain("Host service cleanup remains incomplete");
       expect(logged).toContain("cloudflared was not stopped");
       expect(logged).toContain(gatewayMessage);

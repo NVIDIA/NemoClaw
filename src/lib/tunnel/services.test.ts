@@ -44,7 +44,7 @@ const INTEGRATION_REGISTRY_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_REGIS
 const ALIVE_CLOUDFLARED_CONTROL: ProcessControl = {
   isAlive: () => true,
   commandLine: () => "/usr/local/bin/cloudflared tunnel run",
-  signal: () => {},
+  signalCloudflared: () => "signaled",
 };
 
 function resetIntegrationPidDirs(): void {
@@ -293,7 +293,7 @@ describe("showStatus", () => {
       processControl: {
         isAlive: () => true,
         commandLine: () => null,
-        signal: vi.fn(),
+        signalCloudflared: () => "signaled",
       },
     });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
@@ -482,11 +482,16 @@ describe("startAll", () => {
     const processControl: ProcessControl = {
       isAlive: () => true,
       commandLine: (pid) => (pid === 4242 ? null : "/usr/local/bin/cloudflared tunnel run"),
-      signal: (pid, sig) => signals.push({ pid, sig }),
+      signalCloudflared: (pid, sig) => {
+        signals.push({ pid, sig });
+        return "signaled";
+      },
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345, processControl });
+    await expect(startAll({ pidDir, dashboardPort: 12345, processControl })).rejects.toThrow(
+      "cloudflared process identity is unavailable for PID 4242",
+    );
 
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
@@ -545,7 +550,7 @@ describe("readCloudflaredState", () => {
     const state = readCloudflaredState(pidDir, {
       isAlive: () => true,
       commandLine: () => null,
-      signal: vi.fn(),
+      signalCloudflared: () => "signaled",
     });
     expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
   });
@@ -564,7 +569,7 @@ describe("readCloudflaredState", () => {
     const state = readCloudflaredState(pidDir, {
       isAlive: () => true,
       commandLine: () => commandLine,
-      signal: vi.fn(),
+      signalCloudflared: () => "signaled",
     });
 
     expect(capture).toHaveBeenCalledOnce();
@@ -645,8 +650,17 @@ describe("stopAll", () => {
     const control: ProcessControl = {
       isAlive: () => script.alive[Math.min(aliveIdx++, script.alive.length - 1)],
       commandLine: () => script.cmdlines[Math.min(cmdIdx++, script.cmdlines.length - 1)],
-      signal: (pid, sig) => {
-        signals.push({ pid, sig });
+      signalCloudflared: (pid, sig) => {
+        const commandLine = script.cmdlines[Math.min(cmdIdx++, script.cmdlines.length - 1)];
+        const recordSignal = (): "signaled" => {
+          signals.push({ pid, sig });
+          return "signaled";
+        };
+        return commandLine === null
+          ? "unavailable"
+          : commandLine.split(/\s+/).some((token) => token.endsWith("cloudflared"))
+            ? recordSignal()
+            : "not-cloudflared";
       },
     };
     return { control, signals };
@@ -698,10 +712,57 @@ describe("stopAll", () => {
     expect(output).toContain("Host service cleanup remains incomplete");
   });
 
+  it("does not send SIGTERM when the PID is recycled after initial validation", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["cloudflared tunnel run", "/usr/bin/node vitest"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it.skipIf(process.platform !== "linux")(
+    "signals a verified cloudflared process through a Linux pidfd",
+    () => {
+      const executable = join(pidDir, "cloudflared");
+      writeFileSync(executable, "#!/bin/sh\nsleep 20\n", { mode: 0o700 });
+      const subprocess = childProcess.spawn(executable, [], { stdio: "ignore" });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        stopAll({ pidDir, unloadOllamaModels: () => undefined });
+      } finally {
+        logSpy.mockRestore();
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The identity-bound stop path already reaped the process.
+        }
+      }
+
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    },
+  );
+
   it("preserves the PID when identity becomes unreadable before SIGKILL", () => {
     const { control, signals } = scriptedControl({
       alive: [true, true],
-      cmdlines: ["cloudflared tunnel run", null],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", null],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -718,7 +779,9 @@ describe("stopAll", () => {
 
     expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
-    expect(output).toContain("was not force-stopped because its process identity is unavailable");
+    expect(output).toContain(
+      "was not force-stopped because identity-bound signaling is unavailable",
+    );
     expect(output).toContain("Host service cleanup remains incomplete");
   });
 
@@ -728,7 +791,7 @@ describe("stopAll", () => {
       // pre-SIGKILL re-check.
       alive: [true, false, true],
       // Ours pre-SIGTERM, then recycled to a bystander before escalation.
-      cmdlines: ["cloudflared tunnel run", "/usr/bin/node vitest"],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "/usr/bin/node vitest"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
@@ -746,7 +809,7 @@ describe("stopAll", () => {
   it("escalates to SIGKILL when cloudflared remains live after the grace period (#7644)", () => {
     const { control, signals } = scriptedControl({
       alive: [true, true],
-      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run"],
+      cmdlines: ["cloudflared tunnel run", "cloudflared tunnel run", "cloudflared tunnel run"],
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
