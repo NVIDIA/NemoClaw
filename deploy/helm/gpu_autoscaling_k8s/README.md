@@ -124,7 +124,7 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-This is the multi-user architecture test for **OpenClaw + Ollama**. Hermes + vLLM is the same user → sandbox path ([below](#hermes--vllm-n-user-end-to-end)); either pairing can be first after steps 1–5. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. Step 7 is optional (only if you want to save CPU RAM). 
+This is the multi-user architecture test for **OpenClaw + Ollama**. Hermes + vLLM is the same user → sandbox path ([below](#hermes--vllm-n-user-end-to-end)); either pairing can be first after steps 1–5. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. 
 
 ```text
 E2E test: OpenClaw + Ollama
@@ -191,18 +191,6 @@ Validated 8xH100 — latency > 3000 ms:
 Check the log to see the end users, sandboxes, and chats: 
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 
-### 7. (Optional) Tear down e2e sandboxes — only if you want to save CPU RAM
-
-Skip this if the node has enough DRAM. Agent sandboxes use this DGX H100's **CPU cores and DRAM**, not the H100 GPUs (OpenClaw e2e is 8Gi each; Hermes e2e is 4Gi each). This 2 TB DGX has plenty, so other-agent sandboxes can stay. GPU inference can stay too.
-
-```bash
-./scripts/agentscaling_gpuutil.sh cleanup          # openclaw-ollama-e2e-*
-./scripts/agentscaling_hermes_gpuutil.sh cleanup   # hermes-e2e-*
-# or all agent sandboxes (pairing names too): ./scripts/uninstall-e2e.sh
-```
-
-Do not `helm uninstall` OpenShell or the GPU chart for this. Full cluster teardown: [Uninstall](#uninstall).
-
 ## Agents
 
 | Agent | Runtime | E2E (creates sandboxes) | Client |
@@ -217,7 +205,7 @@ NIM needs NGC Secrets (`./scripts/create-nim-ngc-secrets.sh`). Deep Agents has n
 
 | Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test |
 |----------|-----------------|----------------------|----------------------------------|
-| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
+| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | OpenClaw + Ollama: `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh`. Hermes + vLLM: `./scripts/agentscaling_hermes_gpuutil.sh` or `./scripts/agentscaling_hermes_latency.sh` then `./scripts/client_hermes.sh` |
 
 
 Both paths cover chart deploy, the Envoy load balancer (LeastRequest), authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
@@ -507,12 +495,15 @@ Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU i
 
 ### Hermes + vLLM N-user end-to-end
 
-Same user → sandbox path as OpenClaw + Ollama (either pairing can be first): load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. Complete Quick start steps 1–5 first (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*` and helm-upgrade the GPU chart to vLLM. `client_hermes.sh` only sends chats. Step 7 is optional (only if you want to save CPU RAM).
+Same user → sandbox path as OpenClaw + Ollama (either pairing can be first): load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. Complete Quick start steps 1–5 first (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*` and helm-upgrade the GPU chart to vLLM. `client_hermes.sh` only sends chats. Optional sandbox teardown is in [Uninstall](#optional-e2e-sandboxes--only-if-you-want-to-save-cpu-ram).
 
 ```bash
 # Terminal A — sandbox provision + GPU-util HPA
 # Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
+
+# Terminal B — watch 99%/40%, not millicores
+./scripts/get-hpa.sh -n nemoclaw-gpu -w
 
 # Terminal C — same client for either HPA metric (inflight 1 is the script default)
 E2E_USERS=5 ./scripts/client_hermes.sh
@@ -521,6 +512,12 @@ E2E_USERS=5 ./scripts/client_hermes.sh
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
+
+Validated 8×H100 — Hermes + vLLM GPU util > 40%:
+
+Validated 8×H100 — Hermes + vLLM latency > 3000 ms:
+
+Check the log to see the end users, sandboxes, and `hermes -z` chats:
 
 Each run waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`) so a new test does not inherit a prior scale-down window — it will not force a scale-down under real traffic. While running, the HPA uses one-pod 40% steps, then restores `HPA_VALUES`. Load stops after a short hold at max so replicas return to 1.
 
@@ -593,9 +590,17 @@ After scale-up you should see multiple series. If latency graphs stay empty, che
 
 There is **one** OpenShell gateway for every sandbox (OpenClaw and Hermes). Do not install a second gateway.
 
-### Optional: e2e sandboxes (CPU RAM)
+### Optional: e2e sandboxes — only if you want to save CPU RAM
 
-Same as Quick start [step 7](#7-optional-tear-down-e2e-sandboxes--only-if-you-want-to-save-cpu-ram). Only if you want to save CPU RAM. GPU inference stays.
+Skip this if the node has enough DRAM. Agent sandboxes use this DGX H100's **CPU cores and DRAM**, not the H100 GPUs (OpenClaw e2e is 8Gi each; Hermes e2e is 4Gi each). This 2 TB DGX has plenty, so other-agent sandboxes can stay. GPU inference can stay too.
+
+```bash
+./scripts/agentscaling_gpuutil.sh cleanup          # openclaw-ollama-e2e-*
+./scripts/agentscaling_hermes_gpuutil.sh cleanup   # hermes-e2e-*
+# or all agent sandboxes (pairing names too): ./scripts/uninstall-e2e.sh
+```
+
+Do not `helm uninstall` OpenShell or the GPU chart for this.
 
 ### Full recipe uninstall
 
