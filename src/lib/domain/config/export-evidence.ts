@@ -191,6 +191,11 @@ export interface ObservedExportSandboxIdentity {
 export type ExportSnapshotReadStage =
   | "registry"
   | "gateway-binding"
+  | "gateway-authority"
+  | "gateway-configuration"
+  | "gateway-registration"
+  | "gateway-listener"
+  | "gateway-stability"
   | "sandbox-inventory"
   | "sandbox-identity"
   | "inference-route"

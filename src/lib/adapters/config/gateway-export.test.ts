@@ -122,31 +122,39 @@ describe("gateway export observation", () => {
 
   it("refuses an external declaration without recorded onboarding authority (#11861)", async () => {
     const { probeAttachment } = mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(fs.lstatSync).mockReturnValue(undefined as never);
-    await expect(observeExportGateway(entry)).rejects.toThrow("missing or changed");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow("missing or changed");
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-authority");
     expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
     expect(probeAttachment).not.toHaveBeenCalled();
   });
 
   it("does not reinterpret recorded external ownership after its declaration disappears (#11861)", async () => {
     mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(loadGatewayManagementDeclaration).mockReturnValue({
       ok: true,
       declaration: null,
       source: null,
     });
-    await expect(observeExportGateway(entry)).rejects.toThrow("no longer has its declaration");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow(
+      "no longer has its declaration",
+    );
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-authority");
     expect(managedGatewayStateRootOwnershipFailure).not.toHaveBeenCalled();
   });
 
   it("refuses a declaration that disagrees with the checkpoint (#11861)", async () => {
     mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(loadGatewayManagementDeclaration).mockReturnValue({
       ok: true,
       declaration: { ...declaration, stateDir: "/replacement/state" },
       source: "file",
     });
-    await expect(observeExportGateway(entry)).rejects.toThrow("missing or changed");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow("missing or changed");
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-authority");
   });
 
   it.each([
@@ -156,12 +164,16 @@ describe("gateway export observation", () => {
     { endpoint: declaration.endpoint!, auth: undefined },
   ])("refuses incompatible registration before probing %# (#11861)", async (change) => {
     const { probeAttachment } = mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(observeOpenShellGatewayRegistration).mockResolvedValue({
       name: "nemoclaw",
       active: false,
       ...change,
     });
-    await expect(observeExportGateway(entry)).rejects.toThrow("registration or authentication");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow(
+      "registration or authentication",
+    );
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-registration");
     expect(probeAttachment).not.toHaveBeenCalled();
   });
 
@@ -175,20 +187,28 @@ describe("gateway export observation", () => {
     { listenerExecPath: "/other/gateway" },
   ])("refuses unverified listener or supervisor evidence %# (#11861)", async (change) => {
     const { probeAttachment } = mockSource();
+    const beforeRead = vi.fn();
     probeAttachment.mockResolvedValue({ ...attachment, ...change });
-    await expect(observeExportGateway(entry)).rejects.toThrow("identity could not be verified");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow(
+      "identity could not be verified",
+    );
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-listener");
   });
 
   it("rejects HTTPS before inspecting gateway registration (#11861)", async () => {
     mockSource({ ...declaration, endpoint: "https://127.0.0.1:8080" });
-    await expect(observeExportGateway(entry)).rejects.toThrow("without TLS");
+    const beforeRead = vi.fn();
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow("without TLS");
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-configuration");
     expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
   });
 
   it("refuses WSL before inspecting external registration (#11861)", async () => {
     mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(isWsl).mockReturnValue(true);
-    await expect(observeExportGateway(entry)).rejects.toThrow("native Linux");
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow("native Linux");
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-configuration");
     expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
   });
 
@@ -204,8 +224,10 @@ describe("gateway export observation", () => {
 
   it("refuses malformed checkpoint data and closes the read handle (#11861)", async () => {
     const { readBytes, close } = mockSource();
+    const beforeRead = vi.fn();
     readBytes.mockReturnValue(Buffer.from("not JSON"));
-    await expect(observeExportGateway(entry)).rejects.toThrow();
+    await expect(observeExportGateway(entry, beforeRead)).rejects.toThrow();
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-authority");
     expect(close).toHaveBeenCalledTimes(1);
     expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
   });
@@ -265,18 +287,20 @@ describe("gateway export observation", () => {
 
   it("preserves a legacy managed source without an onboarding checkpoint (#11861)", async () => {
     mockSource();
+    const beforeRead = vi.fn();
     vi.mocked(loadGatewayManagementDeclaration).mockReturnValue({
       ok: true,
       declaration: null,
       source: null,
     });
     vi.mocked(fs.lstatSync).mockReturnValue(undefined as never);
-    expect(await observeExportGateway(entry)).toEqual({
+    expect(await observeExportGateway(entry, beforeRead)).toEqual({
       name: "nemoclaw",
       port: 8080,
       management: "nemoclaw",
       stateRootOwned: true,
     });
+    expect(beforeRead).toHaveBeenLastCalledWith("gateway-binding");
   });
 
   it("refuses a checkpoint that disappears after the path read (#11861)", async () => {

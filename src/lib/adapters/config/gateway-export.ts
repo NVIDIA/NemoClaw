@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { isValidNemoClawPort } from "../../config/model";
 import { isExternalHttpGatewayOrigin } from "../../core/gateway-address";
-import type { ObservedExportGateway } from "../../domain/config/export-evidence";
+import type {
+  ExportSnapshotReadStage,
+  ObservedExportGateway,
+} from "../../domain/config/export-evidence";
 import { isWsl } from "../../core/wsl";
 import { loadGatewayManagementDeclaration } from "../../onboard/gateway-management";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
@@ -126,8 +129,10 @@ async function observeExternalListener(owner: GatewayOwner) {
 async function externalGateway(
   owner: GatewayOwner,
   recorded: GatewayOwner | null,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
 ): Promise<ObservedExportGateway> {
   const { endpoint, gatewayPort: port, gatewayName: name } = owner;
+  beforeRead("gateway-configuration");
   if (
     process.platform !== "linux" ||
     isWsl() ||
@@ -136,9 +141,11 @@ async function externalGateway(
   ) {
     throw new Error("Export requires a native Linux external HTTP loopback gateway without TLS.");
   }
+  beforeRead("gateway-authority");
   if (!recorded || !sameGatewayOwner(recorded, owner)) {
     throw new Error("External gateway authority is missing or changed since onboarding.");
   }
+  beforeRead("gateway-registration");
   const registered = await observeOpenShellGatewayRegistration(name, (args, options) =>
     captureSanitizedResolvedOpenshell(args, {
       ...options,
@@ -154,6 +161,7 @@ async function externalGateway(
       "External gateway registration or authentication differs from its declaration.",
     );
   }
+  beforeRead("gateway-listener");
   const listener = await observeExternalListener(owner);
   return {
     name,
@@ -170,8 +178,10 @@ async function externalGateway(
 
 export async function observeExportGateway(
   entry: Readonly<SandboxEntry>,
+  beforeRead: (stage: ExportSnapshotReadStage) => void = () => {},
 ): Promise<ObservedExportGateway> {
   const { name, port } = resolveExportGatewayBinding(entry);
+  beforeRead("gateway-authority");
   const loaded = loadGatewayManagementDeclaration();
   if (!loaded.ok) throw new Error("Gateway declaration could not be verified.");
   const recorded = readRecordedOwner(port);
@@ -184,11 +194,13 @@ export async function observeExportGateway(
         hasPackagedService: false,
       }),
       recorded,
+      beforeRead,
     );
   }
   if (recorded?.mode === "externally-supervised") {
     throw new Error("Recorded external gateway authority no longer has its declaration.");
   }
+  beforeRead("gateway-binding");
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   const stateDir = resolveGatewayStateDirForPort({ configured, home: os.homedir(), port });
   const stateRootOwned =

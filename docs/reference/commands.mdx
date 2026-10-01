@@ -303,6 +303,74 @@ Its declaration, retained onboarding authority, registration, and supervised lis
 The exported gateway contains `management: external` and the verified `endpoint`, without gateway lifecycle settings or source state paths.
 If gateway evidence cannot be verified, export fails without publishing YAML.
 HTTPS and WSL external gateway exports remain unsupported.
+
+<AgentOnly variant="openclaw">
+
+The following complete example shows an external gateway export for an OpenClaw sandbox named `alpha`.
+Export your source sandbox to obtain its actual provider, model, identity, and policy values.
+This example targets [v1 revision `88c6600c06b0`](https://github.com/NVIDIA/NemoClaw/commit/88c6600c06b0937907290362eef86912052c4ad0).
+
+```yaml
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: alpha
+  uid: 018f47e2-9d93-7d15-9c41-3ecf70b2550f
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:8080
+  inferenceProviders:
+    - name: hosted-openai-api
+      provider: openai
+      api: openai-responses
+      endpoint: https://api.openai.com/v1
+      credential:
+        env: OPENAI_API_KEY
+  sandboxes:
+    - name: alpha
+      runtime:
+        provider: docker
+      harness:
+        kind: openclaw
+        interfaces:
+          dashboard:
+            port: 18789
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-openai-api
+              overrides:
+                model: gpt-5
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /opt/fabric, /opt/nemoclaw, /app]
+              read_write: [/sandbox]
+            network_policies:
+              api:
+                name: api
+                endpoints:
+                  - host: api.openai.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/curl
+```
+
+</AgentOnly>
+
+For external gateway authority, endpoint, registration, or listener verification failures, the diagnostic gives a check to perform before retrying.
+NemoClaw publishes no YAML and omits raw gateway errors.
+If gateway evidence changes during export, stabilize the gateway configuration and listener before retrying.
+
 OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
 Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
 Other local inference and Podman exports remain deferred.

@@ -77,29 +77,38 @@ function qualifySnapshot(observed: ObservedExportSnapshot): QualifiedExportSnaps
   return { ...observed, policy: qualifyEffectivePolicy(observed.policy) };
 }
 
-const LIVE_READ_SOURCE_LABELS = {
-  registry: "sandbox registry",
-  "gateway-binding": "registered gateway binding",
-  "sandbox-inventory": "live sandbox inventory",
-  "sandbox-identity": "live sandbox identity",
-  "inference-route": "live gateway inference route",
-  "provider-metadata": "live inference provider metadata",
-  "web-search-provider": "live web-search provider metadata",
-  "managed-serving": "managed serving runtime",
-  "ollama-serving": "live Ollama daemon and proxy mapping",
-  "effective-policy": "effective OpenShell policy",
+const LIVE_READ_DIAGNOSTICS = {
+  registry: "The sandbox registry could not be read or verified.",
+  "gateway-binding": "The registered gateway binding could not be read or verified.",
+  "gateway-authority":
+    "The gateway declaration or retained onboarding authority could not be verified. " +
+    "Check the declaration against the gateway selected during onboarding.",
+  "gateway-configuration":
+    "External gateway export requires native Linux and an HTTP 127.0.0.1 origin without gateway credentials. " +
+    "Check the declared endpoint and host platform.",
+  "gateway-registration":
+    "The external gateway registration could not be verified. " +
+    "Check that its endpoint and authentication match the gateway declaration.",
+  "gateway-listener":
+    "The external gateway listener or supervisor identity could not be verified. " +
+    "Check that the declared service owns the running gateway listener.",
+  "gateway-stability":
+    "External gateway evidence changed during export. " +
+    "Retry after the gateway configuration and listener are stable.",
+  "sandbox-inventory": "The live sandbox inventory could not be read or verified.",
+  "sandbox-identity": "The live sandbox identity could not be read or verified.",
+  "inference-route": "The live gateway inference route could not be read or verified.",
+  "provider-metadata": "The live inference provider metadata could not be read or verified.",
+  "web-search-provider": "The live web-search provider metadata could not be read or verified.",
+  "managed-serving": "The managed serving runtime could not be read or verified.",
+  "ollama-serving": "The live Ollama daemon and proxy mapping could not be read or verified.",
+  "effective-policy": "The effective OpenShell policy could not be read or verified.",
 } satisfies Readonly<Record<ExportSnapshotReadStage, string>>;
 
 function failedLiveRead(stage: ExportSnapshotReadStage): ObservationAttempt {
   return {
     kind: "rejected",
-    findings: [
-      finding(
-        "source.live",
-        "live-verification-failed",
-        `The ${LIVE_READ_SOURCE_LABELS[stage]} could not be read or verified.`,
-      ),
-    ],
+    findings: [finding("source.live", "live-verification-failed", LIVE_READ_DIAGNOSTICS[stage])],
   };
 }
 

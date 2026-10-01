@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { qualifyEffectivePolicy } from "../../actions/config/observe-export-source";
@@ -138,6 +139,26 @@ describe("external gateway config export", () => {
         validateConfigExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0]),
       ).toMatchObject({
         revision: "88c6600c06b0937907290362eef86912052c4ad0",
+      });
+    },
+  );
+
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "parses and compiles the documented external gateway example (#11861)",
+    testTimeoutOptions(12 * 60_000),
+    () => {
+      const reference = readFileSync(
+        new URL("../../../../docs/reference/commands.mdx", import.meta.url),
+        "utf8",
+      );
+      const section = reference
+        .split("### `$$nemoclaw config export <sandbox>`")[1]!
+        .split("### `$$nemoclaw resources`")[0]!;
+      const example = section.match(/```yaml\n([\s\S]*?)\n```/u)?.[1];
+      expect(example).toBeTypeOf("string");
+      expect(validateConfigExportWithPinnedV1(example!)).toMatchObject({
+        revision: "88c6600c06b0937907290362eef86912052c4ad0",
+        compiledSandboxes: 1,
       });
     },
   );

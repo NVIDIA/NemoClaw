@@ -16,6 +16,7 @@ import { connectExternalHttpOpenShellSdk, connectManagedOpenShellSdk } from "../
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { observeExportGateway } from "./gateway-export";
 import { readFailureCanary } from "./live-export-source-test-fixture";
+import type { ExportSnapshotReadStage } from "../../domain/config/export-evidence";
 
 vi.mock("./gateway-export", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./gateway-export")>()),
@@ -125,7 +126,86 @@ describe("external gateway live source reader", () => {
       });
     const exported = await exportLiveSource();
     expectExportRefusal(exported, { category: "live-verification-failed" });
+    expect(exported.result).toMatchObject({
+      failure: {
+        findings: [
+          {
+            diagnostic:
+              "External gateway evidence changed during export. Retry after the gateway configuration and listener are stable.",
+          },
+        ],
+      },
+    });
     expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      stage: "gateway-authority",
+      diagnostic:
+        "The gateway declaration or retained onboarding authority could not be verified. Check the declaration against the gateway selected during onboarding.",
+    },
+    {
+      stage: "gateway-configuration",
+      diagnostic:
+        "External gateway export requires native Linux and an HTTP 127.0.0.1 origin without gateway credentials. Check the declared endpoint and host platform.",
+    },
+    {
+      stage: "gateway-registration",
+      diagnostic:
+        "The external gateway registration could not be verified. Check that its endpoint and authentication match the gateway declaration.",
+    },
+    {
+      stage: "gateway-listener",
+      diagnostic:
+        "The external gateway listener or supervisor identity could not be verified. Check that the declared service owns the running gateway listener.",
+    },
+  ] satisfies { stage: ExportSnapshotReadStage; diagnostic: string }[])(
+    "reports safe recovery guidance for $stage without connecting or publishing (#11861)",
+    async ({ stage, diagnostic }) => {
+      mockExternalSource();
+      vi.mocked(observeExportGateway).mockImplementationOnce(async (_entry, beforeRead) => {
+        beforeRead?.(stage);
+        throw new Error(`${readFailureCanary} /private/gateway-state \u001b[2J`);
+      });
+
+      const exported = await exportLiveSource();
+
+      expectExportRefusal(exported, { category: "live-verification-failed" });
+      expect(exported.result).toMatchObject({ failure: { findings: [{ diagnostic }] } });
+      expect(connectExternalHttpOpenShellSdk).not.toHaveBeenCalled();
+      expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
+      expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
+      expect(JSON.stringify(exported.result)).not.toContain("/private/gateway-state");
+      expect(JSON.stringify(exported.result)).not.toContain("\\u001b");
+    },
+  );
+
+  it("keeps registration recovery guidance when the final gateway check fails (#11861)", async () => {
+    mockExternalSource();
+    vi.mocked(observeExportGateway)
+      .mockResolvedValueOnce(external)
+      .mockImplementationOnce(async (_entry, beforeRead) => {
+        beforeRead?.("gateway-registration");
+        throw new Error(readFailureCanary);
+      });
+
+    const exported = await exportLiveSource();
+
+    expectExportRefusal(exported, { category: "live-verification-failed" });
+    expect(exported.result).toMatchObject({
+      failure: {
+        findings: [
+          {
+            diagnostic:
+              "The external gateway registration could not be verified. Check that its endpoint and authentication match the gateway declaration.",
+          },
+        ],
+      },
+    });
+    expect(connectExternalHttpOpenShellSdk).toHaveBeenCalled();
+    expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
+    expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
   });
 
   it("does not fall back to a managed connection when the external SDK fails (#11861)", async () => {
@@ -159,6 +239,12 @@ describe("external gateway live source reader", () => {
     vi.mocked(observeExportGateway).mockRejectedValue(new Error(readFailureCanary));
     const exported = await exportLiveSource();
     expectExportRefusal(exported, { category: "live-verification-failed" });
+    expect(exported.result).toMatchObject({
+      failure: {
+        findings: [{ diagnostic: "The registered gateway binding could not be read or verified." }],
+      },
+    });
+    expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
     expect(connectExternalHttpOpenShellSdk).not.toHaveBeenCalled();
     expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
   });

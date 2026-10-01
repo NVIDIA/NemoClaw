@@ -305,19 +305,26 @@ async function effectivePolicy(
 async function recheckExternalGateway(
   entry: Readonly<SandboxEntry>,
   gateway: ObservedExportGateway,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
 ) {
-  if (gateway.external && !isDeepStrictEqual(gateway, await observeExportGateway(entry))) {
+  if (!gateway.external) return;
+  const confirmed = await observeExportGateway(entry, beforeRead);
+  beforeRead("gateway-stability");
+  if (!isDeepStrictEqual(gateway, confirmed)) {
     throw new Error("External gateway changed during the source read.");
   }
 }
 
 async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
   let stage: ExportSnapshotReadStage = "registry";
+  const beforeRead = (nextStage: ExportSnapshotReadStage) => {
+    stage = nextStage;
+  };
   try {
     const entry = loadRegistry().sandboxes[sandboxName] ?? null;
     if (!entry) return { kind: "not-found", sandboxName };
     stage = "gateway-binding";
-    const gateway = await observeExportGateway(entry);
+    const gateway = await observeExportGateway(entry, beforeRead);
     stage = "sandbox-inventory";
     const signal = AbortSignal.timeout(CAPTURE_TIMEOUT_MS);
     const connection = createExportGatewayConnection(gateway, signal);
@@ -339,9 +346,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     const inference = await inferenceFor(
       entry,
       gateway,
-      (nextStage) => {
-        stage = nextStage;
-      },
+      beforeRead,
       signal,
       managedServing,
       connection,
@@ -354,7 +359,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     stage = "effective-policy";
     const { configuration, ...policy } = await effectivePolicy(gateway, row, signal, connection);
     stage = "gateway-binding";
-    await recheckExternalGateway(entry, gateway);
+    await recheckExternalGateway(entry, gateway, beforeRead);
     return {
       kind: "observed",
       sandboxName,
