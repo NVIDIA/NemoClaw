@@ -61,7 +61,7 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 ## Validation
 
-| Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test) |
+| Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test |
 |----------|-----------------|----------------------|----------------------------------|
 | On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
 
