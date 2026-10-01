@@ -386,6 +386,7 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $runtimeCheck = Get-WslContainerRuntimeUnavailableScript
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser
@@ -393,6 +394,7 @@ jobs:
           export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
+          $runtimeCheck
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script

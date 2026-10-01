@@ -329,16 +329,23 @@ function Repair-WslSystemdAfterInstall {
     throw "WSL systemd did not become available after one distro restart: $(@($result.Output) -join "`n")"
 }
 
-function Get-WslContainerRuntimeStopScript {
+function Get-WslContainerRuntimeUnavailableScript {
     return @'
-set -euo pipefail
-systemctl mask --runtime --now docker.service docker.socket
 if docker info >/dev/null 2>&1; then
   echo "Docker must remain unavailable during the non-live Vitest suite." >&2
   systemctl show --property=LoadState,ActiveState,SubState docker.service docker.socket >&2 || true
   exit 1
 fi
 '@
+}
+
+function Get-WslContainerRuntimeStopScript {
+    # This CI-owned distro can restart between steps; keep masks until live testing.
+    $script = @'
+set -euo pipefail
+systemctl mask --now docker.service docker.socket
+'@
+    return $script + "`n" + (Get-WslContainerRuntimeUnavailableScript)
 }
 
 function Stop-WslContainerRuntime {
@@ -351,7 +358,7 @@ function Stop-WslContainerRuntime {
 function Get-WslContainerRuntimeStartScript {
     return @'
 set -euo pipefail
-systemctl unmask --runtime docker.service docker.socket
+systemctl unmask docker.service docker.socket
 systemctl start docker.service
 timeout 30s bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
 docker info

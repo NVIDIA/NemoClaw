@@ -45,22 +45,28 @@ describe("trusted WSL CI helper", () => {
   );
 
   itPowerShell(
-    "keeps Docker unavailable despite socket activation and preserves shutdown failures",
+    "keeps Docker unavailable across distro restarts and preserves shutdown failures",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
 Get-WslContainerRuntimeStopScript
 `,
     (result) => {
       expect(result.status).toBe(0);
-      expect(runWslContainerRuntimeScript(result.stdout)).toMatchObject({
+      expect(
+        runWslContainerRuntimeScript(`${result.stdout}\nsimulate_wsl_restart\n! docker info`),
+      ).toMatchObject({
         status: 0,
         masked: true,
-        commands: ["systemctl mask --runtime --now docker.service docker.socket", "docker info"],
+        commands: [
+          "systemctl mask --now docker.service docker.socket",
+          "docker info",
+          "docker info",
+        ],
       });
       expect(runWslContainerRuntimeScript(result.stdout, "mask-fails")).toMatchObject({
         status: 23,
         stderr: "systemd stop failed\n",
-        commands: ["systemctl mask --runtime --now docker.service docker.socket"],
+        commands: ["systemctl mask --now docker.service docker.socket"],
       });
       expect(runWslContainerRuntimeScript(result.stdout, "reachable")).toMatchObject({
         status: 1,
@@ -82,7 +88,7 @@ Get-WslContainerRuntimeStartScript
         status: 0,
         masked: false,
         commands: [
-          "systemctl unmask --runtime docker.service docker.socket",
+          "systemctl unmask docker.service docker.socket",
           "systemctl start docker.service",
           "timeout 30s",
           "docker info",
