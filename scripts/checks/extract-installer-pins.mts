@@ -577,6 +577,83 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
     version: "0.0.116",
   },
+  {
+    brevTemplateSha256: [
+      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+      "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+      // Exact #11251 template after immutable stable-channel enforcement.
+      "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+      // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
+      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+      // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
+      "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+      // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
+      "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+      // Exact #12192 secure npm diagnostics; release pins stay unchanged.
+      "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+      // Exact #12192 shared npm diagnostics; release pins stay unchanged.
+      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+      // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
+      "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "a8ceb321f3d397a7ff9d07b0ffd6c06ad5d78021b9e477f5aca898ba98aa9bb8",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell.rb",
+    },
+    // The v0.0.116 release publishes only MUSL standalone sandbox archives.
+    // Trust only the exact full-cutover installer template whose stable Linux
+    // path selects that ABI. The historical v0.0.106 record retains the GNU templates.
+    installerTemplateSha256: [
+      "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+      // Exact #11251 template after immutable stable-override validation.
+      "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+      // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+      "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "13ed9929ef1a9bc0dbbbbddfd13f14870cea2f64bee3786d848c7b1836785dc7",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "df589be474d16af9cd38b22ab6738241d9a45a9caa5fa4847c3aa51de8b7c8aa",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "8475250201e4f72180c0d49b7898c7b33c28412f0373ef002a58c87c734255ae",
+      },
+    ],
+    sandboxBuilds: [
+      {
+        required: false,
+        sha256: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      },
+      {
+        required: false,
+        sha256: "9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa",
+      },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+      required: false,
+      runtimeTemplateSha256: [
+        // Exact #11251 gateway-preparation runtime template.
+        "6093aa5b0f20988cfc59e0613cdf1fb21f814b43cc3ec95bb17da14dc0620b60",
+        // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
+        "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
+        // Exact #11251 template after stable supervisor override binding.
+        "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
+        // Exact #11251 template after fail-closed gateway recovery validation.
+        "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+      ],
+    },
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    version: "0.1.2",
+  },
 ] as const;
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
