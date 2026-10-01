@@ -98,39 +98,8 @@ jobs:
           path: candidate
           persist-credentials: false
 
-      - name: Checkout npm audit code from the base commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
-          path: .trusted-reviewed-npm-audit
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/setup-reviewed-npm
-            ci/reviewed-npm-audit.json
-            .github/actions/ci-reviewed-npm-audit
-            ci/npm-audit-exceptions.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-          sparse-checkout-cone-mode: false
-
-      - name: Verify exact audit source and target
-        shell: bash
-        env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEWED_AUDIT_SHA: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
-        run: |
-          set -euo pipefail
-          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$REVIEWED_AUDIT_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
-          test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
-
       - name: Audit exact PR production npm graphs
-        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
+        uses: ./candidate/.github/actions/ci-reviewed-npm-audit
         with:
           target-root: ${{ github.workspace }}/candidate
           report-dir: artifacts/reviewed-npm-audit
@@ -544,7 +513,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: d60ee0bb36e582f83846f41a1b7e94719fcd89f6
+          ref: ${{ github.event.pull_request.base.sha }}
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -566,13 +535,15 @@ jobs:
         if: matrix.agent == 'openclaw'
         id: mcporter-audit
         shell: bash
+        env:
+          REVIEWED_AUDIT_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
-          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = 'd60ee0bb36e582f83846f41a1b7e94719fcd89f6'
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -2382,14 +2353,14 @@ jobs:
             fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
           );
           const packages = {
-            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.1"],
-            brave: ["@openclaw/brave-plugin", "2026.9.1"],
-            discord: ["@openclaw/discord", "2026.9.1"],
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
+            brave: ["@openclaw/brave-plugin", "2026.9.2"],
+            discord: ["@openclaw/discord", "2026.9.2"],
             "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
-            slack: ["@openclaw/slack", "2026.9.1"],
-            whatsapp: ["@openclaw/whatsapp", "2026.9.1"],
-            msteams: ["@openclaw/msteams", "2026.9.1"],
-            googlechat: ["@openclaw/googlechat", "2026.9.1"],
+            slack: ["@openclaw/slack", "2026.9.2"],
+            whatsapp: ["@openclaw/whatsapp", "2026.9.2"],
+            msteams: ["@openclaw/msteams", "2026.9.2"],
+            googlechat: ["@openclaw/googlechat", "2026.9.2"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
           const projectRoots = fs
