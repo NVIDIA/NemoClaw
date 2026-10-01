@@ -390,7 +390,8 @@ function timedOutPhase(meta: UnknownRecord): string | null {
 
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
+  // replayInvalid records possible side effects, including successful tool calls.
+  // Replay safety does not establish whether this turn completed.
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }

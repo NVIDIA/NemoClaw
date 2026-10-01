@@ -63,8 +63,8 @@ export function shouldInitializeNativeOpenclawInferenceRoute(
 ): boolean {
   return (
     context.agent === null &&
-    context.fromDockerfile !== null &&
-    !preserveRebuildLivePolicy &&
+    (context.fromDockerfile !== null || Boolean(context.session?.metadata?.fromImage)) &&
+    (!preserveRebuildLivePolicy || Boolean(context.session?.metadata?.fromImage)) &&
     context.session?.steps.openclaw?.status !== "complete"
   );
 }
@@ -94,6 +94,8 @@ export function createFinalOnboardFlowPhases<
       context,
       options.preserveRebuildLivePolicy === true,
     );
+    const settleOpenclawStartupBeforeConfiguration =
+      initializeNativeInferenceRoute && Boolean(context.session?.metadata?.fromImage);
     if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
       throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
     }
@@ -109,6 +111,7 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
       initializeNativeInferenceRoute,
+      settleOpenclawStartupBeforeConfiguration,
       revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,
     });

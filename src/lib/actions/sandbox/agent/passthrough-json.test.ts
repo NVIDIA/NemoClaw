@@ -284,7 +284,6 @@ describe("runAgentJsonPassthrough", () => {
     expect(stderr.join("")).toContain("did not complete");
     expect(stderr.join("")).toContain("error.kind=incomplete_turn");
     expect(stderr.join("")).toContain("livenessState=abandoned");
-    expect(stderr.join("")).toContain("replayInvalid=true");
     expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions list");
     expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions export <key>");
     expect(stderr.join("")).toContain(
@@ -388,30 +387,43 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("keeps a completed turn at exit 0 so the incomplete-turn check does not misfire", async () => {
-    const payload = JSON.stringify({
-      status: "ok",
-      summary: "completed",
-      result: { payloads: [{ text: "PONG" }], meta: { livenessState: "working" } },
-    });
-    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
-      outcome: { kind: "exited" as const, exitCode: 0 },
-      stdout: payload,
-      stderr: "",
-    }));
-    const { exit, proc } = makeProc();
+  it.each([false, true])(
+    "keeps a completed tool turn at exit 0 with replayInvalid=%s",
+    async (replayInvalid) => {
+      const payload = JSON.stringify({
+        status: "ok",
+        summary: "completed",
+        result: {
+          payloads: [{ text: "PONG" }],
+          meta: {
+            aborted: false,
+            replayInvalid,
+            agentMeta: { stopReason: "stop" },
+            successfulToolNames: ["exec"],
+          },
+        },
+      });
+      const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+        outcome: { kind: "exited" as const, exitCode: 0 },
+        stdout: payload,
+        stderr: "",
+      }));
+      const { exit, proc, stderr, stdout } = makeProc();
 
-    await expect(
-      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
-        getGatewayName: () => null,
-        getOpenshellBinary: () => "openshell",
-        runDispatch,
-        stdinIsTty: () => false,
-      }),
-    ).rejects.toThrow("__exit:0");
+      await expect(
+        runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+          getGatewayName: () => null,
+          getOpenshellBinary: () => "openshell",
+          runDispatch,
+          stdinIsTty: () => false,
+        }),
+      ).rejects.toThrow("__exit:0");
 
-    expect(exit).toHaveBeenCalledWith(0);
-  });
+      expect(exit).toHaveBeenCalledWith(0);
+      expect(stdout.join("")).toBe(payload);
+      expect(stderr.join("")).not.toContain("did not complete");
+    },
+  );
 
   it("keeps a healthy response at exit 0 after a marker-bearing JSON log record", async () => {
     const payload = [

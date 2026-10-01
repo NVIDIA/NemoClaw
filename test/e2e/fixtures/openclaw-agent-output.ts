@@ -42,12 +42,13 @@ function responseContainsToolCallStructure(
   return containsToolCallStructure(wrapperFields);
 }
 
-function isCompletedToolReplay(document: unknown, response: Record<string, unknown>): boolean {
+function hasReplayReplyEvidence(document: unknown, response: Record<string, unknown>): boolean {
   if (!document || typeof document !== "object" || Array.isArray(document)) return false;
   const wrapper = document as Record<string, unknown>;
   const meta = response.meta;
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
   const record = meta as Record<string, unknown>;
+  if (record.replayInvalid !== true) return true;
   const summary = record.toolSummary;
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
   const toolSummary = summary as Record<string, unknown>;
@@ -68,11 +69,11 @@ function isCompletedToolReplay(document: unknown, response: Record<string, unkno
   );
 }
 
-function hasCompletedFinalToolReplay(documents: unknown[]): boolean {
+function hasFinalReplayReplyEvidence(documents: unknown[]): boolean {
   for (let index = documents.length - 1; index >= 0; index -= 1) {
     const document = documents[index]!;
     const response = openClawAgentResponseRecord(document);
-    if (response) return isCompletedToolReplay(document, response);
+    if (response) return hasReplayReplyEvidence(document, response);
   }
   return false;
 }
@@ -110,11 +111,8 @@ function openClawAgentTextParts(raw: string): string[] {
   if (containsToolCallOutput(openClawUnframedJsonText(raw))) return [];
   const documents = parseOpenClawJsonDocuments(raw);
   const incomplete = openClawAgentIncompleteTurnSignal(raw);
-  if (
-    incomplete &&
-    (incomplete.markers.some((marker) => marker !== "replayInvalid=true") ||
-      !hasCompletedFinalToolReplay(documents))
-  ) {
+  // Keep replay reply corroboration independent of the CLI's completion verdict.
+  if (incomplete || !hasFinalReplayReplyEvidence(documents)) {
     return [];
   }
   const parts: string[] = [];
