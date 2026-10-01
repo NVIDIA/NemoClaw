@@ -1203,6 +1203,9 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    // Keep passive discovery identical across applies. An unroutable endpoint can
+    // fail as either a transport error or a timeout.
+    document.spec.inference_providers[0].endpoint = "http://127.0.0.1:9/v1".into();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
