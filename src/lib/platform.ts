@@ -4,12 +4,14 @@
 import { existsSync as defaultExistsSync } from "node:fs";
 import path from "node:path";
 
-import { isWsl, type WslDetectionOptions } from "./core/wsl";
+import { isWsl as detectWsl, type WslDetectionOptions } from "./core/wsl";
 export type { WslDetectionOptions } from "./core/wsl";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
 import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
 import { buildDockerSubprocessEnv } from "./subprocess-env";
+
+const isWsl = detectWsl;
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 

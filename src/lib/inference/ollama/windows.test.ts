@@ -578,9 +578,12 @@ describe("Windows Ollama helper", () => {
     }
   });
 
-  it("rejects readiness when the active runtime changes away from Docker Desktop", () => {
-    const detectContainerRuntimeFromDockerInfo = vi.fn(() => "docker");
-    const currentIsWsl = vi.fn(() => true);
+  it.each([
+    { runtime: "docker", wsl: true },
+    { runtime: "docker-desktop", wsl: false },
+  ])("rejects Windows Ollama readiness for $runtime with WSL=$wsl (#11861)", ({ runtime, wsl }) => {
+    const detectContainerRuntimeFromDockerInfo = vi.fn(() => runtime);
+    const currentIsWsl = vi.fn(() => wsl);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), undefined, {
       detectContainerRuntimeFromDockerInfo,
