@@ -1310,10 +1310,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "none",
-    // Manual PR runs plan this target from the trusted base catalogue. Keep
-    // the retired target's execution shape compatible until main no longer
-    // schedules it; the test builds the checked-out candidate explicitly.
-    restoreCli: false,
+    restoreCli: true,
     exposeCliBin: false,
     owningPaths: ["src/lib/cli/public-display-defaults.ts"],
     environment: {

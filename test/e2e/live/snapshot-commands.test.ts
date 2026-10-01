@@ -4,7 +4,7 @@
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 test(
   "retired snapshot commands expose complete-state backup and rebuild replacements",
@@ -12,8 +12,7 @@ test(
     timeout: testTimeout(5 * 60_000),
     meta: {
       e2ePhases: [
-        "build the exact candidate CLI for trusted-main target retirement",
-        "inspect the exact candidate CLI surface",
+        "inspect the restored exact candidate CLI surface",
         "verify selective snapshot commands remain retired",
         "verify complete-state backup and rebuild replacements are discoverable",
       ],
@@ -30,15 +29,7 @@ test(
       ],
     });
 
-    progress.phase("build the exact candidate CLI for trusted-main target retirement");
-    const build = await host.command("npm", ["run", "build:cli"], {
-      artifactName: "build-exact-candidate-cli",
-      cwd: REPO_ROOT,
-      timeoutMs: 3 * 60_000,
-    });
-    expect(build.exitCode, resultText(build)).toBe(0);
-
-    progress.phase("inspect the exact candidate CLI surface");
+    progress.phase("inspect the restored exact candidate CLI surface");
     const help = await host.command(process.execPath, [CLI_ENTRYPOINT, "help"], {
       artifactName: "snapshot-retirement-cli-help",
       timeoutMs: 60_000,

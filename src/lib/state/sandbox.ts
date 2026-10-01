@@ -1432,18 +1432,6 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
   );
 }
 
-function isNativeNonAuthoritySourceEntry(entry: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const sourceOrAsset =
-    /\.(?:[cm]?[jt]sx?|css|scss|json|map|py|rb|go|rs|java|kt|swift|php|sh|rst)$/iu.test(
-      path.posix.basename(normalized),
-    );
-  return (
-    sourceOrAsset &&
-    (isNativeDependencyTreeEntry(normalized) || normalized.startsWith(".openclaw/cache/"))
-  );
-}
-
 function isNativeNonAuthorityBinaryStateEntry(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   // These SQLite databases are durable agent state rather than credential
@@ -1476,8 +1464,8 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  privateKeyHeader: boolean,
   nonAuthorityBinary: boolean,
-  nonAuthoritySource: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1492,13 +1480,6 @@ function scanNativeTarFilePayload(
     }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
-    // Installed third-party source can embed generated WASM/base64 payloads that
-    // randomly contain complete token-shaped byte sequences. It is not a
-    // credential authority, so scanning it cannot distinguish those bytes from
-    // a real token. Keep scanning dependency manifests and non-source files,
-    // while structured native authorities and bundled NemoClaw code remain
-    // covered below.
-    if (nonAuthoritySource) return false;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
     // the same field (or any other credential assignment) still fails closed.
@@ -1511,6 +1492,7 @@ function scanNativeTarFilePayload(
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
+        privateKeyHeader,
       })
     ) {
       return true;
@@ -1579,8 +1561,8 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
+              !dependencyTree,
               dependencyTree || isNativeNonAuthorityBinaryStateEntry(entry),
-              isNativeNonAuthoritySourceEntry(entry),
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;

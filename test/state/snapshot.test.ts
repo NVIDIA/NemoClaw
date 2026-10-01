@@ -1003,25 +1003,21 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/main/sessions/sessions.json",
       '{"sessions":{"main":{"sessionToken":"opaqueSessionIdentifierZ1234567890"}}}',
     ],
-    ["dependency source map", "node_modules/example.mjs.map", TOKEN_SHAPED_GENERATED_BYTES],
+    ["dependency source map", "node_modules/example.mjs.map", '{"version":3,"sources":[]}'],
     [
       "dependency metadata",
       "node_modules/jsonwebtoken/package.json",
       '{"description":"JSON Web Token implementation","repository":"https://jimmywarting@github.com/example/repo.git"}',
     ],
-    [
-      "Hermes lazy docs",
-      ".hermes/lazy-packages/boto3/examples/cloudfront.rst",
-      TOKEN_SHAPED_GENERATED_BYTES,
-    ],
+    ["Hermes lazy docs", ".hermes/lazy-packages/boto3/examples/cloudfront.rst", "Example docs"],
     [
       "Hermes lazy dependency data",
       ".hermes/lazy-packages/botocore/data/sts/2011-06-15/examples-1.json",
-      JSON.stringify({ accessKeyId: TOKEN_SHAPED_GENERATED_BYTES }),
+      JSON.stringify({ requestId: "example-request" }),
     ],
     ["OpenClaw database", OPENCLAW_SQLITE_WAL, `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
     ["Deep Agents DB", ".deepagents/.state/sessions.db", `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
-    ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", TOKEN_SHAPED_GENERATED_BYTES],
+    ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", ".app { color: #02468a; }"],
   ])(
     "preserves %s without treating it as credential configuration",
     (_case, relativePath, content) => {
@@ -1094,6 +1090,7 @@ describe("complete native home persistence", () => {
       JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    ["dependency source code", "node_modules/example/token.js", `ghp_${"fedcba9876543210"}`],
     [
       "a concrete token in bundled NemoClaw runtime code",
       ".openclaw/extensions/nemoclaw/dist/injected.js",

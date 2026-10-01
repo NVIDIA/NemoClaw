@@ -531,7 +531,7 @@ describe("E2E workflow plan", () => {
       {
         profile: "standard",
         installMode: "none",
-        restoreCli: false,
+        restoreCli: true,
         exposeCliBin: false,
       },
     ],
