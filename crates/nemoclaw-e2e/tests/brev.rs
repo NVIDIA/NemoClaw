@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
+use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_provider::{
+    Backend,
+    openshell::{EnvironmentSecrets, OpenShell},
+};
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
     backend::Row,
@@ -217,21 +221,79 @@ fn egress_proof_requires_policy_denial_for_the_exact_probe_hostname() {
 }
 
 async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let output = exec(
-        client,
-        binding,
-        [
-            "/opt/fabric/bin/python",
-            "-c",
-            "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"status\"}\\n'); print(s.makefile().readline())",
-        ]
-        .map(String::from)
-        .to_vec(),
+    runtime_id_from_snapshot(client.agent_snapshot(binding).await.unwrap())
+}
+
+fn runtime_id_from_snapshot(snapshot: nemoclaw_provider::openshell::AgentSnapshot) -> String {
+    assert_eq!(snapshot.runtime_state, "running");
+    snapshot.runtime_id.unwrap()
+}
+
+#[tokio::test]
+async fn runtime_identity_uses_provider_snapshot_contract() {
+    let (fixture, client, binding) = sandbox_fixture().await;
+    fixture.state.lock().unwrap().fabric_configurations.insert(
+        binding["id"].clone(),
+        json!({"metadata":{"name":binding["agent_name"]}}),
+    );
+
+    assert_eq!(runtime_id(&client, &binding).await, "fixture-runtime");
+    assert!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .any(|command| {
+                command
+                    == &[
+                        "/usr/local/bin/fabric-agent",
+                        "check",
+                        "--agent",
+                        &binding["agent_name"],
+                        "--live",
+                    ]
+            })
+    );
+}
+
+async fn sandbox_fixture() -> (Fixture, OpenShell, Row) {
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
-    .await;
-    let value: Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["ready"], true);
-    value["runtime_id"].as_str().unwrap().into()
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(
+        &document.spec.gateway,
+        Arc::new(nemoclaw_sdk::EnvironmentSecrets),
+    )
+    .unwrap();
+    let generations = [
+        ("workspace".into(), "workspace-generation".into()),
+        ("provider".into(), "provider-generation".into()),
+        ("sandbox".into(), "sandbox-generation".into()),
+    ]
+    .into_iter()
+    .collect();
+    let targets = nemoclaw_e2e::image_runtime::targets(&document, &generations).unwrap();
+    for target in targets.iter().filter(|target| {
+        matches!(
+            target.kind.as_str(),
+            "workspace" | "provider_profile" | "provider"
+        )
+    }) {
+        let mutation = client.ensure(&target.kind, &target.values).await;
+        assert!(mutation.error().is_none(), "{:?}", mutation.error());
+    }
+    let target = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
+    let mutation = client.ensure("sandbox", &target.values).await;
+    assert!(mutation.error().is_none(), "{:?}", mutation.error());
+    (fixture, client, mutation.into_parts().0.unwrap())
 }
 
 async fn openclaw_reply(client: &OpenShell, binding: &Row, agent: &str, key: &str) -> Vec<u8> {
