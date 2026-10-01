@@ -25,11 +25,7 @@ import {
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 import { isDefaultGatewayPort } from "./gateway-binding";
-import {
-  isDockerDriverGatewayHttpReady,
-  isGatewayHttpReady,
-  waitForGatewayHttpReady,
-} from "./gateway-http-readiness";
+import { isDockerDriverGatewayHttpReady, waitForGatewayHttpReady } from "./gateway-http-readiness";
 import {
   invalidGatewayManagementDeclarationError,
   loadGatewayManagementDeclaration,
@@ -409,24 +405,17 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     if (!owner.endpoint) return deps.waitForGatewayHttpReady();
     // The endpoint is constrained to a supported loopback origin at parse time,
     // so this cannot be pointed at an arbitrary host.
-    const clientEnv = getExternalGatewayClientEnv(owner);
+    const clientEnv = getExternalGatewayClientEnv(owner) ?? {};
     const endpoint = owner.endpoint;
     const recordTrace = deps.recordHttpReadinessTrace !== false;
-    if (new URL(endpoint).protocol === "https:") {
-      return waitForGatewayHttpReady({
-        probe: () =>
-          isDockerDriverGatewayHttpReady(
-            undefined,
-            `${endpoint}/openshell.v1.OpenShell/Health`,
-            clientEnv,
-            { recordTrace },
-          ),
-        recordTrace,
-      });
-    }
     return waitForGatewayHttpReady({
       probe: () =>
-        isGatewayHttpReady(undefined, `${endpoint}/`, undefined, undefined, { recordTrace }),
+        isDockerDriverGatewayHttpReady(
+          undefined,
+          `${endpoint}/openshell.v1.OpenShell/Health`,
+          clientEnv,
+          { recordTrace },
+        ),
       recordTrace,
     });
   }

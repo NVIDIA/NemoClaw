@@ -19,6 +19,14 @@ Production access to the raw client and generated messages must stay inside this
 `sdk.ts` is shared with sandbox execution. It retains the existing managed state-root check,
 explicit loopback gateway, and bounded local mTLS file reads. No second credential loader is needed.
 
+External config export uses the separate HTTP connection function in `sdk.ts` after the source
+reader verifies declared and checkpointed ownership, plaintext registration, and the current
+supervised listener. It passes only an explicit `http://127.0.0.1:<port>` endpoint to the SDK.
+The inference CLI read uses that endpoint and empty temporary user and system configuration roots
+to prevent stored credential loading or refresh. Those roots are removed after the read, including
+failure. External read failures do not fall back to the managed connection. `gateway-reuse-cli.ts`
+supplies registration metadata without selecting a gateway or requesting network status.
+
 `inference-route.ts` defines configured and unconfigured observations plus redacted error categories.
 The CLI adapter owns argument construction, ANSI and control-sequence removal, parsing, timeouts,
 and command-error mapping. Named gateway reads stay scoped. The observer returns an error when

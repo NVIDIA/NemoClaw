@@ -3,6 +3,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { isExternalHttpGatewayOrigin } from "../../core/gateway-address";
 import { openRegularFileNoFollow } from "../fs/regular-file";
 import {
   DEFAULT_GATEWAY_PORT,
@@ -24,9 +25,9 @@ type OpenShellSdkModule = Readonly<{
   OpenShellClient: Readonly<{
     connect(
       options: Readonly<{
-        caCert: Buffer;
-        clientCert: Buffer;
-        clientKey: Buffer;
+        caCert?: Buffer;
+        clientCert?: Buffer;
+        clientKey?: Buffer;
         gateway: string;
       }>,
     ): Promise<unknown>;
@@ -76,6 +77,23 @@ export function gatewayPort(target: OpenShellGatewayTarget): number {
 async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
   // Load the SDK lazily through native ESM so the CommonJS CLI uses its import exports.
   return (await importOpenShellSdk()) as OpenShellSdkModule;
+}
+
+/** Connect without credentials to an explicitly verified external HTTP origin. */
+export async function connectExternalHttpOpenShellSdk(
+  target: OpenShellGatewayTarget,
+  endpoint: string,
+  deps: Pick<OpenShellSdkConnectionDeps, "loadSdk" | "signal"> = {},
+): Promise<unknown> {
+  throwIfAborted(deps.signal);
+  if (!isExternalHttpGatewayOrigin(endpoint, gatewayPort(target))) {
+    throw new Error("External HTTP gateway origin does not match the selected local gateway.");
+  }
+  const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
+  throwIfAborted(deps.signal);
+  const client = await sdk.OpenShellClient.connect({ gateway: endpoint });
+  throwIfAborted(deps.signal);
+  return client;
 }
 
 /** Connect the SDK directly to one managed gateway, independent of compute provider. */

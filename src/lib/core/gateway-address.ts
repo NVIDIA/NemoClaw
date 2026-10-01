@@ -6,6 +6,15 @@ import { GATEWAY_PORT } from "./ports";
 export const DEFAULT_GATEWAY_BIND_ADDRESS = "127.0.0.1";
 export const WILDCARD_GATEWAY_BIND_ADDRESS = "0.0.0.0";
 
+export function isExternalHttpGatewayOrigin(endpoint: string, port: number): boolean {
+  return (
+    Number.isInteger(port) &&
+    port >= 1024 &&
+    port <= 65535 &&
+    endpoint === `http://127.0.0.1:${port}`
+  );
+}
+
 export type GatewayBindAddress =
   | typeof DEFAULT_GATEWAY_BIND_ADDRESS
   | typeof WILDCARD_GATEWAY_BIND_ADDRESS;

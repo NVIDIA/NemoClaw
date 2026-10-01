@@ -100,6 +100,12 @@ export interface ObservedExportGateway {
   readonly port: number;
   readonly management: "nemoclaw" | "external" | "unknown";
   readonly stateRootOwned: boolean;
+  readonly external?: Readonly<{
+    endpoint: string;
+    authorityFingerprint: string;
+    listenerPid: number;
+    listenerStartTime: string;
+  }>;
 }
 
 export interface ObservedExportEndpointEvidence {
@@ -292,7 +298,15 @@ const exportSourceFields = {
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
   }),
-  gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  gateway: Type.Union([
+    Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+    Type.Object({
+      name: LocalResourceNameSchema,
+      port: TcpPortSchema,
+      management: Type.Literal("external"),
+      endpoint: BoundedTextSchema,
+    }),
+  ]),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
