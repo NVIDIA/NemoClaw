@@ -368,7 +368,7 @@ async def run_test(args: argparse.Namespace) -> int:
         "(1:1 user→sandbox :18789; this demo uses inflight 1→2 on 8Gi)"
     )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
-    print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
+    print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")
     print("=" * 70)
 
     async def poll_hpa() -> None:
@@ -392,7 +392,7 @@ async def run_test(args: argparse.Namespace) -> int:
                     hold_started = time.monotonic()
                     print(
                         f"[hpa] end-user demand scaled GPUs to {args.target_pods}; "
-                        f"holding {args.hold_sec}s then stopping user queries"
+                        f"holding {args.hold_sec}s then dropping user queries"
                     )
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
@@ -411,7 +411,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 prefix=args.prefix,
                 inflight=args.inflight_per_user,
                 inflight_start=args.inflight_start,
-                duration_sec=args.duration,
+                duration_sec=max(args.duration, 3600),
                 timeout_sec=args.timeout,
                 stop_event=stop_load,
                 log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
@@ -420,11 +420,15 @@ async def run_test(args: argparse.Namespace) -> int:
         for i in range(args.users)
     ]
 
-    deadline = time.monotonic() + args.duration + 30
+    deadline = time.monotonic() + max(args.duration, 1200)
     while True:
-        if stop_load.is_set() or time.monotonic() >= deadline or all(t.done() for t in user_tasks):
-            if time.monotonic() >= deadline and not stop_load.is_set():
-                print("[load] duration elapsed; stopping user queries", file=sys.stderr)
+        if stop_load.is_set() or all(t.done() for t in user_tasks):
+            break
+        if time.monotonic() >= deadline and not stop_load.is_set():
+            print(
+                f"[load] still below {args.target_pods} GPUs after the wait cap; stopping user queries",
+                file=sys.stderr,
+            )
             stop_load.set()
             break
         await asyncio.sleep(1)

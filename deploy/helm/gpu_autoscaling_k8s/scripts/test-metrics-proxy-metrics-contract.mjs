@@ -34,9 +34,15 @@ let nowMs = 1_000_000;
 setLlmMetricsClockForTests(() => nowMs);
 resetLlmLatencyWindowForTests();
 
+let lines = llmMetricsLines();
+assert.ok(
+  !lines.some((entry) => entry.startsWith("nemoclaw_llm_latency_avg_milliseconds ")),
+  "new replica with no samples must omit the HPA gauge (0 would dilute AverageValue)",
+);
+
 recordLlmLatency(5000, true);
 recordLlmLatency(7000, true);
-let lines = llmMetricsLines();
+lines = llmMetricsLines();
 assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 6000);
 assert.ok(
   !lines.some((entry) => entry.includes("latency_p50") || entry.includes("latency_p95")),

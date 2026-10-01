@@ -25,6 +25,7 @@ let llmDurationCount = 0;
 let llmRequestsOk = 0;
 let llmRequestsError = 0;
 let lastLlmSampleAtMs = 0;
+let llmEverSampled = false;
 let nowMsProvider = () => Date.now();
 const llmHistogramBucketsSec = [0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300];
 const llmHistogramCounts = Array.from({ length: llmHistogramBucketsSec.length + 1 }, () => 0);
@@ -56,6 +57,7 @@ export function recordLlmLatency(durationMs, ok) {
   llmDurationsMs.push(normalizedMs);
   if (llmDurationsMs.length > LLM_LATENCY_WINDOW) llmDurationsMs.shift();
   lastLlmSampleAtMs = nowMsProvider();
+  llmEverSampled = true;
 
   let bucketIdx = llmHistogramBucketsSec.findIndex((bound) => sec <= bound);
   if (bucketIdx === -1) bucketIdx = llmHistogramBucketsSec.length;
@@ -91,10 +93,18 @@ export function llmMetricsLines() {
     `nemoclaw_llm_request_duration_seconds_bucket{le="+Inf"} ${llmHistogramCounts[llmHistogramCounts.length - 1]}`,
     `nemoclaw_llm_request_duration_seconds_sum ${llmDurationSumSec}`,
     `nemoclaw_llm_request_duration_seconds_count ${llmDurationCount}`,
-    "# HELP nemoclaw_llm_latency_avg_milliseconds Rolling average LLM latency (recent window; idle-expires)",
-    "# TYPE nemoclaw_llm_latency_avg_milliseconds gauge",
-    `nemoclaw_llm_latency_avg_milliseconds ${Math.round(avg)}`,
   );
+  // New GPU replicas have no samples yet. Exporting 0 here dilutes Pods
+  // AverageValue and stalls latency HPA around 4–5 GPUs. Omit the gauge until
+  // this replica has served a chat. After idle-expire, still export 0 so
+  // scale-down can proceed.
+  if (llmEverSampled) {
+    lines.push(
+      "# HELP nemoclaw_llm_latency_avg_milliseconds Rolling average LLM latency (recent window; idle-expires)",
+      "# TYPE nemoclaw_llm_latency_avg_milliseconds gauge",
+      `nemoclaw_llm_latency_avg_milliseconds ${Math.round(avg)}`,
+    );
+  }
   return lines;
 }
 
@@ -106,4 +116,5 @@ export function setLlmMetricsClockForTests(clockFn) {
 /** Test-only: clear rolling latency samples (does not reset cumulative counters). */
 export function resetLlmLatencyWindowForTests() {
   clearRollingLatencyWindow();
+  llmEverSampled = false;
 }

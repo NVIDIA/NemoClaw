@@ -160,14 +160,13 @@ E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh
 # Terminal C — same client for any HPA metric
 E2E_USERS=5 \
 E2E_INFLIGHT_START_PER_USER=1 \
-E2E_INFLIGHT_PER_USER=2 \
+E2E_INFLIGHT_PER_USER=1 \
 MAX_TOKENS=608 \
-DURATION_SEC=180 \
 ./scripts/client.sh
 ```
 
 
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`).
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
 
 ```bash
 # Terminal A — sandbox provision + latency HPA
@@ -176,8 +175,12 @@ E2E_USERS=5 ./scripts/agentscaling_latency.sh
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
 
-# Terminal C — identical client
-E2E_USERS=5 ./scripts/client.sh
+# Terminal C — same client; stops at 8 GPUs, not at 5 users
+E2E_USERS=5 \
+E2E_INFLIGHT_START_PER_USER=1 \
+E2E_INFLIGHT_PER_USER=1 \
+MAX_TOKENS=608 \
+./scripts/client.sh
 ```
 
 OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-connect-the-openshell-cli) tunnel attached. This e2e uses Envoy with `ALLOW_INSECURE_HTTP=1` (same isolated eval as step 4). Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
