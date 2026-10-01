@@ -372,7 +372,17 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
-The DGX Spark profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, and an `8192`-token batch limit.
+DGX Spark automatically selects its Qwen recipe from the detected unified-memory capacity:
+
+| Detected capacity | Context tokens | Concurrent sequences | Batched tokens | GPU-memory utilization |
+|---|---|---|---|---|
+| At least 60 GB and less than 64 GB | 32,768 | 1 | 4,096 | 0.5 |
+| At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
+
+The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
+Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
+Before installation, NemoClaw displays the selected hardware profile and context limit.
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
@@ -720,7 +730,7 @@ Follow the diagnostic to restore valid telemetry, correct the selected GPU, or f
 Then run `$$nemoclaw onboard --resume`.
 
 To bound resource use while investigating long-context workflows on one DGX Spark, select the Qwen profile.
-The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit to the current N1x defaults.
+For a Spark with at least 64 GB of detected unified memory, the following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit to the current N1x defaults.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
