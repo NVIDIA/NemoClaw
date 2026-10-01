@@ -8,7 +8,7 @@
 
 This experimental recipe shows a cost-efficient architecture: AI agents run in CPU-only OpenShell sandboxes, each sandbox responding to one end user's inference request, while GPU inference autoscales using K8s HPA based on the workload. The e2e demo uses **one sandbox per end user** sharing `inference.local` → Envoy load balancer → GPU inference runtimes -> K8s HPA autoscaling. The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. 
 
-HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay responsive and idle GPUs are released.
+Kubernetes HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay responsive and idle GPUs are released.
 
 Keep `versions.env` aligned: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. Bump all three together when upstream moves.
 
@@ -18,7 +18,7 @@ HPA scales to **N** inference pods (1 GPU each). The load balancer is **Envoy** 
 
 Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). Metrics-proxy, HPA, and the Envoy load balancer stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
 
-HPA uses Pods **`AverageValue`**. Built-in metrics: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
+HPA uses Pods **`AverageValue`**. Example metrics for HPA: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
 
 Isolated eval uses `ALLOW_INSECURE_HTTP=1` (Envoy with no TLS overlay). HTTPS Envoy uses [TLS values](#tls-values).
 
