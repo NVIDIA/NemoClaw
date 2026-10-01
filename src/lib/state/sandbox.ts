@@ -85,11 +85,17 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
 // target image regenerates config.json and its root-owned blueprint cache. The
 // OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
+// Hermes' PID and lock files identify processes in one sandbox generation;
+// restoring them over the replacement gateway makes a healthy process appear
+// stale to authenticated lifecycle commands.
 const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
+  "--exclude='./.hermes/gateway.pid'",
+  "--exclude='./.hermes/runtime/gateway.pid'",
+  "--exclude='./.hermes/runtime/gateway.lock'",
 ].join(" ");
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
@@ -1960,6 +1966,9 @@ function capturePreparedNativeState(
         '  rm -rf -- "$stage/.nemoclaw/blueprints"',
         '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
+        '  rm -f -- "$stage/.hermes/gateway.pid"',
+        '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
+        '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
         '  tar -C "$stage" -cf - -- .',
         "fi",
       ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
@@ -2103,14 +2112,14 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           "self=$$",
           'ancestors=" $self "',
           "cursor=$PPID",
-          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; } 2>/dev/null || break; cursor=$parent; [ -n "$cursor" ] || break; done',
-          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done < "$proc/status" 2>/dev/null || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
           "trap resume EXIT HUP INT TERM",
           "quiesce_pass=0",
           'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
-          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; } 2>/dev/null || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$pid/status" || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           // Expand hard links into independent file content without following

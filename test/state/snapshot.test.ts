@@ -331,13 +331,15 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("captures a prepared stopped tree without SSH and inspects only a requested subtree", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-native-state-"));
     try {
       const nativeRoot = path.join(fixture, "native-home");
+      const writeNative = (relativePath: string, content: string): void =>
+        fs.writeFileSync(path.join(nativeRoot, relativePath), content);
       const inspectionMarker = "not-part-of-hermes-inspection";
       fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, ".hermes", "runtime"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, ".openclaw"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), {
         recursive: true,
@@ -350,31 +352,24 @@ describe("complete native home persistence", () => {
       fs.mkdirSync(path.join(nativeRoot, ".openclaw", "agents", "main", "sessions"), {
         recursive: true,
       });
-      fs.writeFileSync(path.join(nativeRoot, ".nemoclaw", "config.json"), "managed-config");
-      fs.writeFileSync(
-        path.join(nativeRoot, ".openclaw", ".nemoclaw-post-upgrade-doctor"),
+      writeNative(".nemoclaw/config.json", "managed-config");
+      writeNative(
+        ".openclaw/.nemoclaw-post-upgrade-doctor",
         "nemoclaw-openclaw-backup-quiesce-v1\n",
       );
-      fs.writeFileSync(
-        path.join(
-          nativeRoot,
-          ".openclaw",
-          "agents",
-          "main",
-          "sessions",
-          "nemoclaw-onboard-warmup-1.trajectory.jsonl",
-        ),
+      writeNative(
+        ".openclaw/agents/main/sessions/nemoclaw-onboard-warmup-1.trajectory.jsonl",
         "managed-warmup",
       );
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
-      fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), hermesManagedConfig);
+      writeNative(".hermes/config.yaml", hermesManagedConfig);
+      writeNative(".hermes/gateway.pid", "legacy-pid");
+      writeNative(".hermes/runtime/gateway.pid", "pid");
+      writeNative(".hermes/runtime/gateway.lock", "lock");
       fs.mkdirSync(path.join(nativeRoot, ".hermes", "backups", "config"), {
         recursive: true,
       });
-      fs.writeFileSync(
-        path.join(nativeRoot, ".hermes", "backups", "config", "config.yaml.good.20260928-091702"),
-        hermesManagedConfig,
-      );
+      writeNative(".hermes/backups/config/config.yaml.good.20260928-091702", hermesManagedConfig);
       const payloadPath = path.join(nativeRoot, "payload.txt");
       const payloadCopyPath = path.join(nativeRoot, "payload-copy.txt");
       fs.writeFileSync(payloadPath, "payload");
@@ -483,6 +478,9 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
+      expect(archivedPaths).not.toContain(".hermes/gateway.pid");
+      expect(archivedPaths).not.toContain(".hermes/runtime/gateway.pid");
+      expect(archivedPaths).not.toContain(".hermes/runtime/gateway.lock");
       expect(archivedPaths).toContain(".pi/agent/trust.json");
       expect(archivedPaths).not.toContain(".nemoclaw/blueprints/");
       expect(assertCurrent).toHaveBeenCalledTimes(2);
@@ -1223,6 +1221,9 @@ describe("complete native home persistence", () => {
       expect(commands).toContain('kill -STOP "$pid"');
       expect(commands).toContain("quiesce_pass=$((quiesce_pass + 1))");
       expect(commands).toContain("trap resume EXIT HUP INT TERM");
+      expect(commands).toContain('2>/dev/null < "$proc/status"');
+      expect(commands).toContain('2>/dev/null < "/proc/$pid/status"');
+      expect(commands).not.toContain('< "$proc/status" 2>/dev/null');
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
       expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
