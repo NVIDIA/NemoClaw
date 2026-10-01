@@ -1943,7 +1943,12 @@ export function reconstructRetainedSandboxRecoveryFromPendingCreate(
 ): RetainedSandboxRecoveryRecord | null {
   const checkpoint = entry.pendingCreateIdentity;
   const createAttemptNonce = checkpoint?.createAttemptNonce;
-  if (!checkpoint || entry.pendingRouteReservation !== true || !createAttemptNonce) {
+  if (
+    !checkpoint ||
+    checkpoint.state !== "verified-create" ||
+    entry.pendingRouteReservation !== true ||
+    !createAttemptNonce
+  ) {
     return null;
   }
   if (

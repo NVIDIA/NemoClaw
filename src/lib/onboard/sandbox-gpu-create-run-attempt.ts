@@ -484,6 +484,30 @@ export function createSandboxGpuCreateAttemptRunner(
       }
     }
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
+    let persistedUnverifiedReceipt: string | null = null;
+    const persistUnverifiedCreateReceipt = (sandboxId: string): void => {
+      if (!createAttemptNonce) {
+        throw new Error("Sandbox create-attempt identity was not generated.");
+      }
+      const liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+      if (persistedUnverifiedReceipt === liveIdentityFingerprint) return;
+      if (persistedUnverifiedReceipt !== null) {
+        throw new Error("OpenShell create-attempt identity changed before verification.");
+      }
+      const persist = input.persistUnverifiedCreateIdentity;
+      if (!persist) {
+        throw new Error("Verified sandbox creation has no durable create identity receipt owner.");
+      }
+      try {
+        persist({ createAttemptNonce, liveIdentityFingerprint, route });
+      } catch (error) {
+        throw new Error(
+          "NemoClaw could not persist the exact unverified create identity for this create attempt.",
+          { cause: error },
+        );
+      }
+      persistedUnverifiedReceipt = liveIdentityFingerprint;
+    };
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
     ): void => {
@@ -530,17 +554,25 @@ export function createSandboxGpuCreateAttemptRunner(
     const captureRetainedSandboxRecovery = () => {
       if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
       let liveIdentityFingerprint: string | null = null;
+      let sandboxId: string;
       try {
-        const sandboxId = resolveCreatedOpenShellSandboxId({
+        sandboxId = resolveCreatedOpenShellSandboxId({
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           createAttemptNonce,
           runCaptureOpenshell: deps.runCaptureOpenshell,
         });
-        liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
       } catch {
         // The nonce remains durable recovery evidence when identity lookup is unavailable.
+        return {
+          retainedSandboxRecovery: {
+            createAttemptNonce,
+            liveIdentityFingerprint,
+          },
+        } as const;
       }
+      persistUnverifiedCreateReceipt(sandboxId);
+      liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
       return {
         retainedSandboxRecovery: {
           createAttemptNonce,
@@ -640,6 +672,7 @@ export function createSandboxGpuCreateAttemptRunner(
           { cause: error },
         );
       }
+      persistUnverifiedCreateReceipt(sandboxId);
       if (createResult.status !== 0 && input.requirePolicylessCreate) {
         const failure = classifySandboxCreateFailure(createResult.output);
         if (failure.kind !== "sandbox_create_incomplete") {
@@ -708,6 +741,7 @@ export function createSandboxGpuCreateAttemptRunner(
           throw new Error("OpenShell create-attempt identity changed during initial cutover.");
         }
         readyCheckCreatedSandboxId = observation.sandboxId;
+        persistUnverifiedCreateReceipt(observation.sandboxId);
         if (observation.state === "pending") return;
         if (!sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName)) return;
         const sandboxId = observation.sandboxId;
@@ -768,6 +802,7 @@ export function createSandboxGpuCreateAttemptRunner(
             return failReadyCheckCreatedIdentity("selector-identity-changed");
           }
           readyCheckCreatedSandboxId = observation.sandboxId;
+          persistUnverifiedCreateReceipt(observation.sandboxId);
           // End only the create-client handoff. Strict metadata settlement still
           // runs before any post-create effect.
           return true;
@@ -950,6 +985,7 @@ export function createSandboxGpuCreateAttemptRunner(
           { cause: error },
         );
       }
+      persistUnverifiedCreateReceipt(sandboxId);
       waitForCreatedSandboxPublication(sandboxId);
       await verifyCreatedSandboxBeforeEffects(
         sandboxId,
