@@ -327,20 +327,41 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["livenessState=abandoned"]);
   });
 
-  it.each(["local", "gateway"])("ignores replay safety on a completed %s tool turn", (kind) => {
-    const response = {
-      payloads: [{ text: "TOOLS_COMPLETE" }],
-      meta: {
-        aborted: false,
-        replayInvalid: true,
-        agentMeta: { stopReason: "stop" },
-        successfulToolNames: ["exec"],
-      },
-    };
+  it.each([
+    ["local", {}, false],
+    ["gateway", {}, false],
+    ["gateway", { aborted: true }, true],
+    ["gateway", { stopReason: "tool_calls" }, true],
+    ["gateway", { toolSummary: { calls: 1, failures: 1 } }, true],
+  ] as const)(
+    "classifies replay risk for a %s tool turn [case %#]",
+    (kind, override, incomplete) => {
+      const response = {
+        payloads: [{ text: "TOOLS_COMPLETE" }],
+        meta: {
+          aborted: false,
+          replayInvalid: true,
+          stopReason: "stop",
+          finalAssistantVisibleText: "TOOLS_COMPLETE",
+          toolSummary: { calls: 1, failures: 0, tools: ["exec"] },
+          ...override,
+        },
+      };
+      const raw = JSON.stringify(
+        kind === "local" ? response : { status: "ok", summary: "completed", result: response },
+      );
+      expect(openClawAgentIncompleteTurnSignal(raw)).toEqual(
+        incomplete ? { markers: ["replayInvalid=true"] } : null,
+      );
+    },
+  );
+
+  it.each(["local", "gateway"])("rejects an uncorroborated %s replay-risk response", (kind) => {
+    const response = { payloads: [{ text: "partial" }], meta: { replayInvalid: true } };
     const raw = JSON.stringify(
       kind === "local" ? response : { status: "ok", summary: "completed", result: response },
     );
-    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["replayInvalid=true"]);
   });
 
   it("reads run metadata that sits at the envelope root", () => {
@@ -363,6 +384,7 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
       "error.kind=incomplete_turn",
       "livenessState=abandoned",
+      "replayInvalid=true",
     ]);
   });
 
@@ -537,6 +559,7 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
       "error.kind=incomplete_turn",
       "livenessState=abandoned",
+      "replayInvalid=true",
       "timeoutPhase=post_turn",
     ]);
   });

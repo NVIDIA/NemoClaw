@@ -284,6 +284,7 @@ describe("runAgentJsonPassthrough", () => {
     expect(stderr.join("")).toContain("did not complete");
     expect(stderr.join("")).toContain("error.kind=incomplete_turn");
     expect(stderr.join("")).toContain("livenessState=abandoned");
+    expect(stderr.join("")).toContain("replayInvalid=true");
     expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions list");
     expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions export <key>");
     expect(stderr.join("")).toContain(
@@ -387,9 +388,13 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it.each([false, true])(
-    "keeps a completed tool turn at exit 0 with replayInvalid=%s",
-    async (replayInvalid) => {
+  it.each([
+    { replayInvalid: false, corroborated: true, exitCode: 0 },
+    { replayInvalid: true, corroborated: true, exitCode: 0 },
+    { replayInvalid: true, corroborated: false, exitCode: 1 },
+  ])(
+    "returns $exitCode for replayInvalid=$replayInvalid with corroborated=$corroborated",
+    async ({ replayInvalid, corroborated, exitCode }) => {
       const payload = JSON.stringify({
         status: "ok",
         summary: "completed",
@@ -398,8 +403,9 @@ describe("runAgentJsonPassthrough", () => {
           meta: {
             aborted: false,
             replayInvalid,
-            agentMeta: { stopReason: "stop" },
-            successfulToolNames: ["exec"],
+            stopReason: "stop",
+            finalAssistantVisibleText: "PONG",
+            ...(corroborated ? { toolSummary: { calls: 1, failures: 0, tools: ["exec"] } } : {}),
           },
         },
       });
@@ -417,11 +423,13 @@ describe("runAgentJsonPassthrough", () => {
           runDispatch,
           stdinIsTty: () => false,
         }),
-      ).rejects.toThrow("__exit:0");
+      ).rejects.toThrow(`__exit:${String(exitCode)}`);
 
-      expect(exit).toHaveBeenCalledWith(0);
+      expect(exit).toHaveBeenCalledWith(exitCode);
       expect(stdout.join("")).toBe(payload);
-      expect(stderr.join("")).not.toContain("did not complete");
+      expect(stderr.join("").includes("did not complete")).toBe(exitCode === 1);
+      expect(stderr.join("").includes("replayInvalid=true")).toBe(exitCode === 1);
+      expect(stderr.join("").includes("Inspect the partial JSON trace")).toBe(exitCode === 1);
     },
   );
 

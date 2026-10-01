@@ -42,42 +42,6 @@ function responseContainsToolCallStructure(
   return containsToolCallStructure(wrapperFields);
 }
 
-function hasReplayReplyEvidence(document: unknown, response: Record<string, unknown>): boolean {
-  if (!document || typeof document !== "object" || Array.isArray(document)) return false;
-  const wrapper = document as Record<string, unknown>;
-  const meta = response.meta;
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
-  const record = meta as Record<string, unknown>;
-  if (record.replayInvalid !== true) return true;
-  const summary = record.toolSummary;
-  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
-  const toolSummary = summary as Record<string, unknown>;
-  const visibleText =
-    typeof record.finalAssistantVisibleText === "string"
-      ? record.finalAssistantVisibleText.trim()
-      : "";
-  const payloadText: string[] = [];
-  collectOpenClawAssistantText(response.payloads, payloadText, new Set());
-  return (
-    wrapper.status === "ok" &&
-    wrapper.summary === "completed" &&
-    visibleText.length > 0 &&
-    payloadText.some((part) => part.trim() === visibleText) &&
-    typeof toolSummary.calls === "number" &&
-    toolSummary.calls > 0 &&
-    toolSummary.failures === 0
-  );
-}
-
-function hasFinalReplayReplyEvidence(documents: unknown[]): boolean {
-  for (let index = documents.length - 1; index >= 0; index -= 1) {
-    const document = documents[index]!;
-    const response = openClawAgentResponseRecord(document);
-    if (response) return hasReplayReplyEvidence(document, response);
-  }
-  return false;
-}
-
 function collectOpenClawAssistantText(
   value: unknown,
   parts: string[],
@@ -111,8 +75,7 @@ function openClawAgentTextParts(raw: string): string[] {
   if (containsToolCallOutput(openClawUnframedJsonText(raw))) return [];
   const documents = parseOpenClawJsonDocuments(raw);
   const incomplete = openClawAgentIncompleteTurnSignal(raw);
-  // Keep replay reply corroboration independent of the CLI's completion verdict.
-  if (incomplete || !hasFinalReplayReplyEvidence(documents)) {
+  if (incomplete) {
     return [];
   }
   const parts: string[] = [];
