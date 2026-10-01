@@ -639,23 +639,19 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 
 ## Ports
 
-Numbers below are TCP listen ports unless noted. **3000** in an HPA TARGET line is milliseconds, not Grafana and not a listen port.
+`kubectl port-forward` is **`LOCAL:REMOTE`**: host port, then the Service port in the cluster.
 
-| Port | Where it listens | What it is for |
-|------|------------------|----------------|
-| **6443** | Host (`https://127.0.0.1:6443`) | k3s Kubernetes API. `kubectl` and `kubectl port-forward` use this. Connection refused here means the cluster is down, not OpenShell. |
-| **16443** | Host | MicroK8s Kubernetes API in many `microk8s config` files. Same role as 6443 on k3s. |
-| **8080** | Cluster: `service/openshell` in `nemoclaw-sandboxes` | OpenShell **gateway** Service. The right-hand number in `port-forward … LOCAL:8080`. |
-| **8080** | Host `127.0.0.1` (recipe default) | OpenShell **CLI tunnel**. Left-hand number in `port-forward … 8080:8080`. Must match `openshell gateway add` and `openshell status` (Server). |
-| **18080** | Host `127.0.0.1` (optional) | Alternate OpenShell CLI tunnel when host 8080 is already taken. Use `port-forward … 18080:8080` and `openshell gateway add https://127.0.0.1:18080`. |
-| **8081** | Cluster: `service/nemoclaw-gpu-metrics-proxy`; optional host forward `8081:8081` | Metrics-proxy HTTP (`/v1`, `/healthz`, `/metrics`). Not OpenShell. Direct curl uses **8081**, not 8080. |
-| **18789** | Inside each OpenShell sandbox (not the host) | OpenClaw agent (`/health`, `chat.send` on `ws://127.0.0.1:18789/ws`). End users talk here. Do not port-forward this to the host for the e2e client. |
-| **8642** | Inside a Hermes sandbox (not the host) | Hermes gateway `/health`. `hermes -z` e2e does not need it. Not a host port-forward in this recipe. |
-| **443** / **80** | Cluster Envoy Gateway | HTTPS / HTTP into GPU inference when Envoy is on. Sandboxes use `https://inference.local`. ClusterIP only; not a host port-forward for e2e users. |
-| **11434** | Loopback inside each Ollama GPU pod | Ollama. Metrics-proxy on that pod calls it. Not a host port. |
-| **8000** | Loopback inside each vLLM or NIM GPU pod | vLLM / NIM OpenAI-compatible server. Not a host port. |
-| **3000** | Host, optional `port-forward … 3000:80` | Grafana UI (`http://127.0.0.1:3000`). Service port 80 in `monitoring`. |
-
-`kubectl port-forward` syntax is **`LOCAL:REMOTE`**: local host port, then the Service port in the cluster.
+| Name | Port | Where |
+|------|------|-------|
+| OpenShell gateway | **8080** | Cluster `service/openshell` (REMOTE). Host is **8080** (`8080:8080`), or **18080** if host 8080 is busy. `openshell status` uses the host URL. |
+| OpenClaw agent | **18789** | Inside each OpenClaw sandbox. E2e clients talk here. Do not port-forward. |
+| Hermes gateway | **8642** | Inside each Hermes sandbox. `hermes -z` e2e does not forward it. |
+| Envoy | **443** / **80** | Cluster. Sandboxes use `https://inference.local`. |
+| Metrics-proxy | **8081** | Cluster `service/nemoclaw-gpu-metrics-proxy`. Optional host forward `8081:8081`. |
+| Ollama | **11434** | Inside each Ollama GPU pod. |
+| vLLM / NIM | **8000** | Inside each vLLM or NIM GPU pod. |
+| Grafana | **3000** | Host, optional `3000:80` (Service port 80). |
+| k3s API | **6443** | Host. Connection refused here means the cluster is down. |
+| MicroK8s API | **16443** | Host. Same role as k3s 6443. |
 
 Third-party notices: [THIRD-PARTY-NOTICES](../../../../THIRD-PARTY-NOTICES).
