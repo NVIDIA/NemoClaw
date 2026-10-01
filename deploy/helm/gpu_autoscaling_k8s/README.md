@@ -68,9 +68,10 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
 
-<img width="647" height="463" alt="Reference 4× L40S MicroK8s node used for validation" src="https://github.com/user-attachments/assets/80cb397b-d2e3-4b0d-933e-3b8dd1dfdb80" />
+<img width="1512" height="982" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/94506026-48d5-444f-a699-8c6f135c1678" />
 
-The DGX H100 demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the GPU box's CPUs. Sandboxes can run on a different CPU node with more memory; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
+
+The DGX H100 demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX box's CPUs. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
 
 The HPA test was also verified on [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), MicroK8s, `MAX_REPLICAS=4` using `./scripts/hpa-load-test-brev-4xl40s.sh`.
 
