@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # End-user client for the OpenClaw + Ollama e2e. One simulated user per
-# sandbox (1:1). user-i sends chat.send to sandbox openclaw-ollama-e2e-00i
+# sandbox (1:1). user-i sends chat.send to sandbox i
 # on that sandbox's :18789. Clients do not build images, create sandboxes,
 # start OpenClaw, or set the HPA metric.
 #
@@ -55,7 +55,7 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 openshell status >/dev/null \
   || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} CPU OpenClaw sandboxes (1:1). No sandbox create. HPA metric is not set here."
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

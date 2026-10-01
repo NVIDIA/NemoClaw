@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Runs *inside* one CPU-only OpenClaw sandbox. This user's in-flight chat
+# Runs *inside* one OpenShell sandbox. This user's in-flight chat
 # completions go to https://inference.local (OpenShell → Envoy LeastRequest →
 # GPU HPA). It is the per-user half of the 20-sandbox 8×H100 saturator — not
 # the metrics-proxy pod-IP Job in files/load-generator.ts.

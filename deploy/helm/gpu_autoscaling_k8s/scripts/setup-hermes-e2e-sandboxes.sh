@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Create, start, stop, or destroy N CPU-only Hermes sandboxes (one per end
+# Create, start, stop, or destroy N OpenShell sandboxes (one Hermes agent per end
 # user) for the Hermes + vLLM HPA e2e. The model stays on vLLM GPU pods in
 # nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → vLLM HPA.
 #
@@ -105,6 +105,16 @@ sandbox_name() {
   printf '%s%04d' "${SANDBOX_PREFIX}" "${1:?index}"
 }
 
+sandbox_label() {
+  local name="${1:?}"
+  local idx="${name#"${SANDBOX_PREFIX}"}"
+  if [[ "${idx}" =~ ^[0-9]+$ ]]; then
+    printf 'sandbox %s' "$((10#${idx}))"
+  else
+    printf '%s' "${name}"
+  fi
+}
+
 list_prefix_sandboxes() {
   python3 - "${SANDBOX_PREFIX}" <<'PY'
 import json, subprocess, sys
@@ -181,8 +191,8 @@ print_e2e_layout() {
   echo ""
   echo "========================================================================"
   echo "E2E test: Hermes + vLLM"
-  echo "  ${count} end users send hermes -z to ${count} Hermes sandboxes"
-  echo "  ${count} agents run in ${count} OpenShell sandboxes on CPU (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY})"
+  echo "  ${count} end users send hermes -z to ${count} OpenShell sandboxes"
+  echo "  ${count} Hermes agents run in ${count} OpenShell sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY})"
   echo "  LLM (vLLM ${INFERENCE_MODEL}) runs on GPUs"
   echo "  When end-user demand increases, HPA scales vLLM from 1 to 8 GPUs"
   echo "------------------------------------------------------------------------"
@@ -190,7 +200,7 @@ print_e2e_layout() {
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
     if sandbox_pod_ready "${name}"; then
-      sandbox_st="Ready (CPU)"
+      sandbox_st="Ready"
     else
       sandbox_st="NOT READY"
     fi
@@ -446,7 +456,7 @@ bringup_sandboxes() {
   fi
   wait_inference_local_parallel "${names[@]}" \
     || fail "Envoy inference check failed after parallel sandbox create"
-  echo "Ready: ${count} end users → ${count} CPU Hermes sandboxes; LLM on GPUs ($((SECONDS - started_at))s)"
+  echo "Ready: ${count} end users → ${count} Hermes agents in ${count} OpenShell sandboxes; LLM on GPUs ($((SECONDS - started_at))s)"
   print_e2e_layout "${count}"
 }
 

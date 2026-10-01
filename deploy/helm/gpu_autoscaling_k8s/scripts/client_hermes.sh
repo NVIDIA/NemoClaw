@@ -52,7 +52,7 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 openshell status >/dev/null \
   || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} Hermes sandboxes (1:1 hermes -z). No sandbox create. HPA metric is not set here."
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z). No sandbox create. HPA metric is not set here."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Hermes + vLLM client: N end users send prompts into N CPU Hermes sandboxes.
+Hermes + vLLM client: N end users send prompts into N OpenShell sandboxes.
 Default N is E2E_USERS=3 (one sandbox per user). GPU inference is vLLM.
 
 Run agentscaling_hermes_gpuutil.sh or agentscaling_hermes_latency.sh first.
@@ -219,7 +219,7 @@ async def run_test(args: argparse.Namespace) -> int:
     hold_started: float | None = None
 
     print("=" * 70)
-    print(f"  {args.users} end users → {args.users} Hermes sandboxes → Envoy → vLLM HPA")
+    print(f"  {args.users} end users → {args.users} OpenShell sandboxes → Envoy → vLLM HPA")
     print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
     print("  Query: openshell sandbox exec -- hermes -z")
     print("  Not: load-generator.ts pod-IP Job, not in-sandbox curl to Envoy")

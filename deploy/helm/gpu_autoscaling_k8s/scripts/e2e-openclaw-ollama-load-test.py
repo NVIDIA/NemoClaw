@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-OpenClaw + Ollama client: N end users send prompts into N CPU OpenClaw sandboxes.
+OpenClaw + Ollama client: N end users send prompts into N OpenShell sandboxes.
 Default N is E2E_USERS=5 (one sandbox per user). GPU inference is Ollama.
 
 Run agentscaling_gpuutil.sh or agentscaling_latency.sh first. This module is started by ./scripts/client.sh.
@@ -234,13 +234,13 @@ async def run_test(args: argparse.Namespace) -> int:
 
     print("=" * 70)
     print("  E2E test: OpenClaw + Ollama")
-    print(f"  {args.users} end users send requests to {args.users} OpenClaw sandboxes (1:1)")
-    print(f"  {args.users} OpenClaw sandboxes run on CPU")
+    print(f"  {args.users} end users send requests to {args.users} OpenClaw agents (1:1)")
+    print(f"  {args.users} OpenClaw agents run in {args.users} OpenShell sandboxes")
     print(f"  LLM (Ollama {args.model}) runs on GPUs")
     print("  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs")
     print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
-    print("  Each user prompts that user's CPU sandbox on :18789")
-    print("  Path: end user → OpenClaw sandbox → https://inference.local → Envoy load balancer → GPU Ollama HPA")
+    print("  Each user prompts that user's sandbox on :18789")
+    print("  Path: end user → OpenShell sandbox → https://inference.local → Envoy load balancer → GPU Ollama HPA")
     print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
     print(
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
@@ -344,7 +344,7 @@ async def run_test(args: argparse.Namespace) -> int:
     failed = sum(int(r.get("err") or 0) for r in results)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "path": "user -> OpenClaw sandbox -> inference.local -> Envoy -> Ollama HPA",
+        "path": "user -> OpenShell sandbox -> inference.local -> Envoy -> Ollama HPA",
         "users": args.users,
         "target_pods": args.target_pods,
         "hpa_max_replicas": max_replicas,

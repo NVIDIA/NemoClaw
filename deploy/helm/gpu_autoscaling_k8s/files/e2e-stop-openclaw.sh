@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Stop leftover Node workers inside one OpenClaw sandbox so :18789 can bind.
+# Stop leftover Node workers inside one OpenShell sandbox so :18789 can bind.
 # Run via: kubectl cp this file into the pod, then sh /tmp/e2e-stop-openclaw.sh
 # Do not inline the patterns in kubectl exec argv (that process matches itself).
 

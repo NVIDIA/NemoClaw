@@ -210,14 +210,14 @@ This is the multi-user architecture test for **OpenClaw + Ollama**. Queries from
 
 ```text
 E2E test: OpenClaw + Ollama
-  5 end users send requests to 5 OpenClaw sandboxes
-  5 OpenClaw sandboxes run on CPU
+  5 end users send requests to 5 OpenClaw agents
+  5 OpenClaw agents run in 5 OpenShell sandboxes
   LLM (Ollama llama3.2:3b) runs on GPUs
   HPA scales Ollama from 1 to 8 GPUs
 
         5 end users
-            ↓  prompt to the OpenClaw sandbox :18789
-        5 CPU OpenClaw sandboxes (sandbox 0 … sandbox 4)
+            ↓  prompt to the OpenShell sandbox :18789
+        5 OpenShell sandboxes (sandbox 0 … sandbox 4)
             ↓  https://inference.local
         Envoy load balancer — LeastRequest
             ↓
@@ -561,7 +561,7 @@ Send chats with `client.sh` in another terminal or machine. Users talk only to s
 This DGX OpenClaw + Ollama run used **5** end users (one sandbox each). Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
-- one OpenClaw sandbox per user
+- one OpenShell sandbox per user
 - Job-like chats (`files/load-generator.ts` questions, `stream=false`). Questions average **~38 llama3.2 tokens**; `MAX_TOKENS` defaults to **608**
 - inflight **1→2** per sandbox
 
@@ -571,7 +571,7 @@ Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU i
 
 ### Hermes + vLLM N-user end-to-end 
 
-Same user → sandbox path after OpenClaw + Ollama is done: load generator → N Hermes sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Use the same `E2E_USERS` example (10). Cleanup only destroys `hermes-e2e-*` (not `hermes-onprem`, not `openclaw-ollama-e2e-*`). Do not run this while OpenClaw e2e owns the GPUs.
+Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Use the same `E2E_USERS` example (10). Cleanup only destroys `hermes-e2e-*` (not `hermes-onprem`, not `openclaw-ollama-e2e-*`). Do not run this while OpenClaw e2e owns the GPUs.
 
 ```bash
 # After OpenClaw + Ollama e2e is done:
@@ -669,7 +669,7 @@ Shared Prometheus, Adapter, Envoy, and Agent Sandbox CRDs are left in place.
 
 This 8×H100 path is a **demo**. Agents and OpenShell sandboxes use **CPU cores and DRAM**, not the H100 GPUs. Each end user has one sandbox (`E2E_USERS`). `MAX_REPLICAS` is GPU pods only.
 
-On this demo cluster the sandboxes run on the same DGX H100 node as Ollama. That node's CPU RAM limits how many 8Gi OpenClaw sandboxes you can start.
+On this demo cluster the sandboxes run on the same DGX H100 node as Ollama. That node's CPU RAM limits how many 8Gi OpenShell sandboxes you can start.
 
 This DGX H100 uses **dual Intel Xeon Platinum 8480C** processors (56 cores each, 112 cores total) and **2 TB** DRAM. See the [DGX H100/H200 hardware overview](https://docs.nvidia.com/dgx/dgxh100-user-guide/introduction-to-dgxh100.html). It does not include an NVIDIA CPU.
 
