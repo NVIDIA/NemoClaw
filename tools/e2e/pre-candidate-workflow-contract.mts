@@ -63,7 +63,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Generate E2E target matrix": {
     INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     NEMOCLAW_GATEWAY_RUNTIMES:
-      "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
+      "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
     JOBS: "${{ inputs.jobs }}",
     TARGETS: "${{ inputs.targets }}",
     EVENT_NAME: "${{ github.event_name }}",
