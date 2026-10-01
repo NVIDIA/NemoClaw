@@ -33,6 +33,25 @@ runs:
         fi
         expected_semver="${expected_semvers[0]}"
 
+        expected_libssl="$(sed -nE 's/^[[:space:]]+"libssl3t64=([0-9A-Za-z.+:~_-]+)".*/\1/p' agents/hermes/Dockerfile.base)"
+        [[ "$expected_libssl" =~ ^[0-9A-Za-z.+:~_-]+$ ]] || {
+          echo "::error::Expected exactly one OpenSSL runtime inventory pin in agents/hermes/Dockerfile.base" >&2
+          exit 1
+        }
+
+        openssl_identity_ok() {
+          docker run --rm \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --read-only \
+            --user sandbox \
+            --entrypoint /bin/sh "$1" -ec '
+              test "$(dpkg-query -W -f="\${Version}" libssl3t64)" = "$1"
+              grep -Fx "libssl3t64=$1" /usr/local/share/nemoclaw/security-packages.txt >/dev/null
+            ' sh "$expected_libssl" >/dev/null 2>&1
+        }
+
         runtime_identity_ok() {
           local ref="$1"
           docker run --rm \
@@ -76,6 +95,10 @@ runs:
           fi
           if ! layout_ok "$digest_ref"; then
             echo "::warning::Hermes sandbox base image ${ref} contains retired sandbox state; trying another candidate"
+            return 1
+          fi
+          if ! openssl_identity_ok "$digest_ref"; then
+            echo "::warning::Hermes sandbox base image ${ref} does not match OpenSSL ${expected_libssl}; trying another candidate"
             return 1
           fi
           if ! runtime_identity_ok "$digest_ref"; then
@@ -122,6 +145,10 @@ runs:
         fi
         if ! layout_ok nemoclaw-hermes-base-local; then
           echo "::error::Local Hermes sandbox base image contains retired sandbox state"
+          exit 1
+        fi
+        if ! openssl_identity_ok nemoclaw-hermes-base-local; then
+          echo "::error::Local Hermes sandbox base image does not match OpenSSL ${expected_libssl}"
           exit 1
         fi
         if ! runtime_identity_ok nemoclaw-hermes-base-local; then

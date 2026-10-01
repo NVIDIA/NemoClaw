@@ -245,7 +245,7 @@ export async function prepareRebuildTargetPreflights(args: {
     }
     if (fromImage) {
       preflightExternalImageRebuild({
-        agentName: rebuildAgent,
+        agentName: rebuildAgent ?? "openclaw",
         expectedToolDisclosure: durableConfig.toolDisclosure,
         receipt: sandboxEntry.workload,
         runtime,

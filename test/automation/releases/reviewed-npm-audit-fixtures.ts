@@ -27,7 +27,17 @@ export function openClawReplacementGraphFixture<T>(
     packages: { "": Record<string, unknown> };
   };
   return {
-    graph,
+    graph: {
+      ...graph,
+      replacement: {
+        label: "OpenClaw 2026.9.1 locked runtime graph",
+        packageSpec: "openclaw@2026.9.1",
+        integrity:
+          "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
+        tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+        lockSha256: createHash("sha256").update(lock).digest("hex"),
+      },
+    },
     lock,
     manifest: Buffer.from(`${JSON.stringify(parsedLock.packages[""], null, 2)}\n`),
   };
