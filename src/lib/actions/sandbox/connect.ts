@@ -53,7 +53,7 @@ import {
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact, redactFull } from "../../security/redact";
+import { redact, redactFull, redactFullWithUrls } from "../../security/redact";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -278,7 +278,7 @@ const INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS = 2_000;
 
 const inferenceRouteMutator = createCliOpenShellInferenceRouteMutator(
   captureResolvedOpenshellAsync,
-  { redactDiagnostic: (value) => redact(redactFull(value)) },
+  { redactDiagnostic: redactFullWithUrls },
 );
 
 const SANDBOX_CONNECT_FLAGS = new Set([

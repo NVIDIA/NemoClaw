@@ -11,7 +11,7 @@ import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-ad
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { CLI_NAME } from "../cli/branding";
 import { classifyGatewayProviderNames } from "../credentials/provider-list";
-import { redact, redactFull } from "../security/redact";
+import { redactFullWithUrls } from "../security/redact";
 
 const OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS = 5_000;
 
@@ -21,7 +21,7 @@ interface ProviderDiagnosticDeps {
 }
 
 export function redactInferenceSetRouteDiagnostic(value: string): string {
-  return redact(redactFull(value));
+  return redactFullWithUrls(value);
 }
 
 export function createDefaultInferenceSetRouteMutator(capture: CaptureOpenShellInferenceRoute) {

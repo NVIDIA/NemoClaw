@@ -92,6 +92,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+describe("setupHermesProviderInference route mutation", () => {
+  it("stops after an ambiguous mutation without verifying or persisting success", async () => {
+    const deps = makeDeps({
+      inferenceRouteMutator: {
+        setInferenceRoute: vi.fn(async () => ({
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "timeout" as const,
+            message: "OpenShell inference route update ended without a confirmed result.",
+          },
+        })),
+      },
+    });
+
+    await expect(setupHermesProviderInference(makeArgs(null), deps as never)).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
+    expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
+    );
+  });
+});
+
 describe("setupHermesProviderInference smoke verification", () => {
   it("waits for the smoke check before persisting or logging success (#3771)", async () => {
     const smoke = deferred();

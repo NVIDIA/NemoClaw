@@ -669,7 +669,7 @@ const {
   },
   getGatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
-  redactDiagnostic: redact,
+  redactDiagnostic: runner.redactFullWithUrls,
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;

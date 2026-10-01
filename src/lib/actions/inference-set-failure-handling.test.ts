@@ -211,6 +211,7 @@ describe("runInferenceSet failure handling", () => {
   });
 
   it("keeps ENOBUFS failures bounded and redacted without writing sandbox state (#5924)", async () => {
+    const username = "overflow-user-secret";
     const password = "overflow-password-secret";
     const querySecret = "overflow-query-secret";
     const deps = createDeps({
@@ -224,7 +225,7 @@ describe("runInferenceSet failure handling", () => {
         status: null,
         output: "",
         stdout: "",
-        stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
+        stderr: `error: provider 'openai-api' not found at https://${username}:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
         error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
         signal: "SIGTERM",
       })
@@ -245,7 +246,8 @@ describe("runInferenceSet failure handling", () => {
     const message = (err as Error).message;
     const detail = message.match(/^OpenShell detail: (.*)$/mu)?.[1];
     expect(detail).toHaveLength(2_000);
-    expect(message).not.toContain(password);
+    expect(message).not.toContain(username.slice(0, 4));
+    expect(message).not.toContain(password.slice(0, 4));
     expect(message).not.toContain(querySecret);
     expect(message).not.toContain("Registered providers:");
     expect(message).not.toContain("Tip: register a new provider");
