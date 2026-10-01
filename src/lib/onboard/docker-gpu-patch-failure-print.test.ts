@@ -49,6 +49,49 @@ function printAndCapture(deps: Parameters<typeof printDockerGpuPatchFailureAndEx
 }
 
 describe("Docker GPU patch failure reporting (#7996)", () => {
+  it("keeps the GPU headline and GPU-only escape hatches for a GPU operation", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => JSON.stringify({ Status: "running", Running: true, ExitCode: 0 })),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("gpus"),
+      },
+    });
+
+    expect(stderr).toContain("Docker GPU patch failed.");
+    expect(stderr).toContain("Escape hatches:");
+    expect(stderr).toContain("--no-gpu");
+    expect(stderr).toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(stderr).toContain("NEMOCLAW_DOCKER_GPU_PATCH=1");
+    expect(stderr).not.toContain("Next action:");
+    expect(stderr).not.toContain("Docker startup-command patch failed.");
+  });
+
+  it("reports the selected startup-command operation without GPU-only wording (#12080)", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("startup-command"),
+      },
+    });
+
+    expect(stderr).toContain("Docker startup-command patch failed.");
+    expect(stderr).toContain("startup-command restart persistence");
+    expect(stderr).toContain("patched_create_option=persistent sandbox startup command");
+    expect(stderr).toContain("Next action:");
+    expect(stderr).toContain("Rebuild the sandbox image, then rerun onboarding to recreate it.");
+    expect(stderr).not.toContain("Docker GPU patch failed.");
+    expect(stderr).not.toContain("Escape hatches:");
+    expect(stderr).not.toContain("--no-gpu");
+    expect(stderr).not.toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(stderr).not.toContain("NEMOCLAW_DOCKER_GPU_PATCH");
+  });
+
   it("prefers the pre-rollback verdict when fresh inspection cannot find the replacement", () => {
     // Fresh inspection returns nothing after rollback, and the sandbox only
     // shows a generic Error phase.
