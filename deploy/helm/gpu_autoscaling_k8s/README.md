@@ -15,7 +15,7 @@ HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay re
 | Hermes | `hermes` | `./scripts/run-agent-sandbox.sh` (keep attached) |
 | Deep Agents Code | `deepagents` | `./scripts/run-agent-prompt.sh "…"` |
 
-Set `AGENT_NAME` once and reuse it. Do not install two agents in one sandbox. Optional pairing checks (no HPA): [recipe examples](#agent-and-runtime-support).
+Set `AGENT_NAME` once and reuse it. Do not install two agents in one sandbox. Optional pairing checks: [recipe examples](#agent-and-runtime-support).
 
 GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
 
