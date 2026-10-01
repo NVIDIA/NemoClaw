@@ -15,6 +15,8 @@ export interface PendingSandboxCreateIdentity {
   readonly state: "verified-create";
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  /** Custom gateway state directory retained across interrupted creation. */
+  readonly openshellGatewayStateDir?: string;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
@@ -108,6 +110,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
+  /** Route committed before OpenClaw config synchronization; invalidates retained context on retry. */
+  openClawConfigSyncPending?: true;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
@@ -160,6 +164,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Resolved custom OpenShell gateway state directory used when this sandbox was onboarded. */
+  openshellGatewayStateDir?: string | null;
   /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
   stopped?: boolean;
   /** Explicit retained Portable lifecycle owner; absent for every standard sandbox. */
@@ -191,6 +197,18 @@ export type SandboxWorkloadReceipt =
       readonly credentialProxyReplayRequired: boolean;
       /** Optional canonical standard-base64 public CA bundle bound by the profile digest. */
       readonly corporateCaB64?: string;
+      readonly shared: true;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "external-image";
+      /** Exact publisher-owned OCI image digest requested by the operator. */
+      readonly reference: string;
+      /** Platform selected by the local runtime when the digest was inspected. */
+      readonly platform: "linux/amd64" | "linux/arm64";
+      /** Immutable host-local content identity returned by the container runtime. */
+      readonly runtimeImageContentId: string;
+      /** Publisher-owned images are never removed by NemoClaw cleanup. */
       readonly shared: true;
     }
   | {

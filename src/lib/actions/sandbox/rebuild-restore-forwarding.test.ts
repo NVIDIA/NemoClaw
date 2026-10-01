@@ -27,14 +27,14 @@ describe("rebuild restore target forwarding", () => {
       sandboxName: "alpha",
       targetAgentType: "langchain-deepagents-code",
       targetImageIsCustom: true,
-      backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
+      backupManifest: { agentType: "openclaw", backupPath: "/backups/alpha/timestamp" } as never,
       reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });
 
     expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
+      expect.objectContaining({ backupPath: "/backups/alpha/timestamp" }),
       {
         targetAgentType: "langchain-deepagents-code",
         allowCustomImageWholeStateFileRestore: true,

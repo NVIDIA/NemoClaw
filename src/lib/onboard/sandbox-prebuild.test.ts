@@ -45,7 +45,11 @@ function createBuildContext(
   temporaryDirectories.push(buildCtx);
   const dockerfile = path.join(buildCtx, "Dockerfile");
   fs.writeFileSync(dockerfile, "FROM scratch\n");
-  return { buildCtx, createArgs: ["--from", dockerfile, "--name", "alpha"], dockerfile };
+  return {
+    buildCtx,
+    createArgs: ["--from", dockerfile, "--name", "alpha"],
+    dockerfile,
+  };
 }
 
 describe("sandbox BuildKit prebuild", () => {
@@ -84,12 +88,17 @@ describe("sandbox BuildKit prebuild", () => {
     },
   );
 
-  it("lets an explicit context override DOCKER_HOST", () => {
-    const env = { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" };
+  it("lets an explicit DOCKER_HOST override a context (#12223)", () => {
+    const env = {
+      DOCKER_HOST: "unix:///alternate.sock",
+      DOCKER_CONTEXT: "default",
+    };
 
-    expect(dockerContextIsDefaultFromBuild(env)).toBe(true);
-    expect(dockerBuildSubprocessEnv(env)).toMatchObject({ DOCKER_CONTEXT: "default" });
-    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_HOST");
+    expect(dockerContextIsDefaultFromBuild(env)).toBe(false);
+    expect(dockerBuildSubprocessEnv(env)).toMatchObject({
+      DOCKER_HOST: "unix:///alternate.sock",
+    });
+    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_CONTEXT");
   });
 
   afterEach(() => {
@@ -141,17 +150,17 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
   });
 
-  it("keeps Docker context precedence over an ambient Docker host", () => {
+  it("keeps Docker host precedence over an ambient context (#12223)", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///selected-docker.sock");
     vi.stubEnv("DOCKER_CONTEXT", "ambient-remote");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ambient");
 
     const env = dockerBuildSubprocessEnv();
     expect(env).toMatchObject({
-      DOCKER_CONTEXT: "ambient-remote",
+      DOCKER_HOST: "unix:///selected-docker.sock",
       DOCKER_CONFIG: "/home/user/.docker-ambient",
     });
-    expect(env).not.toHaveProperty("DOCKER_HOST");
+    expect(env).not.toHaveProperty("DOCKER_CONTEXT");
   });
 
   it("never enables a local-image handoff for a remote gateway", () => {
@@ -423,6 +432,29 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("rebinds the typed ordinary source without constructing create arguments", async () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      sourceReference: dockerfile,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage: vi.fn(async () => 0),
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(result).toEqual({
+      createArgs: [],
+      sourceReference: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
+    });
+  });
+
   it("isolates a generated BuildKit build from an unavailable WSL Docker Desktop helper (#9748)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
@@ -467,7 +499,9 @@ describe("sandbox BuildKit prebuild", () => {
         inspectImageId: () => IMAGE_ID,
         log,
       }),
-    ).resolves.toMatchObject({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" });
+    ).resolves.toMatchObject({
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+    });
 
     expect(credentialHelperResponds).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("isolated credential-free config"));
@@ -527,7 +561,10 @@ describe("sandbox BuildKit prebuild", () => {
     temporaryDirectories.push(dockerConfig);
     fs.writeFileSync(
       path.join(dockerConfig, "config.json"),
-      JSON.stringify({ credsStore: "desktop.exe", currentContext: "remote-builder" }),
+      JSON.stringify({
+        credsStore: "desktop.exe",
+        currentContext: "remote-builder",
+      }),
     );
     const prepared = prepareDockerBuildEnvironment({
       env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
@@ -702,7 +739,9 @@ describe("sandbox BuildKit prebuild", () => {
     );
     expect(buildImage).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
+      expect.objectContaining({
+        env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }),
+      }),
     );
     expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
     expect(fs.existsSync(credentialConfig)).toBe(false);
@@ -729,7 +768,9 @@ describe("sandbox BuildKit prebuild", () => {
       });
 
     await expect(build()).resolves.toEqual(
-      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+      expect.objectContaining({
+        imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      }),
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
@@ -738,11 +779,16 @@ describe("sandbox BuildKit prebuild", () => {
 
     mocks.dockerSpawn.mockClear();
     await expect(withStdoutRedirectedToStderr(build)).resolves.toEqual(
-      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+      expect.objectContaining({
+        imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      }),
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ shell: false, stdio: ["inherit", process.stderr, "inherit"] }),
+      expect.objectContaining({
+        shell: false,
+        stdio: ["inherit", process.stderr, "inherit"],
+      }),
     );
   });
 

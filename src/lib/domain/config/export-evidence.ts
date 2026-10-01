@@ -14,7 +14,6 @@ import {
   NemoClawOpenClawInterfacesSchema,
   NemoClawHermesInterfacesSchema,
   NemoClawAgentToolDisclosureSchema,
-  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -288,7 +287,6 @@ const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
   tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
-  additionalAgents: Type.Optional(Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1 })),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -324,7 +322,6 @@ export const ExportSourceValuesSchema = Type.Refine(
     if (
       value.execution !== undefined ||
       value.tools !== undefined ||
-      value.additionalAgents !== undefined ||
       value.observability !== undefined
     )
       return false;

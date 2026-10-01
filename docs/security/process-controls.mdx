@@ -290,12 +290,15 @@ A registry-side tag change cannot silently select another managed sandbox image.
 
 ## Auth Profile Permissions
 
-The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
-This prevents other users on the host from reading stored credentials.
+For managed `inference.local` routes, the entrypoint clears the NVIDIA credential aliases before setup and command execution.
+It removes only the exact legacy NemoClaw-generated profile for the selected managed provider and preserves other profiles.
+Direct inference routes outside `inference.local` retain supplied credentials.
+The entrypoint and migration flows enforce `chmod 600` on auth-profile files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials that remain.
 
 | Aspect | Detail |
 |---|---|
-| Default | `600` permissions applied recursively at startup and after migration restores. |
+| Default | The selected managed provider's generated profile is removed. Other auth profiles receive `600` permissions recursively at startup and after migration restores. |
 | What you can change | This is not a user-facing knob. The entrypoint enforces it. |
 | Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
 | Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |

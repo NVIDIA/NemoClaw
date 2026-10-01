@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import {
+  OPENROUTER_CLOUD_MODEL_OPTIONS,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -63,7 +64,11 @@ import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
 
 export { resolveCurrentRuntimeProviderBundle };
-export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
+export {
+  createHermesPortableOllamaInferenceBindings,
+  createHermesPortableOllamaInferenceResolver,
+  retireHermesPortableOllamaFreshState,
+} from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
@@ -903,7 +908,12 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
-    const openRouterFeaturedModels = nvidiaFeaturedModels;
+    const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
+      defaultModel: resolveAgentDefaultCloudModel(agent),
+      fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
+      retiredModelIds: [],
+      writeLine: deps.log,
+    });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,

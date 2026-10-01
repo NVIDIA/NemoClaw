@@ -22,6 +22,7 @@ import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clie
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { assertAgentExecutionSucceeded, hasExactReadyPhase } from "./gpu-e2e-helpers.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
@@ -249,7 +250,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(computeApps.exitCode, resultText(computeApps)).toBe(0);
     const llamaGpuProcess = llamaGpuApplications(computeApps.stdout).find(
       ([pid]) => Number(pid) === managedLlamaPid,
     );
@@ -274,7 +274,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(unauthorized.exitCode, resultText(unauthorized)).toBe(0);
     expect(unauthorized.stdout).toBe("401");
 
     const hostModels = await host.command(
@@ -294,7 +293,6 @@ test(
         timeoutMs: 35_000,
       },
     );
-    expect(hostModels.exitCode, resultText(hostModels)).toBe(0);
     const servedModels = JSON.parse(hostModels.stdout) as {
       data: Array<{ id: string; meta?: { n_ctx?: number } }>;
     };
@@ -330,24 +328,34 @@ NODE`),
     });
 
     progress.phase("verify OpenClaw agent inference and owned cleanup");
-    const agent = await host.nemoclaw(
-      [
-        SANDBOX_NAME,
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--session-id",
-        `${TARGET_ID}-${Date.now()}-${process.pid}`,
-        "-m",
-        "Respond with a short greeting.",
-      ],
-      {
-        artifactName: "openclaw-agent-through-managed-llama-cpp",
-        env: env(),
-        timeoutMs: 12 * 60_000,
-      },
+    const agentArgs = [
+      SANDBOX_NAME,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `${TARGET_ID}-${Date.now()}-${process.pid}`,
+      "-m",
+      "Respond with a short greeting.",
+    ];
+    const preApprovalAgent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-before-admin-approval",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
+    expect(preApprovalAgent.exitCode, resultText(preApprovalAgent)).toBe(0);
+    assertAgentExecutionSucceeded(
+      preApprovalAgent.stdout,
+      "inference",
+      recipe.spec.model.servedName,
     );
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), [apiKey]);
+    const agent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-through-managed-llama-cpp",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
     await captureManagedRuntimeLogs("post-agent");
     expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);

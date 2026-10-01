@@ -25,7 +25,7 @@ import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
-  finishOpenClawPostRestoreDoctor,
+  finishOpenClawBackupQuiesce,
   retireOpenClawPostRestoreDoctorForDelete,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
@@ -74,6 +74,7 @@ export interface RebuildBackupPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
+  capturedAgentState?: import("../../state/state-directory-restore").CapturedAgentState;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -83,8 +84,19 @@ export interface RebuildBackupPhaseResult {
 }
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  const finished = await finishOpenClawPostRestoreDoctor(window);
-  if (!finished.ok) await abortOpenClawPostRestoreDoctor(window);
+  const finished = await finishOpenClawBackupQuiesce(window);
+  if (!finished.ok) {
+    const aborted = await abortOpenClawPostRestoreDoctor(window);
+    const state = aborted.ok
+      ? "The retained sandbox was stopped."
+      : `Stopping or maintenance reconciliation was not fully verified (${aborted.detail}).`;
+    const gateway = window.runtimeSelection
+      ? `gateway '${window.runtimeSelection.gatewayName}'`
+      : "the recorded gateway";
+    console.error(
+      `  Warning: OpenClaw source maintenance cleanup did not return retained sandbox '${window.sandboxName}' healthy (${finished.stage}: ${finished.detail}). ${state} Preserve this sandbox and its backup. Inspect its status and logs on ${gateway} before attempting recovery. Do not delete it or start another replacement.`,
+    );
+  }
   return finished;
 }
 
@@ -156,8 +168,10 @@ export async function runRebuildBackupPhase(
           input.runtimeSelection,
         );
   let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  input.capturedAgentState?.assertCurrent();
   if (
     !preparedRecoveryManifest &&
+    !input.capturedAgentState &&
     !input.staleRecovery &&
     (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
@@ -180,6 +194,7 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
+        ...(input.capturedAgentState ? ([input.capturedAgentState] as const) : ([] as const)),
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

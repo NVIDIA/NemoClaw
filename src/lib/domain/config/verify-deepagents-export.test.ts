@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import {
   asExportedConfig,
-  exportedSingletonSandbox,
+  exportedDeepAgentsSandbox,
 } from "../../../../test/support/config-export-document";
 import type { ObservedExportSnapshot } from "./export-evidence";
 import {
@@ -66,7 +66,7 @@ describe("Deep Agents config export (#11860)", () => {
     expect(sandbox.harness).toEqual({ kind: "deepagents" });
     expect(sandbox.runtime).toEqual({ provider: "docker" });
     expect("agent" in sandbox).toBe(true);
-    const deepAgentsSandbox = exportedSingletonSandbox(sandbox);
+    const deepAgentsSandbox = exportedDeepAgentsSandbox(sandbox);
     expect(deepAgentsSandbox.image).toEqual({ ref: dcodeImageRef });
     expect(deepAgentsSandbox.agent).toEqual({
       name: "primary",

@@ -6,6 +6,21 @@ import { describe, expect, it, vi } from "vitest";
 import { runDebugCommandWithOptions } from "./debug-command";
 
 describe("debug command", () => {
+  it("propagates cancellation from asynchronous sandbox diagnostics", async () => {
+    const cancelled = new Error("diagnostics cancelled");
+    await expect(
+      runDebugCommandWithOptions(
+        {},
+        {
+          env: {},
+          getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
+          getSandboxAvailability: async () => ({ state: "available", gatewayName: "nemoclaw" }),
+          runDebug: vi.fn().mockRejectedValue(cancelled),
+        },
+      ),
+    ).rejects.toBe(cancelled);
+  });
+
   it("runs parsed debug options and falls back to the default sandbox", async () => {
     const runDebug = vi.fn();
     await runDebugCommandWithOptions(
