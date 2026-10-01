@@ -66,6 +66,8 @@ describe("OpenClaw agent-output fixture", () => {
             payloads: [{ text: "TOOLS_COMPLETE" }],
             meta: {
               replayInvalid: true,
+              aborted: false,
+              stopReason: "stop",
               finalAssistantVisibleText: "TOOLS_COMPLETE",
               systemPromptReport: { tools: { entries: [{ name: "exec" }] } },
               toolSummary: { calls: 3, failures: 0, tools: ["exec"] },
