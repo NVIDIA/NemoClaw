@@ -170,7 +170,7 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     });
   });
 
-  it("disables the N1x summary audit while retaining its extended compaction time (#12297)", () => {
+  it("allows one N1x summary retry while retaining the audit and extended timeout (#12297)", () => {
     const config = buildConfig({
       NEMOCLAW_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4",
       NEMOCLAW_PROVIDER_KEY: "inference",
@@ -188,12 +188,12 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
       mode: "safeguard",
       timeoutSeconds: 300,
       recentTurnsPreserve: 1,
-      qualityGuard: { enabled: false, maxRetries: 0 },
+      qualityGuard: { enabled: true, maxRetries: 1 },
       notifyUser: true,
     });
   });
 
-  it("carries the N1x compaction mitigation through managed startup (#12297)", () => {
+  it("carries the N1x summary retry through managed startup (#12297)", () => {
     const built = buildManagedStartupOnboardProfile({
       agentName: "openclaw",
       inference: {
@@ -233,7 +233,7 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     );
     expect(config.agents.defaults.compaction).toMatchObject({
       timeoutSeconds: 300,
-      qualityGuard: { enabled: false, maxRetries: 0 },
+      qualityGuard: { enabled: true, maxRetries: 1 },
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokens");
     expect(config.agents.defaults.compaction).not.toHaveProperty("reserveTokensFloor");

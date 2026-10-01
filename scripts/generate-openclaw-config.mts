@@ -762,9 +762,9 @@ export function buildManagedInferenceSafeguardCompaction(
       : {}),
     qualityGuard: {
       ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard,
-      // Temporary N1x mitigation for #12297. Restore the summary audit after
-      // guard-enabled compaction passes N1x recovery and continuity checks.
-      ...(isN1xManagedVllm ? { enabled: false } : {}),
+      // Give N1x summaries one corrective attempt with audit feedback (#12297).
+      // Keep the audit enabled so failed summaries cannot replace conversation history.
+      ...(isN1xManagedVllm ? { maxRetries: 1 } : {}),
     },
   };
 }
