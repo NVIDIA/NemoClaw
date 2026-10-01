@@ -5,7 +5,7 @@
 
 # NemoClaw Kubernetes GPU autoscaling
 
-This experimental recipe is a **demo** of a cost-efficient architecture: AI agents run in CPU-only OpenShell sandboxes, and GPU inference autoscales on its own. Pairing and quick start use **one** sandbox. The OpenClaw + Ollama e2e uses **one sandbox per end user** sharing `inference.local` → Envoy → Ollama GPU HPA in `nemoclaw-gpu`. This DGX demo uses `E2E_USERS=5` and 8Gi sandboxes. Hermes + vLLM is the next e2e and is not run during the OpenClaw test. The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. 
+This experimental recipe shows a cost-efficient architecture: AI agents run in CPU-only OpenShell sandboxes, each sandbox responding to one end user's inference request, while GPU inference autoscales using K8s HPA based on the workload. The e2e demo uses **one sandbox per end user** sharing `inference.local` → Envoy → GPU inference runtimes -> K8s HPA autoscaling. The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. 
 
 HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay responsive and idle GPUs are released.
 
@@ -53,7 +53,7 @@ Authenticated inference endpoints
 HPA (GPU util >40% or latency >3000 ms)
 ```
 
-Sandboxes never request GPUs. Several users share one inference route and one HPA. The **fast HPA-only test stays** `./scripts/hpa-load-test-dgx-8xh100.sh` (`files/load-generator.ts` Job against metrics-proxy pod IPs; GPU util or `HPA_METRIC=latency_avg`). Do not drop that Job. The OpenClaw + Ollama path is **additional**: provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX GPU-util run used 5 users. This 8×H100 demo runs those sandboxes on the GPU box's CPUs. Sandboxes can run on a different CPU node with more memory; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). Hermes + vLLM is next and is not this script.
+Sandboxes never request GPUs. Several users share one inference route and one HPA. The **fast HPA-only test stays** `./scripts/hpa-load-test-dgx-8xh100.sh` (`files/load-generator.ts` Job against metrics-proxy pod IPs; GPU util or `HPA_METRIC=latency_avg`). Do not drop that Job. The OpenClaw + Ollama path is **additional**: provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the GPU box's CPUs. Sandboxes can run on a different CPU node with more memory; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). Hermes + vLLM is next and is not this script.
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
@@ -196,7 +196,7 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 # deepagents only: ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
-### 6. HPA load test
+### 6. HPA-only load test
 
 ```bash
 # 8× H100 on-prem
