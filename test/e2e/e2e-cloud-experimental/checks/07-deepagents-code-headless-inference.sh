@@ -706,6 +706,8 @@ DCODE_EXIT:${direct_exit}"
     pass "nemoclaw connect --probe-only accepted the managed inference route (direct DNS/hosts ${direct_dns_state})"
   else
     connect_exit=$?
+    printf '%s\n' "$connect_output" \
+      | node --no-warnings "${REPO:-.}/test/e2e/fixtures/redaction.ts"
     connect_target_reason="$(printf '%s\n' "$connect_output" | sed -n 's/^NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
     if [ -n "$connect_target_reason" ]; then
       fail_test "bare connect did not target the expected sandbox (${connect_target_reason})"

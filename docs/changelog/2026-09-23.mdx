@@ -1,0 +1,47 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.129
+
+NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
+It also strengthens host OS reporting and Windows WSL GPU verification.
+
+- Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
+  Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.
+  These templates contain `image: null`; replace that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
+  Related changes: [PR #12054](https://github.com/NVIDIA/NemoClaw/pull/12054) and [PR #12161](https://github.com/NVIDIA/NemoClaw/pull/12161).
+  For supported profiles and refusal conditions, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes and LangChain Deep Agents Code can defer onboarding when installing without NVIDIA hosted inference credentials.
+  The installer creates no provider, sandbox, or completed onboarding state in that case; present credentials retain normal validation.
+  Complete setup later through the installed agent's onboarding command.
+  Related change: [PR #10341](https://github.com/NVIDIA/NemoClaw/pull/10341).
+  For the opt-in flag and prerequisites, refer to the [CLI Commands Reference](/user-guide/deepagents/reference/commands).
+- OpenClaw gateway restart loads updated native plugins from a fresh module graph and waits for `/readyz` to return HTTP `200` with `{"ready":true}` before repairing forwards.
+  Managed startup also preserves the SQLite temporary-directory environment for standalone memory commands.
+  Related changes: [PR #11911](https://github.com/NVIDIA/NemoClaw/pull/11911) and [PR #12256](https://github.com/NVIDIA/NemoClaw/pull/12256).
+  Refer to [Install OpenClaw Plugins](/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins) and [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control).
+- Sandbox status and recovery use the owning local gateway registry even when another gateway is active.
+  On Linux, `nemoclaw <name> connect --probe-only` starts a stopped sandbox through its recorded gateway, including a sibling registry root.
+  Recovery guidance follows the recorded runtime provider, and rebuild delegates to the owning registry after confirmation.
+  Resumed host-local inference onboarding reserves its retained authority before creating a runtime and reports actionable diagnostics when that reservation fails.
+  Related changes: [PR #11945](https://github.com/NVIDIA/NemoClaw/pull/11945), [PR #12075](https://github.com/NVIDIA/NemoClaw/pull/12075), and [PR #12303](https://github.com/NVIDIA/NemoClaw/pull/12303).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Host readiness reports the Linux distribution and release, with warnings for unqualified or inconclusive OS evidence.
+  Windows on Arm GPU verification checks every reported device and aggregate capacity without qualifying generic multi-GPU hosts for larger automatic Ollama model selection.
+  Related changes: [PR #11780](https://github.com/NVIDIA/NemoClaw/pull/11780) and [PR #12212](https://github.com/NVIDIA/NemoClaw/pull/12212).
+  Refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation).
+- NVIDIA Endpoints onboarding no longer selects the retired MiniMax M3 model.
+  Interactive onboarding asks for a replacement; noninteractive onboarding uses an eligible configured model or the agent default.
+  OpenRouter model selection remains separate from NVIDIA's retirement policy.
+  Related change: [PR #11864](https://github.com/NVIDIA/NemoClaw/pull/11864).
+  Refer to [Use NVIDIA Endpoints](/user-guide/openclaw/inference/hosted-inference/use-nvidia-endpoints).
+- Provider credential recovery directs you to choose `retry` before entering an API key in the secure prompt.
+  Recovery requires interactive terminals for standard input and standard error; otherwise, onboarding exits with a nonzero status.
+  Related change: [PR #12093](https://github.com/NVIDIA/NemoClaw/pull/12093).
+  Refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation).
+- Legacy plaintext credential cleanup removes only entries whose migration to the OpenShell gateway has been verified.
+  Unmigrated entries remain available for later onboarding attempts.
+  Related change: [PR #10384](https://github.com/NVIDIA/NemoClaw/pull/10384).
+  Refer to [Credential Storage](/user-guide/openclaw/security/credential-storage) for migration and cleanup conditions.

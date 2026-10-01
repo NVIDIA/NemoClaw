@@ -46,7 +46,7 @@ export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH =
   "/tmp/nemoclaw-openclaw-gateway-startup-timing";
 export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES = 512;
 export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS = 44;
-// Nine non-overlapping startup phases partition launchToFirstHealth. Probe and
+// Eight non-overlapping startup phases partition launchToFirstHealth. Probe and
 // sleep are overlapping diagnostics and are excluded. The phases and total are
 // rounded independently to milliseconds, so emitted values may differ by 5 ms.
 export const PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECONCILIATION_TOLERANCE_MS = 5;
@@ -155,9 +155,8 @@ function parsePortableOpenClawGatewayStartupRecord(
 function formatPortableOpenClawGatewayStartupTiming(fields: {
   launchToEntry: number;
   entrySetup: number;
-  configIntegrity: number;
   providerModelCors: number;
-  tokenPlaceholderHash: number;
+  providerPlaceholdersGatewayToken: number;
   messagingChannelsPreloadsScan: number;
   workspaceAuthTemp: number;
   gatewaySpawn: number;
@@ -170,9 +169,9 @@ function formatPortableOpenClawGatewayStartupTiming(fields: {
   diagnosticRead: number;
   diagnosticReadOutcome: PortableOpenClawGatewayTimingReadOutcome;
 }): string {
-  const line = `${PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX} launchToEntry=${String(boundedGatewayTimingValue(fields.launchToEntry))}ms entrySetup=${String(boundedGatewayTimingValue(fields.entrySetup))}ms configIntegrity=${String(boundedGatewayTimingValue(fields.configIntegrity))}ms providerModelCors=${String(boundedGatewayTimingValue(fields.providerModelCors))}ms tokenPlaceholderHash=${String(boundedGatewayTimingValue(fields.tokenPlaceholderHash))}ms messagingChannelsPreloadsScan=${String(boundedGatewayTimingValue(fields.messagingChannelsPreloadsScan))}ms workspaceAuthTemp=${String(boundedGatewayTimingValue(fields.workspaceAuthTemp))}ms gatewaySpawn=${String(boundedGatewayTimingValue(fields.gatewaySpawn))}ms spawnToFirstHealth=${String(boundedGatewayTimingValue(fields.spawnToFirstHealth))}ms launchToFirstHealth=${String(boundedGatewayTimingValue(fields.launchToFirstHealth))}ms probe=${String(boundedGatewayTimingValue(fields.probe))}ms sleep=${String(boundedGatewayTimingValue(fields.sleep))}ms firstReadyAttempt=${String(Math.min(MAX_EMITTED_GATEWAY_ATTEMPTS, Math.max(0, fields.firstReadyAttempt)))} lastFailure=${fields.lastFailure} diagnosticRead=${String(boundedGatewayTimingValue(fields.diagnosticRead))}ms diagnosticReadOutcome=${fields.diagnosticReadOutcome}`;
+  const line = `${PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX} launchToEntry=${String(boundedGatewayTimingValue(fields.launchToEntry))}ms entrySetup=${String(boundedGatewayTimingValue(fields.entrySetup))}ms providerModelCors=${String(boundedGatewayTimingValue(fields.providerModelCors))}ms providerPlaceholdersGatewayToken=${String(boundedGatewayTimingValue(fields.providerPlaceholdersGatewayToken))}ms messagingChannelsPreloadsScan=${String(boundedGatewayTimingValue(fields.messagingChannelsPreloadsScan))}ms workspaceAuthTemp=${String(boundedGatewayTimingValue(fields.workspaceAuthTemp))}ms gatewaySpawn=${String(boundedGatewayTimingValue(fields.gatewaySpawn))}ms spawnToFirstHealth=${String(boundedGatewayTimingValue(fields.spawnToFirstHealth))}ms launchToFirstHealth=${String(boundedGatewayTimingValue(fields.launchToFirstHealth))}ms probe=${String(boundedGatewayTimingValue(fields.probe))}ms sleep=${String(boundedGatewayTimingValue(fields.sleep))}ms firstReadyAttempt=${String(Math.min(MAX_EMITTED_GATEWAY_ATTEMPTS, Math.max(0, fields.firstReadyAttempt)))} lastFailure=${fields.lastFailure} diagnosticRead=${String(boundedGatewayTimingValue(fields.diagnosticRead))}ms diagnosticReadOutcome=${fields.diagnosticReadOutcome}`;
   if (line.length <= PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_MAX_LINE_LENGTH) return line;
-  return `${PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX} launchToEntry=0ms entrySetup=0ms configIntegrity=0ms providerModelCors=0ms tokenPlaceholderHash=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=error`;
+  return `${PORTABLE_OPENCLAW_GATEWAY_STARTUP_TIMING_PREFIX} launchToEntry=0ms entrySetup=0ms providerModelCors=0ms providerPlaceholdersGatewayToken=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=error`;
 }
 
 /**
@@ -206,9 +205,8 @@ export function createPortableLifecycleTimingRecorder(
   let gatewayPhaseDurations = {
     launchToEntry: 0,
     entrySetup: 0,
-    configIntegrity: 0,
     providerModelCors: 0,
-    tokenPlaceholderHash: 0,
+    providerPlaceholdersGatewayToken: 0,
     messagingChannelsPreloadsScan: 0,
     workspaceAuthTemp: 0,
     gatewaySpawn: 0,
@@ -391,9 +389,8 @@ export function createPortableLifecycleTimingRecorder(
         gatewayPhaseDurations = {
           launchToEntry: record.entry - gatewayLaunchEpochMs,
           entrySetup: record.configStart - record.entry,
-          configIntegrity: record.configEnd - record.configStart,
-          providerModelCors: record.providerEnd - record.configEnd,
-          tokenPlaceholderHash: record.tokenEnd - record.providerEnd,
+          providerModelCors: record.providerEnd - record.configStart,
+          providerPlaceholdersGatewayToken: record.tokenEnd - record.providerEnd,
           messagingChannelsPreloadsScan: record.messagingEnd - record.tokenEnd,
           workspaceAuthTemp: record.workspaceEnd - record.messagingEnd,
           gatewaySpawn: record.spawnEnd - record.workspaceEnd,

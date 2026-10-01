@@ -43,6 +43,9 @@ describe("CLI connect readiness", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'case "$*" in',
+        "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+        "esac",
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
@@ -144,6 +147,9 @@ describe("CLI connect readiness", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          'case "$*" in',
+          "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+          "esac",
           `marker_file=${JSON.stringify(markerFile)}`,
           'printf \'%s\\n\' "$*" >> "$marker_file"',
           'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
@@ -233,6 +239,9 @@ describe("CLI connect readiness", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'case "$*" in',
+        "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+        "esac",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',

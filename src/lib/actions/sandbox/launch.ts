@@ -13,10 +13,7 @@ import {
 } from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
-import {
-  observeSandboxOnGateway,
-  type SandboxRecreateObserver,
-} from "../../onboard/sandbox-recreate-probe";
+import type { SandboxRecreateObserver } from "../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../state/registry";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
@@ -38,17 +35,17 @@ import {
   type HermesPortableActiveLifecycleAuthority,
   withSandboxLifecycleLock as withSandboxMutationLock,
 } from "./gateway-state";
-import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
+import { getKnownSandboxTarget } from "./gateway-target";
 import {
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
-const LAUNCH_READINESS_FENCE_REPAIR =
-  "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+const LAUNCH_READINESS_FENCE_FAILURE = "Launch readiness evidence could not be safely invalidated.";
 const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
   hostCwd: REPOSITORY_ROOT,
 });
@@ -241,57 +238,14 @@ async function startAgentWithPortableAuthority(
   beforeOrdinaryLaunch?: () => Promise<void>,
   beforeAgentExec?: () => void,
 ): Promise<{ finish: () => Promise<void> }> {
-  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   const startOrdinaryAgent = async (): Promise<{ finish: () => Promise<void> }> => {
-    const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
-    const launchedEntry = structuredClone(readSandbox(sandboxName));
-    const legacyTarget =
-      launchedEntry &&
-      (launchedEntry.agent ?? "openclaw") === "openclaw" &&
-      (!launchedEntry.lifecycleGeneration || !launchedEntry.lifecycleLiveIdentityFingerprint)
-        ? { sandboxName, ...getPersistedSandboxTargetGateway(launchedEntry) }
-        : null;
-    const observeSandbox = deps.observeSandbox ?? observeSandboxOnGateway;
-    // Older registrations have no recorded identity. Bind cleanup to the live ID
-    // without changing their registration or requiring a sandbox replacement.
-    const launchedLive = legacyTarget ? observeSandbox(legacyTarget) : null;
-    if (launchedLive && (launchedLive.state !== "ready" || !launchedLive.liveIdentityFingerprint)) {
-      throw new Error(
-        `Cannot verify the live identity of sandbox '${sandboxName}' before launch. Run the sandbox doctor and retry.`,
-      );
-    }
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
     beforeAgentExec?.();
-    const finish = await startSandboxExec(
-      sandboxName,
-      command,
-      { tty: true, stdin: true, timeoutSeconds: 0 },
-      {
-        withCleanupAuthority: (cleanup) =>
-          lockSandbox(sandboxName, () => {
-            enforceRemovedImmutabilityMigrationBoundary(sandboxName);
-            const current = readSandbox(sandboxName);
-            if (
-              !launchedEntry ||
-              !current ||
-              current.agent !== launchedEntry.agent ||
-              current.gatewayName !== launchedEntry.gatewayName ||
-              current.gatewayPort !== launchedEntry.gatewayPort ||
-              current.lifecycleGeneration !== launchedEntry.lifecycleGeneration ||
-              current.lifecycleLiveIdentityFingerprint !==
-                launchedEntry.lifecycleLiveIdentityFingerprint
-            )
-              return null;
-            if (
-              legacyTarget &&
-              observeSandbox(legacyTarget).liveIdentityFingerprint !==
-                launchedLive?.liveIdentityFingerprint
-            )
-              return null;
-            return cleanup();
-          }),
-      },
-    );
+    const finish = await startSandboxExec(sandboxName, command, {
+      tty: true,
+      stdin: true,
+      timeoutSeconds: 0,
+    });
     return { finish };
   };
   const startHermesPortableAgent = (
@@ -447,7 +401,11 @@ async function prepareLaunchSession(
     ) {
       throw new Error(`Sandbox '${sandboxName}' is not registered in the local NemoClaw state.`);
     }
-    if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (decision.recoveryBlocked) {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(undefined)}`,
+      );
+    }
     const fallbackDecision = decision;
     const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);
     const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
@@ -478,7 +436,11 @@ async function prepareLaunchSession(
       acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
       continue;
     }
-    if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (gated.kind === "unsafe") {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
+      );
+    }
     if (gated.value.publication?.kind === "policy-observation-failed") {
       const gatewayName = publicationRequest.gatewayName ?? "the recorded gateway";
       throw new Error(

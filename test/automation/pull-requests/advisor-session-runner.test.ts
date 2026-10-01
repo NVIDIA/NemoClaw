@@ -467,6 +467,23 @@ describe("advisor session runner", () => {
     );
   });
 
+  it("accepts a required evidence read through a symlinked sandbox root (#11392)", async () => {
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-real-"));
+    const aliasDir = `${evidenceDir}-alias`;
+    tempDirs.push(evidenceDir, aliasDir);
+    fs.writeFileSync(path.join(evidenceDir, "specialist.diff"), "diff evidence");
+    fs.symlinkSync(evidenceDir, aliasDir, "dir");
+    const evidencePath = path.join(aliasDir, "specialist.diff");
+
+    const result = await run([evidenceAnalysisTurn("review-evidence", evidencePath)], undefined, [
+      aliasDir,
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.readContents).toEqual(["diff evidence"]);
+  });
+
   it("rejects specialist analysis that omits required evidence (#10791)", async () => {
     const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-"));
     tempDirs.push(evidenceDir);

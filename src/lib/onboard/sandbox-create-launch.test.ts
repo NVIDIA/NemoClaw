@@ -263,6 +263,21 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it("uses the selected environment when no build environment override exists", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "example.invalid/image", "--name", "demo"],
+      env: { HOME: "/selected/home" },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => `openshell ${args.join(" ")}`,
+    });
+
+    expect(result.sandboxEnv).toEqual({ HOME: "/selected/home" });
+  });
+
   it("removes an inherited sandbox policy when create omits caller policy (#9833)", () => {
     const result = prepareSandboxCreateLaunch({
       agent: null,

@@ -55,7 +55,7 @@ function hermesInterfacesSnapshot(port = 19000, internalPort = 19120, tui = true
 }
 
 describe("Hermes retained interface export", () => {
-  it("exports dashboard, TUI and allocated API intent through the complete action (#11433)", async () => {
+  it("exports dashboard and allocated API intent through the complete action (#11433, #12132)", async () => {
     const source = hermesInterfacesSnapshot();
     const exported = await exportSnapshots([source]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
@@ -63,7 +63,7 @@ describe("Hermes retained interface export", () => {
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       kind: "hermes",
       interfaces: {
-        dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+        dashboard: { enabled: true, port: 19000, internalPort: 19120 },
         api: { port: 8643 },
       },
     });
@@ -72,22 +72,26 @@ describe("Hermes retained interface export", () => {
     expect(source.registry.hermesApiPort).toBe(8643);
   });
 
-  it("omits managed default leaves while preserving dashboard enablement (#11433)", async () => {
+  it("preserves an explicitly disabled TUI against the target default (#12132)", async () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
-      dashboard: { enabled: true },
+      dashboard: { enabled: true, tui: { enabled: false } },
     });
   });
 
   it.each([undefined, null, 8642])(
-    "preserves canonical disabled-dashboard output with legacy API %s (#11433)",
+    "preserves canonical disabled-dashboard output with legacy API %s (#11433, #12132)",
     async (hermesApiPort) => {
       const current = await exportSnapshots([hermesSnapshot()]);
       const legacy = await exportSnapshots([hermesSnapshot({ hermesApiPort })]);
       expect(legacy.outcome.ok).toBe(true);
       expect(legacy.writeStdout.mock.calls).toEqual(current.writeStdout.mock.calls);
+      const document = asExportedConfig(YAML.parse(legacy.writeStdout.mock.calls[0]![0]));
+      expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+        dashboard: { enabled: false },
+      });
     },
   );
 
@@ -96,7 +100,7 @@ describe("Hermes retained interface export", () => {
     expect(exported.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-      interfaces: { api: { port: 8643 } },
+      interfaces: { dashboard: { enabled: false }, api: { port: 8643 } },
     });
   });
 

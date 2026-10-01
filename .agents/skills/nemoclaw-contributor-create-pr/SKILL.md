@@ -30,6 +30,10 @@ Use the canonical NVIDIA/NemoClaw base, template, sensitive-path policy, and tru
 surface described in the references. Publish from a clean feature branch. Every published commit
 must be GitHub `Verified`; the PR body must contain the configured identity's DCO declaration.
 
+Before declaring the source repository, apply the trusted-base source-repository eligibility gate in
+[Publication](references/publication.md#select-the-source-repository). Never open a fork PR when a
+required CI or E2E path for the candidate is restricted to same-repository pull requests.
+
 Bind branch writes to the declared repository, branch, local commit, and expected remote state.
 Preserve the atomic prior-state guard, fast-forward ancestry check, and readback requirements.
 Reconcile inconclusive writes before any permitted bounded retry. Never infer success from a write
@@ -37,6 +41,9 @@ response alone or weaken the reference's concurrency and recovery rules.
 
 Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
 unobserved approval. Do not select labels or request maintainer reviews in this workflow.
+A workflow or live E2E file change does not require separate approval. Manual live E2E dispatch
+still requires authority for the selected target. Missing dispatch authority does not block draft
+publication unless the accepted scope requires that live evidence before publication.
 When the diff adds, expands, or repairs live E2E evidence, require the implementation handoff to apply
 [Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). When it
 prunes or relocates live assertions, require the handoff to apply
