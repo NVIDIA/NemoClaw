@@ -201,19 +201,8 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 # deepagents only: ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
-### 6. HPA-only load test (Optional): 
-This is not an e2d test, it only tests if K8s HPA can autoscale the number of pods and GPUs based on inference requests
 
-```bash
-# 8× H100 on-prem
-./scripts/hpa-load-test-dgx-8xh100.sh
-
-# 4× L40S on AWS (Brev)
-./scripts/hpa-load-test-brev-4xl40s.sh
-```
-
-
-### 7. E2E test: multiple end users and sandboxes
+### 6. E2E test: multiple end users and sandboxes
 
 Terminal A — provision (sandboxes and GPUs)
 ```bash
@@ -507,12 +496,21 @@ openshell status
 
 ## Test autoscaling and load balancing
 
-`install-hpa.sh` does not generate load. Pairing tests are not this path. The 4× L40S script is unchanged.
+On 8× H100  `minReplicas=1` and `maxReplicas=8`. 
 
-On 8× H100 both of these keep `minReplicas=1` and `maxReplicas=8`. **Keep the Job.** The sandbox e2e does not replace it.
+- **Fast HPA-only test:** it only tests if K8s HPA can autoscale the number of pods and GPUs based on inference requests, not an e2d test.
 
-- **Fast HPA-only (keep):** `./scripts/hpa-load-test-dgx-8xh100.sh` — Kubernetes Job (`files/load-generator.ts`) talks to metrics-proxy **pod IPs**, then checks Envoy. Use this for GPU-util HPA and for `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`.
-- **OpenClaw + Ollama (additional):** two terminals. Provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`. Send chats with the same `client.sh`. Users talk only to sandbox `:18789`. The client does not set the HPA metric.
+Use this for GPU-util HPA and for `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`.
+
+```bash
+# 8× H100 on-prem
+./scripts/hpa-load-test-dgx-8xh100.sh
+
+# 4× L40S on AWS (Brev)
+./scripts/hpa-load-test-brev-4xl40s.sh
+```
+
+- **OpenClaw + Ollama e2e test:** two terminals. Provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`. Send chats with the same `client.sh`. Users talk only to sandbox `:18789`. The client does not set the HPA metric.
 - `./scripts/test-hermes-e2e-hpa.sh` — Hermes + vLLM, next step. Do not run it while the OpenClaw + Ollama e2e owns the GPUs.
 
 This DGX OpenClaw GPU-util run used **5** end users (one sandbox each). Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
