@@ -3,7 +3,7 @@
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
-import { runWithEnv, testTimeoutOptions } from "./helpers";
+import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 describe("sandbox help", () => {
   it(
@@ -42,6 +42,21 @@ describe("sandbox help", () => {
     testTimeoutOptions(15_000),
     ({ testHome }) => {
       const result = runWithEnv("my-assistant policy --help", testHome.environment());
+
+      expect(result.code).toBe(0);
+      expect(result.out).toContain("my-assistant policy add");
+      expect(result.out).toContain("my-assistant policy list");
+      expect(result.out).not.toContain("command sandbox:policy not found");
+    },
+  );
+
+  it(
+    "renders policy help for a bare policy topic on a registered sandbox",
+    testTimeoutOptions(15_000),
+    ({ testHome }) => {
+      writeSandboxRegistry(testHome.home, "my-assistant");
+
+      const result = runWithEnv("my-assistant policy", testHome.environment());
 
       expect(result.code).toBe(0);
       expect(result.out).toContain("my-assistant policy add");
