@@ -1107,7 +1107,7 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it.concurrent("preserves recovery authority when the native Podman service survives stop (#11014)", async (context) => {
+  it.concurrent("restores Docker and preserves Podman recovery authority when Podman cleanup fails (#11014)", async (context) => {
     const fixture = await runPodmanCleanupFixture(context, true, true);
 
     try {
@@ -1124,6 +1124,11 @@ describe("native Podman E2E setup boundary", () => {
       expect(createHash("sha256").update(fs.readFileSync(fixture.destination)).digest("hex")).toBe(
         fixture.expectedSha256,
       );
+      const systemctlLog = fs.readFileSync(fixture.systemctlLog, "utf8");
+      expect(systemctlLog).toContain("unmask --runtime docker.service");
+      expect(systemctlLog).toContain("unmask --runtime docker.socket");
+      expect(systemctlLog).toContain("start docker.service");
+      expect(systemctlLog).toContain("start docker.socket");
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }
