@@ -35,6 +35,7 @@ import {
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
+  trackGpuGatewayCleanup,
   waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
@@ -107,11 +108,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-gateway-destroy-gpu",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-gateway-destroy-gpu");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-delete-gpu",
@@ -124,7 +121,7 @@ test(
       env: cleanupEnv,
       timeoutMs: 120_000,
     });
-    await cleanupGpu(host, lifecycle, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info",
@@ -359,11 +356,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-hermes-response-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-hermes-response-gateway",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-hermes-response-gateway");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-hermes-response-openshell-sandbox",
@@ -377,7 +370,7 @@ test(
       timeoutMs: 120_000,
     });
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
-    await cleanupGpu(host, lifecycle, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info-hermes-response",
@@ -459,7 +452,7 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     });
     cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
-    await cleanupGpu(host, lifecycle, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
       scenarioLabel: "attached Ollama export",
@@ -482,11 +475,7 @@ exec ollama pull qwen2.5:0.5b`,
       },
     );
     expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "export-cleanup-gateway",
-      env: exportEnv,
-      timeoutMs: 60000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "export-cleanup-gateway");
     cleanup.trackDisposable("delete the export sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "export-cleanup-openshell",
@@ -606,7 +595,7 @@ test.for(["initial", "after retirement"])(
       `${String(preflight.exitCode)}\n${resultText(preflight)}`,
       `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
     ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
-    await cleanupGpu(host, lifecycle, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
 
     cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
       try {
@@ -642,11 +631,7 @@ test.for(["initial", "after retirement"])(
       }
     });
 
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "vllm-export-cleanup-gateway",
-      env: exportEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "vllm-export-cleanup-gateway");
     cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "vllm-export-cleanup-openshell",

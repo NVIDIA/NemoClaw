@@ -709,12 +709,16 @@ describe("E2E fixture clients", () => {
     const pidRunner = new FakeRunner();
     pidRunner.stdout = "12345\n";
     const pidHost = new HostCliClient(pidRunner, { cliPath: "nemoclaw" });
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     await expect(
-      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime(),
+      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime({
+        env: privateRuntimeEnv,
+      }),
     ).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
+    expect(pidRunner.calls[0]?.options?.env?.HOME).toBe(privateRuntimeEnv.HOME);
 
     const containerRunner = new FakeRunner();
     containerRunner.exitCode = 1;

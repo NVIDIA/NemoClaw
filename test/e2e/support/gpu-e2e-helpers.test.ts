@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import {
   assertAgentExecutionSucceeded,
@@ -24,6 +25,7 @@ import {
   openClawModelConfigProjectionScript,
   REPO_ROOT,
   startAttachedOllama,
+  trackGpuGatewayCleanup,
   waitForAttachedOllama,
 } from "../live/gpu-e2e-helpers.ts";
 import * as observedChild from "../fixtures/observed-child-process.ts";
@@ -628,6 +630,7 @@ describe("GPU E2E helpers", () => {
 
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
+    const cleanupEnv = { HOME: "/private/gpu-cleanup" };
     const cleanupOrder: string[] = [];
     const cleanupGatewayRegistration = vi.fn(async () => {
       cleanupOrder.push("remove gateway registration");
@@ -651,14 +654,57 @@ describe("GPU E2E helpers", () => {
       }),
     } as unknown as LifecyclePhaseFixture;
 
-    await expect(cleanupGpu(host, lifecycle, sandbox)).rejects.toThrow(/still listens/u);
-    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({ manageUserService: false });
+    await expect(cleanupGpu(host, lifecycle, sandbox, cleanupEnv)).rejects.toThrow(
+      /still listens/u,
+    );
+    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({
+      env: cleanupEnv,
+      userServiceMode: "permanent",
+    });
     expect(cleanupOrder).toEqual(["stop gateway runtime", "remove gateway registration"]);
     expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
       "nemoclaw",
       expect.objectContaining({ artifactName: "cleanup-gateway-destroy-gpu" }),
     );
     expect(openshell).not.toHaveBeenCalled();
+  });
+
+  it("stops terminal GPU gateway runtime before registration and private-state cleanup", async () => {
+    const cleanup = new CleanupRegistry();
+    const cleanupOrder: string[] = [];
+    const cleanupEnv = { HOME: "/private/export-home" };
+    cleanup.trackDisposable("remove private export state", () => {
+      cleanupOrder.push("remove private state");
+    });
+    const host = {
+      cleanupGatewayRegistration: vi.fn(async () => {
+        cleanupOrder.push("remove gateway registration");
+      }),
+    } as unknown as HostCliClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        cleanupOrder.push("stop gateway runtime");
+        return null;
+      }),
+    } as unknown as LifecyclePhaseFixture;
+
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "export-cleanup-gateway");
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([]);
+    expect(cleanupOrder).toEqual([
+      "stop gateway runtime",
+      "remove gateway registration",
+      "remove private state",
+    ]);
+    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({
+      env: cleanupEnv,
+      userServiceMode: "permanent",
+    });
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "export-cleanup-gateway", env: cleanupEnv }),
+    );
   });
 
   it("forwards the workflow-owned Ollama model pull timeout", () => {

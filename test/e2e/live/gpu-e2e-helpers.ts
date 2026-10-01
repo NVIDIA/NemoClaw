@@ -9,6 +9,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -217,33 +218,49 @@ export async function cleanupGpu(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
+  environment: NodeJS.ProcessEnv = env(),
 ): Promise<void> {
   await preCleanBestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 120_000,
     }),
   );
   await preCleanBestEffort("delete OpenShell sandbox", () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 60_000,
     }),
   );
-  // GPU runners can expose systemctl without a user bus. This is permanent
-  // teardown, so stop the owned PID/container runtime without lifecycle restart tracking.
-  await lifecycle.stopGatewayRuntime({ manageUserService: false });
+  await lifecycle.stopGatewayRuntime({ env: environment, userServiceMode: "permanent" });
   await preCleanBestEffort("remove OpenShell gateway registration", () =>
     host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 60_000,
     }),
   );
   const ollamaCleanup = await cleanupOllama(host, "cleanup-ollama-processes");
   expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
+}
+
+export function trackGpuGatewayCleanup(
+  cleanup: Pick<CleanupRegistry, "trackDisposable" | "trackGateway">,
+  host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
+  environment: NodeJS.ProcessEnv,
+  artifactName: string,
+): void {
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName,
+    env: environment,
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable("stop GPU gateway runtime before registration removal", async () => {
+    await lifecycle.stopGatewayRuntime({ env: environment, userServiceMode: "permanent" });
+  });
 }
 
 export async function cleanupOllama(
