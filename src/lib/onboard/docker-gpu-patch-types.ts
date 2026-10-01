@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import type { SandboxGpuProofResult } from "../state/registry";
 
 export interface SandboxCreateRuntimePatch {
@@ -51,6 +52,7 @@ type ContainerDnsProbeFn = (
 
 export type DockerGpuPatchDeps = {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   dockerCapture?: DockerCaptureFn;
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
@@ -85,6 +87,16 @@ export type DockerGpuPatchDeps = {
    */
   errorPhaseDebouncePolls?: number;
 };
+
+export type DockerGpuDiagnosticDeps = Pick<
+  DockerGpuPatchDeps,
+  | "openShellGpuDiagnostics"
+  | "runCaptureOpenshell"
+  | "dockerCapture"
+  | "dockerLogs"
+  | "homedir"
+  | "now"
+>;
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
 export type DockerGpuPatchBackend = "generic" | "jetson";
