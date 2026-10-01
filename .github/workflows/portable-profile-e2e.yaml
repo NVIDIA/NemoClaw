@@ -84,6 +84,7 @@ on:
       - "src/lib/adapters/openshell/timeouts.ts"
       - "src/lib/agent/defs.ts"
       - "src/lib/core/retry.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
@@ -131,6 +132,7 @@ on:
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
       - "tools/e2e/full-e2e-timeout-contract.mts"

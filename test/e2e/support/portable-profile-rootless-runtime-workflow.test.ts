@@ -96,6 +96,8 @@ describe("portable profile rootless runtime workflow", () => {
     const packageVersionIndex = provision?.indexOf("dpkg-query --show") ?? -1;
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
     const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
+    const finalizationHelper =
+      "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts";
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
     expect(workflow.on.pull_request.paths).toEqual(
@@ -117,6 +119,8 @@ describe("portable profile rootless runtime workflow", () => {
         "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
+    expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
+    expect(workflow.on.push.paths).toContain(finalizationHelper);
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
