@@ -824,6 +824,11 @@ assert_status_mode disabled
     ).toBe(180_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+      ),
+    ).toBe(25 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       ),
     ).toBe(20 * 60_000);

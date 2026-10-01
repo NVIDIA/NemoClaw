@@ -43,6 +43,7 @@ skills:
   writable_root: /sandbox/.deepagents/agent/skills
   list_command: [skills, list, --agent, agent]
   remove_command: [skills, delete, "{name}", --agent, agent, --force, --json]
+  verified_content_digest: sha256
 
 # .deepagents/.mcp.json is the agent-owned MCP source. NemoClaw writes only
 # direct-HTTP endpoint config and OpenShell placeholders, preserves unrelated
