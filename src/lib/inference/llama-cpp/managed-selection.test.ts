@@ -303,6 +303,32 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "rejected" });
   });
 
+  it("rejects Station GB300 WSL when the proved GPU set has no GB300 (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA RTX PRO 6000 Blackwell", memoryMB: 96_000 }],
+      count: 1,
+      totalMemoryMB: 96_000,
+      availableMemoryMB: 90_000,
+      perGpuMB: 96_000,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("rejects the 5120-core N1x WSL identity below the GPU-memory floor (#12282)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
