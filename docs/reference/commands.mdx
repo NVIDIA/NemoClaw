@@ -1085,7 +1085,8 @@ The row does not include the former derived `connected` boolean.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 
 <AgentOnly variant="openclaw,hermes">
-  When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
+  When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output shows that URL.
+  Otherwise, a recorded dashboard port produces the loopback URL `http://127.0.0.1:<port>/`.
 </AgentOnly>
 The default sandbox in text and JSON output honors the same environment override order as host-level
 status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`,
@@ -1956,6 +1957,10 @@ The default output includes a label and a warning. Pass `--quiet` or `-q` to pri
 URL=$($$nemoclaw my-assistant dashboard-url --quiet)
 ```
 
+When onboarding records a non-loopback `CHAT_UI_URL`, the command returns that browser-facing origin with the OpenClaw authentication fragment.
+The host forward remains bound to loopback unless you explicitly configure remote binding.
+Without a recorded external URL, the command uses the recorded local dashboard port.
+
 <Warning>
   Treat the authenticated dashboard URL like a password. Do not log it, share it, or commit it to
   version control. This warning applies when the command prints an OpenClaw tokenized URL.
@@ -1972,6 +1977,8 @@ nemohermes my-assistant dashboard-url --quiet
 ```
 
 The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. Run `openshell forward list` to read the host bind for the dashboard and API forwards.
+When onboarding records a non-loopback `CHAT_UI_URL`, `dashboard-url` returns that browser-facing URL.
+The host forward remains bound to loopback unless you explicitly configure remote binding.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -3576,6 +3583,8 @@ This command reads the registry without gateway recovery, so it never reports `u
 For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
 That route line is labeled `Inference (configured):`.
 An unavailable recorded provider or model appears as `unknown`.
+When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output adds a `Dashboard URL:` line for that sandbox.
+The port suffix beside the sandbox name remains the recorded local forwarding port.
 For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
 Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
