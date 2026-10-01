@@ -203,7 +203,77 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 ```
 
 
-### 6. E2E test: multiple end users and sandboxes
+### 6. E2E test: OpenClaw + Ollama N-user end-to-end 
+
+This is the multi-user architecture test for **OpenClaw + Ollama**. 
+```text
+E2E test: OpenClaw + Ollama
+  5 end users send requests to 5 OpenClaw sandboxes
+  5 OpenClaw sandboxes run on CPU
+  LLM (Ollama llama3.2:3b) runs on GPUs
+  HPA scales Ollama from 1 to 8 GPUs
+
+        5 end users
+            ↓  prompt to the OpenClaw sandbox :18789
+        5 CPU OpenClaw sandboxes (openclaw-ollama-e2e-0000 … 0004)
+            ↓  https://inference.local
+        Envoy load balancer — LeastRequest
+            ↓
+        Ollama on GPUs
+            1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
+```
+
+Queries go **into the sandboxes**. They are not POSTed at Envoy or metrics-proxy pod IPs. The Job (`hpa-load-test-dgx-8xh100.sh`) remains the fast HPA-only test.
+
+The client does **not** build images, create sandboxes, or choose the HPA metric. Pick the provision script for the metric, then use the same client.
+
+**GPU util (this DGX success path).** HPA metric `gpu_utilization_percent`, target 40%. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. GPU % can cross 40% both ways, so replicas may step 3↔4 or 6↔7 before they settle.
+
+```bash
+cd deploy/helm/gpu_autoscaling_k8s
+export PATH="${HOME}/.local/bin:${PATH}"
+export KUBECONFIG="${HOME}/.kube/config"
+
+# Terminal A — sandbox provision + GPU-util HPA
+E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh
+
+# Terminal B — watch 67.5%/40%, not 67500m/40
+./scripts/get-hpa.sh -n nemoclaw-gpu -w
+
+# Terminal C — same client for any HPA metric
+E2E_USERS=5 \
+E2E_INFLIGHT_START_PER_USER=1 \
+E2E_INFLIGHT_PER_USER=2 \
+MAX_TOKENS=608 \
+DURATION_SEC=180 \
+./scripts/client.sh
+```
+
+`DURATION_SEC=180` is the short demo from that run. Raise it (default in `client.sh` is 900) if you need chats to stay up while HPA steps to 8. This k3s rejects `kubectl get hpa,deploy,svc`; watch one resource type per command, or use `get-hpa.sh`.
+
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`).
+
+```bash
+# Terminal A — sandbox provision + latency HPA
+E2E_USERS=5 ./scripts/agentscaling_latency.sh
+
+# Terminal B
+./scripts/get-hpa.sh -n nemoclaw-gpu -w
+
+# Terminal C — identical client
+E2E_USERS=5 ./scripts/client.sh
+```
+
+OpenShell must already be connected (`openshell status`). `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
+
+Optional one-process wrappers (same two steps in one terminal):
+
+```bash
+./scripts/test-openclaw-ollama-e2e-hpa.sh
+./scripts/test-openclaw-ollama-e2e-latency-hpa.sh
+```
+
+Results land in `e2e-results/openclaw-ollama/` (gitignored).
 
 Terminal A — provision (sandboxes and GPUs)
 ```bash
@@ -512,9 +582,8 @@ Use this for GPU-util HPA and for `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=
 ```
 
 - **OpenClaw + Ollama e2e test:** two terminals. Provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`. Send chats with the same `client.sh`. Users talk only to sandbox `:18789`. The client does not set the HPA metric.
-- `./scripts/test-hermes-e2e-hpa.sh` — Hermes + vLLM, next step. Do not run it while the OpenClaw + Ollama e2e owns the GPUs.
 
-This DGX OpenClaw GPU-util run used **5** end users (one sandbox each). Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
+This DGX OpenClaw + Ollama run used **5** end users (one sandbox each). Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
 
 OpenClaw + Ollama defaults (this DGX GPU-util success path):
 
@@ -524,84 +593,11 @@ OpenClaw + Ollama defaults (this DGX GPU-util success path):
 - inflight **1→2** per sandbox
 - slim pin: `nemoclaw` plugin only, `NEMOCLAW_MINIMAL_BOOTSTRAP=1`
 
-Hermes e2e still defaults to 1Gi unless you raise it. Pairing (`create-agent-sandbox.sh`) still defaults to 2 CPU / 4Gi for interactive use.
-
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
-### OpenClaw + Ollama N-user end-to-end (sandboxes saturate HPA)
 
-This is the multi-user architecture test for **OpenClaw + Ollama**. Pairing (`test-openclaw-ollama.sh`) stays one sandbox and does **not** enable HPA. Do not point this e2e at `nemoclaw-deepagents-vllm` / vLLM.
 
-```text
-E2E test: OpenClaw + Ollama
-  5 end users send requests to 5 OpenClaw sandboxes
-  5 OpenClaw sandboxes run on CPU
-  LLM (Ollama llama3.2:3b) runs on GPUs
-  HPA scales Ollama from 1 to 8 GPUs
-
-        5 end users
-            ↓  prompt to the OpenClaw sandbox :18789
-        5 CPU OpenClaw sandboxes (openclaw-ollama-e2e-0000 … 0004)
-            ↓  https://inference.local
-        Envoy load balancer — LeastRequest
-            ↓
-        Ollama on GPUs
-            1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
-```
-
-Queries go **into the sandboxes**. They are not POSTed at Envoy or metrics-proxy pod IPs. The Job (`hpa-load-test-dgx-8xh100.sh`) remains the fast HPA-only test.
-
-The client does **not** build images, create sandboxes, or choose the HPA metric. Pick the provision script for the metric, then use the same client.
-
-**GPU util (this DGX success path).** HPA metric `gpu_utilization_percent`, target 40%. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. GPU % can cross 40% both ways, so replicas may step 3↔4 or 6↔7 before they settle.
-
-```bash
-cd deploy/helm/gpu_autoscaling_k8s
-export PATH="${HOME}/.local/bin:${PATH}"
-export KUBECONFIG="${HOME}/.kube/config"
-
-# Terminal A — sandbox provision + GPU-util HPA
-E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh
-
-# Terminal B — watch 67.5%/40%, not 67500m/40
-./scripts/get-hpa.sh -n nemoclaw-gpu -w
-
-# Terminal C — same client for any HPA metric
-E2E_USERS=5 \
-E2E_INFLIGHT_START_PER_USER=1 \
-E2E_INFLIGHT_PER_USER=2 \
-MAX_TOKENS=608 \
-DURATION_SEC=180 \
-./scripts/client.sh
-```
-
-`DURATION_SEC=180` is the short demo from that run. Raise it (default in `client.sh` is 900) if you need chats to stay up while HPA steps to 8. This k3s rejects `kubectl get hpa,deploy,svc`; watch one resource type per command, or use `get-hpa.sh`.
-
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`).
-
-```bash
-# Terminal A — sandbox provision + latency HPA
-E2E_USERS=5 ./scripts/agentscaling_latency.sh
-
-# Terminal B
-./scripts/get-hpa.sh -n nemoclaw-gpu -w
-
-# Terminal C — identical client
-E2E_USERS=5 ./scripts/client.sh
-```
-
-OpenShell must already be connected (`openshell status`). `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
-
-Optional one-process wrappers (same two steps in one terminal):
-
-```bash
-./scripts/test-openclaw-ollama-e2e-hpa.sh
-./scripts/test-openclaw-ollama-e2e-latency-hpa.sh
-```
-
-Results land in `e2e-results/openclaw-ollama/` (gitignored).
-
-### Hermes + vLLM N-user end-to-end (next step, do not run now)
+### Hermes + vLLM N-user end-to-end 
 
 Same user → sandbox path after OpenClaw + Ollama is done: load generator → N Hermes sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Use the same `E2E_USERS` example (10). Cleanup only destroys `hermes-e2e-*` (not `hermes-onprem`, not `openclaw-ollama-e2e-*`). Do not run this while OpenClaw e2e owns the GPUs.
 
