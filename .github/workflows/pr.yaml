@@ -510,29 +510,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-
-      - name: Checkout npm audit code from the base commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-reviewed-npm-audit
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-reviewed-npm-audit
-            .github/actions/setup-reviewed-npm
-            ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@d60ee0bb36e582f83846f41a1b7e94719fcd89f6
+        uses: ./.github/actions/ci-reviewed-npm-audit
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit

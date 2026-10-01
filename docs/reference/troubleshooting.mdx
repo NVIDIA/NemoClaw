@@ -2313,7 +2313,10 @@ If the inspection fails, times out or cannot prove a trusted official installati
 A missing verified package in the offline build cache also stops installation.
 These are build failures; the post-rebuild startup warnings apply only after the image builds successfully.
 
-Report the failure diagnostic, plugin name and NemoClaw version to a maintainer.
+If the diagnostic says `Original Undici bundle restored after interruption; retry the operation`, rerun the original onboarding or rebuild command.
+The build remains failed until the dependency patch and verification complete successfully.
+
+For other failures, report the diagnostic, plugin name and NemoClaw version to a maintainer.
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
 After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
 
