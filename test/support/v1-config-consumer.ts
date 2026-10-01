@@ -39,6 +39,20 @@ export interface PinnedV1OpenClawNativeSettings {
   execution: { timeoutSeconds: number; heartbeatEvery: string | null };
   dashboard: { enabled: boolean; port: number; bind: string };
   toolDisclosure: string;
+  diagnostics?: {
+    enabled: boolean;
+    otel: {
+      enabled: boolean;
+      endpoint: string;
+      serviceName: string;
+      sampleRate: number;
+      protocol: string;
+      traces: boolean;
+      metrics: boolean;
+      logs: boolean;
+    };
+  };
+  diagnosticsPlugin?: { enabled: boolean };
 }
 
 export interface PinnedV1HermesNativeSettings {

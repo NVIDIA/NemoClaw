@@ -59,6 +59,7 @@ export function runTarListing(
   args: string[],
   failureLabel: string,
   onLine: (line: string) => void,
+  timeoutMs = 60_000,
 ): string | null {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-listing-"));
   const listingPath = path.join(tempDir, "listing.txt");
@@ -71,7 +72,7 @@ export function runTarListing(
           input: tarArchive,
           encoding: "utf-8",
           stdio: ["pipe", listingFd, "pipe"],
-          timeout: 60000,
+          timeout: timeoutMs,
           maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
         })
       : (() => {
@@ -79,7 +80,7 @@ export function runTarListing(
           return spawnSync("tar", args, {
             encoding: "utf-8",
             stdio: [archiveFd, listingFd, "pipe"],
-            timeout: 60000,
+            timeout: timeoutMs,
             maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
           });
         })();

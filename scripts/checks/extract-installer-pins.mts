@@ -517,6 +517,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
       // Exact #12192 shared npm diagnostics; release pins stay unchanged.
       "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+      // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
+      "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
     ],
     formula: {
       asset: "openshell.rb",

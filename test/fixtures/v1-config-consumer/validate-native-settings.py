@@ -60,6 +60,14 @@ def validate_openclaw(settings_by_sandbox):
             "toolDisclosure": (
                 "direct" if native["tools"]["toolSearch"] is False else "progressive"
             ),
+            **(
+                {
+                    "diagnostics": native["diagnostics"],
+                    "diagnosticsPlugin": native["plugins"]["entries"]["diagnostics-otel"],
+                }
+                if "diagnostics" in native
+                else {}
+            ),
         }
     return {
         "contextWindows": context_windows,

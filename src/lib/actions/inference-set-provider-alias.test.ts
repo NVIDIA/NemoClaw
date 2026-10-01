@@ -127,10 +127,11 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
 
     // The persisted provider must be the normalized OpenShell name, not the
     // installer alias, so the sandbox registry stays canonical.
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ provider: "compatible-anthropic-endpoint" }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ provider: "compatible-anthropic-endpoint" })]);
   });
 
   it("still rejects a genuinely unsupported provider name", async () => {
@@ -226,7 +227,11 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       ]),
       "nemoclaw-18080",
     );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider,
@@ -481,10 +486,11 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     ).resolves.toBeTruthy();
     expect(guard).not.toHaveBeenCalled();
     expect(adapterGuard).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ endpointSource: "onboard" }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ endpointSource: "onboard" })]);
   });
 
   it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {
