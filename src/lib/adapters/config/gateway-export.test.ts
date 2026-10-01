@@ -231,25 +231,32 @@ describe("gateway export observation", () => {
         expect(await observeExportGateway(entry)).toMatchObject({ management: "external" });
         vi.mocked(observeOpenShellGatewayRegistration).mockClear();
         probeAttachment.mockClear();
-        const before = fs.statSync(SESSION_FILE);
-        const original = fs.readFileSync(SESSION_FILE, "utf8");
-        const replacement = original.replace("gateway.service", "changed.service");
-        expect(replacement).not.toBe(original);
-        const originalRead = fs.readSync.bind(fs);
-        const read = vi.spyOn(fs, "readSync").mockImplementationOnce(((...args: unknown[]) => {
-          const count = Reflect.apply(originalRead, fs, args);
-          fs.writeFileSync(SESSION_FILE, replacement);
-          fs.utimesSync(SESSION_FILE, before.atime, new Date(before.mtimeMs + 10_000));
-          return count;
-        }) as typeof fs.readSync);
+        const descriptor = fs.openSync(SESSION_FILE, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+        try {
+          const before = fs.fstatSync(descriptor);
+          const original = fs.readFileSync(descriptor, "utf8");
+          const replacement = original.replace("gateway.service", "changed.service");
+          expect(replacement).not.toBe(original);
+          const originalRead = fs.readSync.bind(fs);
+          const read = vi.spyOn(fs, "readSync").mockImplementationOnce(((...args: unknown[]) => {
+            const count = Reflect.apply(originalRead, fs, args);
+            expect(fs.writeSync(descriptor, replacement, 0, "utf8")).toBe(
+              Buffer.byteLength(replacement),
+            );
+            fs.futimesSync(descriptor, before.atime, new Date(before.mtimeMs + 10_000));
+            return count;
+          }) as typeof fs.readSync);
 
-        await expect(observeExportGateway(entry)).rejects.toThrow("changed while reading");
+          await expect(observeExportGateway(entry)).rejects.toThrow("changed while reading");
 
-        expect(read).toHaveBeenCalledTimes(1);
-        const after = fs.statSync(SESSION_FILE);
-        expect([after.dev, after.ino, after.size]).toEqual([before.dev, before.ino, before.size]);
-        expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
-        expect(probeAttachment).not.toHaveBeenCalled();
+          expect(read).toHaveBeenCalledTimes(1);
+          const after = fs.fstatSync(descriptor);
+          expect([after.dev, after.ino, after.size]).toEqual([before.dev, before.ino, before.size]);
+          expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
+          expect(probeAttachment).not.toHaveBeenCalled();
+        } finally {
+          fs.closeSync(descriptor);
+        }
       } finally {
         fs.rmSync(temporaryHome, { recursive: true, force: true });
       }
