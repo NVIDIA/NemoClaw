@@ -2,22 +2,28 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Create, start, stop, or destroy N CPU-only Hermes agent sandboxes (one per
-# end user) for the multi-user HPA test. Same layout as
-# setup-openclaw-ollama-e2e-sandboxes.sh. The model stays on GPU inference pods.
-# Traffic: sandbox → inference.local → Envoy → GPU HPA.
+# Create, start, stop, or destroy N CPU-only Hermes sandboxes (one per end
+# user) for the Hermes + vLLM HPA e2e. The model stays on vLLM GPU pods in
+# nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → vLLM HPA.
+#
+# Sandboxes are light CPU front ends (default 1 CPU / 2Gi). They do not run
+# inference; GPUs do. bringup does not start the Hermes gateway: the client
+# uses hermes -z, which does not need :8642, and a long-running gateway
+# would spend CPU RAM. Prefer ./scripts/agentscaling_hermes_gpuutil.sh or
+# ./scripts/agentscaling_hermes_latency.sh over calling this file directly.
 #
 # Does not run openshell gateway start, nemohermes launch, or the
 # metrics-proxy chat-completions Job. Does not destroy sandboxes outside
-# SANDBOX_PREFIX (default hermes-e2e-). Does not touch openclaw-e2e-* or
-# hermes-onprem.
+# SANDBOX_PREFIX (default hermes-e2e-). Does not touch openclaw-ollama-e2e-*
+# or hermes-onprem.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
-#   ./scripts/setup-hermes-e2e-sandboxes.sh             # default E2E_USERS=10
-#   E2E_USERS=10 ./scripts/setup-hermes-e2e-sandboxes.sh
-#   ./scripts/setup-hermes-e2e-sandboxes.sh 10           # same; any positive count
+#   ./scripts/agentscaling_hermes_gpuutil.sh                      # default E2E_USERS=3, GPU util HPA
+#   E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh bringup   # LLM latency HPA
+#   ./scripts/setup-hermes-e2e-sandboxes.sh 3
 #   ./scripts/setup-hermes-e2e-sandboxes.sh start
+#   ./scripts/setup-hermes-e2e-sandboxes.sh refresh-inference
 #   ./scripts/setup-hermes-e2e-sandboxes.sh stop
 #   ./scripts/setup-hermes-e2e-sandboxes.sh cleanup
 #
@@ -50,7 +56,7 @@ require_cmd python3
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-E2E_USERS="${E2E_USERS:-10}"
+E2E_USERS="${E2E_USERS:-3}"
 ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
   ACTION="${E2E_USERS}"
@@ -58,8 +64,13 @@ fi
 export AGENT_NAME="${AGENT_NAME:-hermes}"
 [[ "${AGENT_NAME}" == "hermes" ]] \
   || fail "setup-hermes-e2e-sandboxes.sh is Hermes-only (got AGENT_NAME=${AGENT_NAME})"
+if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "vllm" ]]; then
+  fail "this e2e is Hermes + vLLM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-hermes-nim.sh."
+fi
 agent_common_validate "${AGENT_NAME}"
-agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME:-vllm}"
+export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-vllm}"
+agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
+export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
 [[ "${SANDBOX_PREFIX}" =~ ^[a-z][a-z0-9-]{0,40}$ ]] \
@@ -67,21 +78,28 @@ SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
 [[ "${SANDBOX_PREFIX}" == hermes-e2e-* || "${SANDBOX_PREFIX}" == "hermes-e2e-" ]] \
   || fail "SANDBOX_PREFIX must stay under hermes-e2e- so OpenClaw e2e / hermes-onprem are not destroyed"
 
-export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-vllm}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export RELEASE="${RELEASE:-nemoclaw-gpu}"
+if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
+  fail "Hermes + vLLM e2e uses NAMESPACE=nemoclaw-gpu RELEASE=nemoclaw-gpu (got ${NAMESPACE}/${RELEASE})"
+fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-# Official complete Hermes image (not *-sandbox-base).
 export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54}"
-# Light CPU front ends; inference stays on GPUs.
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-1Gi}"
+# 1Gi OOMKills concurrent hermes -z in the CPU cgroup. 2Gi is the floor for
+# inflight 1→2. Do not copy OpenClaw's 8Gi unless Hermes also OOMs at 2Gi.
+export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-2Gi}"
+export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
+export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
+export SKIP_INFERENCE_VERIFY="${SKIP_INFERENCE_VERIFY:-1}"
 export OPENSHELL_PROVIDER_NAME="${OPENSHELL_PROVIDER_NAME:-$(agent_common_default_provider_name "${AGENT_NAME}")}"
 
-STATE_DIR="${E2E_STATE_DIR:-${CHART_DIR}/e2e-results/hermes-gateways}"
+STATE_DIR="${E2E_STATE_DIR:-${CHART_DIR}/e2e-results/hermes-agents}"
 mkdir -p "${STATE_DIR}"
+E2E_SANDBOX_NS="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
+E2E_INFERENCE_URL=""
+E2E_API_KEY=""
 
 sandbox_name() {
   printf '%s%04d' "${SANDBOX_PREFIX}" "${1:?index}"
@@ -115,11 +133,133 @@ for name in sorted(names):
 PY
 }
 
+load_e2e_inference_env() {
+  local secret_name secret_key gateway_name
+  [[ -z "${E2E_INFERENCE_URL}" ]] || return 0
+  gateway_name="$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)"
+  E2E_INFERENCE_URL="$(hpa_common_envoy_dataplane_pod_v1_url "${NAMESPACE}" "${gateway_name}")"
+  [[ "${E2E_INFERENCE_URL}" =~ ^https?://.+/v1$ ]] \
+    || fail "could not resolve Envoy dataplane URL"
+  IFS=$'\t' read -r secret_name secret_key < <(
+    hpa_common_inference_secret_contract \
+      "${NAMESPACE}" "${RELEASE}" "${gateway_name}-inference-api"
+  )
+  E2E_API_KEY="$(
+    kubectl get secret "${secret_name}" -n "${NAMESPACE}" -o json \
+      | python3 -c 'import base64,json,sys; print(base64.b64decode(json.load(sys.stdin)["data"][sys.argv[1]]).decode())' \
+        "${secret_key}"
+  )"
+  [[ -n "${E2E_API_KEY}" ]] || fail "inference API key is empty"
+}
+
+install_sandbox_inference_key() {
+  local name="${1:?sandbox}"
+  load_e2e_inference_env
+  printf '%s' "${E2E_API_KEY}" | kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
+    tee /tmp/e2e-inference.key >/dev/null
+  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- chmod 600 /tmp/e2e-inference.key
+}
+
+sandbox_pod_ready() {
+  local name="${1:?sandbox}"
+  kubectl get pod "${name}" -n "${E2E_SANDBOX_NS}" \
+    -o jsonpath='{.status.phase}' 2>/dev/null | grep -qx Running \
+    && [[ "$(kubectl get pod "${name}" -n "${E2E_SANDBOX_NS}" \
+      -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)" == "true" ]]
+}
+
 gateway_health_ok() {
   local name="${1:?sandbox}"
   timeout --foreground 20 openshell sandbox exec -n "${name}" --no-tty -- \
     bash -c 'code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:8642/health 2>/dev/null || true)"; case "${code}" in 200|401) exit 0 ;; esac; exit 1' \
     >/dev/null 2>&1
+}
+
+print_e2e_layout() {
+  local count="${1:?count}"
+  local i name sandbox_st
+  echo ""
+  echo "========================================================================"
+  echo "E2E test: Hermes + vLLM"
+  echo "  ${count} end users send hermes -z to ${count} Hermes sandboxes"
+  echo "  ${count} agents run in ${count} OpenShell sandboxes on CPU (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY})"
+  echo "  LLM (vLLM ${INFERENCE_MODEL}) runs on GPUs"
+  echo "  When end-user demand increases, HPA scales vLLM from 1 to 8 GPUs"
+  echo "------------------------------------------------------------------------"
+  printf "  %-10s  %-12s  %s\n" "end user" "sandbox" "status"
+  for ((i = 0; i < count; i += 1)); do
+    name="$(sandbox_name "${i}")"
+    if sandbox_pod_ready "${name}"; then
+      sandbox_st="Ready (CPU)"
+    else
+      sandbox_st="NOT READY"
+    fi
+    printf "  %-10s  %-12s  %s\n" "user ${i}" "sandbox ${i}" "${sandbox_st}"
+  done
+  echo "------------------------------------------------------------------------"
+  echo "  HPA: vLLM ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
+  echo "  One OpenShell gateway. One Envoy load balancer."
+  echo "  Users send hermes -z into each sandbox. The Hermes gateway is not required."
+  echo "  Client (other terminal; same for GPU util or latency HPA):"
+  echo "    E2E_USERS=${count} ./scripts/client_hermes.sh"
+  echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
+  echo "========================================================================"
+}
+
+refresh_openshell_inference_backend() {
+  # One gateway-scoped provider for all e2e sandboxes. Envoy dataplane pod IP,
+  # not ClusterIP (hairpin on a DGX H100 node drops SYNs).
+  load_e2e_inference_env
+  local log="${STATE_DIR}/openshell-provider.log"
+  mkdir -p "${STATE_DIR}"
+  echo "  OpenShell provider ${OPENSHELL_PROVIDER_NAME} → Envoy dataplane ${E2E_INFERENCE_URL} (pod IP, not ClusterIP)"
+  if openshell provider get "${OPENSHELL_PROVIDER_NAME}" >/dev/null 2>&1; then
+    OPENAI_API_KEY="${E2E_API_KEY}" openshell provider update "${OPENSHELL_PROVIDER_NAME}" \
+      --credential OPENAI_API_KEY \
+      --config "OPENAI_BASE_URL=${E2E_INFERENCE_URL}" \
+      >>"${log}" 2>&1 || fail "openshell provider update ${OPENSHELL_PROVIDER_NAME} failed (see ${log})"
+  else
+    OPENAI_API_KEY="${E2E_API_KEY}" openshell provider create \
+      --name "${OPENSHELL_PROVIDER_NAME}" \
+      --type openai \
+      --credential OPENAI_API_KEY \
+      --config "OPENAI_BASE_URL=${E2E_INFERENCE_URL}" \
+      >>"${log}" 2>&1 || fail "openshell provider create ${OPENSHELL_PROVIDER_NAME} failed (see ${log})"
+  fi
+  openshell inference set \
+    --provider "${OPENSHELL_PROVIDER_NAME}" \
+    --model "${INFERENCE_MODEL}" \
+    --timeout 300 \
+    --no-verify \
+    >>"${log}" 2>&1 || fail "openshell inference set ${OPENSHELL_PROVIDER_NAME}/${INFERENCE_MODEL} failed (see ${log})"
+}
+
+inference_local_ok() {
+  local name="${1:?sandbox}"
+  load_e2e_inference_env
+  install_sandbox_inference_key "${name}"
+  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
+    set -euo pipefail
+    key="$(cat /tmp/e2e-inference.key)"
+    curl -fsS --http1.1 --max-time 5 -H "Authorization: Bearer ${key}" "$1/models" >/dev/null
+  ' bash "${E2E_INFERENCE_URL}" >/dev/null 2>&1
+}
+
+skip_connect_shell_nproc() {
+  local name="${1:?sandbox}"
+  # OpenShell exec sources this hook. harden+verify set nproc=512, and
+  # RLIMIT_NPROC is per real UID on the node. Several e2e sandboxes share that
+  # UID, so the verify fork fails with EAGAIN and hermes -z never runs.
+  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
+    cat > /etc/profile.d/nemoclaw-rlimits.sh << "EOF"
+# Connect-shell must not re-apply nproc=512 (RLIMIT_NPROC is per-UID on the node).
+true
+EOF
+    if [[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ]]; then
+      sed -i "s/^NEMOCLAW_SANDBOX_NPROC_LIMIT=512$/NEMOCLAW_SANDBOX_NPROC_LIMIT=8192/" \
+        /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+    fi
+  ' >/dev/null
 }
 
 start_one_gateway() {
@@ -175,7 +315,7 @@ stop_one_gateway() {
 count_from_existing() {
   local names max=0 n
   names="$(list_prefix_sandboxes)"
-  [[ -n "${names}" ]] || fail "no ${SANDBOX_PREFIX}* sandboxes; run ./scripts/setup-hermes-e2e-sandboxes.sh ${E2E_USERS} first"
+  [[ -n "${names}" ]] || fail "no ${SANDBOX_PREFIX}* sandboxes; run ./scripts/agentscaling_hermes_gpuutil.sh or ./scripts/agentscaling_hermes_latency.sh first"
   while IFS= read -r n; do
     [[ -z "${n}" ]] && continue
     n="${n#"${SANDBOX_PREFIX}"}"
@@ -191,7 +331,7 @@ start_gateways() {
   local count="${1:?count}"
   local i name
   echo "Starting Hermes gateways in ${count} sandboxes (${SANDBOX_PREFIX}0000…)"
-  echo "  Optional for e2e load: hermes -z does not need :8642."
+  echo "  Optional: the HPA client uses hermes -z and does not need :8642."
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
     openshell sandbox get "${name}" >/dev/null 2>&1 \
@@ -211,19 +351,109 @@ stop_gateways() {
 
 cleanup_sandboxes() {
   local name
+  local -a names=() pids=()
   stop_gateways || true
-  echo "Destroying sandboxes named ${SANDBOX_PREFIX}* (not hermes-onprem, not openclaw-e2e-*)"
+  echo "Destroying sandboxes named ${SANDBOX_PREFIX}* in parallel (not hermes-onprem, not openclaw-ollama-e2e-*)"
   while IFS= read -r name; do
     [[ -z "${name}" ]] && continue
+    names+=("${name}")
     echo "  destroying ${name}"
-    openshell sandbox destroy "${name}" --force >/dev/null 2>&1 || true
+    openshell sandbox destroy "${name}" --force >/dev/null 2>&1 &
+    pids+=("$!")
   done < <(list_prefix_sandboxes)
-  echo "Cleanup complete."
+  for pid in "${pids[@]}"; do
+    wait "${pid}" || true
+  done
+  echo "Cleanup complete (${#names[@]} ${SANDBOX_PREFIX}* sandboxes). hermes-onprem was not touched."
+}
+
+create_one_sandbox() {
+  local name="${1:?sandbox}"
+  local log="${STATE_DIR}/${name}.create.log"
+  echo "  creating ${name} (parallel, light ${AGENT_SANDBOX_CPU}/${AGENT_SANDBOX_MEMORY})"
+  if AGENT_NAME=hermes AGENT_SANDBOX_NAME="${name}" \
+    SKIP_CREATE_SMOKE=1 \
+    SKIP_WAIT_INFERENCE_LOCAL=1 \
+    SKIP_INFERENCE_VERIFY=1 \
+    stdbuf -oL -eL "${SCRIPT_DIR}/create-agent-sandbox.sh" >"${log}" 2>&1; then
+    echo "  ${name}: sandbox Ready"
+    return 0
+  fi
+  echo "ERROR: ${name}: create failed; see ${log}" >&2
+  return 1
+}
+
+wait_inference_local_parallel() {
+  local timeout_sec="${INFERENCE_LOCAL_TIMEOUT_SEC:-180}"
+  local deadline=$((SECONDS + timeout_sec))
+  local name
+  ((${#} > 0)) || return 0
+  echo "Checking https://inference.local on ${#} sandboxes one at a time (up to ${timeout_sec}s)"
+  for name in "$@"; do
+    echo "  ${name}: checking inference.local"
+    while ! inference_local_ok "${name}"; do
+      if ((SECONDS >= deadline)); then
+        echo "ERROR: inference.local still failing for: ${name}" >&2
+        return 1
+      fi
+      echo "  ${name}: still waiting for inference.local"
+      sleep 2
+    done
+    echo "  ${name}: inference.local ok"
+  done
+}
+
+bringup_one() {
+  local name="${1:?sandbox}"
+  if sandbox_pod_ready "${name}"; then
+    echo "  ${name}: reusing existing OpenShell sandbox"
+  else
+    create_one_sandbox "${name}" || return 1
+  fi
+  skip_connect_shell_nproc "${name}" || return 1
+}
+
+bringup_sandboxes() {
+  local count="${1:?count}"
+  local i name started_at="${SECONDS}"
+  local -a names=() pids=() failed=()
+  [[ "${count}" =~ ^[1-9][0-9]*$ ]] || fail "sandbox count must be a positive integer"
+  ((count <= 200)) || fail "refusing more than 200 sandboxes in one run"
+  openshell status >/dev/null \
+    || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
+  hpa_common_verify_target_node 1 || exit 1
+  echo "E2E test: Hermes + vLLM — ${count} end users send hermes -z to ${count} CPU sandboxes (LLM on GPUs)"
+  echo "  ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY} per sandbox. Do not start the Hermes gateway."
+  echo "  One OpenShell gateway for all sandboxes. Do not destroy extras."
+  rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
+  echo "  pointing OpenShell inference backend at Envoy/metrics-proxy dataplane pod IP (not ClusterIP)"
+  refresh_openshell_inference_backend \
+    || fail "could not update OpenShell provider ${OPENSHELL_PROVIDER_NAME} to ${E2E_INFERENCE_URL:-unknown}"
+  for ((i = 0; i < count; i += 1)); do
+    names+=("$(sandbox_name "${i}")")
+  done
+  for name in "${names[@]}"; do
+    bringup_one "${name}" &
+    pids+=("$!")
+  done
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      failed+=("${names[$i]}")
+    fi
+  done
+  if ((${#failed[@]} > 0)); then
+    fail "bringup failed for: ${failed[*]}"
+  fi
+  wait_inference_local_parallel "${names[@]}" \
+    || fail "Envoy inference check failed after parallel sandbox create"
+  echo "Ready: ${count} end users → ${count} CPU Hermes sandboxes; LLM on GPUs ($((SECONDS - started_at))s)"
+  print_e2e_layout "${count}"
 }
 
 create_sandboxes() {
   local count="${1:?count}"
-  local i name created=0
+  local i name started_at="${SECONDS}"
+  local -a to_create=() existing=() pids=() creating=() failed=() retry_pids=() retry_names=() all_names=()
   E2E_USERS="${count}"
   export E2E_USERS
   [[ "${count}" =~ ^[1-9][0-9]*$ ]] || fail "sandbox count must be a positive integer"
@@ -231,53 +461,75 @@ create_sandboxes() {
   openshell status >/dev/null \
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
-  echo "Creating ${count} CPU-only ${AGENT_DISPLAY_NAME} agent sandboxes (${SANDBOX_PREFIX}0000 …)"
-  echo "  Agent: AGENT_NAME=${AGENT_NAME} (sandbox has no GPU; the agent runs here)"
-  echo "  GPU inference backend: runtime=${INFERENCE_RUNTIME} model=${INFERENCE_MODEL} ns=${NAMESPACE} release=${RELEASE} ENABLE_ENVOY_LB=${ENABLE_ENVOY_LB}"
+  echo "Creating ${count} light CPU-only Hermes + vLLM e2e sandboxes in parallel (${SANDBOX_PREFIX}0000 …)"
+  echo "  Agent: AGENT_NAME=${AGENT_NAME} (${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY}; no GPU; Hermes runs here)"
+  echo "  GPU inference backend: vLLM model=${INFERENCE_MODEL} ns=${NAMESPACE} release=${RELEASE} ENABLE_ENVOY_LB=${ENABLE_ENVOY_LB}"
+  rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
-    if openshell sandbox get "${name}" >/dev/null 2>&1; then
+    all_names+=("${name}")
+    if sandbox_pod_ready "${name}"; then
       echo "  ${name} already exists, skipping create"
-      created=$((created + 1))
+      existing+=("${name}")
       continue
     fi
-    echo "  creating ${name} (user ${i}, agent ${AGENT_NAME})"
-    created_ok=0
-    for attempt in 1 2 3 4 5; do
-      if AGENT_NAME=hermes AGENT_SANDBOX_NAME="${name}" \
-        SKIP_CREATE_SMOKE="$([[ "${i}" -eq 0 && "${attempt}" -eq 1 ]] && echo 0 || echo 1)" \
-        "${SCRIPT_DIR}/create-agent-sandbox.sh"; then
-        created_ok=1
-        break
-      fi
-      echo "  ${name}: waiting for OpenShell supervisor (attempt ${attempt}/5)"
-      sleep 15
-      if openshell sandbox get "${name}" >/dev/null 2>&1; then
-        echo "  ${name}: Ready, continuing"
-        created_ok=1
-        break
+    to_create+=("${name}")
+  done
+  for name in "${to_create[@]}"; do
+    create_one_sandbox "${name}" &
+    pids+=("$!")
+    creating+=("${name}")
+  done
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      failed+=("${creating[$i]}")
+    fi
+  done
+  if ((${#failed[@]} > 0)); then
+    echo "Retrying ${#failed[@]} failed sandbox create(s) in parallel: ${failed[*]}"
+    retry_pids=()
+    retry_names=("${failed[@]}")
+    failed=()
+    for name in "${retry_names[@]}"; do
+      create_one_sandbox "${name}" &
+      retry_pids+=("$!")
+    done
+    for i in "${!retry_pids[@]}"; do
+      if ! wait "${retry_pids[$i]}"; then
+        failed+=("${retry_names[$i]}")
       fi
     done
-    [[ "${created_ok}" -eq 1 ]] || fail "failed to create ${name}"
-    created=$((created + 1))
-  done
-  echo "Ready: ${created}/${count} sandboxes. Optional gateway start:"
-  echo "  ./scripts/setup-hermes-e2e-sandboxes.sh start"
-  echo "Load path is hermes -z into each sandbox (no Envoy-direct Job)."
+  fi
+  if ((${#failed[@]} > 0)); then
+    fail "failed to create: ${failed[*]}"
+  fi
+  echo "Ready: ${count}/${count} light sandboxes in $((SECONDS - started_at))s (parallel)."
+  echo "  ./scripts/agentscaling_hermes_gpuutil.sh   # or agentscaling_hermes_latency.sh"
+  echo "  E2E_USERS=${count} ./scripts/client_hermes.sh"
 }
 
 case "${ACTION}" in
   cleanup)
     cleanup_sandboxes
     ;;
+  bringup)
+    bringup_sandboxes "${E2E_USERS}"
+    ;;
+  layout)
+    print_e2e_layout "${E2E_USERS}"
+    ;;
   start)
     start_gateways "${E2E_USERS:-$(count_from_existing)}"
+    ;;
+  refresh-inference)
+    refresh_openshell_inference_backend \
+      || fail "could not update OpenShell provider ${OPENSHELL_PROVIDER_NAME} to ${E2E_INFERENCE_URL:-unknown}"
     ;;
   stop)
     stop_gateways
     ;;
   '' | *[!0-9]*)
-    fail "usage: $0 <count>|start|stop|cleanup"
+    fail "usage: $0 <count>|bringup|layout|start|stop|refresh-inference|cleanup"
     ;;
   *)
     create_sandboxes "${ACTION}"

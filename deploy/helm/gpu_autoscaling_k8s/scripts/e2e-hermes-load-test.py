@@ -2,21 +2,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-N end users send prompts into N CPU agent sandboxes (Hermes).
-Default N is E2E_USERS=10 (one sandbox per user).
+Hermes + vLLM client: N end users send prompts into N CPU Hermes sandboxes.
+Default N is E2E_USERS=3 (one sandbox per user). GPU inference is vLLM.
 
-Each user talks only to its sandbox:
+Run agentscaling_hermes_gpuutil.sh or agentscaling_hermes_latency.sh first.
+This module is started by ./scripts/client_hermes.sh.
+The client does not set the HPA metric.
+Each user talks only to its sandbox (hermes -z). 1:1 mapping.
+hermes -z does not need the Hermes gateway on :8642.
 
     openshell sandbox exec -n hermes-e2e-NNNN -- hermes -z "..."
 
-The agent inside the sandbox then calls https://inference.local (Envoy → GPU HPA).
+The agent inside the sandbox then calls https://inference.local (Envoy → vLLM HPA).
 This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs).
 This is not in-sandbox curl to inference.local.
-This is not the OpenClaw e2e (openclaw agent --agent main -m).
+This is not the OpenClaw e2e (chat.send on :18789).
 
 Usage:
-    E2E_USERS=10 python3 scripts/e2e-hermes-load-test.py
-    python3 scripts/e2e-hermes-load-test.py --users 10
+    E2E_USERS=3 python3 scripts/e2e-hermes-load-test.py
+    python3 scripts/e2e-hermes-load-test.py --users 3
 """
 
 from __future__ import annotations
@@ -39,12 +43,12 @@ FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Longer prompts so vLLM GPUs stay busy enough for HPA. Short one-word chats
+# do not move gpu_utilization_percent.
 PROMPTS = [
-    "In one sentence, what is an AI agent sandbox?",
-    "Say OK in one word.",
-    "Name one reason to isolate an agent from the GPU node.",
-    "Reply with a single short greeting.",
-    "In one sentence, what does GPU autoscaling do?",
+    "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
+    "Write a long summary of transformer inference on NVIDIA GPUs.",
+    "Describe how vLLM serves models and batches concurrent chat requests.",
 ]
 
 
@@ -142,17 +146,24 @@ async def simulate_user(
     user_id: int,
     prefix: str,
     inflight: int,
+    inflight_start: int,
     duration_sec: int,
     timeout_sec: int,
     stop_event: asyncio.Event,
     log_path: Path,
 ) -> dict[str, object]:
+    """One hermes -z process per inflight slot.
+
+    Inflight 4 in a 1Gi sandbox OOM-kills Hermes (exit 137). Keep start=1 max=2
+    unless AGENT_SANDBOX_MEMORY is raised.
+    """
     sandbox = sandbox_name(prefix, user_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ok = 0
     err = 0
     started = time.monotonic()
     end = started + duration_sec
+    escalate_at = started + 15
     turn = 0
     log_handle = log_path.open("w")
 
@@ -166,13 +177,14 @@ async def simulate_user(
         else:
             err += 1
             log_handle.write(f"err turn={turn_id} {detail}\n")
-            print(f"[user {user_id} {sandbox}] turn {turn_id} error: {detail}", file=sys.stderr)
+            print(f"[user {user_id} sandbox {user_id}] turn {turn_id} error: {detail}", file=sys.stderr)
         log_handle.flush()
 
     pending: set[asyncio.Task[None]] = set()
     try:
         while time.monotonic() < end and not stop_event.is_set():
-            while len(pending) < inflight and time.monotonic() < end and not stop_event.is_set():
+            cap = inflight if time.monotonic() >= escalate_at else inflight_start
+            while len(pending) < cap and time.monotonic() < end and not stop_event.is_set():
                 pending.add(asyncio.create_task(one_turn(turn)))
                 turn += 1
             if not pending:
@@ -207,11 +219,14 @@ async def run_test(args: argparse.Namespace) -> int:
     hold_started: float | None = None
 
     print("=" * 70)
-    print(f"  {args.users} end users → {args.users} Hermes agent sandboxes → Envoy → GPU HPA")
-    print(f"  Users: {args.users}  sandbox prefix={args.prefix}")
+    print(f"  {args.users} end users → {args.users} Hermes sandboxes → Envoy → vLLM HPA")
+    print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
     print("  Query: openshell sandbox exec -- hermes -z")
     print("  Not: load-generator.ts pod-IP Job, not in-sandbox curl to Envoy")
-    print(f"  Concurrent prompts per user: {args.inflight_per_user}")
+    print(
+        f"  Concurrent prompts per user: {args.inflight_start}→{args.inflight_per_user} "
+        "(keep ≤2 unless sandbox memory is raised)"
+    )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
     print("=" * 70)
@@ -252,6 +267,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 user_id=i,
                 prefix=args.prefix,
                 inflight=args.inflight_per_user,
+                inflight_start=args.inflight_start,
                 duration_sec=args.duration,
                 timeout_sec=args.timeout,
                 stop_event=stop_load,
@@ -306,7 +322,7 @@ async def run_test(args: argparse.Namespace) -> int:
     failed = sum(int(r.get("err") or 0) for r in results)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "path": "user -> sandbox hermes -z -> inference.local -> Envoy -> GPU HPA",
+        "path": "user -> sandbox hermes -z -> inference.local -> Envoy -> vLLM HPA",
         "users": args.users,
         "target_pods": args.target_pods,
         "hpa_max_replicas": max_replicas,
@@ -343,9 +359,9 @@ async def run_test(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="N end users send Hermes -z prompts into N sandboxes (not Envoy-direct); default E2E_USERS=10"
+        description="Hermes + vLLM client: N users send hermes -z into N sandboxes; default E2E_USERS=3"
     )
-    parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "10")))
+    parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "3")))
     parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "hermes-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/hermes"))
     parser.add_argument(
@@ -357,8 +373,14 @@ def main() -> int:
     parser.add_argument(
         "--inflight-per-user",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "4")),
-        help="Concurrent hermes -z prompts each user sends into their sandbox",
+        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "2")),
+        help="Max concurrent hermes -z prompts per sandbox. Keep at 2 unless memory is raised.",
+    )
+    parser.add_argument(
+        "--inflight-start",
+        type=int,
+        default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
+        help="Bootstrap concurrent hermes -z prompts per sandbox before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
@@ -367,9 +389,11 @@ def main() -> int:
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "10")))
     parser.add_argument("--scale-down-wait-loops", type=int, default=int(os.environ.get("SCALE_DOWN_WAIT_LOOPS", "40")))
     args = parser.parse_args()
-    if args.users < 1 or args.inflight_per_user < 1:
-        print("--users and --inflight-per-user must be >= 1", file=sys.stderr)
+    if args.users < 1 or args.inflight_per_user < 1 or args.inflight_start < 1:
+        print("--users, --inflight-per-user, and --inflight-start must be >= 1", file=sys.stderr)
         return 2
+    if args.inflight_start > args.inflight_per_user:
+        args.inflight_start = args.inflight_per_user
     return asyncio.run(run_test(args))
 
 

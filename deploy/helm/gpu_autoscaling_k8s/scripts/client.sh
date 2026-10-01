@@ -55,16 +55,16 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 openshell status >/dev/null \
   || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenClaw sandboxes (1:1). No sandbox create. HPA metric is not set here."
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} CPU OpenClaw sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
   if ! kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" >/dev/null 2>&1; then
-    echo "ERROR: sandbox ${name} does not exist (user-${i}). Run ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh first." >&2
+    echo "ERROR: sandbox ${i} does not exist (user ${i}). Run ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh first." >&2
     missing=1
     continue
   fi
-  echo "  user-${i} → ${name} :18789"
+  echo "  user ${i} → sandbox ${i} :18789"
 done
 ((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_latency.sh"
 
@@ -80,9 +80,9 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
     done
     exit 1
   ' >/dev/null 2>&1; then
-    echo "  ${name}: :18789 up"
+    echo "  sandbox ${i}: :18789 up"
   else
-    echo "ERROR: ${name} is Running but OpenClaw is not listening on :18789. Run agentscaling_gpuutil.sh or agentscaling_latency.sh start." >&2
+    echo "ERROR: sandbox ${i} is Running but OpenClaw is not listening on :18789. Run agentscaling_gpuutil.sh or agentscaling_latency.sh start." >&2
     unhealthy=1
   fi
 done

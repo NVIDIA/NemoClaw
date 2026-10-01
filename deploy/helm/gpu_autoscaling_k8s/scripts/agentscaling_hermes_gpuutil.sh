@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sandbox-side provision for Hermes + vLLM with GPU-utilization HPA
+# (DCGM gpu_utilization_percent, target 40%). One sandbox per end user.
+# Clients send hermes -z into each sandbox. They call inference.local →
+# Envoy → vLLM. Pairing without HPA is Hermes + NIM (test-hermes-nim.sh).
+#
+# Default is 3 users at 2Gi so CPU RAM does not OOMKill the sandboxes.
+# Do not run this while the OpenClaw e2e owns the GPUs.
+#
+# The client does not know this metric. Use ./scripts/client_hermes.sh after
+# sandboxes are Ready. For LLM-latency HPA use
+# ./scripts/agentscaling_hermes_latency.sh.
+#
+# Usage:
+#   cd deploy/helm/gpu_autoscaling_k8s
+#   E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh
+#   E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh start
+#   ./scripts/agentscaling_hermes_gpuutil.sh stop
+#   ./scripts/agentscaling_hermes_gpuutil.sh cleanup
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=versions.env
+source "${CHART_DIR}/versions.env"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=agentscaling-hermes-common.sh
+source "${SCRIPT_DIR}/agentscaling-hermes-common.sh"
+hpa_common_load_local_env "${CHART_DIR}"
+
+export HPA_METRIC="gpu_utilization"
+export GPU_TARGET="${GPU_TARGET:-40}"
+agentscaling_hermes_common_main "${1:-bringup}"

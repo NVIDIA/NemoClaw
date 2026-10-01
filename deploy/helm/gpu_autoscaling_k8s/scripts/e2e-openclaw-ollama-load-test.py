@@ -189,7 +189,7 @@ async def simulate_user(
             text = line.decode("utf-8", errors="replace")
             log_handle.write(text)
             log_handle.flush()
-            print(f"[user {user_id} {sandbox}] {text.rstrip()}", flush=True)
+            print(f"[user {user_id} sandbox {user_id}] {text.rstrip()}", flush=True)
 
     pump_task = asyncio.create_task(pump())
     try:
@@ -238,8 +238,8 @@ async def run_test(args: argparse.Namespace) -> int:
     print(f"  {args.users} OpenClaw sandboxes run on CPU")
     print(f"  LLM (Ollama {args.model}) runs on GPUs")
     print("  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs")
-    print(f"  Sandboxes: {args.prefix}0000 … {args.prefix}{args.users - 1:04d}")
-    print("  Each user prompts that user's sandbox on :18789")
+    print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
+    print("  Each user prompts that user's CPU sandbox on :18789")
     print("  Path: end user → OpenClaw sandbox → https://inference.local → Envoy load balancer → GPU Ollama HPA")
     print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
     print(

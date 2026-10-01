@@ -203,7 +203,7 @@ print_e2e_layout() {
   echo "  LLM (Ollama ${INFERENCE_MODEL}) runs on GPUs"
   echo "  When end-user demand increases, HPA scales Ollama from 1 to 8 GPUs"
   echo "------------------------------------------------------------------------"
-  printf "  %-10s  %-24s  %-26s  %s\n" "end user" "CPU agent" "OpenShell sandbox" "sandbox"
+  printf "  %-10s  %-24s  %-12s  %s\n" "end user" "CPU agent" "sandbox" "status"
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
     if sandbox_pod_ready "${name}"; then
@@ -216,12 +216,12 @@ print_e2e_layout() {
     else
       agent_st="OpenClaw not listening"
     fi
-    printf "  %-10s  %-24s  %-26s  %s\n" "user-${i}" "${agent_st}" "${name}" "${sandbox_st}"
+    printf "  %-10s  %-24s  %-12s  %s\n" "user ${i}" "${agent_st}" "sandbox ${i}" "${sandbox_st}"
   done
   echo "------------------------------------------------------------------------"
   echo "  HPA: Ollama ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
   echo "  One OpenShell gateway. One Envoy load balancer."
-  echo "  Users talk to sandbox :18789, not Envoy."
+  echo "  Users talk to sandbox :18789."
   echo "  Client (other terminal; same for GPU util or latency HPA):"
   echo "    E2E_USERS=${count} ./scripts/client.sh"
   echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"

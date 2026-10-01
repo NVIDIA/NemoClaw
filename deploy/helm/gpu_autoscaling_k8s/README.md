@@ -217,7 +217,7 @@ E2E test: OpenClaw + Ollama
 
         5 end users
             ↓  prompt to the OpenClaw sandbox :18789
-        5 CPU OpenClaw sandboxes (openclaw-ollama-e2e-0000 … 0004)
+        5 CPU OpenClaw sandboxes (sandbox 0 … sandbox 4)
             ↓  https://inference.local
         Envoy load balancer — LeastRequest
             ↓

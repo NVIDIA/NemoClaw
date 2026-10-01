@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# End-user client for the Hermes + vLLM e2e. One simulated user per
+# sandbox (1:1). user-i sends hermes -z into sandbox hermes-e2e-00i.
+# Clients do not build images, create sandboxes, start gateways, or set
+# the HPA metric. hermes -z does not need :8642.
+#
+# Provision first (other terminal):
+#   ./scripts/agentscaling_hermes_gpuutil.sh   # GPU util HPA
+#   ./scripts/agentscaling_hermes_latency.sh   # LLM latency HPA (same client)
+#
+# Default: 3 users, inflight 1→2, 2Gi sandboxes. Do not raise inflight
+# without raising AGENT_SANDBOX_MEMORY; concurrent hermes -z OOMs 1Gi.
+#
+# Usage:
+#   cd deploy/helm/gpu_autoscaling_k8s
+#   E2E_USERS=3 ./scripts/client_hermes.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+export PATH="${HOME}/.local/bin:${PATH}"
+export E2E_USERS="${E2E_USERS:-3}"
+export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
+export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
+export INFERENCE_MODEL="${INFERENCE_MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8}"
+export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
+export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
+export TARGET_PODS="${TARGET_PODS:-8}"
+export DURATION_SEC="${DURATION_SEC:-900}"
+export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
+export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
+export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
+export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
+E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
+
+command -v openshell >/dev/null 2>&1 || fail "missing command: openshell"
+command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
+command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
+
+[[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
+openshell status >/dev/null \
+  || fail "OpenShell is not connected; port-forward service/openshell first (this is not a user chat path)"
+
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} Hermes sandboxes (1:1 hermes -z). No sandbox create. HPA metric is not set here."
+missing=0
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  if ! kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" >/dev/null 2>&1; then
+    echo "ERROR: sandbox ${i} does not exist (user ${i}). Run ./scripts/agentscaling_hermes_gpuutil.sh or ./scripts/agentscaling_hermes_latency.sh first." >&2
+    missing=1
+    continue
+  fi
+  echo "  user ${i} → sandbox ${i} hermes -z"
+done
+((missing == 0)) || fail "clients do not create sandboxes; start them with ./scripts/agentscaling_hermes_gpuutil.sh or ./scripts/agentscaling_hermes_latency.sh"
+
+echo "Checking each sandbox pod is Running"
+unhealthy=0
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  phase="$(kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  ready="$(kubectl get pod "${name}" -n "${OPENSHELL_NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)"
+  if [[ "${phase}" == "Running" && "${ready}" == "true" ]]; then
+    echo "  sandbox ${i}: Ready"
+  else
+    echo "ERROR: sandbox ${i} is not Ready (phase=${phase:-missing} ready=${ready:-missing}). Run agentscaling_hermes_gpuutil.sh or agentscaling_hermes_latency.sh." >&2
+    unhealthy=1
+  fi
+done
+((unhealthy == 0)) || fail "client will not send chat until every sandbox pod is Ready"
+
+mkdir -p "${E2E_OUTPUT_DIR}"
+cd "${CHART_DIR}"
+exec python3 "${SCRIPT_DIR}/e2e-hermes-load-test.py" \
+  --users "${E2E_USERS}" \
+  --prefix "${SANDBOX_PREFIX}" \
+  --output "${E2E_OUTPUT_DIR}" \
+  --model "${INFERENCE_MODEL}" \
+  --duration "${DURATION_SEC}" \
+  --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
+  --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \
+  --target-pods "${TARGET_PODS}" \
+  --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
+  --hpa-namespace "${NAMESPACE}" \
+  --hpa-name "${HPA_NAME}" \
+  --scale-down-wait-loops "${SCALE_DOWN_WAIT_LOOPS}"
