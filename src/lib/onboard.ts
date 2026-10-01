@@ -1438,7 +1438,6 @@ const sandboxCreateOrchestrationRuntime = {
   assessHost,
   baseImageResolutionFlow,
   cliDisplayName,
-  cliName,
   completeOrdinaryOnboardSandboxCreation,
   confirmRecreateForSelectionDrift,
   createOnboardCreatedSandboxCompletion,
@@ -1447,6 +1446,7 @@ const sandboxCreateOrchestrationRuntime = {
   dashboardRuntime,
   dcodeAutoApprovalFlow,
   detectMessagingCredentialRotation,
+  openShellGpuDiagnostics: dockerGpuSandboxCreate.cliOpenShellGpuDiagnostics,
   get ensureAgentFixedForward() {
     return ensureAgentFixedForward;
   },

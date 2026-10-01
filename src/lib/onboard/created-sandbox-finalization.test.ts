@@ -21,6 +21,7 @@ import {
   finalizeCreatedSandbox,
   restoreSelectedOnboardSnapshot,
 } from "./created-sandbox-finalization";
+import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
@@ -1139,6 +1140,10 @@ describe("created sandbox completion actions", () => {
         order.push("registry");
         return input as unknown as SandboxEntry;
       });
+      const initialOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
+      const receiptOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
+      let selectedOpenShellGpuDiagnostics = initialOpenShellGpuDiagnostics;
+      const verifyHermesGpu = vi.spyOn(dockerGpuLocalInference, "verifyGpuSandboxAccessAfterReady");
       const verifiedCreateBoundary = {
         sandboxName: "hermes",
         gatewayName: "nemoclaw",
@@ -1235,6 +1240,7 @@ describe("created sandbox completion actions", () => {
               order.push("gpu");
               return gpuProof;
             },
+            resolveOpenShellGpuDiagnostics: () => selectedOpenShellGpuDiagnostics,
             runCaptureOpenshell: vi.fn(),
             persistFinalHandoffAcknowledgement: vi.fn(),
             persistFinalHandoffCommitStarted: vi.fn(),
@@ -1318,6 +1324,7 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
+      selectedOpenShellGpuDiagnostics = receiptOpenShellGpuDiagnostics;
       await completion.complete(
         schema5 ? null : created,
         configuredReceipt,
@@ -1338,6 +1345,14 @@ describe("created sandbox completion actions", () => {
         "registry",
       ]);
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
+      expect(verifyHermesGpu).toHaveBeenCalledWith(
+        gpuConfig,
+        expect.objectContaining({
+          sandboxName: "hermes",
+          selectedRoute: "native",
+          openShellGpuDiagnostics: receiptOpenShellGpuDiagnostics,
+        }),
+      );
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
@@ -1353,6 +1368,22 @@ describe("created sandbox completion actions", () => {
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
       );
+
+      const proofFailure = new Error("Hermes GPU proof failed");
+      verifyHermesGpu.mockRejectedValueOnce(proofFailure);
+      registerCreatedSandbox.mockClear();
+      await expect(
+        completion.complete(
+          schema5 ? null : created,
+          configuredReceipt,
+          "hermes",
+          manageDashboard,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+          schema5 ? inferenceRouteReservation : undefined,
+        ),
+      ).rejects.toBe(proofFailure);
+      expect(registerCreatedSandbox).not.toHaveBeenCalled();
     },
   );
 });
