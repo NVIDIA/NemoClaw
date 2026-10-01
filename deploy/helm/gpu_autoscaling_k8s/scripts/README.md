@@ -15,8 +15,8 @@ what each script in this directory does — it has no instructions of its own.
 | Script | Purpose |
 |--------|---------|
 | `install-hpa.sh` | Monitoring + chart + HPA (+ Envoy if enabled). This is the autoscaling install path. |
-| `hpa-load-test-dgx-8xh100.sh` | **Keep.** Fast HPA-only test for **8× H100** (metrics-proxy pod-IP Job, `files/load-generator.ts`). GPU util or `HPA_METRIC=latency_avg`. The sandbox e2e does not replace this. |
-| `hpa-load-test-brev-4xl40s.sh` | HPA load test for **4× L40S** on AWS (Brev) |
+| `hpa-load-test-dgx-8xh100.sh` | **Keep.** Fast HPA-only test for **8× H100** (metrics-proxy pod-IP Job, `files/load-generator.ts`). GPU util default, or `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`. The sandbox e2e does not replace this. |
+| `hpa-load-test-brev-4xl40s.sh` | HPA load test for **4× L40S** on AWS (Brev). Same GPU-util default / latency env vars. |
 | `agentscaling_gpuutil.sh` | Sandbox provision + GPU-util HPA (`gpu_utilization_percent` > 40%). This DGX success path. |
 | `agentscaling_latency.sh` | Same sandboxes, LLM-latency HPA (`latency_avg` > 3000 ms). |
 | `client.sh` | End users: 1:1 `chat.send` into each sandbox's `:18789`. Does not create sandboxes or set the HPA metric. Use after either agentscaling script. |
