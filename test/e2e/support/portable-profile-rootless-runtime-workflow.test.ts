@@ -77,6 +77,7 @@ describe("portable profile rootless runtime workflow", () => {
       (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
+    const cliBuildIndex = steps.findIndex((step) => step.name === "Build exact CLI");
     const provisionIndex = steps.findIndex(
       (step) => step.name === "Provision restricted rootless Linux runtime",
     );
@@ -122,7 +123,9 @@ describe("portable profile rootless runtime workflow", () => {
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
     expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
     expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
-    expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(steps[cliBuildIndex]?.run).toBe("npm run build:cli");
+    expect(cliBuildIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(provisionIndex).toBeGreaterThan(cliBuildIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);

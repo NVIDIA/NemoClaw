@@ -179,6 +179,9 @@ jobs:
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
 
+      - name: Build exact CLI
+        run: npm run build:cli
+
       - name: Install pinned OpenShell
         run: |
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
