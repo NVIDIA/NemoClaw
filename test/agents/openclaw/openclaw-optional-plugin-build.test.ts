@@ -12,13 +12,13 @@ import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const BRAVE_INTEGRITY =
-  "sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==";
+  "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
 const BRAVE_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
 const TAVILY_INTEGRITY =
-  "sha512-PPdEXLMxusYu46eyqL0rKKODXfpYsJ3LkLoMSYtJ4BGOFWEveU5E9WCqLtYRQ5dc9kA43dYb6YeE+06heX0MKQ==";
+  "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==";
 const TAVILY_TARBALL =
-  "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.1.tgz";
+  "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz";
 
 it.each([
   {
@@ -49,7 +49,7 @@ it.each([
       writeReviewedNpmFixture(npmFixture, log, [
         {
           integrity,
-          packageSpec: `@openclaw/${provider}-plugin@2026.9.1`,
+          packageSpec: `@openclaw/${provider}-plugin@2026.9.2`,
           tarballUrl: tarball,
         },
       ]);
@@ -82,15 +82,15 @@ it.each([
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
           NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
           NODE_OPTIONS: "",
-          OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY: BRAVE_INTEGRITY,
-          OPENCLAW_TAVILY_PLUGIN_2026_9_1_INTEGRITY: TAVILY_INTEGRITY,
-          OPENCLAW_VERSION: "2026.9.1",
+          OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY: BRAVE_INTEGRITY,
+          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: TAVILY_INTEGRITY,
+          OPENCLAW_VERSION: "2026.9.2",
         },
       });
       const calls = fs.readFileSync(log, "utf-8");
       expect(result.status, result.stderr).toBe(0);
-      expect(calls).toContain(`npm view @openclaw/${provider}-plugin@2026.9.1 dist.integrity`);
-      expect(calls).toContain(`npm pack @openclaw/${provider}-plugin@2026.9.1 --pack-destination`);
+      expect(calls).toContain(`npm view @openclaw/${provider}-plugin@2026.9.2 dist.integrity`);
+      expect(calls).toContain(`npm pack @openclaw/${provider}-plugin@2026.9.2 --pack-destination`);
       expect(calls).toContain("plugins install --force --accept-capabilities npm-pack:");
       expect(calls).toContain("doctor --fix --non-interactive|");
       expect(calls).toContain(`${credential}=openshell:resolve:env:${credential}`);
@@ -106,7 +106,7 @@ it.each([
     provider: "tavily",
     union: "0",
     content: "reviewed plugin fixture",
-    version: "2026.9.1",
+    version: "2026.9.2",
     status: 0,
     installed: ["tavily-plugin"],
     doctor: "doctor --fix --non-interactive|||\n",
@@ -117,7 +117,7 @@ it.each([
     provider: "tavily",
     union: "1",
     content: "reviewed plugin fixture",
-    version: "2026.9.1",
+    version: "2026.9.2",
     status: 0,
     installed: ["diagnostics-otel", "brave-plugin", "tavily-plugin"],
     doctor: "",
@@ -128,22 +128,22 @@ it.each([
     provider: "tavily",
     union: "0",
     content: "modified plugin fixture",
-    version: "2026.9.1",
+    version: "2026.9.2",
     status: 1,
     installed: [],
     doctor: "",
-    diagnostic: /integrity mismatch for .*tavily-plugin-2026\.9\.1\.tgz/u,
+    diagnostic: /integrity mismatch for .*tavily-plugin-2026\.9\.2\.tgz/u,
   },
   {
     scenario: "a modified Brave archive",
     provider: "brave",
     union: "0",
     content: "modified plugin fixture",
-    version: "2026.9.1",
+    version: "2026.9.2",
     status: 1,
     installed: [],
     doctor: "",
-    diagnostic: /integrity mismatch for .*brave-plugin-2026\.9\.1\.tgz/u,
+    diagnostic: /integrity mismatch for .*brave-plugin-2026\.9\.2\.tgz/u,
   },
   {
     scenario: "an unpinned Tavily version",
@@ -171,18 +171,18 @@ it.each([
     try {
       fs.mkdirSync(archiveDirectory);
       fs.writeFileSync(
-        path.join(archiveDirectory, "diagnostics-otel-2026.9.1.tgz"),
+        path.join(archiveDirectory, "diagnostics-otel-2026.9.2.tgz"),
         "reviewed plugin fixture",
       );
       fs.writeFileSync(
-        path.join(archiveDirectory, "brave-plugin-2026.9.1.tgz"),
+        path.join(archiveDirectory, "brave-plugin-2026.9.2.tgz"),
         "reviewed plugin fixture",
       );
       fs.writeFileSync(
-        path.join(archiveDirectory, "tavily-plugin-2026.9.1.tgz"),
+        path.join(archiveDirectory, "tavily-plugin-2026.9.2.tgz"),
         "reviewed plugin fixture",
       );
-      fs.writeFileSync(path.join(archiveDirectory, `${provider}-plugin-2026.9.1.tgz`), content);
+      fs.writeFileSync(path.join(archiveDirectory, `${provider}-plugin-2026.9.2.tgz`), content);
       fs.writeFileSync(log, "");
       const script = [
         "#!/usr/bin/env bash",
@@ -210,9 +210,9 @@ it.each([
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
           NEMOCLAW_WEB_SEARCH_PROVIDER: provider,
           OPENCLAW_VERSION: version,
-          OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY: integrity,
-          OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY: integrity,
-          OPENCLAW_TAVILY_PLUGIN_2026_9_1_INTEGRITY: integrity,
+          OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY: integrity,
+          OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY: integrity,
+          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: integrity,
         },
       });
       expect(result.status, result.stderr).toBe(status);
@@ -220,7 +220,7 @@ it.each([
       const expectedInstalls = installed
         .map(
           (plugin) =>
-            `plugins install --force --accept-capabilities npm-pack:${archiveDirectory}/${plugin}-2026.9.1.tgz|true|true|true\n`,
+            `plugins install --force --accept-capabilities npm-pack:${archiveDirectory}/${plugin}-2026.9.2.tgz|true|true|true\n`,
         )
         .join("");
       expect(fs.readFileSync(log, "utf8")).toBe(expectedInstalls + doctor);
@@ -300,7 +300,7 @@ it.each([
       {
         env: {
           NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
-          OPENCLAW_VERSION: "2026.9.1",
+          OPENCLAW_VERSION: "2026.9.2",
         },
       },
     );

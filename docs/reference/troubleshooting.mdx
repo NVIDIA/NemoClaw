@@ -702,7 +702,6 @@ Managed OpenClaw images preinstall the reviewed Brave and Tavily plugins from pi
 The image build verifies archive integrity before installing each plugin offline.
 Both search plugins remain disabled in the neutral image; onboarding enables only the selected provider and supplies its OpenShell credential reference.
 
-For custom image builds, plugin preparation can still fail when the build cannot download a required archive.
 If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
 
 Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
@@ -2318,7 +2317,10 @@ If the inspection fails, times out or cannot prove a trusted official installati
 A missing verified package in the offline build cache also stops installation.
 These are build failures; the post-rebuild startup warnings apply only after the image builds successfully.
 
-Report the failure diagnostic, plugin name and NemoClaw version to a maintainer.
+If the diagnostic says `Original Undici bundle restored after interruption; retry the operation`, rerun the original onboarding or rebuild command.
+The build remains failed until the dependency patch and verification complete successfully.
+
+For other failures, report the diagnostic, plugin name and NemoClaw version to a maintainer.
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
 After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
 
