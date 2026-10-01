@@ -262,6 +262,23 @@ image rebuild), or (b) switch to a local ≤2000-dim embed model (e.g. LM Studio
 `nomic-embed-text` @ 768, which also ends the NVIDIA EOL churn). Tracked as a
 follow-up. See [[project_gbrain_embed_stack]].
 
+### Follow-up: should gbrain move to local nomic-embed @768? (deferred)
+Assessed 2026-10-01 — **defer; do it on a trigger, not now.**
+- **Quality:** NOT an upgrade. `nemotron-3-embed-1b` (1B retrieval model, 2048d)
+  is *higher* retrieval quality than `nomic-embed-text-v1.5` (~137M, 768d). The
+  swap is a small quality trade-down.
+- **Wins are operational, not quality:** (1) ends the NVIDIA embed **EOL churn**
+  (410'd twice — the root cause of this whole incident); (2) 768 < 2000 → restores
+  the **HNSW index** (seq-scan today; matters as the brain grows); (3) smaller
+  vectors (~2.7×), lower latency, no cloud rate-limits.
+- **Blocker/cost:** the chad **K8s pod** must reach LM Studio on the Mac host
+  (`:1234`) — not the easy `host.docker.internal` path the OWUI container has;
+  needs network wiring + an L7/OPA allowlist entry. Also couples gbrain to LM
+  Studio being up.
+- **Do-it trigger:** when (a) the next NVIDIA embed EOL lands, or (b) the brain
+  grows enough that seq-scan on vector(2048) is slow. Until then, current
+  nemotron@2048 is fine (works, higher quality, tiny brain).
+
 ## 6. Implementation research appendix (file-anchored, 2026-10-01)
 
 Concrete anchors so each workstream is build-ready, not just named.
