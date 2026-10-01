@@ -15,7 +15,7 @@
 | Harness | OpenClaw 2026.7.1 |
 | OpenShell | 0.0.85 |
 
-This experimental recipe demonstrates a cost-efficient architecture that runs AI agents securely inside CPU-only OpenShell sandboxes (one sandbox per end user) while independently autoscaling GPU-backed inference. The agents running in OpenShell sandboxes are one of **`penclaw | hermes | deepagents`**. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts capacity from one to **N** replicas (1 GPU each) as demand changes—maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
+This experimental recipe demonstrates a cost-efficient architecture that runs AI agents securely inside CPU-only OpenShell sandboxes (one sandbox per end user) while independently autoscaling GPU-backed inference. The agents running in OpenShell sandboxes are one of **[`Openclaw | hermes | deepagents`](https://github.com/maggiezha/NemoClaw/tree/0821-2026/agents)**. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts capacity from one to **N** replicas (1 GPU each) as demand changes—maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
 
 Supported GPU inference runtimes include **`ollama` / `vllm` / `nim`**.  Example pairings for e2e demo include: OpenClaw + Ollama (`AGENT_NAME=openclaw`), Hermes + vLLM (`AGENT_NAME=hermes`), Deep Agents Code + NIM (`AGENT_NAME=deepagents`).
 
@@ -216,7 +216,29 @@ Check the log to see the end users, sandboxes, and chats:
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 </p>
 
+
+
+
+
 #### 6b. Hermes + vLLM 
+
+vLLM pulls the image `nvcr.io/nvidia/vllm`. Kubelet needs an `nvcr.io` **image-pull** Secret before `agentscaling_hermes_gpuutil.sh`. The `nvapi-` value in `secrets.env` is that pull password. `apply-local-secrets.sh` stores it as Kubernetes Secret `ngc-registry` (`dockerconfigjson`). The vLLM **container** never gets `NGC_API_KEY`; only NIM uses that in-container env for model-profile download.
+
+```bash
+cd deploy/helm/gpu_autoscaling_k8s
+cp -n secrets.env.example secrets.env
+# edit secrets.env: paste NGC_API_KEY=nvapi-...  (required — becomes Secret ngc-registry for kubelet)
+# optional: HF_TOKEN=hf_... only if Hugging Face returns 401 for the model
+./scripts/apply-local-secrets.sh
+```
+
+If `HF_TOKEN` is set, the script also creates Secret `hf-token`. Put only the **Secret names** in gitignored `local.env`:
+
+```bash
+# local.env — names, not key values
+export VLLM_IMAGE_PULL_SECRET=ngc-registry
+# export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
+``` 
 
 After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
 
@@ -279,7 +301,27 @@ Validated 8xH100 — Hermes + vLLM latency (target 3000 ms):
 
 #### 6c. Deep Agents Code + NIM 
 
-NIM needs NGC Secrets first (`./scripts/apply-local-secrets.sh` or `./scripts/create-nim-ngc-secrets.sh`). Deep Agents has no long-running gateway.
+NIM needs **both** NGC_API_KEY before `agentscaling_deepagents_gpuutil.sh`. 
+
+- Kubernetes Secret `ngc-registry` (`dockerconfigjson`) — kubelet pulls `nvcr.io/nim/nvidia/nemotron-3-nano`
+- Kubernetes Secret `nim-ngc-key` (Opaque, key `NGC_API_KEY`) — the **running NIM container** downloads the model profile
+
+```bash
+cd deploy/helm/gpu_autoscaling_k8s
+cp -n secrets.env.example secrets.env
+# edit secrets.env: paste NGC_API_KEY=nvapi-...  (required — both Secrets above)
+./scripts/apply-local-secrets.sh
+```
+
+Put only the **Secret names** in gitignored `local.env`:
+
+```bash
+# local.env — names, not key values
+export NIM_IMAGE_PULL_SECRET=ngc-registry
+export NIM_NGC_API_KEY_SECRET=nim-ngc-key
+```
+
+Deep Agents has no long-running gateway.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -399,7 +441,7 @@ The Envoy dataplane Service is **ClusterIP** only (`NodePort` / `LoadBalancer` r
 |---------|----------------|-------|-------------|----------|
 | **Ollama** | `llama3.2:3b` | `ollama/ollama` | None | ~2 GB |
 | **vLLM** | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | `nvcr.io/nvidia/vllm` | `VLLM_IMAGE_PULL_SECRET` only if nvcr.io requires it; `VLLM_HF_TOKEN_SECRET` only for gated HF | ~5.3 GB |
-| **NIM** | `nvidia/nemotron-3-nano` | `nvcr.io/nim/nvidia/nemotron-3-nano` | `create-nim-ngc-secrets.sh` then `NIM_NGC_API_KEY_SECRET` + `NIM_IMAGE_PULL_SECRET` | ~8 GB |
+| **NIM** | `nvidia/nemotron-3-nano` | `nvcr.io/nim/nvidia/nemotron-3-nano` | `apply-local-secrets.sh` then `NIM_IMAGE_PULL_SECRET` + `NIM_NGC_API_KEY_SECRET` | ~8 GB |
 
 These are registry/model credentials, not the chart inference API key. Put **Secret names** in `local.env`, never key values. For `nvcr.io` pulls (vLLM image and NIM), run `./scripts/apply-local-secrets.sh` from gitignored `secrets.env` — do not put `nvapi-` keys on the kubectl command line.
 

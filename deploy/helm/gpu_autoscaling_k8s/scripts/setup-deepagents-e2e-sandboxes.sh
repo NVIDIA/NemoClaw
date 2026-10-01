@@ -61,7 +61,7 @@ ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
   ACTION="${E2E_USERS}"
 fi
-export AGENT_NAME="${AGENT_NAME:-hermes}"
+export AGENT_NAME="${AGENT_NAME:-deepagents}"
 [[ "${AGENT_NAME}" == "deepagents" ]] \
   || fail "setup-deepagents-e2e-sandboxes.sh is Deep Agents-only (got AGENT_NAME=${AGENT_NAME})"
 if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "nim" ]]; then
