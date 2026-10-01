@@ -445,7 +445,41 @@ export function captureDockerGpuPatchSandboxSnapshot(
 ): DockerGpuPatchSandboxSnapshot {
   let sandboxPhase: string | null = null;
   let sandboxListLine: string | null = null;
-  if (deps.runCaptureOpenshell) {
+  let openShellDiagnosticArtifacts: DockerGpuPatchSandboxSnapshot["openShellDiagnosticArtifacts"];
+  if (deps.openShellGpuDiagnostics) {
+    // An empty array records that the typed collector was attempted. The
+    // diagnostics writer must not repeat an external call that already failed.
+    openShellDiagnosticArtifacts = [];
+    try {
+      const redactor = createDockerGpuDiagnosticRedactor();
+      openShellDiagnosticArtifacts = deps.openShellGpuDiagnostics.collect({
+        target: { kind: "selected" },
+        sandboxName,
+        timeoutMs: DOCKER_GPU_PATCH_TIMEOUT_MS,
+        redact: redactor.redactText,
+      });
+      const typedGetOutput = completedOpenShellArtifactContent(
+        openShellDiagnosticArtifacts,
+        "openshell-sandbox-get.txt",
+      );
+      if (typedGetOutput) {
+        sandboxPhase = parseSandboxPhaseFromGetOutput(typedGetOutput);
+      }
+      const typedListOutput = completedOpenShellArtifactContent(
+        openShellDiagnosticArtifacts,
+        "openshell-sandbox-list.txt",
+      );
+      if (typedListOutput) {
+        sandboxListLine = findSandboxListLine(typedListOutput, sandboxName);
+        if (sandboxListLine) {
+          const listPhase = parseSandboxPhaseFromListOutput(typedListOutput, sandboxName);
+          if (listPhase) sandboxPhase = listPhase;
+        }
+      }
+    } catch {
+      /* best effort */
+    }
+  } else if (deps.runCaptureOpenshell) {
     try {
       const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
         ignoreError: true,
@@ -468,41 +502,6 @@ export function captureDockerGpuPatchSandboxSnapshot(
       if (sandboxListLine) {
         const listPhase = parseSandboxPhaseFromListOutput(listOutput, sandboxName);
         if (listPhase) sandboxPhase = listPhase;
-      }
-    } catch {
-      /* best effort */
-    }
-  }
-
-  let openShellDiagnosticArtifacts: DockerGpuPatchSandboxSnapshot["openShellDiagnosticArtifacts"];
-  if (deps.openShellGpuDiagnostics) {
-    try {
-      const redactor = createDockerGpuDiagnosticRedactor();
-      openShellDiagnosticArtifacts = deps.openShellGpuDiagnostics.collect({
-        target: { kind: "selected" },
-        sandboxName,
-        timeoutMs: DOCKER_GPU_PATCH_TIMEOUT_MS,
-        redact: redactor.redactText,
-      });
-      const typedGetOutput = completedOpenShellArtifactContent(
-        openShellDiagnosticArtifacts,
-        "openshell-sandbox-get.txt",
-      );
-      if (!sandboxPhase && typedGetOutput) {
-        sandboxPhase = parseSandboxPhaseFromGetOutput(typedGetOutput);
-      }
-      if (!sandboxListLine) {
-        const typedListOutput = completedOpenShellArtifactContent(
-          openShellDiagnosticArtifacts,
-          "openshell-sandbox-list.txt",
-        );
-        if (typedListOutput) {
-          sandboxListLine = findSandboxListLine(typedListOutput, sandboxName);
-          if (sandboxListLine) {
-            const listPhase = parseSandboxPhaseFromListOutput(typedListOutput, sandboxName);
-            if (listPhase) sandboxPhase = listPhase;
-          }
-        }
       }
     } catch {
       /* best effort */

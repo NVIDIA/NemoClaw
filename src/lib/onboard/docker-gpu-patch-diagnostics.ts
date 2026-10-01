@@ -350,7 +350,11 @@ export function collectDockerGpuPatchDiagnostics(
   const openShellDiagnosticArtifacts = snapshot?.openShellDiagnosticArtifacts;
   if (openShellDiagnosticArtifacts) {
     for (const artifact of openShellDiagnosticArtifacts) {
-      if (artifact.content.trim()) writeDiagnosticText(artifact.name, artifact.content);
+      try {
+        if (artifact.content.trim()) writeDiagnosticText(artifact.name, artifact.content);
+      } catch {
+        // Best-effort diagnostics must not hide the original failure.
+      }
     }
   } else if (deps.openShellGpuDiagnostics) {
     try {

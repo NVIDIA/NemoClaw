@@ -125,7 +125,7 @@ describe("Docker GPU patch diagnostics", () => {
     expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
   });
 
-  it("uses typed OpenShell observations for phase classification without raw capture", () => {
+  it("uses typed OpenShell observations as the sole phase authority when raw capture conflicts", () => {
     const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
       {
         name: "openshell-sandbox-get.txt",
@@ -138,16 +138,21 @@ describe("Docker GPU patch diagnostics", () => {
         outcome: { kind: "completed", exitCode: 0 },
       },
     ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
 
     const snapshot = captureDockerGpuPatchSandboxSnapshot(
       "alpha",
       {},
-      { openShellGpuDiagnostics: { collect } },
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
     );
 
     expect(snapshot.sandboxPhase).toBe("Error");
     expect(snapshot.sandboxListLine).toBe("alpha   Error   2s ago");
     expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
   it("classifies a dead patched container as patched_container_failed with the failed mode", () => {
