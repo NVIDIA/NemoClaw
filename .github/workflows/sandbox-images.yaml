@@ -134,9 +134,6 @@ jobs:
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
       - &hermes-export-swap
         name: Add swap for Hermes image export
         shell: bash
@@ -155,14 +152,6 @@ jobs:
           df -h / /mnt
           docker system df
 
-      - name: Validate Hermes production build args
-        env:
-          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
-        run: |
-          set -euo pipefail
-          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
-          scripts/check-production-build-args.sh "${build_args[@]}"
-
       - name: Record resources before Hermes image build
         shell: bash
         run: |
@@ -172,16 +161,15 @@ jobs:
           docker system df || true
 
       - name: Build Hermes production image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: agents/hermes/Dockerfile
-          load: true
-          push: false
-          tags: nemoclaw-hermes-production
-          build-args: BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }}
-          cache-from: type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
-          cache-to: type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
+        env:
+          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          # The resolver can load its fallback base into the Docker daemon's image store.
+          docker build --builder default "${build_args[@]}" -t nemoclaw-hermes-production .
 
       # The production build intentionally omits NEMOCLAW_CORPORATE_CA_B64. A
       # successful final stage therefore proves its registry remediations and
