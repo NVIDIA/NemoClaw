@@ -405,6 +405,32 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
+  "sandbox:policy:requests": [
+    {
+      group: "Policy Presets",
+      order: 22.1,
+      description: "List blocked network requests waiting for approval",
+      flags: "(--json)",
+    },
+  ],
+  "sandbox:policy:approve": [
+    {
+      group: "Policy Presets",
+      order: 22.2,
+      usage: "nemoclaw <name> policy approve <id>",
+      description: "Approve a blocked network request",
+      flags: "(--yes, -y)",
+    },
+  ],
+  "sandbox:policy:reject": [
+    {
+      group: "Policy Presets",
+      order: 22.3,
+      usage: "nemoclaw <name> policy reject <id>",
+      description: "Reject a blocked network request",
+      flags: "(--reason <text>)",
+    },
+  ],
   "sandbox:rebuild": [
     {
       group: "Sandbox Management",

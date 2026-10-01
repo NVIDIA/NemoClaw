@@ -89,7 +89,8 @@ import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { getKnownSandboxTargetGatewayName, getSandboxTargetGatewayName } from "./gateway-target";
+import type { PolicyRequestsHost } from "./policy/requests";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
@@ -2270,6 +2271,15 @@ function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObjec
   for (const line of renderBaselineEntryScope(key, entry)) {
     console.log(line);
   }
+}
+
+/** Host services for `policy requests`, `policy approve`, and `policy reject`. */
+export function createPolicyRequestsHost(cliName: string): PolicyRequestsHost {
+  return {
+    cliName,
+    resolveGatewayName: getKnownSandboxTargetGatewayName,
+    ask: (question) => askPrompt(question),
+  };
 }
 
 export async function excludeSandboxBaseline(
