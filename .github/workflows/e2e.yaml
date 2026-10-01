@@ -696,10 +696,10 @@ jobs:
           fi
           npx --no-install tsx tools/e2e/workflow-plan.mts --ci-output
 
-      # Publish immutable source-run toolchains before candidate checkout or
+      # Stage the reviewed toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@8d7409d66a0e664829f9ddab177aa8460974291f
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@5ca450cd2e468d2a9e66e46ad75df0fa32b9f700
         with:
           enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
           github-token: ${{ github.token }}
