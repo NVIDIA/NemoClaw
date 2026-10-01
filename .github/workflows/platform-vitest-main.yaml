@@ -339,15 +339,7 @@ jobs:
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
-          $script = @'
-          set -euo pipefail
-          service docker stop >/dev/null 2>&1 || true
-          if docker info >/dev/null 2>&1; then
-            echo "Docker must remain unavailable during the non-live Vitest suite." >&2
-            exit 1
-          fi
-          '@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+          Stop-WslContainerRuntime -Distro $env:WSL_DISTRO
 
       - name: Install reviewed Node.js and npm in WSL
         shell: powershell
@@ -438,12 +430,11 @@ jobs:
           $script = @"
           set -euo pipefail
           usermod -aG docker $testUser
-          service docker start
-          docker info
           podman --version
           ip -Version
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+          Start-WslContainerRuntime -Distro $env:WSL_DISTRO
 
       - id: wsl_docker
         name: Detect Docker availability in WSL

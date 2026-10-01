@@ -6,6 +6,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { testTimeout, testTimeoutOptions } from "../../helpers/timeouts";
+import { runWslContainerRuntimeScript } from "../../support/wsl-container-runtime-fixture";
 import {
   POWERSHELL_BATCH_EXEC_TIMEOUT_MS,
   type PowerShellBatchCase,
@@ -41,6 +42,154 @@ describe("trusted WSL CI helper", () => {
         }
       : () => undefined,
     BATCH_TIMEOUT,
+  );
+
+  itPowerShell(
+    "keeps Docker unavailable despite socket activation and preserves shutdown failures",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+Get-WslContainerRuntimeStopScript
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(runWslContainerRuntimeScript(result.stdout)).toMatchObject({
+        status: 0,
+        masked: true,
+        commands: ["systemctl mask --runtime --now docker.service docker.socket", "docker info"],
+      });
+      expect(runWslContainerRuntimeScript(result.stdout, "mask-fails")).toMatchObject({
+        status: 23,
+        stderr: "systemd stop failed\n",
+        commands: ["systemctl mask --runtime --now docker.service docker.socket"],
+      });
+      expect(runWslContainerRuntimeScript(result.stdout, "reachable")).toMatchObject({
+        status: 1,
+        masked: true,
+        stderr: expect.stringContaining("Docker must remain unavailable"),
+      });
+    },
+  );
+
+  itPowerShell(
+    "restores Docker for live tests and propagates the health deadline",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+Get-WslContainerRuntimeStartScript
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(runWslContainerRuntimeScript(result.stdout, "normal", true)).toMatchObject({
+        status: 0,
+        masked: false,
+        commands: [
+          "systemctl unmask --runtime docker.service docker.socket",
+          "systemctl start docker.service",
+          "timeout 30s",
+          "docker info",
+          "docker info",
+        ],
+      });
+      expect(runWslContainerRuntimeScript(result.stdout, "health-timeout", true)).toMatchObject({
+        status: 124,
+        masked: false,
+      });
+    },
+  );
+
+  itPowerShell(
+    "restarts only the requested distro once when the systemd bus is unavailable",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$script:calls = @()
+$script:probes = 0
+function Invoke-WslNativeOutput {
+  param([string[]]$ArgumentList)
+  $script:probes += 1
+  if ($script:probes -eq 1) {
+    return [pscustomobject]@{ ExitCode = 1; Output = @('Failed to connect to system scope bus via local transport: Connection refused') }
+  }
+  return [pscustomobject]@{ ExitCode = 0; Output = @('259') }
+}
+function Invoke-WslNative {
+  param([string[]]$ArgumentList, [switch]$MergeError)
+  $script:calls += $ArgumentList -join ' '
+  return 0
+}
+function Invoke-WslScript {
+  param([string]$Distro, [string]$User, [string]$Script)
+  $script:calls += "stop $Distro as $User"
+}
+Stop-WslContainerRuntime -Distro 'Ubuntu CI'
+Stop-WslContainerRuntime -Distro 'Ubuntu CI'
+ConvertTo-Json -Compress -InputObject @($script:calls)
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).toEqual([
+        "--terminate Ubuntu CI",
+        "stop Ubuntu CI as root",
+        "stop Ubuntu CI as root",
+      ]);
+    },
+  );
+
+  itPowerShell(
+    "stops after one unsuccessful systemd recovery without running the Docker script",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$script:terminations = 0
+$script:probes = 0
+function Invoke-WslNativeOutput {
+  param([string[]]$ArgumentList)
+  $script:probes += 1
+  return [pscustomobject]@{ ExitCode = 1; Output = @('Failed to connect to bus: Connection refused') }
+}
+function Invoke-WslNative { param([string[]]$ArgumentList, [switch]$MergeError) $script:terminations += 1; return 0 }
+function Start-Sleep { param([int]$Seconds) }
+function Invoke-WslScript { throw 'Docker script must not run' }
+try { Stop-WslContainerRuntime -Distro Ubuntu } catch { $script:failure = $_.Exception.Message }
+[pscustomobject]@{ terminations = $script:terminations; probes = $script:probes; failure = $script:failure } | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).toMatchObject({
+        terminations: 1,
+        probes: 21,
+        failure: expect.stringContaining("after one distro restart"),
+      });
+    },
+  );
+
+  itPowerShell(
+    "rejects unrelated service-manager errors without restarting the distro",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+function Invoke-WslNativeOutput { param([string[]]$ArgumentList) return [pscustomobject]@{ ExitCode = 127; Output = @('systemctl: command not found') } }
+function Invoke-WslNative { throw 'Distro must not restart' }
+function Invoke-WslScript { throw 'Docker script must not run' }
+Stop-WslContainerRuntime -Distro Ubuntu
+`,
+    (result) => {
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "WSL service-manager probe failed: systemctl: command not found",
+      );
+    },
+  );
+
+  itPowerShell(
+    "propagates a failed distro termination after the manager probe times out",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+function Invoke-WslNativeOutput { param([string[]]$ArgumentList) return [pscustomobject]@{ ExitCode = 124; Output = @() } }
+function Invoke-WslNative { param([string[]]$ArgumentList, [switch]$MergeError) return 5 }
+function Invoke-WslScript { throw 'Docker script must not run' }
+Stop-WslContainerRuntime -Distro Ubuntu
+`,
+    (result) => {
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("WSL distro termination failed with exit code 5.");
+    },
   );
 
   itPowerShell(

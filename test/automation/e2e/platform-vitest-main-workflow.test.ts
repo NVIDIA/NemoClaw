@@ -169,12 +169,9 @@ describe("platform evidence workflow", () => {
     expect(install).toContain("'zip'");
     expect(install).toContain("'gnu-coreutils'");
     expect(install).not.toContain("service docker start");
-    expect(stopped).toContain("service docker stop");
-    expect(stopped).toContain("if docker info >/dev/null 2>&1; then");
-    expect(stopped).toContain("exit 1");
+    expect(stopped).toContain("Stop-WslContainerRuntime -Distro $env:WSL_DISTRO");
     expect(runtime).not.toContain("Install-WslUbuntuDependencies");
-    expect(runtime).toContain("service docker start");
-    expect(runtime).toContain("docker info");
+    expect(runtime).toContain("Start-WslContainerRuntime -Distro $env:WSL_DISTRO");
     expect(runtime).toContain("podman --version");
     expect(runtime).toContain("ip -Version");
     expect(step("wsl-vitest", "Resolve workspace paths for WSL").run).toContain(
