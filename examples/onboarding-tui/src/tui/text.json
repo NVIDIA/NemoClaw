@@ -1,0 +1,400 @@
+{
+  "questions": {
+    "/metadata/name": {
+      "title": "Name this deployment",
+      "description": "A human-readable DNS label for this desired-state document."
+    },
+    "/spec/gateway/endpoint": {
+      "title": "Gateway endpoint"
+    },
+    "/spec/gateway/engine": {
+      "title": "Gateway engine socket"
+    },
+    "/spec/gateway/image": {
+      "title": "Gateway image"
+    },
+    "/spec/gateway/management": {
+      "title": "How should NemoClaw reach its gateway?"
+    },
+    "/spec/gateway/networkCIDR": {
+      "title": "Gateway network (CIDR)"
+    },
+    "/spec/inferenceProviders/*/api": {
+      "title": "Which inference API should the harness speak?"
+    },
+    "/spec/inferenceProviders/*/endpoint": {
+      "title": "Where is the inference endpoint?",
+      "description": "Enter the complete HTTP or HTTPS endpoint URL."
+    },
+    "/spec/sandboxes/*/agent/auth/method": {
+      "title": "Agent authentication"
+    },
+    "/spec/sandboxes/*/agent/inference/routes/*/name": {
+      "title": "Name this model route"
+    },
+    "/spec/sandboxes/*/agent/inference/routes/*/overrides/maxTokens": {
+      "title": "Maximum response tokens"
+    },
+    "/spec/sandboxes/*/agent/inference/routes/*/overrides/model": {
+      "title": "Choose the model",
+      "description": "Choose a suggestion or enter another model identifier."
+    },
+    "/spec/sandboxes/*/agent/name": {
+      "title": "Name the agent"
+    },
+    "/spec/sandboxes/*/harness/execution/timeoutSeconds": {
+      "title": "Agent timeout (seconds)"
+    },
+    "/spec/sandboxes/*/harness/kind": {
+      "title": "Choose your agent harness",
+      "description": "The harness is the agent environment NemoClaw installs and isolates."
+    },
+    "/spec/sandboxes/*/image/ref": {
+      "title": "Sandbox image"
+    },
+    "/spec/sandboxes/*/name": {
+      "title": "Name this sandbox"
+    },
+    "/spec/sandboxes/*/network/policy": {
+      "title": "Network policy"
+    },
+    "/spec/sandboxes/*/network/tier": {
+      "title": "Network tier"
+    },
+    "/spec/sandboxes/*/runtime/provider": {
+      "title": "Where should the sandbox run?",
+      "description": "The runtime owns the gateway and local sandbox resources."
+    },
+    "/spec/services/*/authentication": {
+      "title": "Service authentication"
+    },
+    "/spec/services/*/container/ipc": {
+      "title": "Container IPC mode"
+    },
+    "/spec/services/*/container/sharedMemoryGiB": {
+      "title": "Shared memory (GiB)"
+    },
+    "/spec/services/*/hardware/architecture": {
+      "title": "CPU architecture"
+    },
+    "/spec/services/*/hardware/minComputeCapability": {
+      "title": "Minimum GPU compute capability"
+    },
+    "/spec/services/*/hardware/minDriverMajor": {
+      "title": "Minimum NVIDIA driver version"
+    },
+    "/spec/services/*/hardware/minGpuMemoryBytes": {
+      "title": "Minimum GPU memory (bytes)"
+    },
+    "/spec/services/*/hardware/profile": {
+      "title": "GPU profile"
+    },
+    "/spec/services/*/image": {
+      "title": "Service image"
+    },
+    "/spec/services/*/memory/consecutiveSamples": {
+      "title": "Memory check samples"
+    },
+    "/spec/services/*/memory/freeGateGiB": {
+      "title": "Free memory gate (GiB)"
+    },
+    "/spec/services/*/memory/gpuMemoryGiB": {
+      "title": "GPU memory (GiB)"
+    },
+    "/spec/services/*/memory/gpuMemoryUtilization": {
+      "title": "GPU memory utilization"
+    },
+    "/spec/services/*/memory/hostReserveGiB": {
+      "title": "Host memory reserve (GiB)"
+    },
+    "/spec/services/*/memory/kvCacheGiB": {
+      "title": "KV cache (GiB)"
+    },
+    "/spec/services/*/memory/minAvailableGiB": {
+      "title": "Minimum available memory (GiB)"
+    },
+    "/spec/services/*/memory/minFreeGiB": {
+      "title": "Minimum free memory (GiB)"
+    },
+    "/spec/services/*/model/digest": {
+      "title": "Model digest"
+    },
+    "/spec/services/*/model/name": {
+      "title": "Model name"
+    },
+    "/spec/services/*/model/repository": {
+      "title": "Model repository"
+    },
+    "/spec/services/*/model/revision": {
+      "title": "Model revision"
+    },
+    "/spec/services/*/placement/engine": {
+      "title": "Service engine"
+    },
+    "/spec/services/*/placement/networkCidr": {
+      "title": "Service network (CIDR)"
+    },
+    "/spec/services/*/publication/bindAddress": {
+      "title": "Bind address"
+    },
+    "/spec/services/*/publication/endpoint": {
+      "title": "Published endpoint"
+    },
+    "/spec/services/*/recipe": {
+      "title": "Serving recipe"
+    },
+    "/spec/services/*/serving/batchTokens": {
+      "title": "Batch tokens"
+    },
+    "/spec/services/*/serving/contextTokens": {
+      "title": "Context length (tokens)"
+    },
+    "/spec/services/*/serving/enforceEager": {
+      "title": "Enforce eager mode"
+    },
+    "/spec/services/*/serving/mambaBackend": {
+      "title": "Mamba backend"
+    },
+    "/spec/services/*/serving/maxSequences": {
+      "title": "Max concurrent sequences"
+    },
+    "/spec/services/*/serving/modelName": {
+      "title": "Served model name"
+    },
+    "/spec/services/*/serving/port": {
+      "title": "Serving port"
+    },
+    "/spec/services/*/serving/reasoningParser": {
+      "title": "Reasoning parser"
+    },
+    "/spec/services/*/serving/speculativeTokens": {
+      "title": "Speculative tokens"
+    },
+    "/spec/services/*/serving/startupTimeoutSeconds": {
+      "title": "Startup timeout (seconds)"
+    },
+    "/spec/services/*/serving/toolParser": {
+      "title": "Tool-call parser"
+    },
+    "adapter:*:/home": {
+      "title": "Home directory"
+    },
+    "adapter:*:/max_tokens": {
+      "title": "Maximum response tokens"
+    },
+    "adapter:*:/native_config": {
+      "title": "Native configuration"
+    },
+    "adapter:nvidia.fabric.claude:/max_budget_usd": {
+      "title": "Maximum budget (USD)"
+    },
+    "adapter:nvidia.fabric.codex:/config_overrides": {
+      "title": "Configuration overrides"
+    },
+    "adapter:nvidia.fabric.codex:/sandbox": {
+      "title": "Sandbox access"
+    },
+    "adapter:nvidia.fabric.hermes:/api_mode": {
+      "title": "API mode"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/api": {
+      "title": "API interface"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/api/port": {
+      "title": "API port"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/enabled": {
+      "title": "Enable dashboard"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/internalPort": {
+      "title": "Dashboard internal port"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/port": {
+      "title": "Dashboard port"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/tui": {
+      "title": "Dashboard terminal UI"
+    },
+    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/tui/enabled": {
+      "title": "Enable dashboard terminal UI"
+    },
+    "adapter:nvidia.fabric.hermes:/mode": {
+      "title": "Run mode"
+    },
+    "adapter:nvidia.fabric.hermes:/plugins_enabled": {
+      "title": "Enabled plugins"
+    },
+    "adapter:nvidia.fabric.hermes:/reasoning_config": {
+      "title": "Reasoning configuration"
+    },
+    "adapter:nvidia.fabric.hermes:/terminal_timeout": {
+      "title": "Terminal timeout (seconds)"
+    },
+    "adapter:nvidia.fabric.langchain.deepagents:/deepagents": {
+      "title": "Deep Agents configuration"
+    },
+    "adapter:nvidia.fabric.mini-swe-agent:/timeout": {
+      "title": "Command timeout"
+    },
+    "adapter:nvidia.fabric.openclaw:/cli": {
+      "title": "CLI command"
+    },
+    "adapter:nvidia.fabric.openclaw:/timeout_seconds": {
+      "title": "Timeout (seconds)"
+    },
+    "adapter:nvidia.fabric.remote-agent:/api_type": {
+      "title": "API type"
+    },
+    "adapter:nvidia.fabric.remote-agent:/base_url": {
+      "title": "Base URL"
+    },
+    "adapter:nvidia.fabric.remote-agent:/connect_timeout_seconds": {
+      "title": "Connect timeout (seconds)"
+    },
+    "adapter:nvidia.fabric.remote-agent:/read_timeout_seconds": {
+      "title": "Read timeout (seconds)"
+    },
+    "inference:preset": {
+      "title": "How should your agent reach its model?",
+      "description": "Hosted inference keeps model compute outside the sandbox."
+    },
+    "model:/api": {
+      "title": "Which API should this route's model use?"
+    },
+    "model:/max_tokens": {
+      "title": "Maximum response tokens"
+    },
+    "route:selection": {
+      "title": "Choose a model route to configure",
+      "description": "Each route keeps its own provider, model, and settings."
+    }
+  },
+  "choices": {
+    "/spec/gateway/management": {
+      "managed": "Install and manage a local gateway",
+      "external": "Connect to an existing gateway"
+    },
+    "/spec/inferenceProviders/*/api": {
+      "openai-completions": "OpenAI chat completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic-messages": "Anthropic Messages"
+    },
+    "/spec/sandboxes/*/agent/auth/method": {
+      "api-key": "API key"
+    },
+    "/spec/sandboxes/*/harness/kind": {
+      "nvidia.fabric.claude": "Claude Code",
+      "nvidia.fabric.codex": "Codex",
+      "nvidia.fabric.hermes": "Hermes",
+      "nvidia.fabric.langchain.deepagents": "LangChain Deep Agents",
+      "nvidia.fabric.mini-swe-agent": "mini-SWE-agent",
+      "nvidia.fabric.nooa": "NOOA",
+      "nvidia.fabric.nooa.bench-agent": "NOOA bench agent",
+      "nvidia.fabric.openclaw": "OpenClaw",
+      "nvidia.fabric.opencode": "OpenCode",
+      "nvidia.fabric.pi": "Pi",
+      "nvidia.fabric.remote-agent": "Remote agent"
+    },
+    "/spec/sandboxes/*/network/tier": {
+      "isolated": "Isolated"
+    },
+    "/spec/sandboxes/*/runtime/provider": {
+      "docker": "Docker",
+      "podman": "Podman"
+    },
+    "/spec/services/*/authentication": {
+      "bearer": "Bearer token"
+    },
+    "/spec/services/*/container/ipc": {
+      "host": "Shared with host",
+      "private": "Private"
+    },
+    "/spec/services/*/hardware/profile": {
+      "dgx-spark": "DGX Spark",
+      "dgx-station": "DGX Station",
+      "rtx-6000-ada": "RTX 6000 Ada",
+      "rtx-pro-6000-blackwell": "RTX PRO 6000 Blackwell",
+      "rtx-3090": "RTX 3090",
+      "rtx-4090": "RTX 4090",
+      "rtx-5090": "RTX 5090",
+      "gb200": "GB200",
+      "gb300": "GB300",
+      "gh200": "GH200",
+      "h100": "H100",
+      "h200": "H200",
+      "a100": "A100",
+      "a10": "A10",
+      "a10g": "A10G",
+      "a40": "A40",
+      "l4": "L4",
+      "l40": "L40",
+      "l40s": "L40S",
+      "t4": "T4"
+    },
+    "adapter:nvidia.fabric.claude:/permission_mode": {
+      "default": "Default",
+      "acceptEdits": "Accept edits",
+      "bypassPermissions": "Bypass permissions",
+      "plan": "Plan only",
+      "dontAsk": "Don't ask",
+      "auto": "Auto"
+    },
+    "adapter:nvidia.fabric.codex:/approval_mode": {
+      "auto_review": "Review automatically",
+      "deny_all": "Deny all escalations"
+    },
+    "adapter:nvidia.fabric.codex:/personality": {
+      "none": "None",
+      "friendly": "Friendly",
+      "pragmatic": "Pragmatic"
+    },
+    "adapter:nvidia.fabric.codex:/reasoning_effort": {
+      "none": "Off",
+      "off": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high",
+      "adaptive": "Adaptive"
+    },
+    "adapter:nvidia.fabric.codex:/sandbox": {
+      "read-only": "Read only",
+      "workspace-write": "Write to workspace",
+      "danger-full-access": "Full access (dangerous)"
+    },
+    "adapter:nvidia.fabric.hermes:/api_mode": {
+      "chat_completions": "OpenAI chat completions",
+      "codex_responses": "OpenAI Responses",
+      "anthropic_messages": "Anthropic Messages"
+    },
+    "adapter:nvidia.fabric.hermes:/mode": {
+      "sdk": "SDK",
+      "service": "Service"
+    },
+    "adapter:nvidia.fabric.remote-agent:/api_type": {
+      "openai-completions": "OpenAI chat completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic-messages": "Anthropic Messages"
+    },
+    "model:/api": {
+      "openai-completions": "OpenAI chat completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic-messages": "Anthropic Messages"
+    },
+    "model:/client_type": {
+      "completion": "Completions",
+      "responses": "Responses"
+    },
+    "model:/reasoning_effort": {
+      "none": "Off",
+      "off": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high",
+      "adaptive": "Adaptive"
+    }
+  }
+}

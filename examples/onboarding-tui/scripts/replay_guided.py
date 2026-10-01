@@ -130,7 +130,8 @@ def main() -> int:
                             answer = value
                             break
                     if "/spec/sandboxes/0/harness/kind" in current:
-                        desired = "nvidia.fabric.openclaw"
+                        # The TUI shows the harness label; the saved YAML keeps its ID.
+                        desired = "OpenClaw"
                         if desired not in current:
                             raise RuntimeError(f"harness choice {desired!r} is unavailable")
                         for _ in range(32):

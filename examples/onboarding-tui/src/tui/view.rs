@@ -3,7 +3,7 @@
 
 use super::{
     app::JourneyWizard,
-    labels::{display_value, label, terminal_text},
+    labels::{self, terminal_text},
     logo::BrandImage,
 };
 use nemoclaw_authoring::JourneyQuestion;
@@ -111,7 +111,7 @@ impl JourneyWizard {
 
     fn question_lines(&self, question: &JourneyQuestion, width: u16) -> Vec<Line<'static>> {
         let mut title = vec![Span::styled(
-            terminal_text(&label(question)),
+            terminal_text(&labels::title(question)),
             Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
         )];
         // The resolver reveals later questions as answers arrive, so there is
@@ -123,10 +123,17 @@ impl JourneyWizard {
                 Style::new().fg(DIM),
             ),
         ]);
-        let mut lines = vec![Line::from(title), Line::from("")];
-        if let Some(description) = question.schema()["description"].as_str() {
+        let mut lines = vec![Line::from(title)];
+        if let Some(service) = labels::service(question) {
             lines.push(Line::from(Span::styled(
-                terminal_text(description),
+                format!("Service: {}", terminal_text(service)),
+                Style::new().fg(MUTED),
+            )));
+        }
+        lines.push(Line::from(""));
+        if let Some(description) = labels::description(question) {
+            lines.push(Line::from(Span::styled(
+                terminal_text(&description),
                 Style::new().fg(MUTED),
             )));
         }
@@ -177,7 +184,7 @@ impl JourneyWizard {
             let mut choices = question
                 .choices()
                 .iter()
-                .map(display_value)
+                .map(|value| labels::choice(question, value))
                 .collect::<Vec<_>>();
             if question.allows_custom_answer() {
                 choices.push("Type another model".into());

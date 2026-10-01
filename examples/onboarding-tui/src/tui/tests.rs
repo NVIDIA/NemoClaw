@@ -400,6 +400,7 @@ fn single_sandbox_examples_reach_review_through_sparse_journey() {
         &mut files,
     );
     files.sort();
+    let mut missing_text = std::collections::BTreeSet::new();
     for path in files {
         let bytes = std::fs::read(&path).unwrap();
         let Ok(document) = Document::parse(bytes.as_slice()) else {
@@ -413,6 +414,11 @@ fn single_sandbox_examples_reach_review_through_sparse_journey() {
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         let mut wizard = JourneyWizard::new(capabilities, state);
         for _ in 0..100 {
+            if let Ok(Some(question)) = wizard.question()
+                && let Some(missing) = super::labels::missing_text(&question)
+            {
+                missing_text.insert(format!("{} has no {missing}", question.id()));
+            }
             wizard.advance();
             if wizard.accepted || wizard.error.is_some() {
                 break;
@@ -429,6 +435,8 @@ fn single_sandbox_examples_reach_review_through_sparse_journey() {
             wizard.error
         );
     }
+    // Add friendly text in text.json for NemoClaw-owned questions.
+    assert!(missing_text.is_empty(), "{missing_text:#?}");
 }
 
 #[test]
