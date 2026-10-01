@@ -63,7 +63,7 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 | Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test) |
 |----------|-----------------|----------------------|----------------------------------|
-| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (pod-IP Job; GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
+| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
 
 
 Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
