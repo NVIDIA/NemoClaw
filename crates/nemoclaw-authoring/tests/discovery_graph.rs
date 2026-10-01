@@ -192,25 +192,6 @@ fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() 
 }
 
 #[test]
-fn retarget_preserves_unaffected_observations_and_invalidates_their_dependents() {
-    let document = document();
-    let mut observed = evidence(&document);
-    let mut key = observed.key.clone();
-    key.harness = "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap();
-    observed.retarget(key.clone());
-    assert!(observed.engine.is_some());
-    assert!(observed.fabric.is_some());
-    key.compute_driver = ComputeDriver::Podman;
-    observed.retarget(key.clone());
-    assert!(observed.engine.is_none());
-    assert!(observed.fabric.is_some());
-    key.engine = "unix:///other.sock".into();
-    observed.retarget(key);
-    assert!(observed.engine.is_none());
-    assert!(observed.fabric.is_none());
-}
-
-#[test]
 fn native_configuration_is_checked_by_the_fabric_planner() {
     let valid = document();
     assert_eq!(
@@ -325,9 +306,6 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         observed.assessment_for_document(&changed).unwrap().pending,
         vec![DiscoveryQuery::Fabric]
     );
-    observed.retarget(discovery_key_for_document(&changed).unwrap());
-    assert!(observed.engine.is_none());
-    assert!(observed.fabric.is_none());
 }
 
 #[test]
@@ -350,7 +328,7 @@ fn external_gateway_without_an_image_engine_stays_unverified_without_a_query() {
 }
 
 #[test]
-fn changing_gateway_management_rechecks_engine_but_retains_image_metadata() {
+fn switching_to_a_managed_gateway_requires_an_engine_observation() {
     let managed = document();
     let mut document = managed.clone();
     document.spec.gateway = serde_json::from_value(serde_json::json!({
@@ -360,24 +338,9 @@ fn changing_gateway_management_rechecks_engine_but_retains_image_metadata() {
     }))
     .unwrap();
     let external = document;
-    let mut facts = nemoclaw_authoring::AuthoringFacts {
-        hardware: Some(nemoclaw_authoring::HardwareEvidence {
-            engine: discovery_key_for_document(&managed).unwrap().engine,
-            observation: nemoclaw_sdk::hardware_discovery::HardwareObservation::unknown(),
-        }),
-        ..Default::default()
-    };
-    facts.retarget_document(&external, None).unwrap();
-    assert!(
-        facts.hardware.is_none(),
-        "image-store hardware is not gateway evidence"
-    );
-    let mut observed = evidence(&external);
+    let observed = evidence(&external);
     assert_eq!(
         observed.assessment_for_document(&managed).unwrap().pending,
         vec![DiscoveryQuery::Engine]
     );
-    observed.retarget(discovery_key_for_document(&managed).unwrap());
-    assert!(observed.engine.is_none());
-    assert!(observed.fabric.is_some());
 }

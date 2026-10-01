@@ -77,22 +77,6 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
 }
 
 impl DiscoveryEvidence {
-    /// Invalidate only facts whose query inputs changed. Changing harness merely
-    /// re-evaluates the existing image catalog against the new requirement.
-    pub fn retarget(&mut self, key: DiscoveryKey) {
-        if !key.managed_gateway
-            || self.key.managed_gateway != key.managed_gateway
-            || self.key.engine != key.engine
-            || self.key.compute_driver != key.compute_driver
-        {
-            self.engine = None;
-        }
-        if self.key.engine != key.engine || self.key.image != key.image {
-            self.fabric = None;
-        }
-        self.key = key;
-    }
-
     /// Evaluate target facts without rewriting desired state or the global menu.
     /// Pending contains only dependency-ready reads. A completed unknown result
     /// remains unknown until the caller explicitly refreshes it.

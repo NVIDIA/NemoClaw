@@ -37,41 +37,6 @@ pub struct AuthoringFacts {
     pub credentials: Vec<CredentialObservation>,
 }
 
-impl AuthoringFacts {
-    pub fn retarget_document(
-        &mut self,
-        document: &Document,
-        route: Option<&str>,
-    ) -> Result<(), Diagnostics> {
-        let request = inference_request_for_document(document, route)?;
-        if self
-            .endpoint
-            .as_ref()
-            .is_some_and(|evidence| evidence.request != request)
-        {
-            self.endpoint = None;
-        }
-        let key = crate::discovery_key_for_document(document)?;
-        if self
-            .hardware
-            .as_ref()
-            .is_some_and(|evidence| !key.managed_gateway || evidence.engine != key.engine)
-        {
-            self.hardware = None;
-        }
-        if self.gateway.as_ref().is_some_and(|evidence| {
-            evidence.gateway != document.spec.gateway
-                || evidence.compute_driver != key.compute_driver
-        }) {
-            self.gateway = None;
-        }
-        let references = document.credential_names();
-        self.credentials
-            .retain(|observation| references.contains(&observation.reference.as_str()));
-        Ok(())
-    }
-}
-
 /// Read the currently selected route's endpoint request from SDK-valid state.
 pub fn inference_request_for_document(
     document: &Document,
