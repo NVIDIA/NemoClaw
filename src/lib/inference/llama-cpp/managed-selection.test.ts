@@ -368,6 +368,26 @@ describe("managed llama.cpp selection", () => {
   });
 
   it.each([
+    ["automatic", {}],
+    ["explicit", { [NEMOCLAW_SERVING_PRESET_ENV]: STATION_GB300_WSL_PRESET_ID }],
+  ])(
+    "rejects %s Station GB300 WSL selection for a remote runtime context (#12476)",
+    (_case, env) => {
+      const { catalog, report } = fixture(STATION_GB300_WSL_PRESET_ID);
+      const dockerContextIsDefault = vi.fn(() => false);
+
+      expect(
+        resolveManagedLlamaCppSelection(env, catalog, report, { dockerContextIsDefault }),
+      ).toEqual({
+        kind: "rejected",
+        reason:
+          "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+      });
+      expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
     ["automatic N1x WSL", N1X_WSL_PRESET_ID, {}],
     ["explicit N1x WSL", N1X_WSL_PRESET_ID, { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID }],
     ["automatic generic GPU", GENERIC_PRESET_ID, {}],

@@ -194,7 +194,7 @@ Use this provider mapping for non-interactive setup:
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
 - Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; on native N1x, this value supplies explicit standard-onboarding intent, but the route remains unvalidated.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; on native N1x, this value supplies explicit Deferred preview intent. Qualifying N1x WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; on native N1x, this value supplies explicit Deferred preview intent. Qualifying N1x WSL and Station GB300 WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
 
