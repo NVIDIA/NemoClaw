@@ -203,3 +203,12 @@ It also supports publisher-managed Docker images pinned by digest and strengthen
   After you update NemoClaw, rebuild an existing sandbox to use the new runtime.
   Related change: [PR #12507](https://github.com/NVIDIA/NemoClaw/pull/12507).
   Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- On DGX Spark, managed Qwen vLLM selects a smaller recipe for detected unified memory from 60 GB to less than 64 GB.
+  The recipe supports a 32,768-token context window, one concurrent sequence, 4,096 batched tokens, and 0.5 GPU-memory utilization.
+  A detected capacity of at least 64 GB retains the 262,144-token recipe.
+  Related change: [PR #12502](https://github.com/NVIDIA/NemoClaw/pull/12502).
+  Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) for qualification and override details.
+- For a JSON OpenClaw agent response with `replayInvalid: true`, NemoClaw returns success only when completed-run, successful-tool-summary, and final-reply evidence corroborate completion.
+  Otherwise, it exits with status `1` and inspect-before-retry guidance because retrying can repeat side effects.
+  Related change: [PR #12502](https://github.com/NVIDIA/NemoClaw/pull/12502).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-agent).
