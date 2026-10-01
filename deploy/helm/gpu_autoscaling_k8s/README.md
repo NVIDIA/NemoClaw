@@ -9,13 +9,10 @@ This experimental recipe shows a cost-efficient architecture: AI agents run in C
 
 HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay responsive and idle GPUs are released.
 
-| Agent | `AGENT_NAME` | After create |
-|-------|--------------|--------------|
-| OpenClaw (default) | `openclaw` | `./scripts/run-agent-sandbox.sh` (keep attached) |
-| Hermes | `hermes` | `./scripts/run-agent-sandbox.sh` (keep attached) |
-| Deep Agents Code | `deepagents` | `./scripts/run-agent-prompt.sh "…"` |
-
-Set `AGENT_NAME` once and reuse it. Do not install two agents in one sandbox. Optional pairing checks: [recipe examples](#agent-and-runtime-support).
+| Agent | E2E (creates sandboxes) | Client |
+|-------|-------------------------|--------|
+| OpenClaw + Ollama | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` | `./scripts/client.sh` |
+| Hermes + vLLM | `./scripts/agentscaling_hermes_gpuutil.sh` or `./scripts/agentscaling_hermes_latency.sh` | `./scripts/client_hermes.sh` |
 
 
 Keep `versions.env` aligned: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. Bump all three together when upstream moves.
@@ -58,7 +55,7 @@ Then, on either cluster:
 - NVIDIA GPU Operator + DCGM Exporter. Helm GPU Operator: `export DCGM_NAMESPACE=gpu-operator` (set `driver.enabled=false` when the host already has the NVIDIA driver). MicroK8s addon: `install-hpa.sh` can run `microk8s enable gpu` and `microk8s enable metrics-server`; DCGM namespace is then `gpu-operator-resources`.
 - Allocatable `nvidia.com/gpu`; nodes labeled `nvidia.com/gpu.present=true`
 - Metrics Server (`kubectl get apiservice v1beta1.metrics.k8s.io` is True)
-- OpenShell path: Docker Buildx + a registry every node can pull; OpenShell CLI matching `versions.env`; Agent Sandbox CRDs; OIDC **or** the unauthenticated eval exception
+- OpenShell path: OpenShell CLI matching `versions.env`; Agent Sandbox CRDs; OIDC **or** the unauthenticated eval exception. E2e sandboxes pull the published GHCR image.
 
 ```bash
 # Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
@@ -69,12 +66,12 @@ kubectl get nodes -l nvidia.com/gpu.present=true
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
-Chart baseline: [NemoClaw GPU autoscaling chart](https://github.com/NVIDIA/NemoClaw/tree/main/deploy/helm/gpu_autoscaling_k8s). Host CLI/Docker: NemoClaw [Prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/docs/get-started/prerequisites.mdx).
+Chart baseline: [NemoClaw GPU autoscaling chart](https://github.com/NVIDIA/NemoClaw/tree/main/deploy/helm/gpu_autoscaling_k8s). Host CLI: NemoClaw [Prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/docs/get-started/prerequisites.mdx).
 
 
 ## Quick start
 
-From `deploy/helm/gpu_autoscaling_k8s/`. Install **k3s or MicroK8s** first ([Prerequisites](#prerequisites)). This uses OpenShell's Kubernetes driver, not `nemoclaw onboard` / `nemohermes launch` / `nemo-deepagents launch`. After create, OpenShell 0.0.85 leaves the sandbox idle (`sleep infinity`). OpenClaw/Hermes listen only while `./scripts/run-agent-sandbox.sh` stays attached. Deep Agents Code has no gateway — use `verify-agent-sandbox.sh` / `run-agent-prompt.sh`. Per-agent loops: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#recipe-quick-start).
+From `deploy/helm/gpu_autoscaling_k8s/`. Install **k3s or MicroK8s** first ([Prerequisites](#prerequisites)). This uses OpenShell's Kubernetes driver, not `nemoclaw onboard`. The e2e `agentscaling_*` scripts create one OpenShell sandbox per end user and install or update the GPU chart. Do not run `create-agent-sandbox.sh` or `run-agent-sandbox.sh` first.
 
 ### 1. Clone and tools
 
@@ -97,96 +94,21 @@ kubectl get nodes \
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
-### 3. Install GPU inference + HPA
+### 3. Keep the OpenShell CLI tunnel attached
 
-- **Envoy (default):** [TLS values](#tls-values). Copy `local.env.example` → `local.env` (gitignored) and point `HPA_VALUES` at the TLS overlay. Scripts source `local.env` from the recipe directory.
-- **Service only:** `ENABLE_ENVOY_LB=0`. No Gateway or TLS Secret. `ALLOW_INSECURE_HTTP=1` is not a substitute for this.
-
-```bash
-cp local.env.example local.env
-cp values.yaml ./hpa-tls-values.yaml
-# Edit hpa-tls-values.yaml (ingress.host + ingress.tls) and local.env (INGRESS_HOST)
-
-# Optional: export NEMOCLAW_TARGET_NODE=<gpu-node-name>
-# Optional: export INFERENCE_MODEL=<ollama-tag>   # default llama3.2:3b
-# Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
-export MAX_REPLICAS=8   # 8× H100; use 4 on 4× L40S
-./scripts/install-hpa.sh
-# Or: ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
-```
-
-Default runtime is **Ollama** (public image, no NGC key). For **NIM**, create Secrets first:
+The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to cluster `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails with connection refused. Recipe default is host **8080**. If host 8080 is in use, forward `18080:8080` and register that URL. Full list: [Ports](#ports). Gateway registration: [OpenShell details](#openshell-details).
 
 ```bash
-NAMESPACE=nemoclaw-gpu ./scripts/create-nim-ngc-secrets.sh
-export INFERENCE_RUNTIME=nim INFERENCE_MODEL=nvidia/nemotron-3-nano
-export NIM_NGC_API_KEY_SECRET=nim-ngc-key NIM_IMAGE_PULL_SECRET=ngc-registry
-./scripts/install-hpa.sh
+./scripts/openshell-port-forward.sh
+# If host 8080 is busy:
+#   OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh
 ```
 
-That helper creates both the in-container `NGC_API_KEY` Secret and the `nvcr.io` imagePullSecret. Do not commit the NGC key.
+`openshell status` must succeed before the e2e.
 
-Wait for the first model pull (`ROLLOUT_TIMEOUT` if needed). Metrics-proxy listens on **8081**.
+### 4. E2E test with multiple end users and sandboxes
 
-```bash
-kubectl get pods,service,hpa -n nemoclaw-gpu
-./scripts/get-hpa.sh -n nemoclaw-gpu
-```
-
-### 4. Agent Sandbox, image, OpenShell
-
-Pick `AGENT_NAME` (`openclaw`, `hermes`, or `deepagents`) once. Comparison: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#comparison).
-
-```bash
-source versions.env
-kubectl apply -f \
-  "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
-
-export AGENT_NAME=openclaw
-# Any registry every node can pull. MicroK8s local registry example: [Image registry](#image-registry)
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
-./scripts/build-agent-sandbox-image.sh
-
-export OPENSHELL_OIDC_ISSUER=https://idp.example.com/realms/openshell
-export OPENSHELL_OIDC_AUDIENCE=openshell-cli
-./scripts/install-openshell-k8s.sh
-```
-
-Dedicated eval without OIDC: `ALLOW_UNAUTHENTICATED_OPENSHELL=1` plus `OPENSHELL_UNAUTHENTICATED_ACK=dedicated-cluster-port-forward-only`. GPU HPA scripts do not require a sandbox.
-
-### 5. Connect CLI and create sandbox
-
-The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to **cluster** `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails with connection refused. The local port must match `openshell gateway add` and `openshell status` (Server URL). Recipe default is host **8080**. If host 8080 is already in use, forward a free port (for example `18080:8080`) and register that URL instead. Full list: [Ports](#ports).
-
-Terminal 1 — keep running:
-
-```bash
-# host 8080 → cluster OpenShell Service 8080
-kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080
-# If host 8080 is busy:  kubectl -n nemoclaw-sandboxes port-forward service/openshell 18080:8080
-```
-
-Terminal 2 — client TLS + gateway ([OpenShell details](#openshell-details)), then:
-
-```bash
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
-export INFERENCE_MODEL=llama3.2:3b   # must match the GPU chart
-./scripts/create-agent-sandbox.sh
-# OpenClaw / Hermes only — keep attached. Skip for deepagents.
-./scripts/run-agent-sandbox.sh
-```
-
-Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nemo-deepagents launch`. Verify from another terminal (Deep Agents: skip `run-agent-sandbox.sh`):
-
-```bash
-./scripts/verify-agent-sandbox.sh
-# deepagents only: ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
-```
-
-
-### 6. E2E test with multiple end users and sandboxes
-
-This is the multi-user architecture test for **OpenClaw + Ollama**. Queries from end users go **into the sandboxes**, one sandbox per end user. 
+This is the multi-user architecture test for **OpenClaw + Ollama**. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. 
 
 ```text
 E2E test: OpenClaw + Ollama
@@ -241,7 +163,7 @@ E2E_USERS=5 ./scripts/agentscaling_latency.sh
 E2E_USERS=5 ./scripts/client.sh
 ```
 
-OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-connect-cli-and-create-sandbox) port-forward attached. `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
+OpenShell must already be connected (`openshell status`). Keep the [step 3](#3-keep-the-openshell-cli-tunnel-attached) port-forward attached. `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
 Validated 4× L40S — GPU util > 40%:
 
@@ -535,28 +457,10 @@ unset INFERENCE_API_KEY
 
 ## OpenShell details
 
-### Image registry
-
-On k3s, push the sandbox image to any registry every node can pull. Do not use the MicroK8s NodePort below unless that registry exists.
-
-### MicroK8s local registry
-
-NodePort **32000**, plain HTTP `localhost:32000/...`. Docker needs `insecure-registries` for that host, then restart Docker.
-
-```bash
-microk8s enable registry
-source versions.env
-export AGENT_NAME=openclaw   # or hermes | deepagents
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
-./scripts/build-agent-sandbox-image.sh
-```
-
-Any registry works if every node can pull the tag.
-
 ### Gateway and sandbox
 
 - Apply Agent Sandbox CRDs yourself (`install-openshell-k8s.sh` does not).
-- Image: versioned tag, no API key in the image.
+- Sandbox image is the published GHCR digest (`ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:…` for OpenClaw e2e; Hermes e2e uses `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:…`). No API key is in the image.
 - OIDC is default. Unauthenticated mode is dedicated-cluster + port-forward only. ClusterIP does not isolate from other pods.
 
 ```bash
@@ -610,13 +514,20 @@ This DGX OpenClaw + Ollama run used **5** end users (one sandbox each). Size `E2
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
 
-### Hermes + vLLM N-user end-to-end 
+### Hermes + vLLM N-user end-to-end
 
-Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Use the same `E2E_USERS` example (10). Cleanup only destroys `hermes-e2e-*` (not `hermes-onprem`, not `openclaw-ollama-e2e-*`). Do not run this while OpenClaw e2e owns the GPUs.
+Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Default `E2E_USERS=3`. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*`. `client_hermes.sh` only sends chats. Cleanup only destroys `hermes-e2e-*`. Do not run this while OpenClaw e2e owns the GPUs.
 
 ```bash
-# After OpenClaw + Ollama e2e is done:
-# ./scripts/test-hermes-e2e-hpa.sh
+# Terminal A — sandbox provision + GPU-util HPA
+E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh
+
+# Terminal C — same client for either HPA metric
+E2E_USERS=3 ./scripts/client_hermes.sh
+
+# Latency (same sandboxes, switch HPA metric)
+E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh
+E2E_USERS=3 ./scripts/client_hermes.sh
 ```
 
 Each run waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`) so a new test does not inherit a prior scale-down window — it will not force a scale-down under real traffic. While running, the HPA uses one-pod 40% steps, then restores `HPA_VALUES`. Load stops after a short hold at max so replicas return to 1.
@@ -743,7 +654,6 @@ Numbers below are TCP listen ports unless noted. **3000** in an HPA TARGET line 
 | **443** / **80** | Cluster Envoy Gateway | HTTPS / HTTP into GPU inference when Envoy is on. Sandboxes use `https://inference.local`. ClusterIP only; not a host port-forward for e2e users. |
 | **11434** | Loopback inside each Ollama GPU pod | Ollama. Metrics-proxy on that pod calls it. Not a host port. |
 | **8000** | Loopback inside each vLLM or NIM GPU pod | vLLM / NIM OpenAI-compatible server. Not a host port. |
-| **32000** | Host NodePort (MicroK8s local registry only) | Push/pull sandbox images (`localhost:32000/...`). k3s does not use this unless you installed that registry. |
 | **3000** | Host, optional `port-forward … 3000:80` | Grafana UI (`http://127.0.0.1:3000`). Service port 80 in `monitoring`. |
 
 `kubectl port-forward` syntax is **`LOCAL:REMOTE`**: local host port, then the Service port in the cluster.

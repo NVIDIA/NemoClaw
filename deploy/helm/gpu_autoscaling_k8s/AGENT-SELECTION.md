@@ -58,9 +58,7 @@ Keep that port-forward attached. Use a second terminal in
 `deploy/helm/gpu_autoscaling_k8s`. Source `versions.env` there. The GPU Helm
 chart is agent-neutral; only the sandbox image and `AGENT_NAME` change.
 
-Do not mix `AGENT_NAME` values in one sandbox. To try another agent, build its
-image and create a **separate** sandbox name. A pass is the `OK: sandbox …`
-line in [Example verify output](#example-verify-output).
+The loops below are optional pairing (one sandbox, no HPA). The DGX e2e path does **not** use them: `agentscaling_gpuutil.sh` / `agentscaling_latency.sh` (OpenClaw) and `agentscaling_hermes_gpuutil.sh` / `agentscaling_hermes_latency.sh` (Hermes) create the sandboxes. See [README Quick start](README.md#quick-start).
 
 The loops below are the recipe path. Optional developer pairing tests (one GPU
 replica, no Kubernetes autoscaling, no load test; not required for HPA) live in
@@ -77,9 +75,8 @@ harness (`openclaw tui` / `openclaw agent --agent main -m`) on this Kubernetes p
 ```bash
 source versions.env
 export AGENT_NAME=openclaw
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
+export AGENT_SANDBOX_IMAGE=ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba
 export INFERENCE_MODEL=llama3.2:3b   # must match the GPU chart model
-./scripts/build-agent-sandbox-image.sh
 ./scripts/create-agent-sandbox.sh
 ```
 
@@ -114,10 +111,9 @@ OpenClaw's `:18789/health`). This recipe does not port-forward the Hermes dashbo
 ```bash
 source versions.env
 export AGENT_NAME=hermes
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
+export AGENT_SANDBOX_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54
 export INFERENCE_RUNTIME=nim
 export INFERENCE_MODEL=nvidia/nemotron-3-nano
-./scripts/build-agent-sandbox-image.sh
 ./scripts/create-agent-sandbox.sh
 ```
 
@@ -183,9 +179,8 @@ source versions.env
 export AGENT_NAME=deepagents
 export INFERENCE_RUNTIME=vllm
 export INFERENCE_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
+export AGENT_SANDBOX_IMAGE=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:f7ad7ddc95cea260cff02d26b873903805806ccfef5d27436cbec4eba3455eff
 ./scripts/install-hpa.sh   # skip if the release is already on this runtime and model
-./scripts/build-agent-sandbox-image.sh
 ./scripts/create-agent-sandbox.sh
 ./scripts/verify-agent-sandbox.sh   # real headless prompt through dcode -n
 ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
@@ -206,7 +201,7 @@ Multi-user HPA e2e for Deep Agents is the same N-user / N-sandbox example as Ope
 | Env var | Default | Purpose |
 |---------|---------|---------|
 | `AGENT_NAME` | — (required) | `openclaw`, `hermes`, or `deepagents` — selects everything else in this table |
-| `AGENT_SANDBOX_IMAGE` | — (required) | Pushed image reference for the selected agent |
+| `AGENT_SANDBOX_IMAGE` | — (required) | Published GHCR sandbox image for the selected agent |
 | `AGENT_SANDBOX_NAME` | See [Comparison](#comparison) | OpenShell sandbox name |
 | `OPENSHELL_PROVIDER_NAME` | See [Comparison](#comparison) | OpenShell inference provider name |
 | `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | Pairing `2` / `4Gi`; OpenClaw e2e `1` / `8Gi`; Hermes e2e `1` / `1Gi` | Sandbox pod requests. E2e sandboxes are light CPU front ends (inference is on GPUs). OpenClaw e2e uses 8Gi because 1Gi, 2Gi, and 4Gi OOM-kill OpenClaw at agent start. Size `E2E_USERS × AGENT_SANDBOX_MEMORY` to the CPU node that runs the sandboxes. |

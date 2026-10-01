@@ -32,7 +32,7 @@ what each script in this directory does — it has no instructions of its own.
 | `cluster-recover.sh` | Destructive release recovery for the selected release only — see script comments before use |
 | `get-metrics-proxy-pods.sh` / `get-hpa.sh` / `hpa-watch.sh` | Inspect / watch |
 | `install-openshell-k8s.sh` | OpenShell gateway |
-| `build-agent-sandbox-image.sh` / `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Agent sandbox lifecycle — pick the agent (`openclaw`, `hermes`, or `deepagents`, mirroring [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/main/agents)) via a single `AGENT_NAME` flag; see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md) |
+| `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Called by the e2e setup scripts. Do not run them as the HPA demo path. |
 | `agent-common.sh` | Per-agent config table sourced by the scripts above |
 | `test-openclaw-ollama.sh` | Optional developer test: OpenClaw + Ollama, one replica, no HPA, no load test. Not required for autoscaling. |
 | `test-hermes-nim.sh` | Optional developer test: Hermes + NIM, one replica, no HPA, no load test (needs NGC Secrets). Not required for autoscaling. |
