@@ -235,6 +235,12 @@ try:
         print("unavailable")
         raise SystemExit(0)
 
+    # Linux appends this suffix when an upgrade unlinks the running executable.
+    # Its identity is uncertain, not evidence that the tunnel has stopped.
+    if executable.endswith(" (deleted)"):
+        print("unavailable")
+        raise SystemExit(0)
+
     if os.path.basename(executable) != "cloudflared":
         print("not-cloudflared")
         raise SystemExit(0)

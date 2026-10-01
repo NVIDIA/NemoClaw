@@ -942,6 +942,40 @@ describe("stopAll", () => {
     },
   );
 
+  it.skipIf(process.platform !== "linux")(
+    "preserves a live cloudflared PID after its executable is removed by an upgrade",
+    async () => {
+      const executable = join(pidDir, "cloudflared");
+      copyFileSync("/bin/sleep", executable);
+      chmodSync(executable, 0o700);
+      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      await new Promise<void>((resolveSpawn, reject) => {
+        subprocess.once("spawn", resolveSpawn);
+        subprocess.once("error", reject);
+      });
+      const pid =
+        subprocess.pid ??
+        (() => {
+          throw new Error("cloudflared test process has no PID");
+        })();
+      const pidFile = join(pidDir, "cloudflared.pid");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        writeFileSync(pidFile, String(pid), { mode: 0o600 });
+        rmSync(executable);
+        expect(() => stopAll({ pidDir, unloadOllamaModels: () => undefined })).toThrow(
+          "Cloudflared cleanup is incomplete",
+        );
+        expect(readFileSync(pidFile, "utf-8")).toBe(String(pid));
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      } finally {
+        logSpy.mockRestore();
+        subprocess.kill("SIGKILL");
+        await new Promise<void>((resolveExit) => subprocess.once("exit", () => resolveExit()));
+      }
+    },
+  );
+
   it.skipIf(process.platform !== "darwin")(
     "signals a verified cloudflared process through a macOS audit token",
     () => {
