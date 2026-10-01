@@ -190,8 +190,9 @@ Validated 8×H100 — GPU util > 40%:
 <img width="818" height="561" alt="Screenshot 2026-09-30 at 2 28 52 PM" src="https://github.com/user-attachments/assets/f2152e25-bde8-4156-9391-db3bee85aa1b" />
 
 
-Validated 4× L40S — latency > 3000 ms:
-<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/465c0164-160d-4927-9719-5a34d5721700" />
+Validated 8xH100 — latency > 3000 ms:
+<img width="841" height="251" alt="Screenshot 2026-09-30 at 5 02 10 PM" src="https://github.com/user-attachments/assets/6235b4f9-9156-43d6-8196-c3e75ee1d7c9" />
+
 
 
 Check the log to see the end users, sandboxes, and chats: 
