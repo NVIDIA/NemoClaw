@@ -1,4 +1,4 @@
-<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/9e1024c0-3442-4cc1-8fac-9202c5c581ce" />
+
 <!--
   SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
