@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import {
   assertAgentExecutionSucceeded,
   cleanupGpu,
@@ -627,7 +628,10 @@ describe("GPU E2E helpers", () => {
 
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
-    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const cleanupOrder: string[] = [];
+    const cleanupGatewayRegistration = vi.fn(async () => {
+      cleanupOrder.push("remove gateway registration");
+    });
     const host = {
       command: async (command: string) =>
         command === "bash"
@@ -640,8 +644,15 @@ describe("GPU E2E helpers", () => {
       cleanupSandbox: async () => success,
       openshell,
     } as unknown as SandboxClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        cleanupOrder.push("stop gateway runtime");
+        return null;
+      }),
+    } as unknown as LifecyclePhaseFixture;
 
-    await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
+    await expect(cleanupGpu(host, lifecycle, sandbox)).rejects.toThrow(/still listens/u);
+    expect(cleanupOrder).toEqual(["stop gateway runtime", "remove gateway registration"]);
     expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
       "nemoclaw",
       expect.objectContaining({ artifactName: "cleanup-gateway-destroy-gpu" }),

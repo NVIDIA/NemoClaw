@@ -87,7 +87,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -124,7 +124,7 @@ test(
       env: cleanupEnv,
       timeoutMs: 120_000,
     });
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info",
@@ -346,7 +346,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -377,7 +377,7 @@ test(
       timeoutMs: 120_000,
     });
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info-hermes-response",
@@ -430,7 +430,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -459,7 +459,7 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     });
     cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
       scenarioLabel: "attached Ollama export",
@@ -574,7 +574,7 @@ test.for(["initial", "after retirement"])(
       ],
     },
   },
-  async (cycle, { artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async (cycle, { artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     const exportEnv = vllmExportEnv();
     const statusEnv = { ...exportEnv, NEMOCLAW_VLLM_PORT: "" };
     await artifacts.target.declare({
@@ -606,7 +606,7 @@ test.for(["initial", "after retirement"])(
       `${String(preflight.exitCode)}\n${resultText(preflight)}`,
       `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
     ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox);
 
     cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
       try {

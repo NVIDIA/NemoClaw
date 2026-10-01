@@ -10,6 +10,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { pollUntil } from "../fixtures/polling.ts";
@@ -212,7 +213,11 @@ export function assertAgentExecutionSucceeded(
   );
 }
 
-export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+export async function cleanupGpu(
+  host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
+  sandbox: SandboxClient,
+): Promise<void> {
   await preCleanBestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-gpu",
@@ -227,6 +232,7 @@ export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): P
       timeoutMs: 60_000,
     }),
   );
+  await lifecycle.stopGatewayRuntime();
   await preCleanBestEffort("remove OpenShell gateway registration", () =>
     host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-gpu",
