@@ -12,7 +12,7 @@ agent-variants: ["openclaw"]
 ---
 
 NemoClaw configures safeguard compaction for OpenClaw sandboxes that use its managed `inference.local` route, except for Local Ollama routes.
-The safeguard bounds each compaction attempt while leaving summarization behavior under OpenClaw's control.
+The safeguard configures a timeout for each built-in summarization request while leaving summarization behavior under OpenClaw's control.
 
 ## Compaction Attempt Limit
 
