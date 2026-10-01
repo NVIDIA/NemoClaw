@@ -1,3 +1,4 @@
+<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/9e1024c0-3442-4cc1-8fac-9202c5c581ce" />
 <!--
   SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
@@ -185,10 +186,16 @@ MAX_TOKENS=608 \
 
 OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-connect-the-openshell-cli) tunnel attached. This e2e uses Envoy with `ALLOW_INSECURE_HTTP=1` (same isolated eval as step 4). Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
-Validated 4× L40S — GPU util > 40%:
+Validated 8×H100 — GPU util > 40%:
+<img width="818" height="561" alt="Screenshot 2026-09-30 at 2 28 52 PM" src="https://github.com/user-attachments/assets/f2152e25-bde8-4156-9391-db3bee85aa1b" />
 
 
 Validated 4× L40S — latency > 3000 ms:
+<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/465c0164-160d-4927-9719-5a34d5721700" />
+
+
+Check the log to see the end users, sandboxes, and chats: 
+<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/41f33bf1-9fbc-4d6e-986e-63310a69f375" />
 
 
 ## Agents
