@@ -11,6 +11,9 @@ type WebhookProxy = Pick<typeof import("./proxy"), "stopGooglechatWebhookProxy">
 
 export { googlechatWebhookTunnelPidDir } from "./pid-dir";
 
+export const GOOGLECHAT_TUNNEL_CLEANUP_ERROR =
+  "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped. Keep the PID record until the process exits, then retry.";
+
 export type GooglechatWebhookLifecycleDeps = {
   readonly services: TunnelServices;
   readonly webhookProxy: WebhookProxy;
@@ -23,9 +26,7 @@ export function stopGooglechatWebhookTunnel(
   const { services, webhookProxy } = deps;
   const pidDir = googlechatWebhookTunnelPidDir(services.resolveServicePidDir({ sandboxName }));
   if (!services.stopCloudflared({ pidDir })) {
-    throw new Error(
-      "Google Chat tunnel cleanup is incomplete because cloudflared process identity is unavailable.",
-    );
+    throw new Error(GOOGLECHAT_TUNNEL_CLEANUP_ERROR);
   }
   webhookProxy.stopGooglechatWebhookProxy(pidDir);
   return pidDir;

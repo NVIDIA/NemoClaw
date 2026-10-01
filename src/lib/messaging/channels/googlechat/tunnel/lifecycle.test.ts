@@ -75,7 +75,9 @@ describe("Google Chat webhook tunnel lifecycle", () => {
         },
         webhookProxy: { stopGooglechatWebhookProxy },
       }),
-    ).toThrow("Google Chat tunnel cleanup is incomplete");
+    ).toThrow(
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
+    );
     expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
   });
 });

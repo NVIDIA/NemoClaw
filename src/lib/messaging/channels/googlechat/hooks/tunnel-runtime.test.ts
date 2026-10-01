@@ -127,7 +127,9 @@ describe("Google Chat tunnel runtime", () => {
       sandboxName: "test",
     });
 
-    expect(() => options.stopTunnel?.()).toThrow("Google Chat tunnel cleanup is incomplete");
+    expect(() => options.stopTunnel?.()).toThrow(
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
+    );
     expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
   });
 
@@ -155,7 +157,7 @@ describe("Google Chat tunnel runtime", () => {
     });
 
     await expect(options.startTunnel?.()).rejects.toThrow(
-      "Google Chat tunnel cleanup is incomplete",
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
     );
     expect(startGooglechatWebhookProxy).not.toHaveBeenCalled();
     expect(startAll).not.toHaveBeenCalled();
