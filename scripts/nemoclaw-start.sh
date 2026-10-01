@@ -1492,7 +1492,7 @@ ensure_gateway_token() {
 
   local _write_rc=0
   run_openclaw_config_as_owner /usr/local/bin/node - \
-    "$config_file" <<'NODETOKEN' || _write_rc=$?
+    "$config_file" "$_DASHBOARD_PORT" <<'NODETOKEN' || _write_rc=$?
 const crypto = require("crypto");
 const fs = require("fs");
 const pathModule = require("path");
@@ -1543,8 +1543,16 @@ function makeTempPath(dirPath) {
 }
 
 try {
+  const gatewayPort = Number(process.argv[3]);
+  if (!Number.isInteger(gatewayPort) || gatewayPort < 1024 || gatewayPort > 65535) {
+    throw new Error("selected gateway port is invalid");
+  }
   const cfg = parseConfig(fs.readFileSync(path, "utf8"));
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
+  // Pairing commands intentionally drop environment overrides. Their native
+  // config must resolve the same port passed to gateway run, including when an
+  // external image carries a different baked default.
+  gateway.port = gatewayPort;
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
   // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
