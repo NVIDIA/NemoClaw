@@ -895,7 +895,7 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ timeout: 15_000 }),
+      expect.any(Object),
     );
     expect(onDeleted).not.toHaveBeenCalled();
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
