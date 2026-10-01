@@ -255,6 +255,15 @@ The command reads the registry and current OpenShell state without changing the 
 It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent.
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+<AgentOnly variant="openclaw">
+
+Gemini exports preserve the V0 provider, API, endpoint, model, and `GEMINI_API_KEY` reference for later V1 implementation.
+V1 cannot yet parse or deploy these Gemini documents.
+The command reports that the V0 export is complete and V1 Gemini support is pending.
+The notice goes to standard error when YAML goes to standard output; JSON file results include `v1Support: "pending"`.
+
+</AgentOnly>
+
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
