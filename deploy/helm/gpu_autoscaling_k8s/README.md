@@ -133,10 +133,9 @@ openshell status
 
 Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Do not run `client.sh`, `client_hermes.sh`, and `client_deepagents.sh` at the same time. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). Optional sandbox teardown is in [Uninstall](#optional-e2e-sandboxes--only-if-you-want-to-save-cpu-ram).
 
-Validated on on-prem DGX **8× H100** (80 GB):
-<p align="center">
-<img width="649" height="746" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/44fc4689-91be-4af9-b25a-a4a70d63d6d4" />
-</p>
+Validation is on DGX **8× H100** (80 GB) on-prem:
+<img width="643" height="584" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/2c940d43-c304-4e0a-ac32-55f13da5f722" />
+
 
 The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX's CPUs. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
