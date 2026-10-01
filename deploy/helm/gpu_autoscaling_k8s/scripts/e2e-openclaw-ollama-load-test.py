@@ -43,6 +43,16 @@ FALLBACK_RE = re.compile(
     r"EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[\": ]+gateway|transport[\": ]+embedded",
     re.IGNORECASE,
 )
+LOAD_COUNTS_RE = re.compile(r"\[load\].*\bok=(\d+)\s+err=(\d+)\b")
+LISTENER_HEALTH_SCRIPT = r"""
+for ns in /run/netns/*; do
+  [ -e "$ns" ] || continue
+  code="$(nsenter --net="$ns" curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true)"
+  case "$code" in 200|401) echo "$code"; exit 0 ;; esac
+done
+echo down
+exit 1
+"""
 
 # Same synthetic questions as files/load-generator.ts (not short one-word chats).
 PROMPTS = [
@@ -105,6 +115,114 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
         f"[hpa] {hpa_motion(current, desired)} "
         f"{namespace}/{name} current={current} desired={desired}"
     )
+
+
+def parse_load_counts(log_path: Path) -> tuple[int, int]:
+    """Last [load] ok/err in the sandbox log is the chat count, not process exit."""
+    ok = err = 0
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0, 0
+    for match in LOAD_COUNTS_RE.finditer(text):
+        ok, err = int(match.group(1)), int(match.group(2))
+    return ok, err
+
+
+def listener_http_code(sandbox: str) -> str:
+    kubectl = shutil.which("kubectl")
+    if not kubectl:
+        return "down"
+    try:
+        raw = subprocess.check_output(
+            [
+                kubectl,
+                "exec",
+                "-n",
+                SANDBOX_NS,
+                sandbox,
+                "-c",
+                "agent",
+                "--",
+                "bash",
+                "-c",
+                LISTENER_HEALTH_SCRIPT,
+            ],
+            text=True,
+            timeout=15,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return "down"
+    code = raw.strip().splitlines()[-1] if raw.strip() else "down"
+    return code if code in {"200", "401"} else "down"
+
+
+def results_from_logs(output_dir: Path, prefix: str) -> list[dict[str, object]]:
+    logs_dir = output_dir / "sandbox-logs"
+    results: list[dict[str, object]] = []
+    user_id = 0
+    while True:
+        path = logs_dir / f"{sandbox_name(prefix, user_id)}.log"
+        if not path.is_file():
+            break
+        chats_ok, chats_err = parse_load_counts(path)
+        results.append(
+            {
+                "user_id": user_id,
+                "sandbox": sandbox_name(prefix, user_id),
+                "chats_ok": chats_ok,
+                "chats_err": chats_err,
+                "log": str(path),
+            }
+        )
+        user_id += 1
+    return results
+
+
+def print_chat_table(
+    results: list[dict[str, object]],
+    duration_sec: int,
+    inflight_start: int,
+    inflight_per_user: int,
+    check_listeners: bool = True,
+) -> None:
+    rows: list[tuple[int, int, int, str]] = []
+    for item in results:
+        user_id = int(item.get("user_id") or 0)
+        log = item.get("log")
+        chats_ok = int(item.get("chats_ok") or 0)
+        chats_err = int(item.get("chats_err") or 0)
+        if log and (chats_ok == 0 and chats_err == 0):
+            chats_ok, chats_err = parse_load_counts(Path(str(log)))
+        sandbox = str(item.get("sandbox") or sandbox_name("openclaw-ollama-e2e-", user_id))
+        code = listener_http_code(sandbox) if check_listeners else "skip"
+        rows.append((user_id, chats_ok, chats_err, code))
+    all_err_zero = all(err == 0 for _, _, err, _ in rows)
+    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-sandbox chat counts"
+    print(
+        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}:"
+    )
+    print("")
+    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6}")
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6}")
+    for user_id, chats_ok, chats_err, _code in rows:
+        print(f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} {chats_ok:>16} {chats_err:>6}")
+    path_line = (
+        "Path in use: user → OpenShell sandbox :18789 → inference.local → "
+        "Envoy load balancer → Ollama."
+    )
+    healthy = [code for _u, _ok, _err, code in rows]
+    print("")
+    if not check_listeners or all(code == "skip" for code in healthy):
+        print(path_line)
+    elif all(code == "200" for code in healthy):
+        print(f"All {len(rows)} listeners are still 200. {path_line}")
+    elif all(code in {"200", "401"} for code in healthy):
+        print(f"All {len(rows)} listeners still answer /health. {path_line}")
+    else:
+        down = [f"sandbox {user_id}" for user_id, _ok, _err, code in rows if code not in {"200", "401"}]
+        print(f"Listeners not 200 after load: {', '.join(down) if down else 'unknown'}")
 
 
 async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
@@ -206,6 +324,7 @@ async def simulate_user(
         await pump_task
         log_handle.close()
     rc = proc.returncode if proc.returncode is not None else 1
+    chats_ok, chats_err = parse_load_counts(log_path)
     if rc == 0:
         ok = 1
     else:
@@ -215,6 +334,8 @@ async def simulate_user(
         "sandbox": sandbox,
         "ok": ok,
         "err": err,
+        "chats_ok": chats_ok,
+        "chats_err": chats_err,
         "turns": inflight,
         "duration": time.monotonic() - started,
         "log": str(log_path),
@@ -342,6 +463,8 @@ async def run_test(args: argparse.Namespace) -> int:
 
     successful = sum(int(r.get("ok") or 0) for r in results)
     failed = sum(int(r.get("err") or 0) for r in results)
+    chats_ok = sum(int(r.get("chats_ok") or 0) for r in results)
+    chats_err = sum(int(r.get("chats_err") or 0) for r in results)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "path": "user -> OpenShell sandbox -> inference.local -> Envoy -> Ollama HPA",
@@ -352,17 +475,20 @@ async def run_test(args: argparse.Namespace) -> int:
         "scale_down_ok": scale_down_ok,
         "successful_queries": successful,
         "failed_queries": failed,
+        "successful_chats": chats_ok,
+        "failed_chats": chats_err,
         "results": results,
     }
     summary_path = output_dir / f"summary_{args.users}users.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(f"Wrote {csv_path}")
     print(f"Wrote {summary_path}")
+    print_chat_table(results, args.duration, args.inflight_start, args.inflight_per_user)
     print(
         f"HPA max={max_replicas} target={args.target_pods} "
         f"scale_up={'ok' if summary['reached_target'] else 'FAIL'} "
         f"scale_down={'ok' if scale_down_ok else 'FAIL'} "
-        f"user→sandbox queries ok={successful} err={failed}"
+        f"user→sandbox chats ok={chats_ok} err={chats_err}"
     )
     if successful < 1:
         print("No successful user→sandbox OpenClaw queries.", file=sys.stderr)
@@ -407,12 +533,31 @@ def main() -> int:
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "10")))
     parser.add_argument("--scale-down-wait-loops", type=int, default=int(os.environ.get("SCALE_DOWN_WAIT_LOOPS", "40")))
+    parser.add_argument(
+        "--from-logs",
+        action="store_true",
+        help="Print the chat table from --output sandbox-logs and exit. Does not send chat.",
+    )
     args = parser.parse_args()
     if args.users < 1 or args.inflight_per_user < 1 or args.inflight_start < 1:
         print("--users, --inflight-per-user, and --inflight-start must be >= 1", file=sys.stderr)
         return 2
     if args.inflight_start > args.inflight_per_user:
         args.inflight_start = args.inflight_per_user
+    if args.from_logs:
+        output_dir = Path(args.output)
+        results = results_from_logs(output_dir, args.prefix)
+        if not results:
+            print(f"No sandbox-logs under {output_dir / 'sandbox-logs'}", file=sys.stderr)
+            return 2
+        print_chat_table(
+            results,
+            args.duration,
+            args.inflight_start,
+            args.inflight_per_user,
+            check_listeners=False,
+        )
+        return 0
     return asyncio.run(run_test(args))
 
 

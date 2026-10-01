@@ -17,78 +17,52 @@ HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay re
 
 Set `AGENT_NAME` once and reuse it. Do not install two agents in one sandbox. Optional pairing checks: [recipe examples](#agent-and-runtime-support).
 
-GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
-
-HPA uses Pods **`AverageValue`**. Built-in metrics: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
-
-**The Envoy load balancer is optional.** Default is LeastRequest in front of GPU replicas. Skip it when the metrics-proxy ClusterIP Service is enough:
-
-| Choice | Install |
-|--------|---------|
-| Envoy LeastRequest (default) | TLS Secret + `ingress.tls` — [TLS values](#tls-values) — then `./scripts/install-hpa.sh` |
-| Metrics-proxy Service only | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
 
 Keep `versions.env` aligned: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. Bump all three together when upstream moves.
 
-## Deployment Architecture
-
-HPA scales to **N** inference pods (1 GPU each). Envoy LeastRequest when enabled; otherwise the metrics-proxy Service. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Validation](#validation).
-
-Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). The sandboxed agent is CPU-only OpenShell, not this pod.
-
-```text
-End users (1 pairing sandbox, or M e2e sandboxes — one per user)
-        ↓
-CPU-only OpenShell sandboxes (AGENT_NAME=openclaw | hermes | deepagents)
-        ↓
-OpenShell https://inference.local
-        ↓
-Envoy load balancer — LeastRequest  (or metrics-proxy Service when ENABLE_ENVOY_LB=0)
-        ↓
-Authenticated inference endpoints
-├─ Inference pod (ollama|vllm|nim) → GPU 1
-├─ …
-└─ Inference pod (ollama|vllm|nim) → GPU N
-        ↑
-HPA (GPU util >40% or latency >3000 ms)
-```
-
- provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. 
-
-The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
-
-`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. After 60s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
-
-## Validation
-
-| Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test |
-|----------|-----------------|----------------------|----------------------------------|
-| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
-
-
-Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
-
-<img width="649" height="746" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/44fc4689-91be-4af9-b25a-a4a70d63d6d4" />
-
-
-
-The DGX H100 demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX box's CPUs. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
-
-The HPA test was also verified on [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), MicroK8s, `MAX_REPLICAS=4` using `./scripts/hpa-load-test-brev-4xl40s.sh`.
-
-
 ## Prerequisites
 
-- Kubernetes 1.25+ (`kubectl`; 1.28+ preferred with Gateway API), Helm 3
-- Allocatable `nvidia.com/gpu`; nodes labeled `nvidia.com/gpu.present=true`
-- NVIDIA GPU Operator + DCGM Exporter (MicroK8s: `install-hpa.sh` can `microk8s enable gpu`)
-- Metrics Server
-- OpenShell path: Docker Buildx + a registry nodes can pull (MicroK8s: [local registry](#microk8s-local-registry)); OpenShell CLI matching `versions.env`; Agent Sandbox CRDs; OIDC **or** the unauthenticated eval exception
+Install Kubernetes with **k3s or MicroK8s**. Either works for this recipe. After `kubectl get nodes` succeeds, the rest of the install is the same.
 
-DCGM namespace defaults to `gpu-operator-resources` (MicroK8s). Use `DCGM_NAMESPACE=gpu-operator` with the standard GPU Operator.
+Pick one cluster:
+
+**k3s**
 
 ```bash
-# export DCGM_NAMESPACE=gpu-operator
+curl -sfL https://get.k3s.io | sh -
+mkdir -p "${HOME}/.kube"
+sudo cp /etc/rancher/k3s/k3s.yaml "${HOME}/.kube/config"
+sudo chown "$(id -u):$(id -g)" "${HOME}/.kube/config"
+export KUBECONFIG="${HOME}/.kube/config"
+kubectl get nodes
+```
+
+If `kubectl` prints connection refused to `127.0.0.1:6443`, start k3s: `sudo systemctl start k3s`. Then retry `kubectl get nodes`.
+
+**MicroK8s**
+
+```bash
+sudo snap install microk8s --classic
+sudo microk8s status --wait-ready
+mkdir -p "${HOME}/.kube"
+sudo microk8s config > "${HOME}/.kube/config"
+export KUBECONFIG="${HOME}/.kube/config"
+kubectl get nodes
+```
+
+If `kubectl` cannot reach the API, start MicroK8s: `sudo microk8s start` and `sudo microk8s status --wait-ready`.
+
+Then, on either cluster:
+
+- Kubernetes 1.25+ (`kubectl`; 1.28+ preferred with Gateway API), Helm 3
+- NVIDIA GPU Operator + DCGM Exporter. Helm GPU Operator: `export DCGM_NAMESPACE=gpu-operator` (set `driver.enabled=false` when the host already has the NVIDIA driver). MicroK8s addon: `install-hpa.sh` can run `microk8s enable gpu` and `microk8s enable metrics-server`; DCGM namespace is then `gpu-operator-resources`.
+- Allocatable `nvidia.com/gpu`; nodes labeled `nvidia.com/gpu.present=true`
+- Metrics Server (`kubectl get apiservice v1beta1.metrics.k8s.io` is True)
+- OpenShell path: Docker Buildx + a registry every node can pull; OpenShell CLI matching `versions.env`; Agent Sandbox CRDs; OIDC **or** the unauthenticated eval exception
+
+```bash
+# Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
+# microk8s enable gpu: default gpu-operator-resources
 kubectl get nodes \
   -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
 kubectl get nodes -l nvidia.com/gpu.present=true
@@ -97,9 +71,10 @@ kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dc
 
 Chart baseline: [NemoClaw GPU autoscaling chart](https://github.com/NVIDIA/NemoClaw/tree/main/deploy/helm/gpu_autoscaling_k8s). Host CLI/Docker: NemoClaw [Prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/docs/get-started/prerequisites.mdx).
 
+
 ## Quick start
 
-From `deploy/helm/gpu_autoscaling_k8s/`. This uses OpenShell's Kubernetes driver, not `nemoclaw onboard` / `nemohermes launch` / `nemo-deepagents launch`. After create, OpenShell 0.0.85 leaves the sandbox idle (`sleep infinity`). OpenClaw/Hermes listen only while `./scripts/run-agent-sandbox.sh` stays attached. Deep Agents Code has no gateway — use `verify-agent-sandbox.sh` / `run-agent-prompt.sh`. Per-agent loops: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#recipe-quick-start).
+From `deploy/helm/gpu_autoscaling_k8s/`. Install **k3s or MicroK8s** first ([Prerequisites](#prerequisites)). This uses OpenShell's Kubernetes driver, not `nemoclaw onboard` / `nemohermes launch` / `nemo-deepagents launch`. After create, OpenShell 0.0.85 leaves the sandbox idle (`sleep infinity`). OpenClaw/Hermes listen only while `./scripts/run-agent-sandbox.sh` stays attached. Deep Agents Code has no gateway — use `verify-agent-sandbox.sh` / `run-agent-prompt.sh`. Per-agent loops: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#recipe-quick-start).
 
 ### 1. Clone and tools
 
@@ -115,7 +90,8 @@ openshell --version
 ### 2. Confirm GPUs and DCGM
 
 ```bash
-# export DCGM_NAMESPACE=gpu-operator   # standard GPU Operator only
+# Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
+# microk8s enable gpu: default gpu-operator-resources
 kubectl get nodes \
   -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
@@ -133,7 +109,7 @@ cp values.yaml ./hpa-tls-values.yaml
 
 # Optional: export NEMOCLAW_TARGET_NODE=<gpu-node-name>
 # Optional: export INFERENCE_MODEL=<ollama-tag>   # default llama3.2:3b
-# Standard GPU Operator: export DCGM_NAMESPACE=gpu-operator
+# Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
 export MAX_REPLICAS=8   # 8× H100; use 4 on 4× L40S
 ./scripts/install-hpa.sh
 # Or: ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh
@@ -167,7 +143,7 @@ kubectl apply -f \
   "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
 
 export AGENT_NAME=openclaw
-microk8s enable registry   # if not already on
+# Any registry every node can pull. MicroK8s local registry example: [Image registry](#image-registry)
 export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
 ./scripts/build-agent-sandbox-image.sh
 
@@ -180,10 +156,14 @@ Dedicated eval without OIDC: `ALLOW_UNAUTHENTICATED_OPENSHELL=1` plus `OPENSHELL
 
 ### 5. Connect CLI and create sandbox
 
+The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to **cluster** `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails with connection refused. The local port must match `openshell gateway add` and `openshell status` (Server URL). Recipe default is host **8080**. If host 8080 is already in use, forward a free port (for example `18080:8080`) and register that URL instead. Full list: [Ports](#ports).
+
 Terminal 1 — keep running:
 
 ```bash
+# host 8080 → cluster OpenShell Service 8080
 kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080
+# If host 8080 is busy:  kubectl -n nemoclaw-sandboxes port-forward service/openshell 18080:8080
 ```
 
 Terminal 2 — client TLS + gateway ([OpenShell details](#openshell-details)), then:
@@ -261,13 +241,71 @@ E2E_USERS=5 ./scripts/agentscaling_latency.sh
 E2E_USERS=5 ./scripts/client.sh
 ```
 
-OpenShell must already be connected (`openshell status`). `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
+OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-connect-cli-and-create-sandbox) port-forward attached. `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
 Validated 4× L40S — GPU util > 40%:
 
 
 Validated 4× L40S — latency > 3000 ms:
 
+
+## Deployment Architecture
+
+HPA scales to **N** inference pods (1 GPU each). Envoy LeastRequest when enabled; otherwise the metrics-proxy Service. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Validation](#validation).
+
+Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). The sandboxed agent is CPU-only OpenShell, not this pod.
+
+GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
+
+HPA uses Pods **`AverageValue`**. Built-in metrics: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
+
+**The Envoy load balancer is optional.** Default is LeastRequest in front of GPU replicas. Skip it when the metrics-proxy ClusterIP Service is enough:
+
+| Choice | Install |
+|--------|---------|
+| Envoy LeastRequest (default) | TLS Secret + `ingress.tls` — [TLS values](#tls-values) — then `./scripts/install-hpa.sh` |
+| Metrics-proxy Service only | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
+
+
+```text
+End users (1 pairing sandbox, or M e2e sandboxes — one per user)
+        ↓
+CPU-only OpenShell sandboxes (AGENT_NAME=openclaw | hermes | deepagents)
+        ↓
+OpenShell https://inference.local
+        ↓
+Envoy load balancer — LeastRequest  (or metrics-proxy Service when ENABLE_ENVOY_LB=0)
+        ↓
+Authenticated inference endpoints
+├─ Inference pod (ollama|vllm|nim) → GPU 1
+├─ …
+└─ Inference pod (ollama|vllm|nim) → GPU N
+        ↑
+HPA (GPU util >40% or latency >3000 ms)
+```
+
+ provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. 
+
+The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
+
+`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. After 60s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
+
+
+## Validation
+
+| Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test |
+|----------|-----------------|----------------------|----------------------------------|
+| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
+
+
+Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
+
+<img width="649" height="746" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/44fc4689-91be-4af9-b25a-a4a70d63d6d4" />
+
+
+The DGX H100 demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX box's CPUs. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
+
+The HPA test was also verified on [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), `MAX_REPLICAS=4`, using `./scripts/hpa-load-test-brev-4xl40s.sh` (that run used MicroK8s; k3s works the same).
 
 ## Install details
 
@@ -497,6 +535,10 @@ unset INFERENCE_API_KEY
 
 ## OpenShell details
 
+### Image registry
+
+On k3s, push the sandbox image to any registry every node can pull. Do not use the MicroK8s NodePort below unless that registry exists.
+
 ### MicroK8s local registry
 
 NodePort **32000**, plain HTTP `localhost:32000/...`. Docker needs `insecure-registries` for that host, then restart Docker.
@@ -568,7 +610,6 @@ This DGX OpenClaw + Ollama run used **5** end users (one sandbox each). Size `E2
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
 
-
 ### Hermes + vLLM N-user end-to-end 
 
 Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Use the same `E2E_USERS` example (10). Cleanup only destroys `hermes-e2e-*` (not `hermes-onprem`, not `openclaw-ollama-e2e-*`). Do not run this while OpenClaw e2e owns the GPUs.
@@ -595,9 +636,6 @@ HPA still adds **one** pod per step. After each step a new GPU sits at 0% until 
 | `INFLIGHT_PER_GPU` | `320` on 8× H100; `64` on 4× L40S | Concurrent chats aimed at each GPU |
 | `LOAD_MULTIPLIER` | `2` | Extra in-flight vs `INFLIGHT_PER_GPU` |
 | `MAX_INFLIGHT_PER_POD` | `640` on 8× H100; `512` on 4× L40S | Hard cap per pod |
-
-
-
 
 
 ## Grafana: watch workload balancing
@@ -687,5 +725,27 @@ On this demo, OpenClaw e2e sandboxes are **1 CPU / 8Gi**. 1Gi, 2Gi, and 4Gi **OO
 ### How is LLM latency calculated for HPA?
 
 The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. It is stored in a rolling window of 128 samples and exported as `nemoclaw_llm_latency_avg_milliseconds`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`).
+
+## Ports
+
+Numbers below are TCP listen ports unless noted. **3000** in an HPA TARGET line is milliseconds, not Grafana and not a listen port.
+
+| Port | Where it listens | What it is for |
+|------|------------------|----------------|
+| **6443** | Host (`https://127.0.0.1:6443`) | k3s Kubernetes API. `kubectl` and `kubectl port-forward` use this. Connection refused here means the cluster is down, not OpenShell. |
+| **16443** | Host | MicroK8s Kubernetes API in many `microk8s config` files. Same role as 6443 on k3s. |
+| **8080** | Cluster: `service/openshell` in `nemoclaw-sandboxes` | OpenShell **gateway** Service. The right-hand number in `port-forward … LOCAL:8080`. |
+| **8080** | Host `127.0.0.1` (recipe default) | OpenShell **CLI tunnel**. Left-hand number in `port-forward … 8080:8080`. Must match `openshell gateway add` and `openshell status` (Server). |
+| **18080** | Host `127.0.0.1` (optional) | Alternate OpenShell CLI tunnel when host 8080 is already taken. Use `port-forward … 18080:8080` and `openshell gateway add https://127.0.0.1:18080`. |
+| **8081** | Cluster: `service/nemoclaw-gpu-metrics-proxy`; optional host forward `8081:8081` | Metrics-proxy HTTP (`/v1`, `/healthz`, `/metrics`). Not OpenShell. Direct curl uses **8081**, not 8080. |
+| **18789** | Inside each OpenShell sandbox (not the host) | OpenClaw agent (`/health`, `chat.send` on `ws://127.0.0.1:18789/ws`). End users talk here. Do not port-forward this to the host for the e2e client. |
+| **8642** | Inside a Hermes sandbox (not the host) | Hermes gateway `/health`. `hermes -z` e2e does not need it. Not a host port-forward in this recipe. |
+| **443** / **80** | Cluster Envoy Gateway | HTTPS / HTTP into GPU inference when Envoy is on. Sandboxes use `https://inference.local`. ClusterIP only; not a host port-forward for e2e users. |
+| **11434** | Loopback inside each Ollama GPU pod | Ollama. Metrics-proxy on that pod calls it. Not a host port. |
+| **8000** | Loopback inside each vLLM or NIM GPU pod | vLLM / NIM OpenAI-compatible server. Not a host port. |
+| **32000** | Host NodePort (MicroK8s local registry only) | Push/pull sandbox images (`localhost:32000/...`). k3s does not use this unless you installed that registry. |
+| **3000** | Host, optional `port-forward … 3000:80` | Grafana UI (`http://127.0.0.1:3000`). Service port 80 in `monitoring`. |
+
+`kubectl port-forward` syntax is **`LOCAL:REMOTE`**: local host port, then the Service port in the cluster.
 
 Third-party notices: [THIRD-PARTY-NOTICES](../../../../THIRD-PARTY-NOTICES).

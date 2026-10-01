@@ -129,7 +129,7 @@ agentscaling_common_main() {
   command -v kubectl >/dev/null 2>&1 || agentscaling_common_fail "missing command: kubectl"
   command -v python3 >/dev/null 2>&1 || agentscaling_common_fail "missing command: python3"
   openshell status >/dev/null \
-    || agentscaling_common_fail "OpenShell gateway is not connected; port-forward service/openshell first"
+    || agentscaling_common_fail "OpenShell CLI cannot reach 127.0.0.1:8080. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
   hpa_common_verify_target_node 1 || exit 1
   hpa_common_verify_gpu_capacity "${MAX_REPLICAS}" || exit 1
   kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True \
