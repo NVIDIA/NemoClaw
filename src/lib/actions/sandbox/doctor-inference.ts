@@ -16,6 +16,8 @@ export type DoctorInferenceRoute = {
   model: string;
   provider: string;
   effectiveReasoningEffort?: EffectiveReasoningEffort | null;
+  /** Sandbox route endpoint recorded at onboard; selects the bearerless local vLLM host port. */
+  recordedEndpointUrl?: string | null;
 };
 
 type ManagedLlamaCppDoctorDeps = {
@@ -184,15 +186,18 @@ function unavailableProviderHealthDiagnostic(detail: string): ProviderHealthStat
 }
 
 function collectProviderHealthDiagnostics(
-  provider: string,
-  model: string,
+  route: DoctorInferenceRoute,
   probe: typeof probeProviderHealth,
 ): ProviderHealthStatus[] {
+  const { provider, model, recordedEndpointUrl } = route;
   if (provider === "unknown") {
     return [unavailableProviderHealthDiagnostic("provider route is unknown")];
   }
   try {
-    const health = probe(provider, { model });
+    const health = probe(provider, {
+      model,
+      ...(typeof recordedEndpointUrl === "string" ? { recordedEndpointUrl } : {}),
+    });
     if (!health) {
       return [
         unavailableProviderHealthDiagnostic(`no direct health probe registered for ${provider}`),
@@ -223,8 +228,7 @@ export async function collectInferenceChecks(
   );
   pushInferenceHealthCheck(checks, gatewayProbe, { label: "Inference route (gateway)" });
   for (const diagnostic of collectProviderHealthDiagnostics(
-    route.provider,
-    route.model,
+    route,
     deps.probeProviderHealthImpl ?? probeProviderHealth,
   )) {
     pushInferenceHealthCheck(checks, diagnostic, { authoritative: false });

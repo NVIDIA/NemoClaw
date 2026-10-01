@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   createUninstallSandboxLifecycle,
   createUninstallSandboxObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
@@ -15,6 +19,64 @@ import {
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import { resolveLegacyModelRouterPort } from "../../core/model-router-port";
+import {
+  dockerDriverGatewayLocalTlsAuthorityIsConfigured,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
+} from "../../onboard/docker-driver-gateway-local-tls";
+
+interface RecordedModelRouter {
+  pid: number | null;
+  port: number | null;
+  expected: boolean;
+  readFailed?: true;
+}
+
+export function readOnboardSessionModelRouter(stateDir: string): RecordedModelRouter {
+  const sessionFile = path.join(stateDir, "onboard-session.json");
+  try {
+    const raw = fs.readFileSync(sessionFile, "utf-8");
+    const data = JSON.parse(raw) as {
+      provider?: unknown;
+      endpointUrl?: unknown;
+      routerCredentialHash?: unknown;
+      routerPid?: unknown;
+      routerPort?: unknown;
+    };
+    if (data === null || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("The onboarding session must be an object");
+    }
+    if (data.routerPort === null && data.routerPid === null && data.routerCredentialHash === null) {
+      return { pid: null, port: null, expected: false };
+    }
+    const pid =
+      typeof data.routerPid === "number" && Number.isInteger(data.routerPid) && data.routerPid > 0
+        ? data.routerPid
+        : null;
+    const port =
+      typeof data.routerPort === "number" &&
+      Number.isInteger(data.routerPort) &&
+      data.routerPort > 0 &&
+      data.routerPort <= 65535
+        ? data.routerPort
+        : data.routerPort == null
+          ? resolveLegacyModelRouterPort(data)
+          : null;
+    return {
+      pid,
+      port,
+      expected:
+        data.provider === "nvidia-router" ||
+        pid !== null ||
+        typeof data.routerCredentialHash === "string",
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { pid: null, port: null, expected: true, readFailed: true };
+    }
+  }
+  return { pid: null, port: null, expected: false };
+}
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -35,6 +97,22 @@ const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
   `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
   "u",
 );
+const BULK_DELETE_MAX_OBSERVATIONS = 5;
+const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
+
+export function selectedGatewayCleanupRuntimeSelection(
+  gatewayName: string,
+  gatewayStateDir: string,
+): OpenShellRuntimeSelection | null {
+  const localTlsDir = resolveCompleteDockerDriverGatewayLocalTlsDir(gatewayStateDir);
+  if (!localTlsDir && dockerDriverGatewayLocalTlsAuthorityIsConfigured(gatewayStateDir))
+    return null;
+  return {
+    gatewayName,
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
 
 function nonEmptyLines(output: string): string[] {
   return output
@@ -100,6 +178,50 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  return false;
+}
+
+export async function deleteAllSelectedGatewaySandboxes(
+  runtime: UninstallRuntimeCommands,
+  runtimeSelection: OpenShellRuntimeSelection | null,
+): Promise<boolean> {
+  if (!runtimeSelection) {
+    runtime.warn(
+      "OpenShell selected-gateway cleanup authority is incomplete; preserving its state for retry.",
+    );
+    return false;
+  }
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
+    { target: { kind: "selected" }, runtimeSelection },
+  );
+  if (result.kind !== "accepted") {
+    runtime.warn(
+      result.error.kind === "command" && result.error.reason === "invalid_request"
+        ? "OpenShell rejected the selected-gateway sandbox cleanup request."
+        : "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
+    );
+    return false;
+  }
+
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env, runtimeSelection);
+  let consecutiveEmptyObservations = 0;
+  let lastObservationError: string | null = null;
+  for (let attempt = 0; attempt < BULK_DELETE_MAX_OBSERVATIONS; attempt += 1) {
+    const observed = await observer.listSandboxes({ target: { kind: "selected" } });
+    lastObservationError = observed.ok ? null : observed.error.message;
+    consecutiveEmptyObservations =
+      observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
+    if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
+      runtime.log("Deleted all OpenShell sandboxes");
+      return true;
+    }
+    if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);
+  }
+  runtime.warn(
+    lastObservationError
+      ? `OpenShell sandbox cleanup was incomplete because inventory could not be verified: ${lastObservationError} Preserving its state for retry.`
+      : "OpenShell sandbox cleanup was incomplete; preserving its state for retry.",
+  );
   return false;
 }
 

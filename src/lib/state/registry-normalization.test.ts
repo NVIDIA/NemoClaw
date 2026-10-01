@@ -39,6 +39,41 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  it("persists incomplete OpenClaw synchronization until explicit completion", async () => {
+    const registry = await loadRegistryWith({
+      alpha: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+    });
+
+    expect(registry.updateSandbox("alpha", { model: "new", openClawConfigSyncPending: true })).toBe(
+      true,
+    );
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      model: "new",
+      openClawConfigSyncPending: true,
+    });
+    registry.updateSandbox("alpha", { agentVersion: "updated" });
+    expect(registry.load().sandboxes.alpha.openClawConfigSyncPending).toBe(true);
+
+    registry.updateSandbox("alpha", { openClawConfigSyncPending: undefined });
+    expect(registry.load().sandboxes.alpha).not.toHaveProperty("openClawConfigSyncPending");
+  });
+
+  it("does not carry incomplete OpenClaw synchronization into a replacement registration", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "new",
+        openClawConfigSyncPending: true,
+      },
+    });
+
+    registry.registerSandbox(registry.getSandbox("alpha")!);
+
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("openClawConfigSyncPending");
+  });
+
   const servingProfileProvenance = {
     schemaVersion: 1,
     catalogDigest: `sha256:${"1".repeat(64)}`,
@@ -656,6 +691,7 @@ describe("sandbox registry normalization", () => {
       state: "verified-create" as const,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      openshellGatewayStateDir: "/home/tester/custom-gateway-state",
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
@@ -680,6 +716,7 @@ describe("sandbox registry normalization", () => {
       state: "verified-create",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      openshellGatewayStateDir: "/home/tester/custom-gateway-state",
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
@@ -691,6 +728,9 @@ describe("sandbox registry normalization", () => {
   });
 
   it.each([
+    ["a relative gateway state directory", { openshellGatewayStateDir: "relative/state" }],
+    ["a noncanonical gateway state directory", { openshellGatewayStateDir: "/custom/../state" }],
+    ["a non-string gateway state directory", { openshellGatewayStateDir: 7 }],
     ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
     ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
     ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],

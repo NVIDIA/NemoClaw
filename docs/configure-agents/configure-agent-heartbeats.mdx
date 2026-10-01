@@ -4,15 +4,15 @@
 title: "Configure OpenClaw Agent Heartbeats"
 sidebar-title: "Configure Agent Heartbeats"
 description: "Configure or disable periodic OpenClaw isolated-session agent turns in a NemoClaw sandbox."
-description-agent: "Configures OpenClaw heartbeat cadence through NemoClaw onboarding. Use when changing periodic agent wake-ups or disabling heartbeat instructions."
+description-agent: "Configures OpenClaw heartbeat cadence during onboarding or in an existing sandbox through native OpenClaw configuration. Use when changing periodic agent wake-ups or disabling heartbeat instructions."
 keywords: ["nemoclaw heartbeat", "openclaw heartbeat", "HEARTBEAT.md"]
 content:
   type: "how_to"
 agent-variants: ["openclaw"]
 ---
 
-Heartbeats configured through NemoClaw run as periodic isolated-session agent turns.
-Configure their cadence before onboarding or recreating the sandbox.
+OpenClaw heartbeats run as periodic isolated-session agent turns.
+Set their initial cadence through NemoClaw before onboarding, or change an existing sandbox through native OpenClaw configuration.
 
 ## Set the Heartbeat Cadence
 
@@ -41,11 +41,17 @@ The model no longer receives heartbeat-only instructions.
 
 ## Apply the Change
 
-NemoClaw writes the heartbeat setting into `openclaw.json` during onboarding.
-Direct `openclaw config set` changes are not the supported path for this NemoClaw-managed build-time default, and a rebuild overwrites direct file edits.
+NemoClaw writes the initial heartbeat setting into `openclaw.json` during onboarding.
+OpenClaw owns that file after first launch.
 
-Recreate an existing sandbox to apply a new cadence.
+For an existing sandbox, connect and use the native OpenClaw config command:
 
 ```bash
-nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+nemoclaw <sandbox-name> connect
+openclaw config set agents.defaults.heartbeat.every 2h
 ```
+
+Use `0m` to disable heartbeats.
+Run `openclaw config unset agents.defaults.heartbeat.every` to return the cadence to OpenClaw's default behavior without removing NemoClaw's isolated-session setting.
+Restart and reconnect preserve the current value.
+Rebuild restores the sanitized configuration captured immediately before rebuild, while snapshot restore reapplies the value from the selected snapshot.

@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentConfigTarget } from "../sandbox/config";
+import {
+  type AgentConfigTarget,
+  readSandboxConfig,
+  resolveAgentConfig,
+  setOpenClawConfigValue,
+} from "../sandbox/config";
+import { resolveSandboxConfigRuntimeSelection } from "../actions/sandbox/mcp-bridge-provider-inspection";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
 
@@ -76,42 +83,56 @@ export function computeTunnelAllowedOrigins(
 }
 
 export interface RegisterTunnelOriginDeps {
+  resolveRuntimeSelection: (sandboxName: string) => OpenShellRuntimeSelection;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
-  readConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
-  writeConfig: (sandboxName: string, target: AgentConfigTarget, config: ConfigObject) => void;
-  recomputeHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  reloadGateway: (sandboxName: string) => Promise<void>;
+  readConfig: (
+    sandboxName: string,
+    target: AgentConfigTarget,
+    runtime: OpenShellRuntimeSelection,
+  ) => ConfigObject;
+  writeAllowedOrigins: (
+    sandboxName: string,
+    origins: string[],
+    runtime: OpenShellRuntimeSelection,
+  ) => Promise<void>;
+  reloadGateway: (sandboxName: string, runtime: OpenShellRuntimeSelection) => Promise<void>;
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
 }
 
-type SandboxConfigModule = {
-  resolveAgentConfig: RegisterTunnelOriginDeps["resolveAgentConfig"];
-  readSandboxConfig: RegisterTunnelOriginDeps["readConfig"];
-  writeSandboxConfig: RegisterTunnelOriginDeps["writeConfig"];
-  recomputeSandboxConfigHash: RegisterTunnelOriginDeps["recomputeHash"];
-};
+async function writeNativeOpenClawAllowedOrigins(
+  sandboxName: string,
+  origins: string[],
+  runtime: OpenShellRuntimeSelection,
+): Promise<void> {
+  setOpenClawConfigValue(sandboxName, "gateway.controlUi.allowedOrigins", origins, runtime);
+}
 
 /**
  * Default reload: the same managed gateway restart `config set --restart` uses.
  * A container restart re-reads the freshly written in-sandbox config on start.
  */
-async function defaultReloadGateway(sandboxName: string): Promise<void> {
+async function defaultReloadGateway(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection,
+): Promise<void> {
   const { restartSandboxGateway } = require("../actions/sandbox/process-recovery") as {
-    restartSandboxGateway: (name: string) => Promise<{ ok: boolean }>;
+    restartSandboxGateway: (
+      name: string,
+      options: { runtimeSelection: OpenShellRuntimeSelection },
+    ) => Promise<{ ok: boolean }>;
   };
-  await restartSandboxGateway(sandboxName);
+  const result = await restartSandboxGateway(sandboxName, { runtimeSelection });
+  if (!result.ok)
+    throw new Error("OpenClaw gateway restart failed after writing the tunnel origin");
 }
 
 function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<RegisterTunnelOriginDeps> {
-  const needsConfig =
-    !deps.resolveAgentConfig || !deps.readConfig || !deps.writeConfig || !deps.recomputeHash;
-  const config = needsConfig ? (require("../sandbox/config") as SandboxConfigModule) : undefined;
   return {
-    resolveAgentConfig: deps.resolveAgentConfig ?? config!.resolveAgentConfig,
-    readConfig: deps.readConfig ?? config!.readSandboxConfig,
-    writeConfig: deps.writeConfig ?? config!.writeSandboxConfig,
-    recomputeHash: deps.recomputeHash ?? config!.recomputeSandboxConfigHash,
+    resolveRuntimeSelection: deps.resolveRuntimeSelection ?? resolveSandboxConfigRuntimeSelection,
+    resolveAgentConfig: deps.resolveAgentConfig ?? resolveAgentConfig,
+    readConfig: deps.readConfig ?? readSandboxConfig,
+    writeAllowedOrigins: deps.writeAllowedOrigins ?? writeNativeOpenClawAllowedOrigins,
     reloadGateway: deps.reloadGateway ?? defaultReloadGateway,
     info: deps.info ?? (() => {}),
     warn: deps.warn ?? (() => {}),
@@ -124,26 +145,6 @@ function readAllowedOrigins(config: ConfigObject): unknown {
   const controlUi = gateway.controlUi;
   if (!isConfigObject(controlUi)) return undefined;
   return controlUi.allowedOrigins;
-}
-
-function ensureConfigObject(record: ConfigObject, key: string): ConfigObject {
-  const existing = record[key];
-  if (isConfigObject(existing)) return existing;
-  const created: ConfigObject = {};
-  record[key] = created;
-  return created;
-}
-
-/**
- * Set gateway.controlUi.allowedOrigins in place, materializing intermediate
- * objects if absent. Mutating the object returned by readConfig preserves the
- * read digest the OpenClaw config guard binds the write to, and leaves sibling
- * gateway keys untouched.
- */
-function applyAllowedOrigins(config: ConfigObject, origins: string[]): void {
-  const gateway = ensureConfigObject(config, "gateway");
-  const controlUi = ensureConfigObject(gateway, "controlUi");
-  controlUi.allowedOrigins = origins;
 }
 
 /**
@@ -172,24 +173,21 @@ export async function registerTunnelOrigin(
       return;
     }
 
-    const config = resolved.readConfig(sandboxName, target);
+    const runtime = resolved.resolveRuntimeSelection(sandboxName);
+    const config = resolved.readConfig(sandboxName, target, runtime);
     const { origins, changed } = computeTunnelAllowedOrigins(readAllowedOrigins(config), tunnelUrl);
     if (!changed) {
       info(`Tunnel origin already registered: ${origin}`);
       return;
     }
 
-    applyAllowedOrigins(config, origins);
-    resolved.writeConfig(sandboxName, target, config);
-    resolved.recomputeHash(sandboxName, target);
+    await resolved.writeAllowedOrigins(sandboxName, origins, runtime);
     info(`Registered tunnel origin with gateway: ${origin}`);
 
     info("Reloading gateway to apply tunnel origin...");
-    await resolved.reloadGateway(sandboxName);
+    await resolved.reloadGateway(sandboxName, runtime);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    warn(
-      `Could not register tunnel origin (${message}); open the Web UI from the gateway host or set NEMOCLAW_CORS_ORIGIN.`,
-    );
+    warn(`Could not register tunnel origin (${message}); open the Web UI from the gateway host.`);
   }
 }

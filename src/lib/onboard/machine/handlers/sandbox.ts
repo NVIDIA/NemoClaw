@@ -83,6 +83,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import {
   advanceSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
+  createRegisteredSandboxIdentityRevalidation,
   fingerprintSandboxRecreateValue,
   ownSandboxRecreateTransaction,
   type ReplacedSandboxSourceEntry,
@@ -117,6 +118,7 @@ import {
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
+  reserveSandboxResumeRoute,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -269,7 +271,10 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
-    getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
+    getSandboxRecreateObservation(
+      sandboxName: string | null,
+      gatewayName?: string,
+    ): SandboxRecreateObservation;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -411,6 +416,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  revalidateSandboxIdentity?: (operation: string) => void;
   stateResult: OnboardStateResult;
 }
 
@@ -1181,16 +1187,11 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
   }
 
-  private reserveHostLocalCreateRoute(sandboxName: string): void {
-    const sessionId = this.options.session?.sessionId;
-    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
-    if (!sessionId || entry?.hostLocalInferenceProvenance === undefined) {
-      return;
-    }
-    // Preserve the receipt's exact runtime authority. The registry rejects any
-    // changed selection rather than replacing an explicit host-local lifecycle.
-    try {
-      const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
+  private reserveCreateRouteForSession(sandboxName: string): void {
+    reserveSandboxResumeRoute(
+      sandboxName,
+      this.deps.getSandboxRegistryEntry(sandboxName),
+      {
         provider: this.options.provider,
         model: this.options.model,
         endpointUrl: this.options.endpointUrl,
@@ -1198,53 +1199,11 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
-        gatewayPort: entry.gatewayPort ?? undefined,
-        openshellDriver: entry.openshellDriver ?? undefined,
-        hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
-        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
-        reservationSessionId: sessionId,
-      });
-      if (!reserved) {
-        throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Cannot reserve host-local inference for sandbox '${sandboxName}': ${detail}\n` +
-          `Run '${this.deps.cliName()} ${sandboxName} doctor' to inspect runtime and gateway authority before retrying.`,
-        { cause: error },
-      );
-    }
-  }
-
-  // Sandbox creation admits only a pending route reservation owned by this
-  // session. A resumed run whose inference step was skipped still holds the
-  // published row of the sandbox it is about to replace, so convert that row
-  // into the session's reservation before the create transaction starts.
-  private reserveCreateRouteForSession(sandboxName: string): void {
-    const sessionId = this.options.session?.sessionId;
-    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
-    if (
-      !sessionId ||
-      !entry ||
-      entry.pendingRouteReservation === true ||
-      entry.hostLocalInferenceProvenance !== undefined
-    ) {
-      return;
-    }
-    const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
-      provider: this.options.provider,
-      model: this.options.model,
-      endpointUrl: this.options.endpointUrl,
-      endpointSource: this.options.endpointSource ?? null,
-      credentialEnv: this.options.credentialEnv,
-      preferredInferenceApi: this.options.preferredInferenceApi,
-      gatewayName: this.options.gatewayName,
-      reservationSessionId: sessionId,
-    });
-    if (!reserved) {
-      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
-    }
+        reservationSessionId: this.options.session?.sessionId,
+      },
+      this.deps.reserveSandboxInferenceRoute,
+      this.deps.cliName(),
+    );
   }
 
   private finalizeInferenceRouteReservation(
@@ -1254,6 +1213,9 @@ class SandboxStateFlow<
     const entry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
+    if (sessionId && entry.reservationSessionId !== sessionId) {
+      this.reserveCreateRouteForSession(sandboxName);
+    }
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
       `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,
@@ -2261,7 +2223,6 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        this.reserveHostLocalCreateRoute(requestedSandboxName);
         this.reserveCreateRouteForSession(requestedSandboxName);
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
@@ -2589,6 +2550,13 @@ class SandboxStateFlow<
       sandboxName: state.sandboxName,
       agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
     };
+    const revalidateSandboxIdentity = createRegisteredSandboxIdentityRevalidation(
+      this.deps.getSandboxRegistryEntry(state.sandboxName),
+      {
+        readRegistration: this.deps.getSandboxRegistryEntry,
+        observe: this.deps.getSandboxRecreateObservation,
+      },
+    );
     return {
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
@@ -2597,6 +2565,7 @@ class SandboxStateFlow<
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,
+      revalidateSandboxIdentity,
       stateResult:
         this.options.apfInterceptorRequested === true && !this.options.externalComponentRegistered
           ? completeOnboardMachine({}, metadata)

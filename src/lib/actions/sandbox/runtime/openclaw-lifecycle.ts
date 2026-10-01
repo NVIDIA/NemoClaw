@@ -15,11 +15,9 @@ export {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
-  beginUnregisteredOpenClawPostRestoreDoctor,
+  finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
   finishUnregisteredOpenClawPostRestoreDoctor,
-  promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-  promoteOpenClawBackupQuiesceToPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
 } from "../process-recovery";
 export type { OpenClawPostRestoreDoctorWindow } from "../process-recovery";

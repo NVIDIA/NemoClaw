@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  createSdkOpenShellSandboxStateLifecycle,
+  type MutateOpenShellSandboxRequest,
+  type OpenShellSandboxStateLifecycle,
+} from "../../adapters/openshell/sandbox-lifecycle-sdk";
+
 import type {
   RuntimeProviderBundle,
   RuntimeProviderCommandCapture,
@@ -17,6 +23,7 @@ import {
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
+const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
 const FIXED_ROOT_ENV = [
   "HOME=/root",
   "LANG=C.UTF-8",
@@ -401,6 +408,66 @@ export function finalizeProviderManagedStartupSharedState(input: {
   return { supervisorReady: false, failure: null };
 }
 
+/** Retry the exact-container hold release before entering retained recovery. */
+export function releaseManagedStartupHoldWithRetry(release: () => void): void {
+  let failure: unknown;
+  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      release();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
+}
+
+/** Complete one exact-container profile application, commit, and hold release. */
+export function completeProviderManagedStartup(
+  input: Parameters<typeof applyProviderManagedStartupRootRequest>[0],
+  options: {
+    readonly onPhase?: (phase: "apply" | "commit" | "release") => void;
+    /** Preserve recovery protocol metadata before a later commit or release can fail. */
+    readonly onApplied?: (transaction: ProviderManagedStartupTransaction | null) => void;
+  } = {},
+  operations: {
+    readonly applyProviderManagedStartupRootRequest: typeof applyProviderManagedStartupRootRequest;
+    readonly finalizeProviderManagedStartupSharedState: typeof finalizeProviderManagedStartupSharedState;
+    readonly releaseProviderManagedStartupHold: typeof releaseProviderManagedStartupHold;
+  } = {
+    applyProviderManagedStartupRootRequest,
+    finalizeProviderManagedStartupSharedState,
+    releaseProviderManagedStartupHold,
+  },
+): ProviderManagedStartupTransaction | null {
+  options.onPhase?.("apply");
+  const transaction = operations.applyProviderManagedStartupRootRequest(input);
+  options.onApplied?.(transaction);
+  if (!transaction) return null;
+  const owner = {
+    runtimeProvider: input.runtimeProvider,
+    sandboxName: input.sandboxName,
+    sandboxId: input.sandboxId,
+    transaction,
+  };
+  options.onPhase?.("commit");
+  const sharedState = operations.finalizeProviderManagedStartupSharedState({
+    ...owner,
+    supervisorReady: true,
+  });
+  if (!sharedState.supervisorReady || sharedState.failure) {
+    throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
+  }
+  options.onPhase?.("release");
+  releaseManagedStartupHoldWithRetry(() =>
+    operations.releaseProviderManagedStartupHold({
+      ...owner,
+      profileFingerprint: input.request.profileFingerprint,
+    }),
+  );
+  return transaction;
+}
+
 export function releaseProviderManagedStartupHold(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly sandboxName: string;
@@ -442,5 +509,22 @@ export function releaseProviderManagedStartupHold(input: {
         commandDetail(result) ? `: ${commandDetail(result)}` : ""
       }`,
     );
+  }
+}
+
+/** Reload the supervisor's upstream TLS roots after the root apply installs a CA. */
+export async function refreshManagedStartupCorporateCaTrust(
+  request: MutateOpenShellSandboxRequest,
+  lifecycle: OpenShellSandboxStateLifecycle = createSdkOpenShellSandboxStateLifecycle(),
+): Promise<void> {
+  // OpenShell snapshots its TLS roots before the held managed workload receives
+  // its profile. Native stop/start retains that exact container and its CA files.
+  for (const action of ["stop", "start"] as const) {
+    const result = await lifecycle[`${action}Sandbox`](request);
+    if (result.kind === "failed") {
+      throw new Error(
+        `Could not ${action} sandbox '${request.sandboxName}' to activate corporate CA trust: ${result.error.message}`,
+      );
+    }
   }
 }

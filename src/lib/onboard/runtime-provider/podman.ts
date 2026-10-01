@@ -10,6 +10,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
+  type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
@@ -144,7 +145,10 @@ export function createPodmanRuntimeProviderBundle(
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
-  const containerEngineOperations = new Map([
+  const containerEngineOperations = new Map<
+    RuntimeProviderContainerEngineOperation,
+    PodmanContainerEngine
+  >([
     ["host-doctor", hostDoctor],
     ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
     ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
@@ -263,7 +267,7 @@ export function createPodmanRuntimeProviderBundle(
             providerId,
             supported: true,
             services: ["ollama", "nim", "vllm"],
-            createOperation: ({ env, acceleration }) => {
+            createOperation: ({ env, acceleration, deadlineMs }) => {
               if (publishedRecoveryOperation) {
                 if (
                   env !== publishedRecoveryOperation.environment ||
@@ -278,6 +282,7 @@ export function createPodmanRuntimeProviderBundle(
                 engine: inferenceEngine,
                 env,
                 acceleration,
+                ...(deadlineMs === undefined ? {} : { deadlineMs }),
                 authorityStore: inferenceOptions.authorityStore,
                 routeAuthorityStore: inferenceOptions.routeAuthorityStore,
                 onFailureEvidence: inferenceOptions.onFailureEvidence,
@@ -287,7 +292,9 @@ export function createPodmanRuntimeProviderBundle(
                   : {}),
                 ...(inferenceOptions.authority ? { authority: inferenceOptions.authority } : {}),
                 ...(inferenceOptions.authorityQualification
-                  ? { authorityQualification: inferenceOptions.authorityQualification }
+                  ? {
+                      authorityQualification: inferenceOptions.authorityQualification,
+                    }
                   : {}),
                 ...(inferenceOptions.hermesPortablePublishedEngineAuthority
                   ? {
@@ -296,7 +303,9 @@ export function createPodmanRuntimeProviderBundle(
                     }
                   : {}),
                 ...(inferenceOptions.publishedResumeTiming
-                  ? { publishedResumeTiming: inferenceOptions.publishedResumeTiming }
+                  ? {
+                      publishedResumeTiming: inferenceOptions.publishedResumeTiming,
+                    }
                   : {}),
               });
             },

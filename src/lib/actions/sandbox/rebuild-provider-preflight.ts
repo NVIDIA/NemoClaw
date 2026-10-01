@@ -18,6 +18,7 @@ import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-met
 import {
   assessRecoveredProviderCredentialReuse,
   isRecoveredProviderCredentialReuseSelectionKey,
+  type RecoveredProviderReuseRejectCondition,
 } from "../../onboard/recovered-provider-reuse";
 import * as registry from "../../state/registry";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -110,6 +111,25 @@ type GatewayCredentialReusePreflightDeps = {
   readGatewayProviderMetadata(provider: string): Promise<GatewayProviderMetadata | null>;
   readRecordedProviderEndpoints(provider: string, excludeSandboxName: string): string[] | null;
 };
+
+function rebuildCredentialReuseCondition(condition: RecoveredProviderReuseRejectCondition): string {
+  switch (condition) {
+    case "recovery-source":
+      return "The provider selection was not recovered from this sandbox.";
+    case "provider-identity":
+      return "The recorded provider identity is missing or incompatible.";
+    case "model-identity":
+      return "The recorded model identity is missing or invalid.";
+    case "inference-api":
+      return "The recorded inference API is missing or unsupported.";
+    case "provider-surface":
+      return "The gateway provider is registered for a different API surface.";
+    case "gateway-provider-identity":
+      return "The gateway provider binding is missing or incompatible.";
+    case "endpoint-identity":
+      return "The recorded endpoint identity is missing or incompatible.";
+  }
+}
 
 function printMissingRebuildGatewayProvider(provider: string, credentialEnv: string | null): void {
   console.error("");
@@ -348,18 +368,14 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
     );
     return true;
   }
-  const rejectionReason =
-    decision.kind === "reject"
-      ? decision.reason
-      : "the host credential state changed during preflight";
-
+  if (decision.kind === "validate-host-credential") return true;
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the gateway credential for '${config.provider}'.`,
+    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the recorded gateway credential.`,
   );
-  console.error(`  ${rejectionReason}.`);
-  console.error(`  Export ${config.credentialEnv} to use normal credential validation and upsert.`);
+  console.error(`  ${rebuildCredentialReuseCondition(decision.condition)}`);
+  console.error("  Export the provider credential to use normal validation and upsert.");
   console.error("  Sandbox is untouched — no data was lost.");
-  bail(`Unsafe gateway credential reuse for provider '${config.provider}': ${rejectionReason}`);
+  bail("Unsafe gateway credential reuse");
   return false;
 }
