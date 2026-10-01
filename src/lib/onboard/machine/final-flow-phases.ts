@@ -64,7 +64,7 @@ export function shouldInitializeNativeOpenclawInferenceRoute(
   return (
     context.agent === null &&
     (context.fromDockerfile !== null || Boolean(context.session?.metadata?.fromImage)) &&
-    !preserveRebuildLivePolicy &&
+    (!preserveRebuildLivePolicy || Boolean(context.session?.metadata?.fromImage)) &&
     context.session?.steps.openclaw?.status !== "complete"
   );
 }
