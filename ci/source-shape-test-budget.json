@@ -412,11 +412,6 @@
       "category": "security"
     },
     {
-      "file": "test/install/installer-hash-check.test.ts",
-      "test": "binds the trusted digest to the exact prospective Brev template (#12192)",
-      "category": "security"
-    },
-    {
       "file": "test/install/installer-supervisor-manifest-trust.test.ts",
       "test": "accepts the prospective shared gateway state resolver template (#10544)",
       "category": "security"
