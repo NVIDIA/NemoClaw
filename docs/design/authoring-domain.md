@@ -39,7 +39,7 @@ Consumers use the state API; they do not coordinate these private objects themse
 | Concept | Represents and owns | Lifetime |
 | --- | --- | --- |
 | [PartialDocument](../../crates/nemoclaw-authoring/src/partial_document.rs) | Supplied sparse YAML/JSON values; absence remains distinguishable from explicit `null`. Assesses those values against SDK constraints. | Input template or assessment input |
-| [JourneyDefinition](../../crates/nemoclaw-authoring/src/journey_definition.rs) | Base partial document, exact `ask` selectors, question scopes, `omit` selectors, authored question order, and target prerequisites. | Reusable journey configuration |
+| [JourneyDefinition](../../crates/nemoclaw-authoring/src/journey_definition.rs) | Base partial document, exact `ask` selectors, question scopes, exact and scope `omit` selectors, authored question order, and target prerequisites. | Reusable journey configuration |
 | [JourneyState](../../crates/nemoclaw-authoring/src/journey_state.rs) | Coordinates one run and applies validated answer transitions across its value, decision, and position owners. | Mutable run |
 | [AuthoredValues](../../crates/nemoclaw-authoring/src/journey_state/authored_values.rs) | Current sparse desired state, cached inactive adapter settings, and whether a gateway engine value was generated. | Run state |
 | [DecisionRecord](../../crates/nemoclaw-authoring/src/journey_state/decision_record.rs) | Accepted and omitted answers, reopening causes, preset selections, and route-specific native model decisions. | Run state |

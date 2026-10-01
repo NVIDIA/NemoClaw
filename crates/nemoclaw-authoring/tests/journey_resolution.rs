@@ -228,6 +228,78 @@ fn omit_guidance_rejects_required_or_supplied_sdk_fields() {
 }
 
 #[test]
+fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_harness() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let resolution = JourneyDefinition::new("express", base.clone())
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    assert!(
+        resolution.questions().is_empty(),
+        "{:?}",
+        resolution.questions()
+    );
+    assert!(
+        resolution
+            .omitted()
+            .contains(&"adapter:nvidia.fabric.openclaw:/cli".to_owned())
+    );
+
+    let mut hermes = base.supplied().clone();
+    hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("nvidia.fabric.hermes");
+    let hermes = PartialDocument::from_yaml(hermes.to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("express-hermes", hermes)
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    assert!(
+        resolution
+            .questions()
+            .iter()
+            .all(|question| !question.id().starts_with("adapter:")),
+        "{:?}",
+        resolution.questions()
+    );
+
+    let resolution = JourneyDefinition::new("express-with-home", base.clone())
+        .omit([JourneyScope::ActiveAdapterSettings])
+        .ask(["adapter:nvidia.fabric.openclaw:/home"])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    assert_eq!(
+        resolution
+            .questions()
+            .iter()
+            .map(|question| question.id())
+            .collect::<Vec<_>>(),
+        ["adapter:nvidia.fabric.openclaw:/home"]
+    );
+
+    assert!(
+        JourneyDefinition::new("contradictory", base.clone())
+            .ask([JourneyScope::ActiveAdapterSettings])
+            .omit([JourneyScope::ActiveAdapterSettings])
+            .start(&capabilities)
+            .is_err()
+    );
+    assert!(
+        JourneyDefinition::new("unsupported-scope", base)
+            .omit([JourneyScope::RouteModels])
+            .start(&capabilities)
+            .is_err()
+    );
+}
+
+#[test]
 fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
     let capabilities = Capabilities::available();
     let mut values: serde_json::Value =

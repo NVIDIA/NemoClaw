@@ -74,6 +74,7 @@ pub struct JourneyDefinition {
     pub(crate) ask_order: Vec<String>,
     pub(crate) ask_scopes: BTreeSet<JourneyScope>,
     pub(crate) omit: BTreeSet<String>,
+    pub(crate) omit_scopes: BTreeSet<JourneyScope>,
     pub(crate) target_prerequisites: BTreeSet<TargetPrerequisite>,
 }
 
@@ -86,6 +87,7 @@ impl JourneyDefinition {
             ask_order: Vec::new(),
             ask_scopes: BTreeSet::new(),
             omit: BTreeSet::new(),
+            omit_scopes: BTreeSet::new(),
             target_prerequisites: BTreeSet::new(),
         }
     }
@@ -106,8 +108,19 @@ impl JourneyDefinition {
         self
     }
 
-    pub fn omit(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.omit.extend(fields.into_iter().map(Into::into));
+    /// Leave absent optional values unset without a prompt. A scope omits only
+    /// the absent optional values it discovers; exact `ask` guidance still asks.
+    pub fn omit(mut self, selectors: impl IntoIterator<Item = impl Into<JourneySelector>>) -> Self {
+        for selector in selectors {
+            match selector.into() {
+                JourneySelector::Field(field) => {
+                    self.omit.insert(field);
+                }
+                JourneySelector::Scope(scope) => {
+                    self.omit_scopes.insert(scope);
+                }
+            }
+        }
         self
     }
 
@@ -142,6 +155,22 @@ impl JourneyDefinition {
             return Err(diagnostic(
                 "journey",
                 &format!("'{field}' cannot be both asked and omitted"),
+            ));
+        }
+        if let Some(scope) = self.ask_scopes.intersection(&self.omit_scopes).next() {
+            return Err(diagnostic(
+                "journey",
+                &format!("scope {scope:?} cannot be both asked and omitted"),
+            ));
+        }
+        if let Some(scope) = self
+            .omit_scopes
+            .iter()
+            .find(|scope| **scope != JourneyScope::ActiveAdapterSettings)
+        {
+            return Err(diagnostic(
+                "journey",
+                &format!("scope {scope:?} cannot be omitted in this preview"),
             ));
         }
         for field in &self.ask {

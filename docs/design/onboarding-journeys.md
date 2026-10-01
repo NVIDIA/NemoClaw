@@ -39,7 +39,8 @@ When all required values are resolved, materialize through `Document::parse` so 
 `ask(field)` prompts even when the partial document supplies a valid value; that value is a suggestion.
 An applicable missing field prompts by default, including optional fields in the supported question surface.
 `omit(field)` leaves an absent optional field unset without a prompt.
-Reject `omit` for a required or supplied field, and reject `ask` plus `omit` for the same field.
+`omit(JourneyScope::ActiveAdapterSettings)` does the same for every absent optional setting of whichever harness is active; required, supplied, and invalid settings still follow the normal rules, and exact `ask` guidance still asks its setting.
+Reject `omit` for a required or supplied field, reject other omit scopes, and reject `ask` plus `omit` for the same field or scope.
 Fabric determines which native settings exist, apply, and are required; guidance only controls deliberate prompts and omissions.
 The resolver checks active native settings even when the definition gives no native prompt guidance.
 Keep guidance for a currently unreachable SDK or adapter field and warn in the tree preview instead of rejecting the journey when the field exists in another valid schema branch; it may become reachable after another answer or catalog change. Reject guidance for a field absent from every SDK branch.
@@ -89,7 +90,7 @@ Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repo
 | --- | --- | --- |
 | Minimum viable values | One empty sandbox, with explicit `ask` guidance for the name. | Stops at an unresolved SDK frontier; it does not enumerate every question. |
 | Minimum inline scaffold | `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml`: inline harness and inference forms, one route, and an external endpoint. | Asks the deployment, sandbox, agent, and route names, gateway management, harness, provider kind, and model. `minimally_supplied_inline_envelope_materializes_through_one_resolver` materializes it after those answers and explicit optional omissions; the example TUI also completes it through the watchable replay. |
-| Express | `examples/onboarding/openclaw.yaml`. | Zero questions, with five optional OpenClaw adapter settings omitted. Target compatibility remains a separate assessment. |
+| Express | `examples/onboarding/openclaw.yaml`. | Zero questions, with absent optional adapter settings omitted through the `ActiveAdapterSettings` scope. Target compatibility remains a separate assessment. |
 | Guided preview | The express template without a route model, with explicit `ask` guidance for the name, harness, runtime, provider, API, and model fields. | Asks each of those fields. |
 
 Starting a journey generates a missing deployment uid, so the uid is never a question.
@@ -100,7 +101,7 @@ These previews do not establish complete coverage of arbitrary partial documents
 - The SDK exposes a bounded YAML value parser so sparse authoring input uses the same syntax limits as complete documents.
 - The first partial assessment preserves supplied values and classifies full-schema errors. A compound rule remains deferred unless branch errors prove that adding values cannot satisfy it. The resolver can expand a `oneOf` with a shared required `const` discriminator directly from the SDK schema; this bounded case does not make the assessment a general partial evaluator.
 - The tree preview names its inspected surface and prints an unresolved SDK frontier. It follows schema-derived finite choices, including gateway management, the external endpoint branch, and exclusive Sandbox, Agent, and Route forms, without a separate question implementation for those SDK branches. An empty sandbox asks whether to use an inline harness or `harnessRef` before exposing the inline harness kind. It does not enumerate every SDK conditional branch or every combination of independent choices; the TUI calls the mutable resolver after each answer.
-- Explicit omission guidance covers absent optional SDK fields and adapter settings. SDK field omission is checked against the generated schema, including when a question scope would otherwise ask that field. The TUI also offers an omit action for optional questions, including native model settings.
+- Explicit omission guidance covers absent optional SDK fields and adapter settings, either by exact field or through the `ActiveAdapterSettings` scope. SDK field omission is checked against the generated schema, including when a question scope would otherwise ask that field. The TUI also offers an omit action for optional questions, including native model settings.
 - The tree preview redacts suggestion values and authored route names because supplied values may contain sensitive data.
 - The tree header identifies the generated SDK input schema by SHA-256 and a catalog-backed Fabric snapshot by its source revision and exact serialized SHA-256. Harness-only capabilities report catalog provenance as unverified.
 - Invalid supplied SDK scalar fields become editable questions even without explicit guidance and stay visible in the preview without printing their values. Optional invalid fields can be omitted. A harness without a schema in the current Fabric catalog is marked unverified, so the preview does not claim that no questions remain.

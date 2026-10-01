@@ -144,6 +144,17 @@ impl QuestionResolver<'_> {
                         omitted.push(id);
                         continue;
                     }
+                    if value.is_none()
+                        && !field.required
+                        && !self.definition.ask.contains(&id)
+                        && self
+                            .definition
+                            .omit_scopes
+                            .contains(&JourneyScope::ActiveAdapterSettings)
+                    {
+                        omitted.push(id);
+                        continue;
+                    }
                     let valid = value
                         .is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
                     if value.is_none()
