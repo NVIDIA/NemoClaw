@@ -168,8 +168,8 @@ function providerConfigLines(
       ? [
           "",
           "[models.providers.openai.params]",
-          "# NemoClaw-managed inference.local currently exposes Chat Completions.",
-          "# Remove this override when that route supports OpenAI Responses API.",
+          "# NemoClaw-managed OpenAI-compatible routes use Chat Completions.",
+          "# Remove this override when the selected route supports OpenAI Responses API.",
           "use_responses_api = false",
           ...openAiModelRequestParamLines(model, reasoningEffort),
         ]

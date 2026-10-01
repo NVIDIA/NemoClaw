@@ -133,6 +133,7 @@ export async function ensureNativeNvidiaProvider(input: {
   adapter: OpenShellProviderAdapter;
   target: OpenShellGatewayTarget;
   credentialValue: string | null;
+  reuseExistingCredential?: boolean;
   expected?: NativeNvidiaProviderAttachment;
   profilePath?: string;
 }): Promise<NativeNvidiaProviderAttachment> {
@@ -180,7 +181,7 @@ export async function ensureNativeNvidiaProvider(input: {
     return attachmentFromMetadata(observed);
   }
 
-  if (!input.credentialValue) {
+  if (!input.credentialValue && !input.reuseExistingCredential) {
     throw new NativeNvidiaProviderError(
       `A host credential is required to create OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}'.`,
     );
@@ -189,9 +190,11 @@ export async function ensureNativeNvidiaProvider(input: {
     target,
     name: NVIDIA_HOSTED_NATIVE_PROVIDER,
     type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-    credentials: [{ name: NVIDIA_HOSTED_CREDENTIAL_ENV, value: input.credentialValue }],
+    credentials: input.credentialValue
+      ? [{ name: NVIDIA_HOSTED_CREDENTIAL_ENV, value: input.credentialValue }]
+      : [],
     config: [],
-    fromExisting: false,
+    fromExisting: !input.credentialValue,
   });
   if (!created.ok && !mutationOutcomeMayBeAmbiguous(created.error)) {
     throw new NativeNvidiaProviderError(
@@ -275,10 +278,21 @@ export async function ensureNativeNvidiaProviderAttached(input: {
       `Could not attach native NVIDIA provider to sandbox '${input.sandboxName}': ${providerErrorDetail(attached.error)}`,
     );
   }
-  return {
-    receipt: await verifyNativeNvidiaProviderAttachment(input),
-    changed: true,
-  };
+  try {
+    return {
+      receipt: await verifyNativeNvidiaProviderAttachment(input),
+      changed: true,
+    };
+  } catch (error) {
+    try {
+      await detachNativeNvidiaProvider(input);
+    } catch (detachError) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const detachDetail = detachError instanceof Error ? detachError.message : String(detachError);
+      throw new NativeNvidiaProviderError(`${detail}\n  ${detachDetail}`);
+    }
+    throw error;
+  }
 }
 
 /** Detach only the recorded native NVIDIA provider identity and prove absence. */

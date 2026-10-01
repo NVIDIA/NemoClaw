@@ -8,6 +8,7 @@ import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-ad
 import { parseCheckedInProviderProfileContract } from "../adapters/openshell/provider-profile";
 import {
   ensureNativeNvidiaProvider,
+  ensureNativeNvidiaProviderAttached,
   nativeNvidiaProviderProfilePath,
   NativeNvidiaProviderError,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
@@ -42,8 +43,8 @@ function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellPr
     listProviders: vi.fn(),
     inspectProviderProfile: vi.fn(),
     deleteProvider: vi.fn(),
-    detachProvider: vi.fn(),
-    attachProvider: vi.fn(),
+    detachProvider: vi.fn(async () => ({ ok: true })),
+    attachProvider: vi.fn(async () => ({ ok: true })),
     configureProviderRefresh: vi.fn(),
     getProviderRefreshStatus: vi.fn(),
     ...overrides,
@@ -130,6 +131,35 @@ describe("native NVIDIA OpenShell provider", () => {
     expect(createProvider).toHaveBeenCalledOnce();
   });
 
+  it("creates from an existing gateway credential when recreation has no local key (#12558)", async () => {
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "not found" },
+      })
+      .mockResolvedValueOnce({ ok: true, value: metadata() });
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
+      ok: true,
+    }));
+
+    await expect(
+      ensureNativeNvidiaProvider({
+        adapter: adapter({ getProvider, createProvider }),
+        target,
+        credentialValue: null,
+        reuseExistingCredential: true,
+      }),
+    ).resolves.toMatchObject({ providerId: "provider-id" });
+    expect(createProvider).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        name: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        credentials: [],
+        fromExisting: true,
+      }),
+    );
+  });
+
   it("refuses a replaced provider before rotating its credential (#12558)", async () => {
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
 
@@ -200,5 +230,64 @@ describe("native NVIDIA OpenShell provider", () => {
         sandboxName: "alpha",
       }),
     ).rejects.toThrow(/does not have its native NVIDIA inference provider attached/u);
+  });
+
+  it("removes a newly attached provider when attachment verification fails (#12558)", async () => {
+    const listProviderAttachments = vi
+      .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: true,
+      value: { changed: true },
+    }));
+    const providerAdapter = adapter({ listProviderAttachments, detachProvider });
+
+    await expect(
+      ensureNativeNvidiaProviderAttached({
+        adapter: providerAdapter,
+        target,
+        sandboxName: "alpha",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow(/does not have its native NVIDIA inference provider attached/u);
+    expect(detachProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      sandboxName: "alpha",
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    });
+  });
+
+  it("preserves verification and cleanup failures after a new attachment (#12558)", async () => {
+    const listProviderAttachments = vi
+      .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { names: [NVIDIA_HOSTED_NATIVE_PROVIDER] },
+      });
+
+    await expect(
+      ensureNativeNvidiaProviderAttached({
+        adapter: adapter({ listProviderAttachments }),
+        target,
+        sandboxName: "alpha",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "provider-id",
+        },
+      }),
+    ).rejects.toThrow(
+      /does not have its native NVIDIA inference provider attached[\s\S]*did not confirm removal/u,
+    );
   });
 });

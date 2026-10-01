@@ -215,6 +215,7 @@ describe("native NVIDIA onboarding", () => {
       getGatewayName: () => "nemoclaw",
       runOpenshell,
       updateSandbox,
+      getSandbox: () => null,
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,

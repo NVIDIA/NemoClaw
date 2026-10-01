@@ -1944,6 +1944,11 @@ export async function runInferenceSet(
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
     await completeInferencePostCommit(mutation, deps);
+    // The agent config has converged once post-commit work succeeds. Do not
+    // leave its recovery marker pending if later provider cleanup fails.
+    if (mutation.openClawConfigSyncPending) {
+      clearOpenClawConfigSyncPending(selected.sandboxName, deps);
+    }
     const priorNativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
       lockedSelection.entry.nativeNvidiaProviderAttachment,
     );
@@ -1963,10 +1968,6 @@ export async function runInferenceSet(
           `Native NVIDIA access was removed from sandbox '${selected.sandboxName}', but NemoClaw could not clear its attachment receipt. Retry this command before another provider change.`,
         );
       }
-    }
-    // Keep recovery pending until both the running gateway and pairing have converged.
-    if (mutation.openClawConfigSyncPending) {
-      clearOpenClawConfigSyncPending(selected.sandboxName, deps);
     }
     return mutation.result;
   });

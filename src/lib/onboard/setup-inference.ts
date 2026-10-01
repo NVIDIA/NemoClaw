@@ -24,6 +24,7 @@ import {
   ensureNativeNvidiaProvider,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../inference/native-nvidia";
 import {
@@ -927,10 +928,17 @@ export function createSetupInference(
             if (!providerAdapter) {
               throw new Error("Native NVIDIA setup is missing its OpenShell provider adapter.");
             }
+            const recordedAttachment = sandboxName
+              ? normalizeNativeNvidiaProviderAttachment(
+                  deps.getSandbox?.(sandboxName)?.nativeNvidiaProviderAttachment,
+                )
+              : undefined;
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,
               target: { kind: "selected" },
               credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              ...(recordedAttachment ? { expected: recordedAttachment } : {}),
             });
             return null;
           }

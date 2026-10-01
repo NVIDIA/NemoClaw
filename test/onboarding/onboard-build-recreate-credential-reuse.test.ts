@@ -51,6 +51,23 @@ Gateway inference:
 EOF
   exit 0
 fi
+if [ "$1" = "provider" ] && [ "$2" = "profile" ] && [ "$3" = "export" ]; then
+  cat <<'EOF'
+{"id":"nemoclaw-nvidia-inference-v1","credentials":[{"name":"api_key","env_vars":["NVIDIA_INFERENCE_API_KEY"],"required":true,"auth_style":"bearer","header_name":"authorization","query_param":""}],"endpoints":[{"host":"integrate.api.nvidia.com","port":443,"protocol":"rest","enforcement":"enforce","rules":[{"allow":{"method":"GET","path":"/v1/models"}},{"allow":{"method":"POST","path":"/v1/chat/completions"}}]}],"binaries":["/usr/local/bin/node","/usr/bin/node","/opt/hermes/.venv/bin/python","/opt/hermes/.venv/bin/python3","/opt/venv/bin/python3","/usr/local/bin/curl","/usr/bin/curl"],"inference_capable":true}
+EOF
+  exit 0
+fi
+if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$3" = "nemoclaw-nvidia-prod-v1" ]; then
+  cat <<'EOF'
+Name: nemoclaw-nvidia-prod-v1
+Id: provider-id
+Type: nemoclaw-nvidia-inference-v1
+Resource version: 1
+Credential keys: NVIDIA_INFERENCE_API_KEY
+Config keys: <none>
+EOF
+  exit 0
+fi
 if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$5" = "nvidia-prod" ]; then
   cat <<'EOF'
 Name: nvidia-prod
