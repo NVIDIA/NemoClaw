@@ -92,10 +92,35 @@ It also improves messaging, status output, configuration export, and operator di
   Related change: [PR #10487](https://github.com/NVIDIA/NemoClaw/pull/10487).
   Refer to [Network Policies](/user-guide/openclaw/reference/network-policies#policy-tiers) for tier and replacement details.
 - Rebuild can preserve declared state from a managed Docker OpenClaw or Deep Agents Code sandbox in `Phase: Error` without starting or executing in its stopped container.
-  Deep Agents Code also preserves native MCP configuration through a bounded recovery handoff.
-  It requires an unchanged source container and exclusively owned managed state volume; user-managed credential files are excluded.
+  Deep Agents Code carries only supported managed native MCP entries through a bounded recovery handoff.
+  It requires an unchanged source container and exclusively owned managed state volume; credential state and user-authored or unsupported MCP content remain excluded.
   Related changes: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305) and [PR #11293](https://github.com/NVIDIA/NemoClaw/pull/11293).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for requirements and recovery limits.
+- Destroying the final registered `vllm-local` consumer now removes an eligible NemoClaw-managed vLLM container after sandbox deletion, ownership, and cross-gateway consumer checks succeed.
+  Use `--keep-vllm` or `NEMOCLAW_KEEP_VLLM=1` to retain the container for later reuse.
+  Related change: [PR #11528](https://github.com/NVIDIA/NemoClaw/pull/11528).
+  Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm#handle-a-running-vllm-server) for cleanup and recovery conditions.
+- Pi rebuild and snapshot restore preserve the sanitized native `settings.json`, including its global project-trust default.
+  Per-path decisions in `trust.json` remain excluded.
+  Related change: [PR #12393](https://github.com/NVIDIA/NemoClaw/pull/12393).
+  Refer to [Pi Support](/user-guide/pi/reference/pi-support#persistent-and-reconstructed-state) for the preservation boundary.
+- Lock contention during onboarding now reports the recorded owner state and directs you to retry normal lock acquisition after any active owner exits.
+  It no longer recommends deleting a lock or stopping an unverified process.
+  Related change: [PR #10465](https://github.com/NVIDIA/NemoClaw/pull/10465).
+- In-place upgrades normalize trusted OpenShell gateway service paths before comparing them, so equivalent `HOME` and XDG paths with redundant slashes do not block retirement of NemoClaw's own service.
+  Prepared legacy OpenClaw recovery also waits for ordinary write pairing before closing the recovery transaction.
+  Related changes: [PR #10541](https://github.com/NVIDIA/NemoClaw/pull/10541) and [PR #10629](https://github.com/NVIDIA/NemoClaw/pull/10629).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) for upgrade recovery behavior.
+- The hosted installer passes the selected runtime-provider authority into Windows WSL readiness checks, allowing a Podman-selected installation to reach onboarding without Docker.
+  Related change: [PR #12294](https://github.com/NVIDIA/NemoClaw/pull/12294).
+  Refer to [Windows Preparation](/user-guide/openclaw/get-started/additional-setup/windows-preparation) for supported runtime paths.
+- Onboarding can reclaim a foreign pending inference-route reservation attached to an already published sandbox when the selected gateway authority matches.
+  The route remains pending until normal onboarding finalization, and sandbox data is preserved.
+  Related change: [PR #12295](https://github.com/NVIDIA/NemoClaw/pull/12295).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-onboard) for resume behavior.
+- When both Docker selectors are set, NemoClaw now follows Docker CLI precedence and uses `DOCKER_HOST` instead of `DOCKER_CONTEXT` across readiness, onboarding, image builds, storage checks, runner commands, and cleanup diagnostics.
+  Related change: [PR #12330](https://github.com/NVIDIA/NemoClaw/pull/12330).
+  Refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) for Docker endpoint selection.
 - Uninstall leaves unrelated Docker containers intact and keeps a managed gateway running until its registered sandboxes are cleaned up.
   For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.
   Related changes: [PR #10478](https://github.com/NVIDIA/NemoClaw/pull/10478) and [PR #12299](https://github.com/NVIDIA/NemoClaw/pull/12299).

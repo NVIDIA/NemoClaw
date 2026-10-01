@@ -3164,7 +3164,13 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 
 <AgentOnly variant="openclaw,deepagents">
 
-For a managed Docker OpenClaw or Deep Agents Code sandbox in `Error`, `rebuild` captures declared state without starting or executing in the stopped source. The original container must still exist, and any mounted managed state volume must have the expected ownership and be used only by that container. Capture or identity validation failure stops replacement before deletion. Deep Agents Code carries native MCP configuration through a bounded recovery handoff. See [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for preservation limits and recovery steps.
+For a managed Docker OpenClaw or Deep Agents Code sandbox in `Error`, `rebuild` captures declared state without starting or executing in the stopped source. The original container must still exist, and any mounted managed state volume must have the expected ownership and be used only by that container. Capture or identity validation failure stops replacement before deletion. Deep Agents Code carries only supported managed native MCP entries through a bounded recovery handoff. See [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for preservation limits and recovery steps.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+`.deepagents/.env`, authentication state, and user-authored or unsupported `.deepagents/.mcp.json` content are excluded. Keep secure host copies and restore them only through their owning supported workflow.
 
 </AgentOnly>
 
