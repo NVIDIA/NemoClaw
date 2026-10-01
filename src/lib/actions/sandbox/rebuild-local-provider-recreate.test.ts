@@ -124,47 +124,20 @@ const localProviderScenarios = [
 ] as const;
 
 function makeRouteApplier() {
-  return createLocalInferenceRouteApplier({
-    gatewayName: "nemoclaw",
-    inferenceRouteMutator: {
-      async setInferenceRoute(request) {
-        const result = openshellRuntime.runOpenshell(
-          [
-            "inference",
-            "set",
-            "-g",
-            request.target.gatewayName,
-            "--no-verify",
-            "--provider",
-            request.route.provider,
-            "--model",
-            request.route.model,
-            "--timeout",
-            String(request.verificationTimeoutSeconds),
-          ],
-          { ignoreError: true },
-        );
-        return result.status === 0
-          ? { ok: true as const }
-          : {
-              ok: false as const,
-              ambiguous: false,
-              error: {
-                kind: "command" as const,
-                reason: "failed" as const,
-                exitCode: result.status,
-                message: String(result.stderr || result.stdout || "route update failed"),
-              },
-            };
-      },
-    },
-    isNonInteractive: () => true,
-    promptValidationRecovery: async () => "selection",
-    classifyApplyFailure: () => ({ kind: "unknown" }) as never,
-    localInferenceTimeoutSecs: 30,
-    error: unusedCommonInferenceDeps.error,
-    exitProcess: unusedCommonInferenceDeps.exitProcess,
-  });
+  const setInferenceRoute = vi.fn(async () => ({ ok: true as const }));
+  return {
+    applyLocalInferenceRoute: createLocalInferenceRouteApplier({
+      gatewayName: "nemoclaw",
+      inferenceRouteMutator: { setInferenceRoute },
+      isNonInteractive: () => true,
+      promptValidationRecovery: async () => "selection",
+      classifyApplyFailure: () => ({ kind: "unknown" }) as never,
+      localInferenceTimeoutSecs: 30,
+      error: unusedCommonInferenceDeps.error,
+      exitProcess: unusedCommonInferenceDeps.exitProcess,
+    }),
+    setInferenceRoute,
+  };
 }
 
 installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
@@ -176,6 +149,7 @@ describe("rebuild local-provider recreation", () => {
       let sourceDeleted = false;
       let harness!: RebuildFlowHarness;
       let setupResult: SetupResult | undefined;
+      const routeApplier = makeRouteApplier();
       harness = createRebuildFlowHarness({
         sandboxEntry: { provider, model, credentialEnv: null },
         onboard: async (session) => {
@@ -188,7 +162,7 @@ describe("rebuild local-provider recreation", () => {
           expect(session.steps.provider_selection.status).toBe("pending");
           expect(session.steps.inference.status).toBe("pending");
 
-          setupResult = await setup(makeRouteApplier());
+          setupResult = await setup(routeApplier.applyLocalInferenceRoute);
         },
       });
       harness.session.provider = provider;
@@ -248,19 +222,13 @@ describe("rebuild local-provider recreation", () => {
         "--config",
         `OPENAI_BASE_URL=${baseUrl}`,
       ]);
-      expect(calls).toContainEqual([
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        provider,
-        "--model",
-        model,
-        "--timeout",
-        "30",
-      ]);
+      expect(routeApplier.setInferenceRoute).toHaveBeenCalledOnce();
+      expect(routeApplier.setInferenceRoute).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        route: { provider, model },
+        verification: "skip",
+        verificationTimeoutSeconds: 30,
+      });
       expect(calls.some((args) => args[0] === "provider" && args[1] === "update")).toBe(false);
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
         targetAgentType: "openclaw",
