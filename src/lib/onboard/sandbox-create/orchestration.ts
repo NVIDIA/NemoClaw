@@ -3505,7 +3505,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload,
       note,
       sandboxCommandExecutor,
-      selectedOpenShellGpuDiagnostics,
+      () => selectedOpenShellGpuDiagnostics,
     );
     // Managed bootstrap can invalidate OpenShell's cached Ready state after it
     // replaces the container. Registry publication stays bound to the durable

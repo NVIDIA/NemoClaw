@@ -139,7 +139,7 @@ export async function applyDockerGpuPatchOrExit(
   },
   deps: Pick<
     DockerGpuPatchDeps,
-    "commandExecutor" | "runOpenshell" | "runCaptureOpenshell" | "sleep"
+    "commandExecutor" | "openShellGpuDiagnostics" | "runOpenshell" | "runCaptureOpenshell" | "sleep"
   >,
 ): Promise<DockerGpuPatchResult> {
   console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
@@ -149,6 +149,7 @@ export async function applyDockerGpuPatchOrExit(
     return result;
   } catch (error) {
     printDockerGpuPatchFailureAndExit(options.sandboxName, error, {
+      openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
       runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   }
