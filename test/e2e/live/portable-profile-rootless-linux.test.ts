@@ -1055,8 +1055,9 @@ async function main(progress: TestProgress): Promise<void> {
     );
     assert.equal(disposableNetwork.dns_enabled, true);
     assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
-    assert.equal(disposableNetwork.subnets.length, 1);
-    const disposableSubnet = disposableNetwork.subnets[0] as Record<string, unknown>;
+    const disposableSubnets = disposableNetwork.subnets as Record<string, unknown>[];
+    assert.equal(disposableSubnets.length, 1);
+    const disposableSubnet = disposableSubnets[0]!;
     assert.equal(Object.hasOwn(disposableSubnet, "lease_range"), false);
     assert.notEqual(disposableSubnet.subnet, "169.254.1.0/24");
     disposableNetworkId = String(disposableNetwork.id);
@@ -1109,7 +1110,7 @@ async function main(progress: TestProgress): Promise<void> {
       origin: "generated",
       log: console.log,
     });
-    const imageRef = prebuild.imageRef;
+    const imageRef = prebuild.imageRef as string;
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
     assert.match(
