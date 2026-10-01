@@ -56,7 +56,10 @@ REGISTRY="${REGISTRY:-localhost:32000}"          # registry every cluster node c
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${CHART_DIR}"
+cd "${CHART_DIR}" || {
+  echo "ERROR: cannot cd to ${CHART_DIR}" >&2
+  return 1
+}
 # shellcheck source=hpa-common.sh
 source "${SCRIPT_DIR}/hpa-common.sh"
 hpa_common_load_local_env "${CHART_DIR}"
@@ -127,7 +130,7 @@ echo "=== 5/6: Port-forward + connect OpenShell CLI (no second terminal needed) 
 PF_LOG="$(mktemp)"
 AGENT_RUNTIME_LOG=""
 AGENT_RUNTIME_PID=""
-kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080 >"${PF_LOG}" 2>&1 &
+kubectl -n nemoclaw-sandboxes port-forward service/openshell 18080:8080 >"${PF_LOG}" 2>&1 &
 PF_PID=$!
 cleanup() {
   if [[ -n "${AGENT_RUNTIME_PID}" ]]; then
@@ -141,11 +144,21 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Waiting for the OpenShell gateway port-forward to come up..."
+pf_ready=0
 for _ in $(seq 1 30); do
   kill -0 "${PF_PID}" 2>/dev/null || { echo "ERROR: port-forward exited early; see below:" >&2; cat "${PF_LOG}" >&2; exit 1; }
-  (exec 3<>"/dev/tcp/127.0.0.1/8080") 2>/dev/null && exec 3>&- 3<&- && break
+  if (exec 3<>"/dev/tcp/127.0.0.1/18080") 2>/dev/null; then
+    exec 3>&- 3<&-
+    pf_ready=1
+    break
+  fi
   sleep 1
 done
+if [[ "${pf_ready}" -ne 1 ]]; then
+  echo "ERROR: OpenShell port-forward never opened 127.0.0.1:18080; see below:" >&2
+  cat "${PF_LOG}" >&2
+  exit 1
+fi
 
 MTLS_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/openshell/gateways/nemoclaw-k8s/mtls"
 if [[ -f "${MTLS_DIR}/tls.key" ]] && openshell status >/dev/null 2>&1; then

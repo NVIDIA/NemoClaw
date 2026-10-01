@@ -194,6 +194,91 @@ prometheus_service_name() {
   printf '%s' "${svc}"
 }
 
+# Helm replaces lists. Merge recipe custom metrics into an existing adapter
+# instead of dropping unrelated rules.custom entries other HPAs may use.
+merge_existing_adapter_custom_rules() {
+  local existing_json merged_json
+  existing_json="$(mktemp)"
+  merged_json="$(mktemp)"
+  if ! helm get values "${ADAPTER_RELEASE}" -n "${MONITORING_NS}" -o json >"${existing_json}" 2>/dev/null; then
+    echo '{}' >"${existing_json}"
+  fi
+  if ! python3 - "${ADAPTER_VALUES}" "${existing_json}" "${merged_json}" <<'PY'
+import json
+import subprocess
+import sys
+
+recipe_path, existing_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def load_yaml(path):
+    try:
+        import yaml
+
+        with open(path, encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
+    except ImportError:
+        pass
+    converters = (
+        ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.dump(YAML.load_file(ARGV[0]))", path],
+        ["yq", "-o=json", ".", path],
+    )
+    for cmd in converters:
+        try:
+            return json.loads(subprocess.check_output(cmd, text=True))
+        except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError):
+            continue
+    raise SystemExit(
+        "need PyYAML, ruby+yaml, or yq to merge Prometheus Adapter rules.custom"
+    )
+
+
+def rule_as(rule):
+    if not isinstance(rule, dict):
+        return None
+    name = rule.get("name")
+    if isinstance(name, dict) and name.get("as"):
+        return str(name["as"])
+    return None
+
+
+with open(existing_path, encoding="utf-8") as handle:
+    raw = handle.read().strip() or "{}"
+existing = json.loads(raw)
+if not isinstance(existing, dict):
+    existing = {}
+existing_rules = ((existing.get("rules") or {}).get("custom") or [])
+if not isinstance(existing_rules, list):
+    existing_rules = []
+
+recipe = load_yaml(recipe_path)
+recipe_rules = ((recipe.get("rules") or {}).get("custom") or [])
+if not isinstance(recipe_rules, list):
+    recipe_rules = []
+
+merged = []
+seen = set()
+for rule in existing_rules + recipe_rules:
+    as_name = rule_as(rule)
+    if as_name:
+        if as_name in seen:
+            continue
+        seen.add(as_name)
+    merged.append(rule)
+
+with open(out_path, "w", encoding="utf-8") as handle:
+    json.dump({"rules": {"custom": merged}}, handle)
+    handle.write("\n")
+PY
+  then
+    rm -f "${existing_json}" "${merged_json}"
+    echo "ERROR: failed to merge Prometheus Adapter custom rules" >&2
+    return 1
+  fi
+  printf '%s' "${merged_json}"
+  rm -f "${existing_json}"
+}
+
 discover_existing_prometheus_stack() {
   local candidate_namespace=""
   local candidate_release=""
@@ -232,6 +317,7 @@ discover_existing_prometheus_stack() {
 
 ensure_prometheus_stack() {
   local adapter_chart_version=""
+  local merged_adapter_values=""
 
   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
   helm repo update prometheus-community >/dev/null 2>&1 || helm repo update >/dev/null 2>&1
@@ -294,15 +380,20 @@ ensure_prometheus_stack() {
       exit 1
     }
     echo "Configuring existing Prometheus Adapter ${ADAPTER_RELEASE} with chart version ${adapter_chart_version}." >&2
-    helm upgrade "${ADAPTER_RELEASE}" prometheus-community/prometheus-adapter \
+    merged_adapter_values="$(merge_existing_adapter_custom_rules)"
+    if ! helm upgrade "${ADAPTER_RELEASE}" prometheus-community/prometheus-adapter \
       --namespace "${MONITORING_NS}" \
       --version "${adapter_chart_version}" \
       --reuse-values \
-      -f "${ADAPTER_VALUES}" \
+      -f "${merged_adapter_values}" \
       --set rules.default=true \
       --set "prometheus.url=${PROM_URL}" \
       --set prometheus.port=9090 \
-      --wait --timeout 10m >/dev/null
+      --wait --timeout 10m >/dev/null; then
+      rm -f "${merged_adapter_values}"
+      exit 1
+    fi
+    rm -f "${merged_adapter_values}"
   else
     echo "Installing Prometheus Adapter ${ADAPTER_RELEASE} in namespace ${MONITORING_NS}." >&2
     helm upgrade --install "${ADAPTER_RELEASE}" prometheus-community/prometheus-adapter \

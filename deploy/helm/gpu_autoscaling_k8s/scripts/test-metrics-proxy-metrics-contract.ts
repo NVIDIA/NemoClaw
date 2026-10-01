@@ -7,15 +7,12 @@
 
 import assert from "node:assert/strict";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 process.env.LLM_LATENCY_WINDOW_SIZE = "8";
 process.env.LLM_LATENCY_IDLE_EXPIRE_MS = "100";
 
-const metricsPath = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  "../files/metrics-proxy-metrics.ts",
-);
+const metricsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../files/metrics-proxy-metrics.ts");
 const {
   recordLlmLatency,
   llmMetricsLines,
@@ -23,7 +20,7 @@ const {
   resetLlmLatencyWindowForTests,
 } = await import(pathToFileURL(metricsPath).href);
 
-function gaugeValue(lines, name) {
+function gaugeValue(lines: string[], name: string): number {
   const prefix = `${name} `;
   const line = lines.find((entry) => entry.startsWith(prefix));
   assert.ok(line, `missing gauge ${name}`);
@@ -36,7 +33,7 @@ resetLlmLatencyWindowForTests();
 
 let lines = llmMetricsLines();
 assert.ok(
-  !lines.some((entry) => entry.startsWith("nemoclaw_llm_latency_avg_milliseconds ")),
+  !lines.some((entry: string) => entry.startsWith("nemoclaw_llm_latency_avg_milliseconds ")),
   "new replica with no samples must omit the HPA gauge (0 would dilute AverageValue)",
 );
 
@@ -45,7 +42,7 @@ recordLlmLatency(7000, true);
 lines = llmMetricsLines();
 assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 6000);
 assert.ok(
-  !lines.some((entry) => entry.includes("latency_p50") || entry.includes("latency_p95")),
+  !lines.some((entry: string) => entry.includes("latency_p50") || entry.includes("latency_p95")),
   "p50/p95 latency gauges must not be exported",
 );
 

@@ -7,7 +7,7 @@
 #   E2E_USERS=3 ./scripts/client_hermes.sh
 # This does not replace hpa-load-test-dgx-8xh100.sh.
 # LLM latency is ./scripts/agentscaling_hermes_latency.sh then the same client_hermes.sh.
-# Do not run this while the OpenClaw e2e owns the GPUs.
+# Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh are still up.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s

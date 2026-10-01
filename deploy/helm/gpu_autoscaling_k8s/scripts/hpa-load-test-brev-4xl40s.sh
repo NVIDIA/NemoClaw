@@ -121,6 +121,7 @@ HPA_HELM_ARGS=(
   --namespace "${NAMESPACE}"
   --create-namespace
   --set namespace.create=false
+  --set "namespace.name=${NAMESPACE}"
   -f "${HPA_VALUES}"
   --set inference.model="${INFERENCE_MODEL}"
   --set probes.readinessChecksInference=true

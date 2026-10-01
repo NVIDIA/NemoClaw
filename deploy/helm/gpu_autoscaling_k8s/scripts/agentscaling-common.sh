@@ -29,7 +29,7 @@ agentscaling_common_pin_openclaw_ollama() {
     agentscaling_common_fail "uses NAMESPACE=nemoclaw-gpu RELEASE=nemoclaw-gpu (got ${NAMESPACE}/${RELEASE})"
   fi
   export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
-  export ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP:-1}"
+  export ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP:-0}"
   export ENABLE_AUTOSCALING="${ENABLE_AUTOSCALING:-1}"
   export MIN_REPLICAS="${MIN_REPLICAS:-1}"
   export MAX_REPLICAS="${MAX_REPLICAS:-8}"

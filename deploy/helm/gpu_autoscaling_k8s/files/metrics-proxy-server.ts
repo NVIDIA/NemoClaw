@@ -133,6 +133,11 @@ async function proxyChatCompletions(req, res) {
     res.end("invalid json\n");
     return;
   }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    res.writeHead(400, { "content-type": "text/plain" });
+    res.end("request body must be a JSON object\n");
+    return;
+  }
   body.model = MODEL;
   const llmStart = performance.now();
   let llmOk = false;
@@ -324,6 +329,13 @@ const server = http.createServer(
       }
       res.writeHead(404);
       res.end("not found\n");
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "text/plain" });
+        res.end("internal error\n");
+      } else {
+        res.destroy();
+      }
     } finally {
       if (!isProbe) inflight -= 1;
     }

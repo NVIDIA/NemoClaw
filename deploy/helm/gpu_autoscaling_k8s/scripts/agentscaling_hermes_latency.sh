@@ -7,13 +7,14 @@
 # and client path as GPU-util: users send hermes -z into each sandbox.
 #
 # Switches the cluster HPA metric, then creates sandboxes.
+# Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
 # Run ./scripts/client_hermes.sh in another terminal after sandboxes are Ready.
 # The client does not set HPA_METRIC. For GPU-util HPA use
 # ./scripts/agentscaling_hermes_gpuutil.sh.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
-#   E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh
+#   E2E_USERS=3 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 #   E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh start
 #   ./scripts/agentscaling_hermes_latency.sh stop
 #   ./scripts/agentscaling_hermes_latency.sh cleanup

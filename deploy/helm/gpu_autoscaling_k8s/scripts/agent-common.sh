@@ -238,3 +238,11 @@ agent_common_create_smoke_test() {
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     curl -fsS https://inference.local/v1/models >/dev/null
 }
+
+# GHCR Hermes images bake NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b.
+# Point oneshot at the chart model so hermes -z does not send a missing id.
+agent_common_pin_hermes_model() {
+  local sandbox_name="${1:?sandbox}" model="${2:?model}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    hermes config set model.default "${model}" >/dev/null
+}

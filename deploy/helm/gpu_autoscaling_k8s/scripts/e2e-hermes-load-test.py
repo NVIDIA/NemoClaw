@@ -154,8 +154,7 @@ async def simulate_user(
 ) -> dict[str, object]:
     """One hermes -z process per inflight slot.
 
-    Inflight 4 in a 1Gi sandbox OOM-kills Hermes (exit 137). Keep start=1 max=2
-    unless AGENT_SANDBOX_MEMORY is raised.
+    Inflight 2+ OOMed a CPU node. Default is one hermes -z per sandbox.
     """
     sandbox = sandbox_name(prefix, user_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,7 +224,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("  Not: load-generator.ts pod-IP Job, not in-sandbox curl to Envoy")
     print(
         f"  Concurrent prompts per user: {args.inflight_start}→{args.inflight_per_user} "
-        "(keep ≤2 unless sandbox memory is raised)"
+        "(default 1; inflight 2 OOMed a CPU node)"
     )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
@@ -373,8 +372,8 @@ def main() -> int:
     parser.add_argument(
         "--inflight-per-user",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "2")),
-        help="Max concurrent hermes -z prompts per sandbox. Keep at 2 unless memory is raised.",
+        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "1")),
+        help="Max concurrent hermes -z prompts per sandbox. Default 1; inflight 2 OOMed dgx-19.",
     )
     parser.add_argument(
         "--inflight-start",

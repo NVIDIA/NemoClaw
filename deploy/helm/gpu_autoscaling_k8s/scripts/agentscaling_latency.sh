@@ -7,6 +7,7 @@
 # and client path as GPU-util: users talk only to :18789.
 #
 # Switches the cluster HPA metric, then creates/starts sandboxes.
+# Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
 # Run ./scripts/client.sh in another terminal after :18789 is up.
 # The client does not set HPA_METRIC. For GPU-util HPA use
 # ./scripts/agentscaling_gpuutil.sh.

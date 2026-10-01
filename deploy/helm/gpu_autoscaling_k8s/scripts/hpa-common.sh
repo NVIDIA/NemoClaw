@@ -725,7 +725,7 @@ hpa_common_ingress_basic_auth_credentials() {
   local ns="${1:?namespace}"
   local release="${2:?release}"
   local username="${3:-admin}"
-  local secret_name="${4:-${release}-metrics-proxy-ingress-auth}"
+  local secret_name="${4:-$(RELEASE="${release}" hpa_common_release_fullname)-metrics-proxy-ingress-auth}"
 
   require_cmd kubectl
   require_cmd python3
@@ -1489,6 +1489,32 @@ hpa_common_append_target_node_helm_sets() {
   __helm_args+=(--set-string "ingress.gateway.tolerations[0].effect=NoSchedule")
 }
 
+# inference.runtime / inference.model plus NIM and vLLM Secret flags.
+# Shared by the HPA upgrade and the 1-replica baseline so a vLLM/NIM release
+# is not rewritten as Ollama during hpa_common_ensure_metrics_proxy_ready.
+hpa_common_append_inference_runtime_helm_sets() {
+  local -n __helm_args="${1:?helm_args array name}"
+  local inference_runtime="${2:-${INFERENCE_RUNTIME:-ollama}}"
+  local inference_model="${3:-${INFERENCE_MODEL:-llama3.2:3b}}"
+  __helm_args+=(--set "inference.runtime=${inference_runtime}")
+  __helm_args+=(--set "inference.model=${inference_model}")
+  if [[ -n "${NIM_NGC_API_KEY:-}" ]]; then
+    __helm_args+=(--set-string "nim.ngcApiKey.value=${NIM_NGC_API_KEY}")
+  fi
+  if [[ -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
+    __helm_args+=(--set-string "nim.ngcApiKey.existingSecret=${NIM_NGC_API_KEY_SECRET}")
+  fi
+  if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
+    __helm_args+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
+  fi
+  if [[ -n "${VLLM_IMAGE_PULL_SECRET:-}" ]]; then
+    __helm_args+=(--set-string "vllm.imagePullSecret.existingSecret=${VLLM_IMAGE_PULL_SECRET}")
+  fi
+  if [[ -n "${VLLM_HF_TOKEN_SECRET:-}" ]]; then
+    __helm_args+=(--set-string "vllm.huggingFaceToken.existingSecret=${VLLM_HF_TOKEN_SECRET}")
+  fi
+}
+
 # Idle Kubernetes HPA baseline for GPU autoscaling (no --reuse-values — avoids Service port merge bugs).
 hpa_common_gpu_helm_upgrade() {
   local release="${1:?release}"
@@ -1519,8 +1545,6 @@ hpa_common_gpu_helm_upgrade() {
     --set namespace.create=false
     --set "namespace.name=${ns}"
     -f "${hpa_values}"
-    --set inference.model="${inference_model}"
-    --set inference.runtime="${inference_runtime}"
     --set probes.readinessChecksInference=true
     --set "ingress.allowInsecureHttp=${allow_insecure_http}"
     --set "ingress.gateway.enabled=$(hpa_common_envoy_lb_helm_value)"
@@ -1558,29 +1582,7 @@ hpa_common_gpu_helm_upgrade() {
   fi
   hpa_common_append_target_node_helm_sets helm_args
   hpa_common_append_servicemonitor_release_helm_set helm_args
-  # Only relevant when inference_runtime=nim; harmless (ignored by the chart) otherwise.
-  # NIM_NGC_API_KEY alone is enough for the common case: the chart derives both the
-  # in-container NGC_API_KEY Secret and the nvcr.io imagePullSecret from this one value.
-  if [[ -n "${NIM_NGC_API_KEY:-}" ]]; then
-    helm_args+=(--set-string "nim.ngcApiKey.value=${NIM_NGC_API_KEY}")
-  fi
-  if [[ -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
-    helm_args+=(--set-string "nim.ngcApiKey.existingSecret=${NIM_NGC_API_KEY_SECRET}")
-  fi
-  # Only needed when NIM_NGC_API_KEY_SECRET is used instead of NIM_NGC_API_KEY: the chart
-  # cannot read that Secret's data at template time to derive an imagePullSecret, so point it
-  # at a pre-created `kubernetes.io/dockerconfigjson` Secret for nvcr.io instead.
-  if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
-    helm_args+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
-  fi
-  # vLLM does not need NGC_API_KEY for model download. Its nvcr.io image may still
-  # need registry authentication, and gated Hugging Face models need a separate token.
-  if [[ -n "${VLLM_IMAGE_PULL_SECRET:-}" ]]; then
-    helm_args+=(--set-string "vllm.imagePullSecret.existingSecret=${VLLM_IMAGE_PULL_SECRET}")
-  fi
-  if [[ -n "${VLLM_HF_TOKEN_SECRET:-}" ]]; then
-    helm_args+=(--set-string "vllm.huggingFaceToken.existingSecret=${VLLM_HF_TOKEN_SECRET}")
-  fi
+  hpa_common_append_inference_runtime_helm_sets helm_args "${inference_runtime}" "${inference_model}"
 
   helm "${helm_args[@]}" >/dev/null
 }
@@ -1658,6 +1660,9 @@ hpa_common_ensure_metrics_proxy_ready() {
   fi
   hpa_common_append_target_node_helm_sets helm_args
   hpa_common_append_servicemonitor_release_helm_set helm_args
+  hpa_common_append_inference_runtime_helm_sets helm_args \
+    "${INFERENCE_RUNTIME:-ollama}" \
+    "${INFERENCE_MODEL:-llama3.2:3b}"
   helm "${helm_args[@]}" >/dev/null
 
   hpa_common_kick_deployment "${ns}" "${deploy}" || helm "${helm_args[@]}" >/dev/null

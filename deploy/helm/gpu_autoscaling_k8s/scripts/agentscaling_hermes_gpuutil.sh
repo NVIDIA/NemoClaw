@@ -7,8 +7,10 @@
 # Clients send hermes -z into each sandbox. They call inference.local →
 # Envoy → vLLM. Pairing without HPA is Hermes + NIM (test-hermes-nim.sh).
 #
-# Default is 3 users at 2Gi so CPU RAM does not OOMKill the sandboxes.
-# Do not run this while the OpenClaw e2e owns the GPUs.
+# Default is 3 users at 4Gi (2Gi + inflight 2 OOMed dgx-19). Inflight stays 1.
+# Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
+# Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh
+# are still running. GPU inference can stay; this script switches it to vLLM.
 #
 # The client does not know this metric. Use ./scripts/client_hermes.sh after
 # sandboxes are Ready. For LLM-latency HPA use
@@ -16,7 +18,7 @@
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
-#   E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh
+#   E2E_USERS=3 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
 #   E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh start
 #   ./scripts/agentscaling_hermes_gpuutil.sh stop
 #   ./scripts/agentscaling_hermes_gpuutil.sh cleanup

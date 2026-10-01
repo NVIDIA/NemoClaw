@@ -151,7 +151,9 @@ configure_openshell_inference() {
   if [[ "${SKIP_PROVIDER_SETUP:-0}" == "1" ]]; then
     return 0
   fi
-  if [[ -f "${OPENSHELL_LOG_DIR}/.provider.done" ]]; then
+  local want="${PROVIDER_NAME} ${BASE_URL} ${MODEL}"
+  if [[ -f "${OPENSHELL_LOG_DIR}/.provider.done" ]] \
+    && [[ "$(<"${OPENSHELL_LOG_DIR}/.provider.done")" == "${want}" ]]; then
     return 0
   fi
   if openshell provider get "${PROVIDER_NAME}" >/dev/null 2>&1; then
@@ -177,7 +179,7 @@ configure_openshell_inference() {
     inference_set_args+=(--no-verify)
   fi
   openshell inference set "${inference_set_args[@]}" >>"${OPENSHELL_LOG}" 2>&1
-  touch "${OPENSHELL_LOG_DIR}/.provider.done"
+  printf '%s' "${want}" >"${OPENSHELL_LOG_DIR}/.provider.done"
 }
 
 # OpenShell 0.0.85 prints "Error: supervisor session not connected" / ssh 255
@@ -309,6 +311,7 @@ wait_inference_local() {
 }
 
 CREATE_PID=""
+ready_ok=1
 if [[ "${sandbox_already_present}" -eq 0 ]]; then
   # OpenShell 0.0.85 keeps create attached until supervisor SSH is up; that
   # wait fails/hangs after the pod is Ready. Create in the background, wait
@@ -317,14 +320,15 @@ if [[ "${sandbox_already_present}" -eq 0 ]]; then
   openshell sandbox create "${SANDBOX_CREATE_ARGS[@]}" --no-tty \
     >>"${OPENSHELL_LOG}" 2>&1 &
   CREATE_PID=$!
-  wait_sandbox_ready "${SANDBOX_NAME}" || true
+  wait_sandbox_ready "${SANDBOX_NAME}" || ready_ok=0
   if [[ -n "${CREATE_PID}" ]] && kill -0 "${CREATE_PID}" 2>/dev/null; then
     kill "${CREATE_PID}" 2>/dev/null || true
     wait "${CREATE_PID}" 2>/dev/null || true
   fi
 else
-  wait_sandbox_ready "${SANDBOX_NAME}" || true
+  wait_sandbox_ready "${SANDBOX_NAME}" || ready_ok=0
 fi
+((ready_ok == 1)) || fail "${SANDBOX_NAME} did not become Ready; see ${OPENSHELL_LOG}"
 
 # Patch nproc via kubectl before any OpenShell exec. Connect-shell re-applies
 # nproc=512; RLIMIT_NPROC is per-UID on the node, so 10 e2e sandboxes EAGAIN.
@@ -388,6 +392,12 @@ case "${SKIP_WAIT_INFERENCE_LOCAL:-0}" in
     fail "SKIP_WAIT_INFERENCE_LOCAL must be 0 or 1"
     ;;
 esac
+
+if [[ "${AGENT_NAME}" == "hermes" ]]; then
+  echo "  ${SANDBOX_NAME}: pinning Hermes model.default=${MODEL}"
+  agent_common_pin_hermes_model "${SANDBOX_NAME}" "${MODEL}" \
+    || fail "${SANDBOX_NAME}: hermes config set model.default ${MODEL} failed"
+fi
 
 case "${SKIP_CREATE_SMOKE:-0}" in
   0)

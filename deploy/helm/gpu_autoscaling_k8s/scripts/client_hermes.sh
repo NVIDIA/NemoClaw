@@ -11,8 +11,7 @@
 #   ./scripts/agentscaling_hermes_gpuutil.sh   # GPU util HPA
 #   ./scripts/agentscaling_hermes_latency.sh   # LLM latency HPA (same client)
 #
-# Default: 3 users, inflight 1→2, 2Gi sandboxes. Do not raise inflight
-# without raising AGENT_SANDBOX_MEMORY; concurrent hermes -z OOMs 1Gi.
+# Default: 3 users, inflight 1, 4Gi sandboxes. 2Gi + inflight 2 OOMed dgx-19.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
@@ -39,7 +38,7 @@ export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
-export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
@@ -81,7 +80,7 @@ done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox pod is Ready"
 
 mkdir -p "${E2E_OUTPUT_DIR}"
-cd "${CHART_DIR}"
+cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 exec python3 "${SCRIPT_DIR}/e2e-hermes-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \

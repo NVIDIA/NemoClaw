@@ -2,6 +2,10 @@
 local.env
 hpa-tls-values.yaml
 
+# Raw NGC / Hugging Face keys. Never commit. See secrets.env.example.
+secrets.env
+*.key
+
 # Local OpenShell CLI prefix (pip --prefix); not part of the recipe.
 .tools-openshell/
 

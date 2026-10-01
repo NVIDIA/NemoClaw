@@ -21,7 +21,7 @@ spec:
       labels:
         {{- include "nemoclaw-gpu.selectorLabels" . | nindent 8 }}
       annotations:
-        checksum/metrics-proxy-config: {{ printf "%s%s%s%s" (.Files.Get "files/metrics-proxy-server.ts") (.Files.Get "files/metrics-proxy-metrics.ts") (.Files.Get "files/package.json") (.Files.Get "files/ollama-start.sh") | sha256sum }}
+        checksum/metrics-proxy-config: {{ printf "%s%s%s%s%s%s%s" (.Files.Get "files/metrics-proxy-server.ts") (.Files.Get "files/metrics-proxy-metrics.ts") (.Files.Get "files/package.json") (.Files.Get "files/ollama-start.sh") (include "nemoclaw-gpu.runtime" .) (include "nemoclaw-gpu.runtimeBaseUrl" .) (.Values.inference.model | toString) | sha256sum }}
       {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
       {{- end }}

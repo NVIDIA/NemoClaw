@@ -124,7 +124,7 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-This is the multi-user architecture test for **OpenClaw + Ollama**. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. 
+This is the multi-user architecture test for **OpenClaw + Ollama**. Hermes + vLLM is the same user → sandbox path ([below](#hermes--vllm-n-user-end-to-end)); either pairing can be first after steps 1–5. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. Step 7 is optional (only if you want to save CPU RAM). 
 
 ```text
 E2E test: OpenClaw + Ollama
@@ -151,15 +151,15 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export KUBECONFIG="${HOME}/.kube/config"
 
 # Terminal A — sandbox provision + GPU-util HPA
-E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh
+# Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
+# A TLS install can omit that variable.
+E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 
 # Terminal B — watch 67.5%/40%, not 67500m/40
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
 
-# Terminal C — same client for any HPA metric
+# Terminal C — same client for any HPA metric (inflight 1 is the script default)
 E2E_USERS=5 \
-E2E_INFLIGHT_START_PER_USER=1 \
-E2E_INFLIGHT_PER_USER=1 \
 MAX_TOKENS=608 \
 ./scripts/client.sh
 ```
@@ -169,15 +169,13 @@ MAX_TOKENS=608 \
 
 ```bash
 # Terminal A — sandbox provision + latency HPA
-E2E_USERS=5 ./scripts/agentscaling_latency.sh
+E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
 
 # Terminal C — same client; stops at 8 GPUs, not at 5 users
 E2E_USERS=5 \
-E2E_INFLIGHT_START_PER_USER=1 \
-E2E_INFLIGHT_PER_USER=1 \
 MAX_TOKENS=608 \
 ./scripts/client.sh
 ```
@@ -193,7 +191,17 @@ Validated 8xH100 — latency > 3000 ms:
 Check the log to see the end users, sandboxes, and chats: 
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 
+### 7. (Optional) Tear down e2e sandboxes — only if you want to save CPU RAM
 
+Skip this if the node has enough DRAM. Agent sandboxes use this DGX H100's **CPU cores and DRAM**, not the H100 GPUs (OpenClaw e2e is 8Gi each; Hermes e2e is 4Gi each). This 2 TB DGX has plenty, so other-agent sandboxes can stay. GPU inference can stay too.
+
+```bash
+./scripts/agentscaling_gpuutil.sh cleanup          # openclaw-ollama-e2e-*
+./scripts/agentscaling_hermes_gpuutil.sh cleanup   # hermes-e2e-*
+# or all agent sandboxes (pairing names too): ./scripts/uninstall-e2e.sh
+```
+
+Do not `helm uninstall` OpenShell or the GPU chart for this. Full cluster teardown: [Uninstall](#uninstall).
 
 ## Agents
 
@@ -414,11 +422,12 @@ gateway on `:8642`.
 ```bash
 export PATH="${HOME}/.local/bin:${PATH}"
 openshell sandbox exec -n hermes-onprem --no-tty -- \
-  hermes -z "In one sentence, what is an AI agent sandbox?"
+  hermes -z "In one sentence, what is an AI agent sandbox?" --safe-mode
 ```
 
 Pass: a non-empty sentence (wording varies). Do not pass `-m` (`hermes -z`
-treats `-m` as the prompt). OpenShell must already be connected (`openshell status`).
+treats `-m` as the prompt). `--safe-mode` keeps a small local model from emitting
+tool JSON instead of a sentence. OpenShell must already be connected (`openshell status`).
 
 `./scripts/verify-agent-sandbox.sh` also waits for in-sandbox
 `http://localhost:8642/health`. That URL is inside the sandbox, not on the host
@@ -491,25 +500,26 @@ This DGX OpenClaw + Ollama run used **5** end users (one sandbox each). Size `E2
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - one OpenShell sandbox per user
 - Job-like chats (`files/load-generator.ts` questions, `stream=false`). Questions average **~38 llama3.2 tokens**; `MAX_TOKENS` defaults to **608**
-- inflight **1→2** per sandbox
+- inflight **1** per sandbox (inflight 2 OOMed a CPU node)
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
 
 ### Hermes + vLLM N-user end-to-end
 
-Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. Complete Quick start steps 1–5 first (`openshell status` Connected, `gatewayclass eg` present). Default `E2E_USERS=3`. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*`. `client_hermes.sh` only sends chats. Cleanup only destroys `hermes-e2e-*`. Do not run this while OpenClaw e2e owns the GPUs.
+Same user → sandbox path as OpenClaw + Ollama (either pairing can be first): load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. Complete Quick start steps 1–5 first (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*` and helm-upgrade the GPU chart to vLLM. `client_hermes.sh` only sends chats. Step 7 is optional (only if you want to save CPU RAM).
 
 ```bash
 # Terminal A — sandbox provision + GPU-util HPA
-E2E_USERS=3 ./scripts/agentscaling_hermes_gpuutil.sh
+# Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
+E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
 
-# Terminal C — same client for either HPA metric
-E2E_USERS=3 ./scripts/client_hermes.sh
+# Terminal C — same client for either HPA metric (inflight 1 is the script default)
+E2E_USERS=5 ./scripts/client_hermes.sh
 
 # Latency (same sandboxes, switch HPA metric)
-E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh
-E2E_USERS=3 ./scripts/client_hermes.sh
+E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
+E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
 Each run waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`) so a new test does not inherit a prior scale-down window — it will not force a scale-down under real traffic. While running, the HPA uses one-pod 40% steps, then restores `HPA_VALUES`. Load stops after a short hold at max so replicas return to 1.
@@ -581,11 +591,18 @@ After scale-up you should see multiple series. If latency graphs stay empty, che
 
 ## Uninstall
 
-Stop `run-agent-sandbox.sh` (OpenClaw/Hermes). With the OpenShell port-forward up (names: `nemoclaw-onprem` / `onprem-ollama`, `hermes-onprem` / `onprem-hermes`, `deepagents-onprem` / `onprem-deepagents`):
+There is **one** OpenShell gateway for every sandbox (OpenClaw and Hermes). Do not install a second gateway.
+
+### Optional: e2e sandboxes (CPU RAM)
+
+Same as Quick start [step 7](#7-optional-tear-down-e2e-sandboxes--only-if-you-want-to-save-cpu-ram). Only if you want to save CPU RAM. GPU inference stays.
+
+### Full recipe uninstall
+
+Stop `run-agent-sandbox.sh` (OpenClaw/Hermes). With the OpenShell port-forward up:
 
 ```bash
-openshell sandbox delete nemoclaw-onprem
-openshell provider delete onprem-ollama
+./scripts/uninstall-e2e.sh
 openshell gateway remove nemoclaw-k8s
 rm -r -- "${XDG_CONFIG_HOME:-${HOME}/.config}/openshell/gateways/nemoclaw-k8s/mtls"
 helm uninstall openshell -n nemoclaw-sandboxes
@@ -613,7 +630,7 @@ NVIDIA's data center CPU is **NVIDIA Grace** (Arm Neoverse V2):
 
 See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/grace-cpu-superchip/). NVIDIA also pairs Grace with GPUs in GH200 and GB200; those are GPU systems, not extra CPU-only capacity on this H100 box.
 
-On this demo, OpenClaw e2e sandboxes are **1 CPU / 8Gi**. 1Gi, 2Gi, and 4Gi **OOMKill** OpenClaw at sandbox start (`exit 137`) because leftover Node.js workers fill the cgroup before `:18789` binds. Keep **one sandbox per user** and inflight **1→2**. Prefer more sandboxes × fewer prompts over packing Job-sized inflight into one sandbox.
+On this demo, OpenClaw e2e sandboxes are **1 CPU / 8Gi**. 1Gi, 2Gi, and 4Gi **OOMKill** OpenClaw at sandbox start (`exit 137`) because leftover Node.js workers fill the cgroup before `:18789` binds. Keep **one sandbox per user** and inflight **1**. Inflight 2 OOMed a CPU node. Prefer more sandboxes × fewer prompts over packing Job-sized inflight into one sandbox.
 
 ### How is LLM latency calculated for HPA?
 

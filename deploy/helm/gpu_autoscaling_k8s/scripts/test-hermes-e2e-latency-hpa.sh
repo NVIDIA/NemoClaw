@@ -7,7 +7,7 @@
 #   E2E_USERS=3 ./scripts/client_hermes.sh
 # Same client as GPU util. The client does not set HPA_METRIC.
 # This does not replace hpa-load-test-dgx-8xh100.sh.
-# Do not run this while the OpenClaw e2e owns the GPUs.
+# Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh are still up.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s

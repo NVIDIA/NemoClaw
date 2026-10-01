@@ -11,7 +11,8 @@
 #   ./scripts/agentscaling_gpuutil.sh   # GPU util HPA (this DGX success path)
 #   ./scripts/agentscaling_latency.sh   # LLM latency HPA (same client)
 #
-# This DGX GPU-util run: 5 users, inflight 1→2, 8Gi, MAX_TOKENS=608.
+# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=608.
+# Inflight 2 OOMed a CPU node (dgx-19). Do not raise without extra sandbox RAM.
 # Users never talk to the Envoy load balancer. OpenShell is only the exec
 # tunnel into each sandbox; it is not the user-facing listener.
 #
@@ -42,7 +43,7 @@ export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
 export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
-export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
@@ -72,6 +73,8 @@ echo "Checking each sandbox listens on :18789 (do not send chat if this fails)"
 unhealthy=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  # curl %{http_code} is literal; do not expand it in the sandbox shell.
+  # shellcheck disable=SC2016
   if kubectl exec -n "${OPENSHELL_NAMESPACE}" "${name}" -c agent -- bash -c '
     for ns in /run/netns/*; do
       [ -e "$ns" ] || continue
@@ -89,7 +92,7 @@ done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox listens on :18789"
 
 mkdir -p "${E2E_OUTPUT_DIR}"
-cd "${CHART_DIR}"
+cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \

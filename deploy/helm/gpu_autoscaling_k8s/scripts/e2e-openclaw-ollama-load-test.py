@@ -325,7 +325,9 @@ async def simulate_user(
         log_handle.close()
     rc = proc.returncode if proc.returncode is not None else 1
     chats_ok, chats_err = parse_load_counts(log_path)
-    if rc == 0:
+    # run_test stops load early (HPA target or deadline) and SIGTERM the exec.
+    # Count the user from chat.send results, not from the killed process exit code.
+    if chats_ok > 0 and (rc == 0 or stop_event.is_set()):
         ok = 1
     else:
         err = 1
@@ -365,7 +367,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
     print(
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
-        "(1:1 user→sandbox :18789; this demo uses inflight 1→2 on 8Gi)"
+        "(1:1 user→sandbox :18789; default inflight 1 so CPU sandboxes do not OOM)"
     )
     print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")
@@ -522,8 +524,8 @@ def main() -> int:
     parser.add_argument(
         "--inflight-per-user",
         type=int,
-        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "2")),
-        help="Max concurrent chats per sandbox. This DGX demo uses 2.",
+        default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "1")),
+        help="Max concurrent chats per sandbox. Default 1; inflight 2 OOMed dgx-19.",
     )
     parser.add_argument(
         "--inflight-start",

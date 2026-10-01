@@ -196,14 +196,6 @@ load_e2e_inference_env() {
   [[ -n "${E2E_API_KEY}" ]] || fail "inference API key is empty"
 }
 
-install_sandbox_inference_key() {
-  local name="${1:?sandbox}"
-  load_e2e_inference_env
-  printf '%s' "${E2E_API_KEY}" | kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
-    tee /tmp/e2e-inference.key >/dev/null
-  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- chmod 600 /tmp/e2e-inference.key
-}
-
 sandbox_pod_ready() {
   local name="${1:?sandbox}"
   kubectl get pod "${name}" -n "${E2E_SANDBOX_NS}" \
@@ -217,7 +209,7 @@ print_e2e_layout() {
   local i name sandbox_st agent_st
   echo ""
   echo "========================================================================"
-  echo "E2E test: OpenClaw + Ollama"
+  echo "E2E test: ${AGENT_DISPLAY_NAME} + Ollama"
   echo "  ${count} end users send requests to ${count} OpenClaw agents"
   echo "  ${count} OpenClaw agents run in ${count} OpenShell sandboxes"
   echo "  LLM (Ollama ${INFERENCE_MODEL}) runs on GPUs"
@@ -280,6 +272,8 @@ agent_health_ok() {
   local name="${1:?sandbox}"
   # OpenClaw binds :18789 in the OpenShell sandbox netns, not the pod netns.
   # kubectl exec curl 127.0.0.1:18789 always fails (that is the 180s false timeout).
+  # curl %{http_code} is literal; do not expand it in the sandbox shell.
+  # shellcheck disable=SC2016
   kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
     for ns in /run/netns/*; do
       [ -e "$ns" ] || continue
@@ -294,13 +288,9 @@ agent_health_ok() {
 
 inference_local_ok() {
   local name="${1:?sandbox}"
-  load_e2e_inference_env
-  install_sandbox_inference_key "${name}"
-  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
-    set -euo pipefail
-    key="$(cat /tmp/e2e-inference.key)"
-    curl -fsS --http1.1 --max-time 5 -H "Authorization: Bearer ${key}" "$1/models" >/dev/null
-  ' bash "${E2E_INFERENCE_URL}" >/dev/null 2>&1
+  # OpenShell MITM injects credentials. Do not copy the gateway API key into the sandbox.
+  timeout --foreground 12 openshell sandbox exec -n "${name}" --no-tty -- \
+    curl -fsS --http1.1 --max-time 5 https://inference.local/v1/models >/dev/null 2>&1
 }
 
 pin_openclaw_ollama_model() {
@@ -416,10 +406,10 @@ wait_names_healthy() {
 finish_one_agent() {
   local name="${1:?sandbox}"
   if ! inference_local_ok "${name}"; then
-    echo "ERROR: $(sandbox_label "${name}"): Envoy inference URL not reachable after agent start" >&2
+    echo "ERROR: $(sandbox_label "${name}"): https://inference.local not reachable after agent start" >&2
     return 1
   fi
-  echo "  $(sandbox_label "${name}"): ${INFERENCE_MODEL} via Envoy ok"
+  echo "  $(sandbox_label "${name}"): ${INFERENCE_MODEL} via inference.local ok"
 }
 
 stop_one_agent() {
@@ -466,7 +456,7 @@ count_from_existing() {
 start_agents() {
   local count="${1:?count}"
   local i name started_at="${SECONDS}"
-  local -a names=() pending=() already=() finish_pids=() finish_names=() failed=()
+  local -a names=() pending=()
   echo "Starting ${count} OpenClaw agents in parallel (sandbox 0 … sandbox $((count - 1))). Cluster still has one OpenShell gateway and one Envoy load balancer."
   echo "  Light sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY}); GPUs do inference."
   echo "  One agent per sandbox (nemoclaw-start, NEMOCLAW_MINIMAL_BOOTSTRAP=1). Not sequential :18789 waits."
@@ -491,8 +481,6 @@ start_agents() {
     launch_one_agent "${name}"
     pending+=("${name}")
   done
-  finish_pids=()
-  finish_names=()
   wait_names_healthy "${pending[@]}" || fail "parallel agent start timed out; logs in ${STATE_DIR}"
   wait_inference_local_parallel "${names[@]}" \
     || fail "Envoy inference check failed after parallel agent start"

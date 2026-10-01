@@ -6,7 +6,7 @@
 # user) for the Hermes + vLLM HPA e2e. The model stays on vLLM GPU pods in
 # nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → vLLM HPA.
 #
-# Sandboxes are light CPU front ends (default 1 CPU / 2Gi). They do not run
+# Sandboxes are light CPU front ends (default 1 CPU / 4Gi). They do not run
 # inference; GPUs do. bringup does not start the Hermes gateway: the client
 # uses hermes -z, which does not need :8642, and a long-running gateway
 # would spend CPU RAM. Prefer ./scripts/agentscaling_hermes_gpuutil.sh or
@@ -27,7 +27,7 @@
 #   ./scripts/setup-hermes-e2e-sandboxes.sh stop
 #   ./scripts/setup-hermes-e2e-sandboxes.sh cleanup
 #
-# Do not run this while the OpenClaw e2e owns the GPUs.
+# Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh are still up.
 
 set -euo pipefail
 
@@ -87,9 +87,8 @@ export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
 export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-# 1Gi OOMKills concurrent hermes -z in the CPU cgroup. 2Gi is the floor for
-# inflight 1→2. Do not copy OpenClaw's 8Gi unless Hermes also OOMs at 2Gi.
-export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-2Gi}"
+# 2Gi + inflight 2 OOMed dgx-19. 4Gi with inflight 1. 8Gi is OpenClaw-only.
+export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
 export SKIP_INFERENCE_VERIFY="${SKIP_INFERENCE_VERIFY:-1}"
@@ -162,14 +161,6 @@ load_e2e_inference_env() {
   [[ -n "${E2E_API_KEY}" ]] || fail "inference API key is empty"
 }
 
-install_sandbox_inference_key() {
-  local name="${1:?sandbox}"
-  load_e2e_inference_env
-  printf '%s' "${E2E_API_KEY}" | kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
-    tee /tmp/e2e-inference.key >/dev/null
-  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- chmod 600 /tmp/e2e-inference.key
-}
-
 sandbox_pod_ready() {
   local name="${1:?sandbox}"
   kubectl get pod "${name}" -n "${E2E_SANDBOX_NS}" \
@@ -190,7 +181,7 @@ print_e2e_layout() {
   local i name sandbox_st
   echo ""
   echo "========================================================================"
-  echo "E2E test: Hermes + vLLM"
+  echo "E2E test: ${AGENT_DISPLAY_NAME} + vLLM"
   echo "  ${count} end users send hermes -z to ${count} OpenShell sandboxes"
   echo "  ${count} Hermes agents run in ${count} OpenShell sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY})"
   echo "  LLM (vLLM ${INFERENCE_MODEL}) runs on GPUs"
@@ -246,13 +237,9 @@ refresh_openshell_inference_backend() {
 
 inference_local_ok() {
   local name="${1:?sandbox}"
-  load_e2e_inference_env
-  install_sandbox_inference_key "${name}"
-  kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
-    set -euo pipefail
-    key="$(cat /tmp/e2e-inference.key)"
-    curl -fsS --http1.1 --max-time 5 -H "Authorization: Bearer ${key}" "$1/models" >/dev/null
-  ' bash "${E2E_INFERENCE_URL}" >/dev/null 2>&1
+  # OpenShell MITM injects credentials. Do not copy the gateway API key into the sandbox.
+  timeout --foreground 12 openshell sandbox exec -n "${name}" --no-tty -- \
+    curl -fsS --http1.1 --max-time 5 https://inference.local/v1/models >/dev/null 2>&1
 }
 
 skip_connect_shell_nproc() {
@@ -421,6 +408,8 @@ bringup_one() {
     create_one_sandbox "${name}" || return 1
   fi
   skip_connect_shell_nproc "${name}" || return 1
+  echo "  ${name}: pinning Hermes model.default=${INFERENCE_MODEL}"
+  agent_common_pin_hermes_model "${name}" "${INFERENCE_MODEL}" || return 1
 }
 
 bringup_sandboxes() {

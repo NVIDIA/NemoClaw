@@ -33,7 +33,7 @@ agentscaling_hermes_common_pin() {
     agentscaling_hermes_common_fail "uses NAMESPACE=nemoclaw-gpu RELEASE=nemoclaw-gpu (got ${NAMESPACE}/${RELEASE})"
   fi
   export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
-  export ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP:-1}"
+  export ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP:-0}"
   export ENABLE_AUTOSCALING="${ENABLE_AUTOSCALING:-1}"
   export MIN_REPLICAS="${MIN_REPLICAS:-1}"
   export MAX_REPLICAS="${MAX_REPLICAS:-8}"
@@ -41,13 +41,13 @@ agentscaling_hermes_common_pin() {
   export SKIP_MONITORING="${SKIP_MONITORING:-1}"
   export USE_EXISTING_PROMETHEUS="${USE_EXISTING_PROMETHEUS:-1}"
   export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
-  # Fewer sandboxes than OpenClaw's 5×8Gi path. 2Gi is the floor so concurrent
-  # hermes -z processes do not OOMKill the CPU cgroup (1Gi did with inflight 4).
+  # 2Gi + inflight 2 OOMed dgx-19. Use 4Gi with inflight 1. 8Gi is OpenClaw's
+  # gateway floor (Node workers); hermes -z does not need that.
   export E2E_USERS="${E2E_USERS:-3}"
   export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
   export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
-  export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-2Gi}"
+  export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
   if [[ "${MIN_REPLICAS}" != "1" ]]; then
     agentscaling_hermes_common_fail "minReplicas must stay 1 (got MIN_REPLICAS=${MIN_REPLICAS})"
   fi

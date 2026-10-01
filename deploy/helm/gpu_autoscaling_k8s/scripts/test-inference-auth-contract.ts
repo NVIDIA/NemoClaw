@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,7 +22,7 @@ const unauthenticatedLoadGenerator = spawn(process.execPath, [loadGeneratorPath]
   stdio: ["ignore", "ignore", "pipe"],
 });
 let loadGeneratorStderr = "";
-unauthenticatedLoadGenerator.stderr.on("data", (chunk) => {
+unauthenticatedLoadGenerator.stderr.on("data", (chunk: Buffer) => {
   loadGeneratorStderr += chunk.toString();
 });
 const [loadGeneratorExit] = await once(unauthenticatedLoadGenerator, "exit");
@@ -37,7 +38,7 @@ const backend = http.createServer((req, res) => {
   if (req.url === "/v1/chat/completions" && req.method === "POST") {
     let raw = "";
     req.setEncoding("utf8");
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: string) => {
       raw += chunk;
     });
     req.on("end", () => {
@@ -55,7 +56,8 @@ backend.listen(0, "127.0.0.1");
 await once(backend, "listening");
 const backendAddress = backend.address();
 assert.equal(typeof backendAddress, "object");
-const backendPort = backendAddress.port;
+assert.ok(backendAddress);
+const backendPort = (backendAddress as AddressInfo).port;
 
 const child = spawn(process.execPath, [serverPath], {
   env: {
@@ -72,18 +74,18 @@ const child = spawn(process.execPath, [serverPath], {
 });
 
 let stderr = "";
-child.stderr.on("data", (chunk) => {
+child.stderr.on("data", (chunk: Buffer) => {
   stderr += chunk.toString();
 });
 
 try {
-  const listeningPort = await new Promise((resolve, reject) => {
+  const listeningPort = await new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`metrics-proxy startup timeout: ${stderr}`)), 10_000);
     child.once("exit", (code) => {
       clearTimeout(timer);
       reject(new Error(`metrics-proxy exited before startup (${code}): ${stderr}`));
     });
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       const match = chunk.toString().match(/listening on :(\d+)/u);
       if (!match) return;
       clearTimeout(timer);
@@ -91,6 +93,10 @@ try {
     });
   });
   const baseUrl = `http://127.0.0.1:${listeningPort}`;
+  const authHeaders = {
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json",
+  };
 
   assert.equal((await fetch(`${baseUrl}/healthz`)).status, 200);
   assert.equal((await fetch(`${baseUrl}/v1/models`)).status, 401);
@@ -121,14 +127,36 @@ try {
 
   const chatResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
+    headers: authHeaders,
     body: JSON.stringify({ model: "not-installed", messages: [] }),
   });
   assert.equal(chatResponse.status, 200);
   assert.equal(observedModel, model);
+
+  const nullBody = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: authHeaders,
+    body: "null",
+  });
+  assert.equal(nullBody.status, 400);
+  assert.equal(await nullBody.text(), "request body must be a JSON object\n");
+
+  const arrayBody = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: authHeaders,
+    body: "[]",
+  });
+  assert.equal(arrayBody.status, 400);
+  assert.equal(await arrayBody.text(), "request body must be a JSON object\n");
+
+  const invalidJson = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: authHeaders,
+    body: "{",
+  });
+  assert.equal(invalidJson.status, 400);
+  assert.equal(await invalidJson.text(), "invalid json\n");
+
   console.log(
     "OK: inference proxy and load generator require the API key and serve the configured model",
   );
