@@ -767,10 +767,16 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     ""
   ).trim();
   let tunnelTargetReady = true;
+  let cloudflaredAvailable = true;
   try {
     execSync("command -v cloudflared", {
       stdio: ["ignore", "ignore", "ignore"],
     });
+  } catch {
+    cloudflaredAvailable = false;
+    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
+  }
+  if (cloudflaredAvailable) {
     if (tunnelToken) {
       const wasRunning = isRunning(pidDir, "cloudflared");
       startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
@@ -806,18 +812,15 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         }
       }
       if (tunnelTargetReady && !runningNamedTunnel) {
+        // Persist the target before launching a process that depends on this state.
+        writeCloudflaredDashboardPort(pidDir, dashboardPort);
         startService(pidDir, "cloudflared", "cloudflared", [
           "tunnel",
           "--url",
           `http://localhost:${String(dashboardPort)}`,
         ]);
-        if (isRunning(pidDir, "cloudflared")) {
-          writeCloudflaredDashboardPort(pidDir, dashboardPort);
-        }
       }
     }
-  } catch {
-    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
   if (!tunnelTargetReady) {

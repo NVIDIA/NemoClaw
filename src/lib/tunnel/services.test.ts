@@ -503,6 +503,32 @@ describe("startAll", () => {
     );
   });
 
+  it("rejects an unwritable target record before starting a quick tunnel and permits retry", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      "#!/usr/bin/env sh\necho 'https://retry-target.trycloudflare.com'\nsleep 20\n",
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const targetFile = join(pidDir, "cloudflared.dashboard-port");
+    mkdirSync(targetFile, { recursive: true });
+
+    await expect(startAll({ pidDir, dashboardPort: 18_791 })).rejects.toThrow("EISDIR");
+
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(pidDir, "cloudflared.log"))).toBe(false);
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("cloudflared not found");
+    rmSync(targetFile, { recursive: true });
+    await startAll({ pidDir, dashboardPort: 18_791 });
+    expect(readCloudflaredState(pidDir).kind).toBe("running");
+    expect(readFileSync(targetFile, "utf-8")).toBe("18791");
+  });
+
   it("does not replace a quick tunnel that remains live after stop escalation", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
