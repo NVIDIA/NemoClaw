@@ -63,8 +63,8 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 | Hardware | Install ceiling | Simple HPA-only test | End users and sandboxes E2E test) |
 |----------|-----------------|----------------------|----------------------------------|
-| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (pod-IP Job; GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or './scripts/agentscaling_latency.sh' then `./scripts/client.sh` |
-| [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), MicroK8s | `MAX_REPLICAS=4` | `./scripts/hpa-load-test-brev-4xl40s.sh` | — |
+| On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (pod-IP Job; GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
+
 
 Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
 
@@ -72,6 +72,7 @@ Both paths cover chart deploy, optional Envoy LeastRequest, authenticated infere
 
 The DGX H100 demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. This 8×H100 demo runs those sandboxes on the GPU box's CPUs. Sandboxes can run on a different CPU node with more memory; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
 
+The HPA test was also verified on [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), MicroK8s, `MAX_REPLICAS=4` using `./scripts/hpa-load-test-brev-4xl40s.sh`.
 
 
 ## Prerequisites
