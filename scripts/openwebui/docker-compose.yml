@@ -13,86 +13,61 @@
 
 services:
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    # Derived from upstream v0.11.4 to add cross-origin isolation headers
+    # (COOP/COEP/CORP). CheerpX cannot transfer SharedArrayBuffer into its
+    # worker without them, so the in-browser terminal never boots without this.
+    # Rebuild after bumping the base version: Dockerfile.coi + main.py.patched.
+    build:
+      context: .
+      dockerfile: Dockerfile.coi
+    image: nemoclaw-open-webui:coi-v0.11.4
     container_name: nemoclaw-openwebui
     restart: unless-stopped
     expose:
       - "8080"
     ports:
-      # 127.0.0.1 binding — internet access ONLY via the cloudflared sidecar.
-      # Do not change to 0.0.0.0 unless you also intend LAN exposure.
       - "127.0.0.1:${WEBUI_HOST_PORT:-3000}:8080"
     volumes:
       - ${WEBUI_DATA_DIR:-${HOME}/.nemoclaw/openwebui/data}:/app/backend/data
+      - ./static/loader.js:/app/build/static/loader.js:ro
+      # CheerpX runtime, xterm, and the 600 MB ext2 disk image. Bind-mounted
+      # rather than baked into the image or docker cp'd, because the container
+      # is recreated by `docker compose up` and would otherwise lose them.
+      - ./static/vendor:/app/backend/open_webui/static/vendor:ro
     environment:
       WEBUI_AUTH: "True"
-      # Pin the JWT signing key from .env. Without this, OpenWebUI generates a
-      # fresh /app/backend/.webui_secret_key on every container recreate (the
-      # file lives in the image layer, not the data volume), which invalidates
-      # every existing browser JWT — historical chats then 401 and the SPA
-      # bounces to home. Set once in .env, never rotate without warning users.
       WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY is required — generate with: openssl rand -hex 32}"
       ENABLE_SIGNUP: "${ENABLE_SIGNUP:-False}"
-      # In tunnel mode this is set to Cf-Access-Authenticated-User-Email.
-      # In quick mode it's empty, so open-webui falls back to its own login form.
       WEBUI_AUTH_TRUSTED_EMAIL_HEADER: "${WEBUI_AUTH_TRUSTED_EMAIL_HEADER:-}"
       WEBUI_AUTH_TRUSTED_NAME_HEADER: "${WEBUI_AUTH_TRUSTED_EMAIL_HEADER:-}"
       DEFAULT_USER_ROLE: "user"
-      # Show every base/custom model to every signed-in user. Without this,
-      # OpenWebUI's per-model access_grant filter hides models owned by the
-      # admin from regular users — the dropdown ends up empty for non-admins.
       BYPASS_MODEL_ACCESS_CONTROL: "True"
-      # Duration string (open-webui parses with python parse_duration; bare int
-      # like "86400" raises "Invalid duration string" and breaks /signup).
       JWT_EXPIRES_IN: "24h"
       ENABLE_COMMUNITY_SHARING: "False"
       ENABLE_MESSAGE_RATING: "False"
       WEBUI_NAME: "${WEBUI_NAME:-Chad}"
       OPENAI_API_BASE_URL: "${OPENAI_API_BASE_URL}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-sk-no-key-required}"
-      # Force SQLite DELETE journal mode — WAL flakes on Docker Desktop's
-      # macOS bind-mount ("fakeowner" fs), surfacing as SQLITE_IOERR on
-      # both reads and writes. The lookup-by-email exception was being
-      # silently swallowed by Users.get_user_by_email, falling through to
-      # signup, which then 401'd every browser request. DELETE is the
-      # original SQLite default and works everywhere; the perf delta on
-      # webui.db's workload is in the noise.
       DATABASE_ENABLE_SQLITE_WAL: "False"
-      # Forward authenticated user identity to every OpenAI-compatible upstream
-      # (chad-shim, nvidia-proxy) as X-OpenWebUI-User-{Name,Id,Email,Role}.
-      # Lets chad-shim route per operator (tantodefi vs tjcooke) for identity
-      # context, gbrain scoping, and admin-allowlisted actions.
       ENABLE_FORWARD_USER_INFO_HEADERS: "True"
-      # Web search for the Tier-0 "Chad Lite" model (and anyone who toggles it).
-      # Routed to the in-stack SearXNG (private, keyless, no rate limits).
-      # IMPORTANT: these are OpenWebUI PersistentConfig — they seed the DB on the
-      # FIRST boot only. On an existing webui.db they are ignored; set them in
-      # admin → Settings → Web Search instead (engine = searxng, query URL =
-      # http://searxng:8080/search?q=<query>&format=json). See
-      # docs/design/multi-user-chad.md.
       ENABLE_WEB_SEARCH: "${ENABLE_WEB_SEARCH:-True}"
       WEB_SEARCH_ENGINE: "${WEB_SEARCH_ENGINE:-searxng}"
       SEARXNG_QUERY_URL: "${SEARXNG_QUERY_URL:-http://searxng:8080/search?q=<query>&format=json}"
       WEB_SEARCH_RESULT_COUNT: "${WEB_SEARCH_RESULT_COUNT:-4}"
+      TERMINAL_SERVER_CONNECTIONS: '[{"id":"docker-term","name":"Docker Terminal","enabled":true,"url":"http://docker-vm-relay:8787","auth_type":"bearer","key":"${BROWSER_VM_RELAY_KEY:?BROWSER_VM_RELAY_KEY is required}","config":{"contexts":{"chat":{"context_id":"chat_id"}},"chat_uploads":"default"}},{"id":"webvm","name":"Browser VM (fresh)","url":"${BROWSER_VM_RELAY_URL:-http://browser-vm-relay:8787}","server_type":"orchestrator","auth_type":"bearer","key":"${BROWSER_VM_RELAY_KEY:?BROWSER_VM_RELAY_KEY is required or the terminal bridge will not authenticate}","config":{"contexts":{"chat":{"context_id":"chat_id"}},"chat_uploads":"default"}}]'
     depends_on:
       - searxng
+      - docker-vm-relay
     networks:
-      - openwebui-net
+      - openwebui_openwebui-net
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # SearXNG — private, keyless metasearch powering OpenWebUI web search (Tier 0).
-  # Reached by open-webui at http://searxng:8080 on the shared network; never
-  # exposed to the host or internet. Small (~150-300 MB). The json format +
-  # limiter:false in searxng/settings.yml are REQUIRED for OpenWebUI's
-  # server-side API calls. See docs/design/multi-user-chad.md.
   searxng:
     image: searxng/searxng:latest
     container_name: nemoclaw-searxng
     restart: unless-stopped
     environment:
-      # Injected into settings.yml by the image entrypoint. Generate with:
-      #   openssl rand -hex 32
       SEARXNG_SECRET: "${SEARXNG_SECRET:?SEARXNG_SECRET is required — generate with: openssl rand -hex 32}"
       SEARXNG_BASE_URL: "http://searxng:8080/"
     volumes:
@@ -100,40 +75,64 @@ services:
     expose:
       - "8080"
     networks:
-      - openwebui-net
+      - openwebui_openwebui-net
 
-  # Tunnel mode: domain-backed managed tunnel + Cloudflare Access in front.
+  # Docker Terminal backend.
+  #
+  # The relay opens its own PTY (os.openpty) and speaks OpenWebUI's
+  # Open-Terminal contract against it. The upstream `open-terminal` image cannot
+  # serve this leg: it exposes only /api/terminals/user/{input,output}, with no
+  # session-create route and no WebSocket, so OpenWebUI's proxy gets 405 on
+  # POST /api/terminals and the terminal never comes up.
+  #
+  # Set DOCKER_TARGET to run the shell inside a specific container
+  # (`docker exec -i -t`); with it empty the shell runs in the relay's own
+  # container. Either way the socket is only reachable on the compose network.
+  docker-vm-relay:
+    build:
+      context: ./browser-vm
+      dockerfile: deploy/relay.Dockerfile
+    container_name: nemoclaw-docker-vm-relay
+    restart: unless-stopped
+    environment:
+      RELAY_PORT: "8787"
+      RELAY_API_KEY: "${BROWSER_VM_RELAY_KEY:?BROWSER_VM_RELAY_KEY is required}"
+      RELAY_WS_KEY: "${BROWSER_VM_RELAY_KEY}"
+      RELAY_LOG_VERBOSE: "${BROWSER_VM_LOG_VERBOSE:-0}"
+      # Same relay code as the browser leg, different far end of the pipe:
+      # a real PTY instead of the in-tab CheerpX pod.
+      RELAY_BACKEND: "docker"
+      # Shell to run in the PTY. Set DOCKER_TARGET to land inside a specific
+      # container ("docker exec -i -t"); leave it empty for a shell in the
+      # relay's own container.
+      DOCKER_SHELL: "${DOCKER_SHELL:-/bin/bash}"
+      DOCKER_TARGET: "${DOCKER_TARGET:-}"
+      DOCKER_CWD: "${DOCKER_CWD:-/root}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - openwebui_openwebui-net
+
   cloudflared-tunnel:
     profiles: ["tunnel"]
     image: cloudflare/cloudflared:latest
     container_name: nemoclaw-cloudflared
     restart: unless-stopped
-    # Resolve host.docker.internal so a Public Hostname route can target a
-    # service bound to the Mac host (the runs.supachad.com dashboard on :7331).
-    # Same mapping open-webui already uses; without it cloudflared NXDOMAINs the
-    # origin and returns 502. (host-gateway → the Docker Desktop host.)
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # --protocol http2 forces TCP-based HTTP/2 instead of cloudflared's default
-    # QUIC-over-UDP. QUIC sessions get torn down ("failed to accept QUIC stream:
-    # timeout: no recent network activity") when residential routers / mobile
-    # carriers / NAT firewalls prune idle UDP flows aggressively — surfacing as
-    # transient 530 / "Argo tunnel error" until cloudflared reconnects ~1s
-    # later. HTTP/2 over TCP avoids that whole class of failures at the cost of
-    # ~5-15ms extra per request.
     command: tunnel --no-autoupdate run --protocol http2 --token ${CF_TUNNEL_TOKEN:-missing}
     depends_on:
       - open-webui
     networks:
-      - openwebui-net
-    # Pin DNS — docker's embedded resolver on custom bridges sometimes
-    # NXDOMAINs trycloudflare.com lookups on macOS hosts.
+      - openwebui_openwebui-net
     dns:
       - 1.1.1.1
       - 8.8.8.8
 
-  # Quick mode: ephemeral *.trycloudflare.com URL, no auth gate beyond open-webui's.
-  # The URL changes on every restart; only the cloudflared logs know it.
   cloudflared-quick:
     profiles: ["quick"]
     image: cloudflare/cloudflared:latest
@@ -143,11 +142,15 @@ services:
     depends_on:
       - open-webui
     networks:
-      - openwebui-net
+      - openwebui_openwebui-net
     dns:
       - 1.1.1.1
       - 8.8.8.8
 
 networks:
-  openwebui-net:
-    driver: bridge
+  openwebui_openwebui-net:
+    external: true
+    name: openwebui_openwebui-net
+
+volumes:
+  terminals-data:

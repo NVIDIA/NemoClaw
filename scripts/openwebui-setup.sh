@@ -389,20 +389,41 @@ else
   ok "open-webui + cloudflared running"
 fi
 
-# ── 9b. Deploy static loader.js (model dropdown tooltip injector) ────
+# ── 9b. Deploy static loader.js (model dropdown tooltips + browser-vm panel) ─
 #
-# Open-webui serves /static/* from /app/backend/open_webui/static/ inside
-# the container. We ship a tiny browser-side script that adds tooltip
-# descriptions to the model picker; without this auto-deploy the file is
-# only present locally and a fresh container loses it on every boot.
-# Idempotent: docker cp overwrites if the source changed.
+# Open-webui serves /static/* from STATIC_DIR (/app/backend/open_webui/static)
+# inside the container, and backend config.py copies /app/build/static/* into
+# STATIC_DIR exactly ONCE, at module import (i.e. container boot). There is no
+# watcher: a rebuilt loader does NOT appear until the container restarts.
+#
+# The bind mount (./static/loader.js → /app/build/static/loader.js) is what
+# makes a fresh/recreated container pick the loader up for free on boot. But
+# `docker cp` into that path fails with "device or resource busy" because it is
+# a live mount, so it must NOT gate the real target below — the previous
+# version chained the two with `&&`, so the busy error short-circuited the
+# STATIC_DIR copy and this step silently deployed nothing.
+#
+# So: patch STATIC_DIR (what is served) unconditionally, and treat the
+# /app/build/static copy as best-effort for containers on an older compose
+# that has no mount yet.
 LOADER_SRC="${WEBUI_DIR}/static/loader.js"
 if [ "$DRY_RUN" -eq 0 ] && [ -f "$LOADER_SRC" ]; then
   step "Deploying static/loader.js into open-webui container"
-  if docker cp "$LOADER_SRC" nemoclaw-openwebui:/app/backend/open_webui/static/loader.js 2>&1; then
-    ok "loader.js deployed (model dropdown tooltips active)"
+  loader_ok=0
+  if docker cp "$LOADER_SRC" nemoclaw-openwebui:/app/backend/open_webui/static/loader.js >/dev/null 2>&1; then
+    ok "loader.js deployed to STATIC_DIR (served immediately)"
+    loader_ok=1
   else
-    warn "loader.js deploy failed — model picker will still work, just no tooltips"
+    warn "could not write STATIC_DIR — loader.js will land on the next container restart"
+  fi
+  # Best-effort for pre-mount containers; "resource busy" is expected here.
+  if ! docker cp "$LOADER_SRC" nemoclaw-openwebui:/app/build/static/loader.js >/dev/null 2>&1; then
+    info "skipped /app/build/static/loader.js (live bind mount; boot copy handles it)"
+  fi
+  if [ "$loader_ok" -eq 0 ]; then
+    docker restart nemoclaw-openwebui >/dev/null 2>&1 \
+      && ok "restarted open-webui to pick up loader.js from the bind mount" \
+      || warn "loader.js deploy failed — model picker still works, no tooltips"
   fi
 fi
 
@@ -454,6 +475,38 @@ if [ "$DRY_RUN" -eq 0 ] && [ -f "$WEBUI_DB" ]; then
     else
       warn "journal_mode switch returned: ${new_mode} (signin may still 401)"
     fi
+  fi
+fi
+
+# ── 9e. Seed Open Terminal connection + per-user terminal settings ───
+#
+# OpenWebUI's terminal UI is driven from TWO independent places and seeding
+# only the first is the documented cause of "No terminal connections
+# configured.":
+#
+#   1. config table, key terminal_server.connections  (the admin list —
+#      what GET /api/v1/terminals/ returns). TERMINAL_SERVER_CONNECTIONS in
+#      docker-compose.yml seeds this on the FIRST boot of a fresh webui.db
+#      only, and is silently ignored on every boot after that.
+#   2. user.settings -> ui.terminalServers             (the per-user list).
+#      The frontend's $terminalServers store is populated only from here, and
+#      the chat's terminal controls are gated on $selectedTerminalId, which is
+#      set only when a user picks a terminal from the dropdown.
+#
+# With (2) empty the UI renders "No terminal connections configured." even
+# though (1) is perfect and the API returns 200. seed-terminal-config.py writes
+# both, idempotently, and backs the DB up first. Re-running is a no-op.
+SEED_TERMINAL="${WEBUI_DIR}/seed-terminal-config.py"
+if [ "$DRY_RUN" -eq 0 ] && [ -f "$SEED_TERMINAL" ] && [ -f "$WEBUI_DB" ]; then
+  step "Seeding Open Terminal connection + per-user terminal settings (idempotent)"
+  if seed_out="$(WEBUI_DB="$WEBUI_DB" python3 "$SEED_TERMINAL" --apply 2>&1)"; then
+    ok "terminal config seeded"
+    printf '%s\n' "$seed_out" | sed 's/^/    /'
+    # Users must reload for the per-user settings to reach the Svelte store.
+    docker restart nemoclaw-openwebui >/dev/null 2>&1 || true
+  else
+    warn "seed-terminal-config.py failed — the chat terminal will show 'no terminal configured':"
+    printf '%s\n' "$seed_out" | sed 's/^/    /'
   fi
 fi
 

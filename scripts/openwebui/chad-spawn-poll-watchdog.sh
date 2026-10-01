@@ -50,6 +50,23 @@ trim_log() {
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG"; }
 
+# Self-heal: the pod's container filesystem resets on pod recreate, so the
+# sandbox-writable and image binaries can vanish. Restore from the host copy
+# so a fresh pod self-recovers without manual re-provisioning.
+PROVISION_SRC="${CHAD_SPAWN_POLL_SRC:-${HOME}/.nemoclaw/source/scripts/chad-cron-wrappers/chad-spawn-poll}"
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" \
+    "test -x '$SPAWN_POLL' -o -x '$SPAWN_POLL_FALLBACK'" 2>/dev/null; then
+  if [ -x "$PROVISION_SRC" ]; then
+    log "self-heal: uploading chad-spawn-poll to pod"
+    cat "$PROVISION_SRC" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" \
+      "cat > '$SPAWN_POLL' && chmod +x '$SPAWN_POLL'" || {
+      log "self-heal: upload failed — using fallback path"
+    }
+  else
+    log "self-heal: host source missing at $PROVISION_SRC"
+  fi
+fi
+
 # Run the poll. Prefer sandbox-writable copy (allows future patches without
 # image rebuild); fall back to image binary.
 OUTPUT=$(
@@ -106,23 +123,24 @@ INBOX_LINE=$(printf '{"ts":"%s","source":"chad-spawn-poll-watchdog","kind":"%s",
 
 # Append to in-pod inbox + today's memory. Memory append is "best effort" —
 # the inbox is the authoritative structured record.
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" "
-  mkdir -p \$(dirname '$INBOX')
-  echo '$INBOX_LINE' >> '$INBOX'
-  MEM=\$(/usr/local/bin/chad-ensure-today-memory 2>/dev/null || echo '')
-  if [ -n \"\$MEM\" ] && [ '$severity' != 'info' ]; then
-    {
-      echo ''
-      echo '## Spawn-poll reconciliations — $(ts)'
-      echo 'Severity: $severity  Exit: $RC'
-      echo '```'
-      cat <<'POLL_OUT'
-$OUTPUT
-POLL_OUT
-      echo '```'
-    } >> \"\$MEM\"
-  fi
-" >> "$LOG" 2>&1
+# Note: payloads (inbox line + raw output) travel via stdin, never inlined into
+# the remote command string — inlining multi-line output corrupted shell parsing.
+printf '%s\n' "$INBOX_LINE" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" \
+  "cat >> '$INBOX'" >> "$LOG" 2>&1 || true
+if [ "$severity" != "info" ] && [ -n "$OUTPUT" ]; then
+  printf '%s' "$OUTPUT" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" '
+    MEM=$(/usr/local/bin/chad-ensure-today-memory 2>/dev/null || /sandbox/.openclaw-data/bin/chad-ensure-today-memory 2>/dev/null || echo "")
+    if [ -n "$MEM" ]; then
+      {
+        echo ""
+        echo "## Spawn-poll reconciliations — '"$(ts)"'"
+        echo "Severity: '"$severity"'  Exit: '"$RC"'"
+        echo "```"
+        cat
+        echo "```"
+      } >> "$MEM"
+    fi' >> "$LOG" 2>&1 || true
+fi
 
 log "kind=$event_kind severity=$severity rc=$RC summary=$(printf '%s' "$SUMMARY" | head -c 160)"
 trim_log

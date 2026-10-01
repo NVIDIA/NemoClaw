@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# browser-vm relay dependencies. Runs on python:3.12-slim in production.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1

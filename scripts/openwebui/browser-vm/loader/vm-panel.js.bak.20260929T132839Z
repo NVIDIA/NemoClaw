@@ -1,0 +1,1828 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// vm-panel.js — in-browser CheerpX/WebVM sandbox for the browser-vm relay.
+//
+// Appended to loader.js by loader/build.sh (single deploy artifact via the
+// existing bind mount). Self-contained: boots one fresh, memory-only Debian
+// pod per OpenWebUI chat, exposes window.__owuiVm, and pipes the pod to the
+// relay so BOTH the model (via browser_shell tool) and the native OpenWebUI
+// "Open Terminal" panel can drive it.
+//
+// Protocol (relay):
+//   browser -> relay   {"type":"register","chat_id":…}   on connect
+//                      {"type":"pong"}                    on {"type":"ping"}
+//                      {"type":"exec_result","id",…}      exec completion
+//                      {"type":"reset_ack","id"}          reset completion
+//                      <non-JSON text/binary>             VM console output
+//   relay -> browser   {"type":"exec","id","cmd","cwd","timeout_ms"}
+//                      {"type":"term:data","data","enc":"b64"|absent}
+//                                                         native-terminal input
+//                      {"type":"term:resize","rows","cols"}
+//                      {"type":"term:require"}            boot the pod now
+//                      {"type":"reset","id"}
+//                      {"type":"ping"} | {"type":"error",…}
+//
+// CheerpX integration, verified against @leaningtech/cheerpx@1.3.9 (the pinned
+// version above — check index.d.ts and the shipped bundle before changing it):
+//   Linux.create({mounts, networkInterface})   — no `cmd`, no `network`
+//   Linux.run(file, args, {env, cwd})          — resolves on exit, returns
+//                                               {status} only; no stdout
+//   Linux.setCustomConsole(write, cols, rows)  — returns (keyCode) => void;
+//                                               write is called ONE BYTE per
+//                                               call. This is the only way to
+//                                               read output, and the only way
+//                                               to write input.
+//   Linux.delete()                             — teardown
+// There is no XtermConsole, no stdin, no spawn(), and no global `CheerpX` in
+// that version; code that assumed any of those silently fell back to the mock.
+// Verified headlessly in test_vm_panel.js against a fake modelled on those
+// signatures. What still needs a real browser: the keycode translation in
+// textToKeycodes() against a live tty, and the disk-image boot time.
+
+(function () {
+  "use strict";
+
+  // ── Configuration (overridable from the console/devtools) ──────────────
+  const CFG = Object.assign(
+    {
+      // relay base URL; dev example:
+      //   window.__BROWSER_VM = { relay: "ws://127.0.0.1:8787" }
+      // prod default assumes the relay is behind the same reverse proxy at
+      // /vm-bridge (e.g. chat.supachad.com/vm-bridge for cloudflared).
+      relay: (() => {
+        const proto = location.protocol === "https:" ? "wss://" : "ws://";
+        return proto + location.host + "/vm-bridge";
+      })(),
+      token: "", // relay WEB socket key, if RELAY_WS_KEY is set in prod
+      // Default for the composer chip: may the agent drive this chat's VM?
+      // Persisted per browser under "bv.shareWithAgent" once toggled.
+      shareWithAgent: true,
+      terminalName: "Browser VM",
+      // Pinned exactly. @latest resolves to a different major on any given day
+      // and this file is a single deploy artifact with no lockfile to catch it.
+      //
+      // These are ESM *modules*, not UMD bundles: the npm entry re-exports the
+      // named classes and never touches `window`. There is no
+      // `build/cheerpx.min.js` and no global `CheerpX` — an earlier version of
+      // this file pointed at both, so the import 404'd, the error was swallowed,
+      // and the panel silently fell back to the mock pod. That is the entire
+      // reason the dock used to say "No console available in this VM."
+      cheerpxUrl: "https://cdn.jsdelivr.net/npm/@leaningtech/cheerpx@1.3.9/index.js",
+      // We own the terminal, because CheerpX 1.3.9 only exposes VM output
+      // through setCustomConsole(). xterm.js is the VT emulator for it; the
+      // .mjs builds are self-contained (no bare specifiers), so import() works.
+      xtermUrl: "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.mjs",
+      xtermFitUrl: "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.mjs",
+      xtermCss: "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css",
+      imageWs: "wss://disks.webvm.io/debian-trixie-mxl.ext2",
+      // No network by default: this is a sandbox, and egress should be an
+      // explicit opt-in. 1.3.9 takes a networkInterface *object* (authKey,
+      // controlUrl, …), so `true` was never a working value.
+      //   window.__BROWSER_VM = { network: { authKey: "…" } }
+      network: false,
+      // exec() recovers the command's output by printing OSC markers around it
+      // on the shared tty. Output is coalesced before each xterm.write so a
+      // burst of 1-byte CheerpX callbacks becomes a handful of writes.
+      flushBytes: 256,
+      // Open the terminal and boot the pod as soon as a chat is open, rather
+      // than waiting for a click. The lazy default was chosen to avoid
+      // streaming the disk image on every page load — but it made the panel
+      // look dead: the agent's commands ran and their output was written to an
+      // xterm inside a dock that was never opened, so the user saw nothing at
+      // all. Cost is one cached disk image per browser profile. Set false (or
+      // window.__BROWSER_VM = { autoOpen: false }) to go back to lazy.
+      autoOpen: true,
+      // How long a relay socket must stay open before its reconnect backoff is
+      // reset. Below this, a connect/close cycle counts as flapping and the
+      // delay keeps growing, so a relay that accepts-then-drops cannot be
+      // hammered at the 1s base rate indefinitely.
+      stableConnMs: 10000,
+    },
+    window.__BROWSER_VM || {}
+  );
+
+  const STATE = {
+    chatId: null, // active chat the pod is bound to
+    ws: null,
+    cx: null, // CheerpX.Linux instance
+    cxLib: null, // the CheerpX module namespace (Linux, CloudDevice, …)
+    xtermLib: null, // {Terminal, FitAddon}
+    console: null, // {el, term, fit, sink, send, …} — ours, not CheerpX's
+    ready: false, // broker + pod booted
+    booting: false,
+    pubAdapter: null, // resolved adapter (real or mock)
+    execSeq: 0,
+    reconnectTimer: null,
+    backoff: 0,
+    lastResetAt: 0,
+    // The user closed the dock on purpose. Auto-open must not fight them, and
+    // must not re-arm until they open it again or switch chat.
+    dismissed: false,
+    // Agent activity that happened while the dock was closed. Drives the badge
+    // on the terminal button so output is never silently invisible.
+    unseenAgentRuns: 0,
+    // Set when the real VM could not be loaded. Non-null means there is no VM,
+    // and the panel must say so rather than emulate one.
+    failedReason: null,
+    // When the current relay socket opened, for flap detection.
+    wsOpenedAt: 0,
+  };
+
+  // ── Panel UI (small docked status bar; the interactive viewport is the
+  //    native OpenWebUI "Open Terminal" panel — no xterm UI here) ─────────
+  const CSS =
+    "#bv-vmbar{" +
+    "position:fixed;right:0.75rem;bottom:0.75rem;z-index:9999;" +
+    "display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.6rem;" +
+    "font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e4e4e7;" +
+    "background:rgba(24,24,27,0.92);border:1px solid #3f3f46;border-radius:999px;" +
+    "box-shadow:0 6px 20px rgba(0,0,0,0.35);" +
+    "}" +
+    "#bv-vmbar .bv-dot{width:8px;height:8px;border-radius:50%;flex:none;background:#71717a;}" +
+    "#bv-vmbar.bv-idle .bv-dot{background:#71717a;}" +
+    "#bv-vmbar.bv-booting .bv-dot{background:#f59e0b;animation:bv-pulse 1s infinite;}" +
+    "#bv-vmbar.bv-ready .bv-dot{background:#22c55e;}" +
+    "#bv-vmbar.bv-error .bv-dot{background:#ef4444;}" +
+    "#bv-vmbar button{" +
+    "border:1px solid #3f3f46;border-radius:999px;background:transparent;" +
+    "color:#e4e4e7;font-size:10px;padding:0.08rem 0.5rem;cursor:pointer;margin-left:0.25rem;" +
+    "}" +
+    "#bv-vmbar button:hover{background:#27272a;}" +
+    /* Terminal icon is the primary affordance: bigger hit target, no label. */
+    "#bv-vmbar .bv-iconbtn{display:inline-flex;align-items:center;justify-content:center;" +
+    "width:22px;height:22px;padding:0;margin-left:0.35rem;border-radius:6px;flex:none;}" +
+    "#bv-vmbar .bv-iconbtn svg{width:13px;height:13px;stroke:currentColor;fill:none;" +
+    "stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}" +
+    "#bv-vmbar .bv-iconbtn[aria-expanded='true']{background:#3f3f46;color:#fff;}" +
+    // Badge on the terminal button: the agent ran commands while the dock was
+    // closed, so there is unseen terminal output waiting.
+    "#bv-vmbar .bv-iconbtn{position:relative;}" +
+    "#bv-vmbar .bv-badge{position:absolute;top:-5px;right:-5px;min-width:14px;" +
+    "height:14px;padding:0 3px;border-radius:7px;background:#ef4444;color:#fff;" +
+    "font:9px/14px ui-monospace,monospace;text-align:center;font-weight:700;" +
+    "box-shadow:0 0 0 1.5px #18181b;pointer-events:none;}" +
+    "#bv-vmbar .bv-iconbtn.bv-busy{color:#fca5a5;animation:bv-pulse 1.4s ease-in-out infinite;}" +
+    "@keyframes bv-pulse{0%,100%{opacity:1}50%{opacity:.45}}" +
+    /* ── The interactive terminal dock ─────────────────────────────────── */
+    "#bv-term{position:fixed;right:0.75rem;bottom:3.25rem;z-index:9998;" +
+    "width:min(720px,calc(100vw - 1.5rem));height:min(460px,calc(100vh - 7rem));" +
+    "display:none;flex-direction:column;overflow:hidden;" +
+    "background:rgba(9,9,11,0.97);border:1px solid #3f3f46;border-radius:10px;" +
+    "box-shadow:0 18px 48px rgba(0,0,0,0.55);color:#e4e4e7;" +
+    "font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;" +
+    "backdrop-filter:blur(6px);}" +
+    "#bv-term.bv-open{display:flex;}" +
+    "#bv-term-head{display:flex;align-items:center;gap:0.5rem;flex:none;" +
+    "padding:0.4rem 0.6rem;border-bottom:1px solid #27272a;background:#18181b;}" +
+    "#bv-term-title{font-weight:600;font-size:11px;letter-spacing:0.02em;}" +
+    "#bv-term-state{font-size:10px;color:#a1a1aa;flex:1;min-width:0;" +
+    "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+    "#bv-term-head button{border:1px solid #3f3f46;background:transparent;color:#e4e4e7;" +
+    "font-size:10px;padding:0.1rem 0.45rem;border-radius:5px;cursor:pointer;}" +
+    "#bv-term-head button:hover{background:#27272a;}" +
+    "#bv-term-body{flex:1;min-height:0;position:relative;overflow:hidden;background:#000;}" +
+    "#bv-term-body .xterm{height:100%;}" +
+    "#bv-term-xterm{position:absolute;inset:0;}" +
+    "#bv-term-note{position:absolute;left:0;right:0;bottom:0;z-index:2;" +
+    "padding:0.15rem 0.4rem;background:rgba(120,53,15,0.92);color:#fde68a;" +
+    "font-size:10px;}" +
+    "#bv-term-fallback{position:absolute;inset:0;display:none;flex-direction:column;" +
+    "gap:0.4rem;align-items:center;justify-content:center;color:#71717a;font-size:11px;" +
+    "text-align:center;padding:1rem;}" +
+    "#bv-term-fallback.bv-on{display:flex;}" +
+    "#bv-term-foot{flex:none;display:flex;align-items:center;gap:0.5rem;" +
+    "padding:0.3rem 0.6rem;border-top:1px solid #27272a;background:#18181b;font-size:10px;" +
+    "color:#a1a1aa;}" +
+    "#bv-term-agent{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
+    "#bv-term-agent.bv-busy{color:#f59e0b;}" +
+    /* ── Composer chip: choose what the agent may drive in this chat ───── */
+    "#bv-chip{display:inline-flex;align-items:center;gap:0.3rem;flex:none;" +
+    "border:1px solid #3f3f46;border-radius:999px;background:transparent;color:#a1a1aa;" +
+    "font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;" +
+    "padding:0.1rem 0.45rem;cursor:pointer;user-select:none;}" +
+    "#bv-chip:hover{background:rgba(63,63,70,0.25);color:#e4e4e7;}" +
+    "#bv-chip svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.8;" +
+    "stroke-linecap:round;stroke-linejoin:round;flex:none;}" +
+    "#bv-chip.bv-on{color:#22c55e;border-color:#166534;}" +
+    "#bv-chip.bv-off{color:#f59e0b;border-color:#78350f;}" +
+    "#bv-chip-menu{position:fixed;z-index:10000;min-width:232px;max-width:300px;" +
+    "display:none;flex-direction:column;gap:0.15rem;padding:0.35rem;" +
+    "background:#18181b;border:1px solid #3f3f46;border-radius:8px;" +
+    "box-shadow:0 12px 32px rgba(0,0,0,0.5);color:#e4e4e7;" +
+    "font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;}" +
+    "#bv-chip-menu.bv-open{display:flex;}" +
+    "#bv-chip-menu .bv-h{font-size:10px;color:#71717a;padding:0.15rem 0.35rem;" +
+    "text-transform:uppercase;letter-spacing:0.05em;}" +
+    "#bv-chip-menu button{text-align:left;border:1px solid transparent;background:transparent;" +
+    "color:#e4e4e7;font:inherit;padding:0.3rem 0.4rem;border-radius:6px;cursor:pointer;" +
+    "display:flex;align-items:center;gap:0.4rem;}" +
+    "#bv-chip-menu button:hover{background:#27272a;}" +
+    "#bv-chip-menu button[aria-checked='true']::after{content:'\\2713';margin-left:auto;color:#22c55e;}" +
+    "#bv-chip-menu .bv-note{font-size:10px;color:#71717a;padding:0.2rem 0.4rem;" +
+    "border-top:1px solid #27272a;margin-top:0.15rem;}" +
+    "@keyframes bv-pulse{50%{opacity:0.35;}}";
+
+  function ensureStyles() {
+    if (!document.getElementById("bv-vmbar-style")) {
+      const st = document.createElement("style");
+      st.id = "bv-vmbar-style";
+      st.textContent = CSS;
+      (document.head || document.documentElement).appendChild(st);
+    }
+  }
+
+  const TERM_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" ' +
+    'rx="2"/><path d="M6.5 9.5l3 2.5-3 2.5"/><path d="M12.5 15h5"/></svg>';
+
+  let barEl = null;
+  function ensureBar() {
+    if (barEl && document.body.contains(barEl)) return barEl;
+    ensureStyles();
+    barEl = document.createElement("div");
+    barEl.id = "bv-vmbar";
+    barEl.className = "bv-idle";
+    const dot = document.createElement("span");
+    dot.className = "bv-dot";
+    const label = document.createElement("span");
+    label.id = "bv-vmbar-label";
+    // Primary affordance: the terminal icon opens the interactive dock.
+    const term = document.createElement("button");
+    term.id = "bv-vmbar-term";
+    term.className = "bv-iconbtn";
+    term.type = "button";
+    term.title = "Open terminal (shared with the agent)";
+    term.setAttribute("aria-label", "Open terminal");
+    term.setAttribute("aria-expanded", "false");
+    term.innerHTML = TERM_ICON;
+    // Badge: agent commands ran while the dock was closed. Without it the
+    // output was written to a terminal nobody was looking at, which is exactly
+    // the "the agent ran commands but nothing appeared" failure.
+    const badge = document.createElement("span");
+    badge.id = "bv-vmbar-badge";
+    badge.className = "bv-badge";
+    badge.hidden = true;
+    term.appendChild(badge);
+    term.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleTerminal();
+    });
+    const reset = document.createElement("button");
+    reset.id = "bv-vmbar-reset";
+    reset.textContent = "Reset";
+    reset.addEventListener("click", (e) => {
+      e.stopPropagation();
+      resetVm();
+    });
+    barEl.appendChild(dot);
+    barEl.appendChild(label);
+    barEl.appendChild(term);
+    barEl.appendChild(reset);
+    document.body.appendChild(barEl);
+    return barEl;
+  }
+
+  function setBar(state, text) {
+    const bar = ensureBar();
+    bar.className = "bv-" + state;
+    const lbl = bar.querySelector("#bv-vmbar-label");
+    if (lbl) lbl.textContent = text || "";
+  }
+
+  // ── Interactive terminal dock ───────────────────────────────────────────
+  // The dock hosts our own xterm, wired straight to the pod's tty through
+  // setCustomConsole: the user types into it, the guest tty echoes, and the
+  // relay mirrors the same bytes to the native Open Terminal panel. The agent's
+  // exec() calls type into that same tty, so both sides share one machine and
+  // one scrollback.
+  let dockEl = null;
+  let chipEl = null;
+  let menuEl = null;
+
+  function ensureDock() {
+    if (dockEl && document.body.contains(dockEl)) return dockEl;
+    ensureStyles();
+    dockEl = document.createElement("div");
+    dockEl.id = "bv-term";
+    dockEl.innerHTML =
+      '<div id="bv-term-head">' +
+      '<span id="bv-term-title">Browser VM</span>' +
+      '<span id="bv-term-state">idle</span>' +
+      '<button id="bv-term-reset" type="button">Reset</button>' +
+      '<button id="bv-term-close" type="button" aria-label="Close terminal">Close</button>' +
+      "</div>" +
+      '<div id="bv-term-body"><div id="bv-term-fallback">' +
+      "<span>Booting the VM&hellip;</span></div>" +
+      // We own this element: CheerpX 1.3.9 hands output to us and takes
+      // keycodes back, so there is no third-party console node to adopt.
+      '<div id="bv-term-xterm"></div></div>' +
+      '<div id="bv-term-foot"><span id="bv-term-agent">idle</span>' +
+      '<span id="bv-term-hint">shared with the agent</span></div>';
+    document.body.appendChild(dockEl);
+    dockEl.querySelector("#bv-term-close").addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeTerminal();
+    });
+    dockEl.querySelector("#bv-term-reset").addEventListener("click", (e) => {
+      e.stopPropagation();
+      resetVm();
+    });
+    // Clicking the body focuses the tty so the keyboard reaches the VM.
+    dockEl.querySelector("#bv-term-body").addEventListener("mousedown", () => focusConsole());
+    return dockEl;
+  }
+
+  function setTermState(text) {
+    if (!dockEl) return;
+    const el = dockEl.querySelector("#bv-term-state");
+    if (el) el.textContent = text || "";
+  }
+
+  function setAgentState(text, busy) {
+    if (!dockEl) return;
+    const el = dockEl.querySelector("#bv-term-agent");
+    if (!el) return;
+    el.textContent = text || "idle";
+    el.className = busy ? "bv-busy" : "";
+  }
+
+  // Put our own xterm in the dock. CheerpX never builds a console node for us
+  // any more (1.3.9 has no XtermConsole), so this is parenting, not adoption.
+  function mountConsole() {
+    const c = STATE.console;
+    if (!c || !c.el) return false;
+    const body = dockEl && dockEl.querySelector("#bv-term-body");
+    if (!body) return false;
+    const fb = body.querySelector("#bv-term-fallback");
+    if (fb) fb.classList.remove("bv-on");
+    if (c.el.parentNode !== body) body.appendChild(c.el);
+    fitConsole();
+    return true;
+  }
+
+  function fitConsole() {
+    const c = STATE.console;
+    if (!c || !c.fit || !c.term) return;
+    try {
+      c.fit.fit();
+    } catch (_) {
+      /* the dock can be display:none, so there is nothing to measure yet */
+    }
+  }
+
+  function focusConsole() {
+    const t = STATE.console && STATE.console.term;
+    if (!t) return;
+    try {
+      if (typeof t.focus === "function") t.focus();
+    } catch (_) {
+      /* no-op */
+    }
+  }
+
+  // Transient in-dock warning. Used for the things that are genuinely lossy —
+  // non-ASCII input, exec output that ran past the sentinel, etc. — so the user
+  // is never quietly handed incomplete results.
+  function setTermNote(text) {
+    const body = dockEl && dockEl.querySelector("#bv-term-body");
+    if (!body) return;
+    let note = body.querySelector("#bv-term-note");
+    if (!text) {
+      if (note && note.parentNode) note.parentNode.removeChild(note);
+      return;
+    }
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "bv-term-note";
+      body.appendChild(note);
+    }
+    note.textContent = text;
+  }
+
+  async function openTerminal() {
+    const dock = ensureDock();
+    dock.classList.add("bv-open");
+    // Opening by any route re-arms auto-open for future chat switches.
+    STATE.dismissed = false;
+    clearAgentBadge();
+    const btn = ensureBar().querySelector("#bv-vmbar-term");
+    if (btn) btn.setAttribute("aria-expanded", "true");
+    setTermState(STATE.ready ? "ready" : "booting…");
+    if (!STATE.ready) {
+      const fb = dock.querySelector("#bv-term-fallback");
+      if (fb) {
+        fb.classList.add("bv-on");
+        fb.firstElementChild.textContent = "Booting the VM…";
+      }
+      await ensureBooted();
+    }
+    if (!mountConsole()) {
+      const fb = dock.querySelector("#bv-term-fallback");
+      if (fb) {
+        fb.classList.add("bv-on");
+        fb.firstElementChild.textContent = STATE.ready
+          ? "No console available in this VM."
+          : "VM unavailable.";
+      }
+      setTermState(STATE.ready ? "no console" : "unavailable");
+      return;
+    }
+    setTermState("ready · " + (STATE.chatId || "").slice(0, 8));
+    // Give xterm a frame to lay out before focusing, or the caret lands wrong.
+    setTimeout(focusConsole, 60);
+  }
+
+  function closeTerminal() {
+    if (dockEl) dockEl.classList.remove("bv-open");
+    // Closing is a decision, so it always records one. There is no
+    // "close but keep auto-opening" case: the only way back to auto-open is for
+    // the user to open it again, or to switch chat.
+    STATE.dismissed = true;
+    const btn = ensureBar().querySelector("#bv-vmbar-term");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleTerminal() {
+    if (dockEl && dockEl.classList.contains("bv-open")) closeTerminal();
+    else openTerminal();
+  }
+
+  // Should the dock come up by itself? Only when the feature is on, a chat is
+  // open, the agent is allowed to drive this terminal, and the user has not
+  // just closed it. Everything else stays lazy.
+  function shouldAutoOpen() {
+    return !!(CFG.autoOpen && STATE.chatId && shareEnabled() && !STATE.dismissed);
+  }
+
+  function autoOpenTerminal() {
+    if (!shouldAutoOpen()) return false;
+    openTerminal();
+    return true;
+  }
+
+  function setAgentBadge(n) {
+    STATE.unseenAgentRuns = Math.max(0, n | 0);
+    const bar = ensureBar();
+    const badge = bar.querySelector("#bv-vmbar-badge");
+    if (!badge) return;
+    if (STATE.unseenAgentRuns > 0) {
+      badge.textContent = STATE.unseenAgentRuns > 99 ? "99+" : String(STATE.unseenAgentRuns);
+      badge.hidden = false;
+      bar.querySelector("#bv-vmbar-term").classList.add("bv-busy");
+    } else {
+      badge.hidden = true;
+      bar.querySelector("#bv-vmbar-term").classList.remove("bv-busy");
+    }
+  }
+
+  function clearAgentBadge() {
+    setAgentBadge(0);
+  }
+
+  // Called whenever the agent does something visible in the terminal. If the
+  // dock is closed the output still lands in the xterm (and in the relay's
+  // mirror for the native panel), so this only has to make it *discoverable*.
+  function noteAgentActivity() {
+    if (dockEl && dockEl.classList.contains("bv-open")) return;
+    setAgentBadge(STATE.unseenAgentRuns + 1);
+  }
+
+  // Echo into the local tty so the agent's work is visible in the shared
+  // scrollback instead of only in the chat bubble. Goes straight to xterm,
+  // bypassing the sink, so it is not mirrored back to the relay — the relay
+  // already has the exec_result frame.
+  //
+  // Deliberately does NOT touch the badge: one exec writes several lines here
+  // (the [agent] banner, any stderr, the exit line), and the badge counts runs,
+  // not writes. noteAgentActivity() is called once per exec in execRequest.
+  function agentWrite(text) {
+    const t = STATE.console && STATE.console.term;
+    if (!t || typeof t.write !== "function") return;
+    try {
+      t.write(text);
+    } catch (_) {
+      /* no-op */
+    }
+  }
+
+  // ── Composer chip: which terminal the agent may drive ──────────────────
+  // OWUI's own terminal selector is gated on per-user settings that ship empty,
+  // so the chat gets an explicit, always-visible control instead.
+  const SHARE_KEY = "bv.shareWithAgent";
+
+  function shareEnabled() {
+    try {
+      const v = localStorage.getItem(SHARE_KEY);
+      return v === null ? CFG.shareWithAgent !== false : v === "1";
+    } catch (_) {
+      return CFG.shareWithAgent !== false;
+    }
+  }
+
+  function setShare(on) {
+    try {
+      localStorage.setItem(SHARE_KEY, on ? "1" : "0");
+    } catch (_) {
+      /* private mode; keep in-memory only */
+    }
+    // Unregistering the chat is what actually denies the agent: the relay then
+    // answers browser_shell with no_browser, and the tool tells the user the
+    // terminal is switched off rather than silently doing nothing.
+    if (on) connectRelay();
+    else dropRelay();
+    renderChip();
+  }
+
+  function renderChip() {
+    if (!chipEl || !document.body.contains(chipEl)) return;
+    const on = shareEnabled();
+    chipEl.className = on ? "bv-on" : "bv-off";
+    const name = CFG.terminalName || "Browser VM";
+    chipEl.querySelector(".bv-chip-label").textContent = on ? name : name + " (off)";
+    chipEl.title = on
+      ? "Agent can use this terminal. Click to change."
+      : "Agent cannot use this terminal. Click to change.";
+  }
+
+  function ensureMenu() {
+    if (menuEl && document.body.contains(menuEl)) return menuEl;
+    menuEl = document.createElement("div");
+    menuEl.id = "bv-chip-menu";
+    menuEl.innerHTML =
+      '<div class="bv-h">Terminal for this chat</div>' +
+      '<button type="button" data-v="webvm" role="menuitemradio">Browser VM (WebVM)</button>' +
+      '<div class="bv-note">Shared: your keystrokes and the agent&rsquo;s commands ' +
+      "run in the same VM.</div>";
+    document.body.appendChild(menuEl);
+    menuEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-v]");
+      if (!b) return;
+      e.stopPropagation();
+      setShare(true);
+      closeMenu();
+      openTerminal();
+    });
+    return menuEl;
+  }
+
+  function closeMenu() {
+    if (menuEl) menuEl.classList.remove("bv-open");
+    if (chipEl) chipEl.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleMenu() {
+    const menu = ensureMenu();
+    if (menu.classList.contains("bv-open")) {
+      closeMenu();
+      return;
+    }
+    menu.querySelector('button[data-v="webvm"]').setAttribute(
+      "aria-checked",
+      shareEnabled() ? "true" : "false",
+    );
+    const r = chipEl.getBoundingClientRect();
+    menu.style.right = Math.max(8, window.innerWidth - r.right) + "px";
+    menu.style.bottom = window.innerHeight - r.top + 8 + "px";
+    menu.classList.add("bv-open");
+    chipEl.setAttribute("aria-expanded", "true");
+  }
+
+  // Is this element part of a text-entry surface? OpenWebUI's message box
+  // (#chat-input) is a TipTap/ProseMirror contenteditable, NOT a textarea:
+  // anything appended inside it is parsed into the document as message
+  // content. Inserting the chip there typed its "Browser VM" label into the
+  // user's prompt, and ProseMirror then detached the node, so the periodic
+  // re-attach re-injected the text — once per tick, forever.
+  function isEditorSurface(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.id === "chat-input") return true;
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") return true;
+    if (el.classList && el.classList.contains("ProseMirror")) return true;
+    if (el.isContentEditable) return true;
+    // Also reject anything nested inside an editing surface, so we never
+    // append into a wrapper the editor owns.
+    if (typeof el.closest === "function" && el.closest('[contenteditable="true"]')) {
+      return true;
+    }
+    return false;
+  }
+
+  function chipHost() {
+    // Inert containers that merely sit BESIDE the editor. Note these may
+    // contain the editor (the <form> does) — that is fine and is the point:
+    // the chip becomes a sibling of the input, never a child of it.
+    const candidates = [
+      document.getElementById("message-input-container"),
+      document.querySelector("form"),
+      document.querySelector("footer"),
+    ];
+    for (const el of candidates) {
+      if (el && !isEditorSurface(el)) return el;
+    }
+    return null;
+  }
+
+  function ensureChip() {
+    if (chipEl && document.body.contains(chipEl)) return chipEl;
+    // Anchor beside the composer so it reads as part of the chat input rather
+    // than a floating overlay. Returns null until the SPA has mounted it.
+    const host = chipHost();
+    if (!host) return null;
+    ensureStyles();
+    chipEl = document.createElement("div");
+    chipEl.id = "bv-chip";
+    chipEl.setAttribute("aria-haspopup", "menu");
+    chipEl.setAttribute("aria-expanded", "false");
+    chipEl.innerHTML = TERM_ICON + '<span class="bv-chip-label"></span>';
+    chipEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleMenu();
+    });
+    host.appendChild(chipEl);
+    renderChip();
+    return chipEl;
+  }
+
+  // ── Chat detection (OpenWebUI SPA) ─────────────────────────────────────
+  function currentChatId() {
+    const m = location.pathname.match(/^\/c\/([^/]+)/);
+    if (m) return m[1];
+    try {
+      const stored = JSON.parse(localStorage.getItem("chat") || "null");
+      if (stored && stored.id) return String(stored.id);
+    } catch (_) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function watchChat() {
+    let last = currentChatId();
+    setInterval(() => {
+      const now = currentChatId();
+      if (now !== last) {
+        last = now;
+        STATE.chatId = now;
+        closeMenu();
+        ensureChip();
+        // Chat switched: the relay maps native-terminal traffic by chat_id, so
+        // a stale open browser WS would bridge the wrong chat. Re-register.
+        dropRelay();
+        connectRelay();
+        bootOnChatChange();
+      }
+    }, 800);
+  }
+
+  // The pod must be FRESH per chat (plan: fresh every time). Talking to a
+  // different chat id through the old pod would violate isolation, so tear
+  // down and re-boot whenever the route changes chats.
+  async function bootOnChatChange() {
+    if (STATE.booting) return;
+    if (!STATE.chatId) {
+      setBar("idle", "VM: no chat");
+      return;
+    }
+    // A new chat is a new audience: whatever the user dismissed in the old one
+    // was about that one. Reset the badge too, or it would carry a stale count
+    // into a terminal that has never run anything.
+    STATE.dismissed = false;
+    clearAgentBadge();
+    const wasReady = STATE.ready;
+    if (STATE.ready) await teardown();
+    if (wasReady || autoOpenTerminal()) {
+      // Either the user already had a live pod, or auto-open is on. Either way
+      // a pod is expected for this chat, so bring the terminal up now rather
+      // than leaving an empty terminal on screen until the first command.
+      // openTerminal() owns the boot, and it is the same call in both cases.
+      await openTerminal();
+    } else {
+      // Otherwise stay lazy: don't stream the whole disk image on every chat
+      // navigation. The pod boots the moment the dock asks (term:require) or
+      // the agent runs a command.
+      setBar("idle", "VM: " + STATE.chatId.slice(0, 8) + " (boot on demand)");
+    }
+  }
+
+  // ── Adapters: real CheerpX vs mock (protocol testing) ──────────────────
+  // The mock adapter makes the whole relay + tool + WS protocol testable in
+  // plain browsers and headless WS clients without touching CheerpX.
+  //
+  // The CheerpX npm entry is an ES module with named exports; it never sets a
+  // global. So the library is resolved by import() and cached, not sniffed off
+  // `window`. The two globals below are pre-bundling hooks, checked first so a
+  // page that already ships CheerpX/xterm does not pay for a second download —
+  // and so the headless test can drive the identical code path.
+  async function loadCheerpX() {
+    if (STATE.cxLib) return STATE.cxLib;
+    let mod = null;
+    if (window.__BROWSER_VM_CHEERPX) {
+      mod = window.__BROWSER_VM_CHEERPX;
+    } else {
+      mod = await import(/* webpackIgnore: true */ CFG.cheerpxUrl);
+      // A bare import() against a CDN is served from the HTTP cache, and the
+      // app sets no cache-control on its own assets — but jsDelivr does, and
+      // the failure it causes is invisible (a stale copy of the module loads
+      // fine, or fails CORS with no hint why). One cache-busted retry turns
+      // "the CDN is confused" into a real, actionable error. Only on failure:
+      // the happy path must not pay for a second 300KB download.
+      if (!mod || !mod.Linux) {
+        const bustUrl = CFG.cheerpxUrl + (CFG.cheerpxUrl.includes("?") ? "&" : "?") + "bv=" + (window.__BV_BUILD__ || "dev");
+        console.warn("[browser-vm] CheerpX import looked stale; retrying", bustUrl);
+        mod = await import(/* webpackIgnore: true */ bustUrl);
+      }
+    }
+    // Tolerate a CJS default wrapper, but do not paper over a shape we cannot
+    // drive: a half-present library would boot a pod with no way to read it.
+    const lib = mod && mod.Linux ? mod : mod && mod.default ? mod.default : mod;
+    if (!lib || !lib.Linux || !lib.CloudDevice) {
+      throw new Error("CheerpX module loaded but exposes no Linux/CloudDevice");
+    }
+    STATE.cxLib = lib;
+    return lib;
+  }
+
+  async function loadXterm() {
+    if (STATE.xtermLib) return STATE.xtermLib;
+    let Terminal = null;
+    let FitAddon = null;
+    if (window.__BROWSER_VM_XTERM) {
+      Terminal = window.__BROWSER_VM_XTERM.Terminal;
+      FitAddon = window.__BROWSER_VM_XTERM.FitAddon;
+    } else {
+      const mods = await Promise.all([
+        import(/* webpackIgnore: true */ CFG.xtermUrl),
+        import(/* webpackIgnore: true */ CFG.xtermFitUrl),
+      ]);
+      Terminal = mods[0].Terminal;
+      FitAddon = mods[1].FitAddon;
+    }
+    if (!Terminal) throw new Error("xterm.js failed to load (no Terminal export)");
+    STATE.xtermLib = { Terminal: Terminal, FitAddon: FitAddon || null };
+    return STATE.xtermLib;
+  }
+
+  async function resolveAdapter() {
+    if (window.__BROWSER_VM_FORCE_MOCK) return makeMockAdapter();
+    try {
+      await loadCheerpX();
+      return await makeCheerpxAdapter();
+    } catch (e) {
+      // Hard failure, on purpose.
+      //
+      // The mock used to be the automatic fallback here, and that is precisely
+      // what hid this integration for so long: it answers exec() with
+      // "[mock] <cmd>" and exit 0, so the agent reported success for commands
+      // that never ran, while the UI looked perfectly alive. A test fixture is
+      // not a fallback. When the real VM cannot load, the honest answer is that
+      // there is no VM — see makeFailedAdapter.
+      console.error("[browser-vm] CheerpX unavailable, VM disabled:", e);
+      return makeFailedAdapter(e);
+    }
+  }
+
+  // Stands in for the adapter when CheerpX cannot be loaded and the mock was
+  // not explicitly requested. Nothing here pretends to work: exec() reports a
+  // non-zero exit and the reason, so the truth reaches the agent through
+  // exec_result and it can tell the user instead of claiming a command ran.
+  function makeFailedAdapter(err) {
+    const why = String((err && err.message) || err || "unknown error");
+    const msg = "browser VM unavailable: " + why;
+    STATE.failedReason = msg;
+    console.error("[browser-vm] " + msg);
+    setBar("error", "VM: " + msg);
+    return {
+      name: "failed",
+      failed: true,
+      async init() {
+        STATE.ready = false;
+        setBar("error", "VM: " + msg);
+      },
+      async exec() {
+        return { exit: 127, stdout: "", stderr: msg };
+      },
+      async reset() {
+        setBar("error", "VM: " + msg);
+      },
+      writeTerm() {
+        /* no VM, so no tty */
+      },
+    };
+  }
+
+  function makeMockAdapter() {
+    // Test fixture. Only reachable via window.__BROWSER_VM_FORCE_MOCK — never
+    // as a fallback, because its exec() output is fabricated (see
+    // makeFailedAdapter).
+    console.warn("[browser-vm] using MOCK adapter (forced by __BROWSER_VM_FORCE_MOCK)");
+    STATE.failedReason = null;
+    return {
+      name: "mock",
+      async init(chatId) {
+        setBar("booting", "VM(mock): " + chatId.slice(0, 8));
+        await sleep(300);
+        STATE.ready = true;
+        setBar("ready", "VM(mock): " + chatId.slice(0, 8) + " ready");
+      },
+      async exec(cmd, opts) {
+        const t0 = Date.now();
+        await sleep(50);
+        return {
+          exit: 0,
+          stdout: "[mock] " + cmd + " (ran for " + (Date.now() - t0) + "ms)\n",
+          stderr: "",
+        };
+      },
+      async reset() {
+        STATE.ready = false;
+        await STATE.pubAdapter.init(STATE.chatId);
+      },
+      writeTerm() {
+        /* mock has no terminal */
+      },
+    };
+  }
+
+  // ── Console keycodes ────────────────────────────────────────────────────
+  // CheerpX 1.3.9's setCustomConsole() does not take bytes. It returns a
+  // handler that takes a *legacy DOM keyCode* — that is exactly what CheerpX's
+  // own built-in console posts, from its `keypress` listener (`~~event.keyCode`)
+  // plus a `keydown` special case for backspace. So the wire format between
+  // our xterm and the guest tty is keycodes, and this is the translation table.
+  //
+  // xterm speaks VT sequences (onData); a keypress channel is one byte wide.
+  // Greedy longest-match at scan time, so "\x1b[A" is Up rather than
+  // Escape-then-"[A".
+  const KEY_SEQS = {
+    // arrows, normal and application-cursor-mode
+    "\x1bOA": 38,
+    "\x1bOB": 40,
+    "\x1bOC": 39,
+    "\x1bOD": 37,
+    "\x1b[A": 38,
+    "\x1b[B": 40,
+    "\x1b[C": 39,
+    "\x1b[D": 37,
+    // home / end
+    "\x1bOH": 36,
+    "\x1bOF": 35,
+    "\x1b[H": 36,
+    "\x1b[F": 35,
+    "\x1b[1~": 36,
+    "\x1b[4~": 35,
+    // insert / delete, page up / page down. Note 33 and 46 are each shared by
+    // two keys in the DOM keyCode space (Insert/PgUp, Delete/PgDn) — that is
+    // upstream's collision, and matching it is the correct thing to do.
+    "\x1b[2~": 33,
+    "\x1b[3~": 46,
+    "\x1b[5~": 33,
+    "\x1b[6~": 46,
+    // shift+tab is not expressible; degrade to tab rather than lose the keypress
+    "\x1b[Z": 9,
+  };
+  // Single characters are deliberately NOT in this table: printable ASCII and
+  // C0 controls pass through unchanged, and the handful that need rewriting
+  // (\n -> Enter, DEL -> Backspace) are handled in the scanner below. Keeping
+  // them out of the table is what stops \n being read as Ctrl+J.
+  const KEY_SEQS_BY_LEN = Object.keys(KEY_SEQS).sort((a, b) => b.length - a.length);
+
+  // Returns {codes, skipped}. `skipped` counts input we could not represent —
+  // non-ASCII, which has no single-byte keycode. Dropping it is the honest
+  // option; inventing a code would corrupt the user's command line.
+  function textToKeycodes(text) {
+    const s = text == null ? "" : String(text);
+    const codes = [];
+    let skipped = 0;
+    let i = 0;
+    while (i < s.length) {
+      const code = s.charCodeAt(i);
+      if (code === 0x1b) {
+        // Longest match, so "\x1b[A" is Up rather than Escape-then-"[A".
+        let hit = null;
+        for (const seq of KEY_SEQS_BY_LEN) {
+          if (seq.length > 1 && s.startsWith(seq, i)) {
+            hit = seq;
+            break;
+          }
+        }
+        if (hit) {
+          codes.push(KEY_SEQS[hit]);
+          i += hit.length;
+          continue;
+        }
+        codes.push(27);
+        i++;
+        continue;
+      }
+      // Enter arrives as \r from most clients and \n from some; both mean the
+      // same keypress, and a keypress listener would have reported 13.
+      if (code === 0x0a) {
+        codes.push(13);
+      } else if (code === 0x7f) {
+        codes.push(8); // DEL is how most terminals send Backspace
+      } else if (code < 0x80) {
+        // Printable ASCII and C0 controls (so Ctrl+A -> 1) both pass through
+        // unchanged, which is what a keypress listener would have reported.
+        codes.push(code);
+      } else {
+        skipped++;
+      }
+      i++;
+    }
+    return { codes: codes, skipped: skipped };
+  }
+
+  const ANSI_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g;
+  function stripAnsi(s) {
+    return String(s).replace(ANSI_RE, "");
+  }
+
+  function shQuote(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'";
+  }
+
+  // ── Output sink ─────────────────────────────────────────────────────────
+  // setCustomConsole() delivers VM output ONE BYTE PER CALL. Writing that
+  // straight into xterm would be a write() per byte, so bytes are buffered and
+  // flushed in batches, and decoded as a *stream* because a multi-byte UTF-8
+  // character routinely straddles two callbacks.
+  function makeOutputSink() {
+    let bytes = [];
+    let timer = null;
+    const decoder = new TextDecoder("utf-8");
+    const cap = { on: false, buf: "" };
+
+    function flush() {
+      timer = null;
+      if (!bytes.length) return;
+      const chunk = decoder.decode(new Uint8Array(bytes), { stream: true });
+      bytes = [];
+      if (!chunk) return;
+      if (cap.on) cap.buf += chunk;
+      const t = STATE.console && STATE.console.term;
+      if (t) {
+        try {
+          t.write(chunk);
+        } catch (_) {
+          /* a torn-down terminal must not stall the VM's output path */
+        }
+      }
+      sendTerminalOutput(chunk);
+    }
+
+    return {
+      write(buf) {
+        if (!buf) return;
+        if (typeof buf === "string") {
+          for (let i = 0; i < buf.length; i++) bytes.push(buf.charCodeAt(i) & 0xff);
+        } else {
+          for (let i = 0; i < buf.length; i++) bytes.push(buf[i] & 0xff);
+        }
+        if (bytes.length >= CFG.flushBytes) {
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          flush();
+          return;
+        }
+        if (timer === null) timer = setTimeout(flush, 0);
+      },
+      flush: flush,
+      // exec() has no other way to see the command's output — run() returns
+      // only {status} and there is no stdout stream anywhere in 1.3.9 — so it
+      // borrows the console between two OSC sentinels.
+      beginCapture() {
+        flush();
+        cap.on = true;
+        cap.buf = "";
+      },
+      // Non-destructive, because the exec poll has to look at the same growing
+      // buffer repeatedly while it waits for the closing marker.
+      readCapture() {
+        flush();
+        return cap.buf;
+      },
+      endCapture() {
+        flush();
+        cap.on = false;
+        return cap.buf;
+      },
+    };
+  }
+
+  async function attachConsole(cx) {
+    const lib = await loadXterm();
+    const dock = ensureDock();
+    const host = dock.querySelector("#bv-term-xterm");
+    if (!host) throw new Error("terminal host missing from dock");
+    const term = new lib.Terminal({
+      convertEol: false,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: 12,
+      cursorBlink: true,
+      theme: { background: "#000000" },
+      scrollback: 5000,
+    });
+    let fit = null;
+    if (lib.FitAddon) {
+      // Both modules export the class directly ({ Terminal }, { FitAddon }) —
+      // there is no namespace to unwrap.
+      fit = new lib.FitAddon();
+      term.loadAddon(fit);
+    }
+    term.open(host);
+    const sink = makeOutputSink();
+    const con = { el: host, term: term, fit: fit, sink: sink, send: null };
+    STATE.console = con;
+    if (dockEl.classList.contains("bv-open")) mountConsole();
+    // Attach BEFORE run(): the shell's first prompt would otherwise go to a
+    // console that is not listening yet and be lost.
+    con.send = cx.setCustomConsole(sink.write, term.cols || 80, term.rows || 24);
+    // The user's keystrokes and the native panel's keystrokes take the exact
+    // same path from here, so the two can never drift apart.
+    term.onData((data) => {
+      if (STATE.pubAdapter && typeof STATE.pubAdapter.writeTerm === "function") {
+        STATE.pubAdapter.writeTerm(data);
+      }
+    });
+    return con;
+  }
+
+  async function makeCheerpxAdapter() {
+    const lib = STATE.cxLib;
+    // exec() drives the one shared tty by typing sentinels around the command,
+    // so two concurrent execs would interleave and each would capture the
+    // other's output. The agent can absolutely fire commands back to back, so
+    // they are serialised here rather than in the relay.
+    let execQueue = Promise.resolve();
+    const enqueue = (job) => {
+      const run = execQueue.then(job, job); // run even if the last one threw
+      execQueue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+
+    return {
+      name: "cheerpx",
+
+      async init(chatId) {
+        setBar("booting", "VM: " + chatId.slice(0, 8) + " booting…");
+        // Plan §6: cloud base (read-only) + MEMORY-ONLY overlay. Persistence is
+        // phase 2; swap IDBDevice("") for IDBDevice("c<chat_id>") later.
+        const cloudDevice = await lib.CloudDevice.create(CFG.imageWs);
+        const memOverlay = await lib.IDBDevice.create("");
+        const overlayDevice = await lib.OverlayDevice.create(cloudDevice, memOverlay);
+        const mounts = [{ type: "ext2", path: "/", dev: overlayDevice }];
+
+        // 1.3.9 takes `networkInterface`, not `network`, and an object — the
+        // old `network: true` was silently ignored. Default is no network at
+        // all: this is a sandbox, and egress should be an explicit opt-in via
+        // window.__BROWSER_VM = { network: { authKey: "…" } }.
+        const createOpts = {
+          networkInterface: CFG.network && typeof CFG.network === "object" ? CFG.network : undefined,
+        };
+
+        let cx;
+        try {
+          cx = await lib.Linux.create({
+            mounts: mounts.concat([
+              { type: "proc", path: "/proc" },
+              { type: "devs", path: "/dev" },
+            ]),
+            networkInterface: createOpts.networkInterface,
+          });
+        } catch (e) {
+          // /proc and /dev are what make a shell usable, but a build that
+          // rejects them should still give the user a bootable root rather
+          // than nothing at all. Loud, because the degradation is real.
+          console.warn("[browser-vm] full mount set rejected, retrying with / only:", e);
+          cx = await lib.Linux.create({
+            mounts: mounts,
+            networkInterface: createOpts.networkInterface,
+          });
+        }
+        STATE.cx = cx;
+
+        await attachConsole(cx);
+        STATE.ready = true;
+        setBar("ready", "VM: " + chatId.slice(0, 8) + " ready");
+
+        // run() resolves when the process exits, and an interactive shell does
+        // not exit — so this is deliberately not awaited. Awaisting it would
+        // hang init() forever and the dock would never finish booting.
+        cx.run("/bin/sh", ["-i"], {
+          cwd: "/",
+          env: [
+            "HOME=/root",
+            "USER=root",
+            "SHELL=/bin/sh",
+            "TERM=xterm-256color",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          ],
+        }).catch((e) => {
+          // Only reachable if the pod dies; a clean exit is a user typing `exit`.
+          if (e) console.warn("[browser-vm] shell ended:", e);
+        });
+
+        // The dock may already be open (user clicked the icon before the pod
+        // finished booting); adopt the console as soon as it exists.
+        if (dockEl && dockEl.classList.contains("bv-open")) {
+          mountConsole();
+          setTermState("ready · " + chatId.slice(0, 8));
+          setTimeout(focusConsole, 60);
+        }
+      },
+
+      // exec: there is no spawn(), no getStdout(), and no stdin in 1.3.9. The
+      // only channel that carries bytes in both directions is the console, so
+      // we *type* the command into the shared tty and read it back between two
+      // OSC 999 sentinels that xterm swallows (unknown OSC = no output).
+      async exec(cmd, opts) {
+        return enqueue(() => runExec(cmd, opts));
+      },
+
+      // Plan §6 freshness: teardown cx and re-create everything pristine.
+      async reset() {
+        STATE.ready = false;
+        setBar("booting", "VM: resetting…");
+        await teardown();
+        await ensureBooted();
+      },
+
+      // Keystrokes from the native "Open Terminal" panel, or from our own
+      // xterm's onData. Both land here, so there is one translation path.
+      writeTerm(data, enc) {
+        // Decode base64 envelopes back to the raw byte string.
+        let text = data;
+        if (enc === "b64") {
+          try {
+            text = b64ToBinary(data);
+          } catch (_) {
+            return; // malformed frame: drop it rather than kill the handler
+          }
+        }
+        const con = STATE.console;
+        if (!con || !con.send) return;
+        const parsed = textToKeycodes(text);
+        if (parsed.skipped) {
+          setTermNote(
+            parsed.skipped +
+              (parsed.skipped === 1 ? " character was" : " characters were") +
+              " dropped: this VM console takes one-byte keycodes, so non-ASCII input is not expressible.",
+          );
+        }
+        for (const kc of parsed.codes) {
+          try {
+            con.send(kc);
+          } catch (_) {
+            /* pod died mid-keystroke; the relay will report the session as gone */
+          }
+        }
+      },
+
+      resizing(cols, rows) {
+        const con = STATE.console;
+        if (!con) return;
+        if (con.term) {
+          try {
+            con.term.resize(cols, rows);
+          } catch (_) {
+            /* best effort; the guest redraws on the next prompt */
+          }
+        }
+        // setCustomConsole is also the resize channel: it posts the new geometry
+        // to the worker, so re-calling it (and keeping the handler it returns)
+        // is how the guest learns the terminal changed size.
+        if (STATE.cx && con.send) {
+          try {
+            con.send = STATE.cx.setCustomConsole(con.sink.write, cols, rows);
+          } catch (_) {
+            /* keep the previous handler rather than lose input entirely */
+          }
+        }
+      },
+    };
+
+    // ── exec: the only way to read output ────────────────────────────
+    // There is no spawn(), no getStdout() and no stdin in 1.3.9, and
+    // run() resolves with {status} only. So the command is *typed* into
+    // the shared tty between two OSC 999 sentinels — xterm swallows an
+    // unknown OSC code, so the markers are invisible to the user and
+    // never reach the relay mirror.
+    async function runExec(cmd, opts) {
+      // The original cwd is saved and put back, so an exec cannot leave the
+      // user's interactive shell somewhere they did not ask to be.
+      const con = STATE.console;
+      if (!STATE.cx || !con || !con.send) {
+        return { exit: -1, stdout: "", stderr: "pod not booted" };
+      }
+      const token = Math.random().toString(36).slice(2, 10);
+      const half = token.slice(0, 4);
+      const rest = token.slice(4);
+      const begin = "\x1b]999;bv" + token + "-b\x07";
+      const endRe = new RegExp("\x1b\\]999;bv" + token + "-e:(-?\\d+)\x07");
+      const cwd = (opts && opts.cwd) || "/root";
+
+      // The token is assembled from two arguments so the *echo* of the typed
+      // line can never contain it — otherwise we would match our own echo
+      // instead of the printf output and capture nothing. No trailing
+      // newline here: the caller owns the line terminator, and `extra` (the
+      // exit code argument) has to land on the same line as the format.
+      const marker = (tag, extra) =>
+        "printf '\\033]999;bv%s%s" + tag + "\\007' " + shQuote(half) + " " + shQuote(rest) + (extra || "");
+
+      // Order matters. `stty -echo` stops the tty reflecting what we type, and
+      // blanking PS1 keeps the shell's own prompts out of the captured text.
+      // The command goes in bare — no braces, no subshell — so a command
+      // containing an unbalanced } or ) cannot break the wrapper. The
+      const script = [
+        "stty -echo\n",
+        '__bvps1="$PS1"; __bvcd="$PWD"; PS1=""; PS2=""\n',
+        marker("-b") + "\n",
+        "cd " + shQuote(cwd) + " 2>/dev/null\n",
+        String(cmd) + "\n",
+        "__bvrc=$?\n",
+        marker("-e", '"$__bvrc"') + "\n",
+        // The trailing newline is load-bearing. Without it the shell is left
+        // holding this line *unexecuted* on the command line, so the cwd, PS1
+        // and tty echo were never put back and every agent command silently
+        // relocated the user's own shell.
+        'cd "$__bvcd" 2>/dev/null; PS1="$__bvps1"; stty echo\n',
+      ].join("");
+
+      con.sink.beginCapture();
+      try {
+        await typeIntoTty(script);
+      } catch (e) {
+        con.sink.endCapture();
+        restoreTty();
+        return { exit: -1, stdout: "", stderr: String(e && e.message ? e.message : e) };
+      }
+
+      // Poll the same growing buffer for the closing sentinel rather than
+      // assuming one round-trip is enough: the tty is asynchronous and a
+      // command that never ends must still hit the caller's deadline.
+      const deadline = Date.now() + ((opts && opts.timeout_ms) || 30000);
+      let text = "";
+      let sawBegin = false;
+      let matched = null;
+      for (;;) {
+        const raw = con.sink.readCapture();
+        const i = raw.indexOf(begin);
+        if (i >= 0) {
+          sawBegin = true;
+          const rest = raw.slice(i + begin.length);
+          matched = endRe.exec(rest);
+          if (matched) {
+            text = rest.slice(0, matched.index);
+            break;
+          }
+          text = rest;
+        }
+        if (Date.now() > deadline) break;
+        await sleep(50);
+      }
+      con.sink.endCapture();
+      // Only on the paths where the script's own restore line did not run. On
+      // success it already put back the cwd, PS1 and tty echo, and calling
+      // restoreTty() again would fire a Ctrl+C at a healthy shell — printing a
+      // bare `^C` into the user's terminal after every single agent command.
+      // A missing end marker means the shell may be mid-command, and that is
+      // exactly when the interrupt is wanted.
+      if (!matched) restoreTty();
+
+      if (!sawBegin) {
+        return {
+          exit: -1,
+          stdout: "",
+          stderr: "no output captured — the shell may not be ready yet",
+        };
+      }
+      if (!matched) {
+        setTermNote("exec output was cut off before the end marker");
+        return {
+          exit: -1,
+          stdout: stripAnsi(text).replace(/\r/g, ""),
+          stderr: "command did not finish (timed out)",
+        };
+      }
+      setTermNote(null);
+      // A tty has one stream, so stdout and stderr are interleaved exactly as
+      // the user sees them. Reporting them merged is honest; pretending to
+      // split them would be a lie the model then reasons from.
+      return {
+        exit: Number(matched[1]),
+        stdout: stripAnsi(text).replace(/\r/g, ""),
+        stderr: "",
+      };
+    }
+
+    // Type a script into the tty, one keycode at a time, yielding after each
+    // newline so the shell has a chance to consume the line.
+    async function typeIntoTty(script) {
+      const con = STATE.console;
+      if (!con || !con.send) throw new Error("no console");
+      const parsed = textToKeycodes(script);
+      for (let i = 0; i < parsed.codes.length; i++) {
+        const kc = parsed.codes[i];
+        try {
+          con.send(kc);
+        } catch (_) {
+          /* keep going: a dropped key is better than a hung exec */
+        }
+        if (kc === 13) await sleep(0);
+      }
+    }
+
+    // Unconditionally put the tty back the way we found it. Idempotent, so
+    // calling it after a normal exec and again after a timeout is fine —
+    // which matters, because a timeout that left `stty -echo` in place would
+    // leave the user typing into a terminal that never echoes. It also restores
+    // the cwd and PS1, because a command that hung never reached the script's
+    // own restore line.
+    function restoreTty() {
+      const con = STATE.console;
+      if (!con || !con.send) return;
+      const parsed = textToKeycodes('\x03cd "$__bvcd" 2>/dev/null; PS1="$__bvps1"; stty echo\n');
+      for (const kc of parsed.codes) {
+        try {
+          con.send(kc);
+        } catch (_) {
+          /* nothing left to do */
+        }
+      }
+    }
+  }
+
+  function sendTerminalOutput(data) {
+    if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+      try {
+        STATE.ws.send(typeof data === "string" ? data : String(data));
+      } catch (_) {
+        /* drop on failure; keepalive/reconnect covers it */
+      }
+    }
+  }
+
+  // ── Boot / teardown ────────────────────────────────────────────────────
+  async function ensureBooted() {
+    if (STATE.ready || STATE.booting) return;
+    if (!STATE.chatId) return;
+    STATE.booting = true;
+    try {
+      STATE.pubAdapter = await resolveAdapter();
+      await STATE.pubAdapter.init(STATE.chatId);
+      connectRelay();
+    } catch (e) {
+      // Logged as well as shown: the bar is one line of text that a caller can
+      // immediately overwrite, and a boot failure that vanishes is exactly how
+      // this integration stayed broken for months.
+      console.error("[browser-vm] boot failed:", e);
+      setBar("error", "VM boot failed: " + (e && e.message ? e.message : e));
+    } finally {
+      STATE.booting = false;
+    }
+  }
+
+  async function teardown() {
+    STATE.ready = false;
+    const cx = STATE.cx;
+    STATE.cx = null;
+    const con = STATE.console;
+    STATE.console = null;
+    if (con) {
+      // Empty the host, but keep the host itself. `#bv-term-xterm` is permanent
+      // dock markup (see ensureDock), not something the xterm owns — unparenting
+      // it here used to leave the dock structurally broken after a single
+      // reset, so the next attachConsole() found no host and the pod never came
+      // back. Only the xterm's own child element goes; the host stays.
+      if (con.el) {
+        try {
+          while (con.el.firstChild) con.el.removeChild(con.el.firstChild);
+        } catch (_) {
+          /* already detached */
+        }
+      }
+      // Flush whatever the pod emitted before we let go of the sink, then stop
+      // mirroring: a dead pod must not keep writing to a live terminal.
+      try {
+        con.sink.flush();
+      } catch (_) {
+        /* best effort */
+      }
+      if (con.term && typeof con.term.dispose === "function") {
+        try {
+          con.term.dispose();
+        } catch (_) {
+          /* xterm may already be gone with its element */
+        }
+      }
+    }
+    setTermNote(null);
+    if (cx) {
+      try {
+        // 1.3.9 spells teardown `delete()`. There is no close() and no
+        // destroy() — the old fallbacks silently did nothing, leaking the
+        // worker and the whole disk image on every reset.
+        if (typeof cx.delete === "function") cx.delete();
+        else if (cx.close) await cx.close();
+      } catch (_) {
+        /* best-effort shutdown */
+      }
+    }
+  }
+
+  async function resetVm() {
+    if (STATE.pubAdapter) {
+      setBar("booting", "VM: reset…");
+      try {
+        await STATE.pubAdapter.reset();
+        // Check the outcome rather than assuming it. ensureBooted() swallows
+        // boot errors and reports them on the bar itself, so a reset that
+        // silently failed used to be announced here as "fresh" — the user saw
+        // success and a dead terminal.
+        if (STATE.ready) {
+          setBar("ready", "VM: " + (STATE.chatId || "").slice(0, 8) + " fresh");
+        } else if (barEl && barEl.classList.contains("bv-error")) {
+          // Leave the boot error on the bar; it is more specific than "reset
+          // failed" and names the real cause.
+          console.error("[browser-vm] reset did not produce a ready pod");
+        } else {
+          setBar("error", "reset failed: the VM did not come back");
+        }
+      } catch (e) {
+        setBar("error", "reset failed: " + (e && e.message ? e.message : e));
+      }
+    } else {
+      await ensureBooted();
+    }
+  }
+
+  // ── Relay WebSocket ────────────────────────────────────────────────────
+  function relayUrl() {
+    const sep = CFG.relay.includes("?") ? "&" : "?";
+    const tok = CFG.token ? sep + "token=" + encodeURIComponent(CFG.token) : "";
+    return CFG.relay + "/vm?chat_id=" + encodeURIComponent(STATE.chatId || "") + tok;
+  }
+
+  async function connectRelay() {
+    if (!STATE.chatId) return;
+    // Chip is off: stay unregistered so the agent gets an explicit
+    // no_browser instead of silently sharing a VM the user disabled.
+    if (!shareEnabled()) return;
+    if (STATE.ws && (STATE.ws.readyState === WebSocket.OPEN || STATE.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    let ws;
+    try {
+      ws = new WebSocket(relayUrl());
+    } catch (e) {
+      setBar("error", "WS failed");
+      return;
+    }
+    STATE.ws = ws;
+    ws.addEventListener("open", () => {
+      STATE.wsOpenedAt = Date.now();
+      // Deliberately NOT resetting the backoff here. A relay that accepts the
+      // socket and then immediately drops it used to produce a 1-reconnect-
+      // per-second storm forever, because every open reset the backoff to zero
+      // and the delay never grew past the 1s base. Flapping must keep backing
+      // off; only a socket that actually stayed up earns a clean slate.
+      ws.send(JSON.stringify({ type: "register", chat_id: STATE.chatId, client: "loader-1.0" }));
+    });
+    ws.addEventListener("message", (ev) => handleMessage(ev.data));
+    ws.addEventListener("close", () => {
+      if (STATE.ws === ws) {
+        STATE.ws = null;
+        // A connection that lived long enough to count as healthy clears the
+        // backoff. Anything shorter is a flap, and flapping has to keep
+        // backing off or we hammer the relay at the base interval forever.
+        if (STATE.wsOpenedAt && Date.now() - STATE.wsOpenedAt >= CFG.stableConnMs) {
+          STATE.backoff = 0;
+        }
+        STATE.wsOpenedAt = 0;
+        scheduleReconnect();
+      }
+    });
+    ws.addEventListener("error", () => {
+      try {
+        ws.close();
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  }
+
+  function scheduleReconnect() {
+    STATE.backoff = Math.min(STATE.backoff ? STATE.backoff * 2 : 1000, 15000);
+    if (STATE.reconnectTimer) clearTimeout(STATE.reconnectTimer);
+    STATE.reconnectTimer = setTimeout(() => {
+      STATE.reconnectTimer = null;
+      connectRelay();
+    }, STATE.backoff);
+  }
+
+  // Hard-drop the browser socket without scheduling a reconnect. Used when the
+  // active chat changes: the relay keys native-terminal traffic by chat_id, so
+  // a socket still bound to the previous chat would bridge the wrong pod.
+  // Any later need for a socket re-enters through connectRelay().
+  function dropRelay() {
+    if (STATE.reconnectTimer) {
+      clearTimeout(STATE.reconnectTimer);
+      STATE.reconnectTimer = null;
+    }
+    STATE.backoff = 0;
+    const ws = STATE.ws;
+    STATE.ws = null;
+    if (ws) {
+      try {
+        ws.onclose = null;
+        ws.close();
+      } catch (_) {
+        /* already closing/closed */
+      }
+    }
+  }
+
+  function handleMessage(data) {
+    const text = typeof data === "string" ? data : data.data;
+    let msg = null;
+    if (text && (text.startsWith("{") || text.startsWith("["))) {
+      try {
+        msg = JSON.parse(text);
+      } catch (_) {
+        msg = null;
+      }
+    }
+    if (msg && msg.type) {
+      switch (msg.type) {
+        case "ping":
+          if (STATE.ws) STATE.ws.send(JSON.stringify({ type: "pong" }));
+          break;
+        case "exec":
+          execRequest(msg);
+          break;
+        case "reset":
+          resetVm().then(() => {
+            if (STATE.ws) STATE.ws.send(JSON.stringify({ type: "reset_ack", id: msg.id || "" }));
+          });
+          break;
+        case "term:data":
+          // Native dock keystrokes (line-mode input path).
+          if (STATE.pubAdapter) STATE.pubAdapter.writeTerm(msg.data, msg.enc);
+          break;
+        case "term:resize":
+          resizeVm(msg);
+          break;
+        case "term:require":
+          // Native "Open Terminal" dock attached for this chat. Boot the pod
+          // right now so its console streams straight into the dock; a blank
+          // pod would otherwise make the dock sit on "Session has ended".
+          ensureBooted().then(() => {
+            if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+              STATE.ws.send(JSON.stringify({ type: "term:ready", chat_id: STATE.chatId }));
+            }
+          });
+          break;
+        case "error":
+          setBar("error", "relay: " + (msg.message || "error"));
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+    // Raw frame: VM console output to echo into the (mirrored) panel.
+    sendTerminalOutput(text);
+  }
+
+  function resizeVm(msg) {
+    const rows = clampInt(msg.rows, 2, 300, 24);
+    const cols = clampInt(msg.cols, 2, 300, 80);
+    if (STATE.pubAdapter && typeof STATE.pubAdapter.resizing === "function") {
+      STATE.pubAdapter.resizing(cols, rows);
+      return;
+    }
+    try {
+      if (STATE.console && STATE.console.term) {
+        STATE.console.term.resize(cols, rows);
+      }
+    } catch (_) {
+      /* best-effort */
+    }
+  }
+
+  function clampInt(v, lo, hi, dflt) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return dflt;
+    return Math.min(hi, Math.max(lo, n));
+  }
+
+  async function execRequest(msg) {
+    const id = msg.id || "x" + ++STATE.execSeq;
+    const timeout = Math.min(Number(msg.timeout_ms) || 30000, 300000);
+    let result = { exit: -1, stdout: "", stderr: "timed out in browser" };
+    // Counted once per run, before the boot: a run that boots the pod is
+    // exactly the one the user is most likely not watching.
+    noteAgentActivity();
+    await ensureBooted();
+    // Collaboration: show the agent's command and its result in the same
+    // terminal the user is typing into, so both sides watch one machine.
+    const oneLine = String(msg.cmd || "").replace(/\s+/g, " ").trim();
+    setAgentState("agent: " + oneLine.slice(0, 60), true);
+    agentWrite("\r\n\x1b[2m[agent]\x1b[0m " + msg.cmd + "\r\n");
+    try {
+      const timedOut = new Promise((_, rej) =>
+        setTimeout(() => rej(new Error("exec timed out in browser")), timeout)
+      );
+      result = await Promise.race([
+        Promise.resolve(STATE.pubAdapter.exec(msg.cmd, { cwd: msg.cwd, timeout_ms: timeout })),
+        timedOut,
+      ]);
+    } catch (e) {
+      result = { exit: -1, stdout: "", stderr: String(e && e.message ? e.message : e) };
+    }
+    if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+      STATE.ws.send(
+        JSON.stringify({
+          type: "exec_result",
+          id: id,
+          exit: Number.isInteger(result.exit) ? result.exit : -1,
+          stdout: clip(String(result.stdout || "")),
+          stderr: clip(String(result.stderr || "")),
+        })
+      );
+    }
+    // exec() types the command into the shared tty and recovers its output from
+    // the same console, so the output is *already* on screen — echoing it here
+    // too would print everything twice. Only the command banner and the exit
+    // status are ours to add; note the banner matters because `stty -echo` is
+    // active during exec, so the tty itself will not reflect the command.
+    if (String(result.stderr || "")) {
+      agentWrite("\x1b[31m" + result.stderr + "\x1b[0m\r\n");
+    }
+    agentWrite(
+      "\x1b[2m[agent] exit " + (Number.isInteger(result.exit) ? result.exit : -1) + "\x1b[0m\r\n",
+    );
+    setAgentState("agent idle", false);
+    if (dockEl && dockEl.classList.contains("bv-open")) setTimeout(focusConsole, 0);
+  }
+
+  function clip(s) {
+    const MAX = 512 * 1024;
+    if (s.length <= MAX) return s;
+    return s.slice(0, MAX) + "\n[… truncated by browser-vm …]";
+  }
+
+  // The relay base64-encodes every binary keystroke from the native Open
+  // Terminal panel (relay.py `_native_to_vm_loop`). atob gives back a
+  // one-char-per-byte "binary string", which is what textToKeycodes() and the
+  // guest tty expect — decoding to UTF-8 text instead would corrupt any
+  // keystroke above U+007F and mangle multi-byte paste. (Non-ASCII is then
+  // dropped with a visible note, because the keycode channel is one byte wide.)
+  function b64ToBinary(b64) {
+    const bin = atob(String(b64).replace(/\s+/g, ""));
+    let out = "";
+    for (let i = 0; i < bin.length; i++) out += String.fromCharCode(bin.charCodeAt(i) & 0xff);
+    return out;
+  }
+
+  function sleep(ms) {
+    return new Promise((res) => setTimeout(res, ms));
+  }
+
+  // ── Public API (plan §6: window.__owuiVm) ─────────────────────────────
+  window.__owuiVm = {
+    async init(chatId) {
+      STATE.chatId = chatId || null;
+      await ensureBooted();
+    },
+    async exec(cmd, opts) {
+      await ensureBooted();
+      return STATE.pubAdapter.exec(cmd, opts || {});
+    },
+    async reset() {
+      await resetVm();
+    },
+    isBooted() {
+      return STATE.ready;
+    },
+    openTerminal,
+    closeTerminal,
+    toggleTerminal,
+    isTerminalOpen() {
+      return !!(dockEl && dockEl.classList.contains("bv-open"));
+    },
+    // Lets the chat/agent surface the VM state and toggle the share flag.
+    shareEnabled,
+    setShare,
+    shouldAutoOpen,
+    getState() {
+      return {
+        chatId: STATE.chatId,
+        ready: STATE.ready,
+        booting: STATE.booting,
+        adapter: STATE.pubAdapter ? STATE.pubAdapter.name : null,
+        connected: !!(STATE.ws && STATE.ws.readyState === WebSocket.OPEN),
+        share: shareEnabled(),
+        terminalOpen: !!(dockEl && dockEl.classList.contains("bv-open")),
+        autoOpen: !!CFG.autoOpen,
+        dismissed: STATE.dismissed,
+        unseenAgentRuns: STATE.unseenAgentRuns,
+        // Non-null => there is no real VM and the panel is not emulating one.
+        // A mock here would mean fabricated exec() output reaching the agent.
+        failedReason: STATE.failedReason,
+      };
+    },
+  };
+
+  // ── Boot ───────────────────────────────────────────────────────────────
+  function start() {
+    // Identity, in one place. This file is served from a stable URL and the
+    // app sets no cache-control on it, so browsers are free to apply
+    // heuristic caching and pin an OLD copy of this loader indefinitely. That
+    // is not hypothetical: a stale build was observed requesting a CheerpX
+    // path that no longer exists, failing CORS, and silently running the mock
+    // adapter while reporting success. The build id makes a pinned copy
+    // obvious in the console instead of invisible, and loadCheerpX retries once
+    // with a cache-busting query so a fresh copy is actually retrieved.
+    var BUILD_ID = "dev";
+    try {
+      var s = document.currentScript;
+      if (s && s.src) {
+        var m = /[?&]v=([0-9a-f]{8,})/.exec(s.src);
+        if (m) BUILD_ID = m[1];
+      }
+    } catch (_) {
+      /* currentScript is null in some async contexts; dev is fine */
+    }
+    window.__BV_BUILD__ = BUILD_ID;
+    console.log(
+      "[chad-loader] v3 build " + BUILD_ID + " (loader.js). " +
+        "Stale build? Hard-reload, or clear the site cache — an old loader.js " +
+        "will run the mock adapter and report commands that never ran.",
+    );
+    STATE.chatId = currentChatId();
+    watchChat();
+    ensureBar();
+    ensureChip();
+    // The SPA re-renders the composer on navigation, which detaches our chip.
+    // Re-attach on DOM mutation rather than on a 1s poll: a fixed poll both
+    // burns a timer forever and, because the editor used to eat the node, it
+    // re-injected the chip's label on every single tick.
+    let chipMisses = 0;
+    let chipQueued = false;
+    const chipObserver = new MutationObserver(() => {
+      if (chipQueued) return;
+      chipQueued = true;
+      queueMicrotask(() => {
+        chipQueued = false;
+        if (chipEl && document.body.contains(chipEl)) {
+          chipMisses = 0;
+          return;
+        }
+        chipEl = null;
+        // A host that keeps detaching us must not be able to spin this loop.
+        if (++chipMisses > 5) {
+          chipObserver.disconnect();
+          return;
+        }
+        if (ensureChip()) chipMisses = 0;
+      });
+    });
+    chipObserver.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener("click", (e) => {
+      if (menuEl && menuEl.classList.contains("bv-open") && !menuEl.contains(e.target)) closeMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
+    // Register with the relay immediately (even with no pod booted) so the
+    // native "Open Terminal" dock can reach this browser, then bring the
+    // terminal up for the chat already on screen.
+    connectRelay();
+    if (STATE.chatId) {
+      if (autoOpenTerminal()) {
+        // openTerminal() owns the bar text from here.
+      } else {
+        setBar("idle", "VM: " + STATE.chatId.slice(0, 8) + " (boot on demand)");
+      }
+    } else {
+      setBar("idle", "VM: no chat");
+    }
+    window.__owuiVm.connectRelay = connectRelay;
+    window.__owuiVm.reset = resetVm;
+    window.__owuiVm.reconnect = connectRelay;
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();

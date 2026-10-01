@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Derived OpenWebUI image. Two changes over upstream v0.11.4:
+#
+# 1. Cross-origin isolation headers (COOP/COEP/CORP) so the in-browser
+#    CheerpX/WebVM terminal can boot. CheerpX moves SharedArrayBuffer buffers
+#    into its worker, and the browser only allows that transfer when the
+#    document is cross-origin isolated. Without these the pod dies with
+#    "SharedArrayBuffer transfer requires self.crossOriginIsolated" and the
+#    terminal silently falls back to a mock pod.
+#
+# 2. The loader <script> tag loses `crossorigin="use-credentials"` and gains a
+#    content-hash query. Upstream's tag puts the page in credentials:'include'
+#    mode, which the dynamic `import()` of CheerpX inherits; every CDN then
+#    answers with `Access-Control-Allow-Origin: *`, which browsers reject for
+#    credentialed requests — so the ESM load fails and no VM ever boots.
+#
+#    The query is a sha256 prefix of loader.js, computed at build time, so a
+#    changed loader is never served from cache. A hand-maintained constant
+#    (what this used to be) silently pins the URL: every deploy ships the same
+#    `?v=1`, the browser keeps the old copy, and edits appear to have no
+#    effect. Deriving it from the content removes the failure mode — you cannot
+#    forget to bump it.
+#
+# Both are baked in rather than applied with `docker exec` because the container
+# is recreated by `docker compose up`, which discards edits to its filesystem.
+
+FROM ghcr.io/open-webui/open-webui:v0.11.4
+
+# 1. Cross-origin isolation.
+COPY coi_middleware.py /app/backend/open_webui/coi_middleware.py
+COPY main.py.patched /app/backend/open_webui/main.py
+
+# 2. Loader script tag: drop crossorigin, add a content-derived ?v=.
+#    loader.js is copied in only to be hashed; the bind mount from
+#    docker-compose.yml is what actually serves it at runtime.
+COPY static/loader.js /tmp/loader.js
+RUN set -eu; \
+    V=$(sha256sum /tmp/loader.js | cut -c1-12); \
+    sed -i "s#<script src=\"/static/loader.js\" defer crossorigin=\"use-credentials\"></script>#<script src=\"/static/loader.js?v=$V\" defer></script>#" /app/build/index.html; \
+    sed -i -E "s#(<script src=\"/static/loader\.js)\?v=[0-9a-z]+(\"[^>]*></script>)#\1?v=$V\2#" /app/build/index.html; \
+    rm -f /tmp/loader.js; \
+    grep -q "loader.js?v=$V" /app/build/index.html; \
+    echo "loader.js cache-bust: ?v=$V"

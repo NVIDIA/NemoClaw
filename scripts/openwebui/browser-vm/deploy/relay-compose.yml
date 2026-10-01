@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sidecar container for the browser-vm relay.
+#
+# Add this service to the OpenWebUI docker stack (scripts/openwebui/docker-compose.yml)
+# and wire a TERMINAL_SERVER_CONNECTIONS entry + the relay API key in .env, e.g.:
+#
+#   BROWSER_VM_RELAY_KEY=<long random string>
+#   TERMINAL_SERVER_CONNECTIONS=[{"id":"webvm","name":"Browser VM (fresh)","url":"http://browser-vm-relay:8787","server_type":"orchestrator","auth_type":"bearer","key":"${BROWSER_VM_RELAY_KEY}","config":{"contexts":{"chat":{"context_id":"chat_id"}},"chat_uploads":"default"}}]
+#
+# Build: the relay image just carries relay/ + requirements.txt. Push it
+# anywhere reachable by the compose host, or build in-place:
+#
+#   docker build -t browser-vm-relay:<sha> -f deploy/relay.Dockerfile relay/
+#
+# The browser leg is reached by loader.js at ws(s)://<public-host>/vm-bridge
+# (see deploy/routes-notice.md for cloudflared routing; no nginx in this stack).
+
+services:
+  browser-vm-relay:
+    image: browser-vm-relay:local   # replace with your registry tag, e.g. browser-vm-relay:<sha> for bedrock.browser-vm.relay   # replace with your registry tag, e.g. ghcr.io/<repo>/browser-vm-relay:<sha>
+    restart: unless-stopped
+    environment:
+      RELAY_PORT: "8787"
+      RELAY_API_KEY: "${BROWSER_VM_RELAY_KEY}"
+      RELAY_WS_KEY: "${BROWSER_VM_RELAY_KEY}"        # reuse same secret; tighter ACLs later
+      RELAY_LOG_VERBOSE: "${BROWSER_VM_LOG_VERBOSE:-0}"
+    ports:
+      # Bound to loopback only — OpenWebUI reaches it via host.docker.internal:8787,
+      # and nothing else inside the compose network should open it.
+      - "127.0.0.1:8787:8787"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8787/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
