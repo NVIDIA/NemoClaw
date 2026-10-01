@@ -423,7 +423,7 @@ case "${SKIP_MONITORING:-0}" in
     exit 1
     ;;
 esac
-if [[ "${SKIP_MONITORING}" == "1" ]]; then
+if [[ "${SKIP_MONITORING:-0}" == "1" ]]; then
   echo "SKIP_MONITORING=1: installing the GPU chart only (no Prometheus/Envoy changes)." >&2
 else
   ensure_prometheus_stack

@@ -5,7 +5,7 @@
 
 # NemoClaw Kubernetes GPU autoscaling
 
-This experimental recipe shows a cost-efficient architecture: AI agents run in CPU-only OpenShell sandboxes, each sandbox responding to one end user's inference request, while GPU inference autoscales using K8s HPA based on the workload. The e2e demo uses **one sandbox per end user** sharing `inference.local` → Envoy → GPU inference runtimes -> K8s HPA autoscaling. The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. 
+This experimental recipe shows a cost-efficient architecture: AI agents run in CPU-only OpenShell sandboxes, each sandbox responding to one end user's inference request, while GPU inference autoscales using K8s HPA based on the workload. The e2e demo uses **one sandbox per end user** sharing `inference.local` → Envoy load balancer → GPU inference runtimes -> K8s HPA autoscaling. The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. 
 
 HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay responsive and idle GPUs are released.
 
@@ -13,21 +13,15 @@ Keep `versions.env` aligned: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sand
 
 ## Deployment Architecture
 
-HPA scales to **N** inference pods (1 GPU each). Envoy LeastRequest when enabled; otherwise the metrics-proxy Service. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Validation](#validation).
+HPA scales to **N** inference pods (1 GPU each). The load balancer is **Envoy** (LeastRequest). Sandboxes reach GPUs at `https://inference.local`. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Validation](#validation).
 
 Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). The sandboxed agent is CPU-only OpenShell, not this pod.
 
-GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
+GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and the Envoy load balancer stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
 
 HPA uses Pods **`AverageValue`**. Built-in metrics: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
 
-**The Envoy load balancer is optional.** Default is LeastRequest in front of GPU replicas. Skip it when the metrics-proxy ClusterIP Service is enough:
-
-| Choice | Install |
-|--------|---------|
-| Envoy LeastRequest (default) | TLS Secret + `ingress.tls` — [TLS values](#tls-values) — then `./scripts/install-hpa.sh` |
-| Metrics-proxy Service only | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
-
+Isolated eval uses `ALLOW_INSECURE_HTTP=1` (Envoy with no TLS overlay). HTTPS Envoy uses [TLS values](#tls-values).
 
 ```text
 End users (1 pairing sandbox, or M e2e sandboxes — one per user)
@@ -36,7 +30,7 @@ CPU-only OpenShell sandboxes (AGENT_NAME=openclaw | hermes | deepagents)
         ↓
 OpenShell https://inference.local
         ↓
-Envoy load balancer — LeastRequest  (or metrics-proxy Service when ENABLE_ENVOY_LB=0)
+Envoy load balancer — LeastRequest
         ↓
 Authenticated inference endpoints
 ├─ Inference pod (ollama|vllm|nim) → GPU 1
@@ -46,7 +40,7 @@ Authenticated inference endpoints
 HPA (GPU util >40% or latency >3000 ms)
 ```
 
- provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users,`E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. 
+Provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users, `E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. 
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
@@ -56,7 +50,7 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 Install Kubernetes with [k3s](https://docs.k3s.io/quick-start) or [MicroK8s](https://microk8s.io/docs/getting-started). Either works for this recipe. After `kubectl get nodes` succeeds, the rest of the install is the same.
 
-Pick one cluster:
+Pick one:
 
 **[k3s](https://docs.k3s.io/quick-start)**
 
@@ -84,7 +78,7 @@ kubectl get nodes
 
 If `kubectl` cannot reach the API, start MicroK8s: `sudo microk8s start` and `sudo microk8s status --wait-ready`.
 
-Then, on either cluster:
+Then:
 
 - Kubernetes 1.25+ (`kubectl`; 1.28+ preferred with Gateway API), Helm 3
 - NVIDIA GPU Operator + DCGM Exporter. Helm GPU Operator: `export DCGM_NAMESPACE=gpu-operator` (set `driver.enabled=false` when the host already has the NVIDIA driver). MicroK8s addon: `install-hpa.sh` can run `microk8s enable gpu` and `microk8s enable metrics-server`; DCGM namespace is then `gpu-operator-resources`.
@@ -101,9 +95,7 @@ kubectl get nodes -l nvidia.com/gpu.present=true
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
-## Quick start
-
-From `deploy/helm/gpu_autoscaling_k8s/`. Install [k3s](https://docs.k3s.io/quick-start) or [MicroK8s](https://microk8s.io/docs/getting-started) first ([Prerequisites](#prerequisites)). This uses OpenShell's Kubernetes driver, not `nemoclaw onboard`. The e2e `agentscaling_*` scripts create one OpenShell sandbox per end user and install or update the GPU chart. Do not run `create-agent-sandbox.sh` or `run-agent-sandbox.sh` first.
+## Quick start guide
 
 ### 1. Clone and tools
 
@@ -126,19 +118,59 @@ kubectl get nodes \
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
-### 3. Keep the OpenShell CLI tunnel attached
+### 3. Install the OpenShell gateway once
 
-The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to cluster `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails with connection refused. Recipe default is host **8080**. If host 8080 is in use, forward `18080:8080` and register that URL. Full list: [Ports](#ports). Gateway registration: [OpenShell details](#openshell-details).
+Skip this if `kubectl -n nemoclaw-sandboxes get svc openshell` succeeds. The e2e scripts do not create this namespace.
 
 ```bash
-./scripts/openshell-port-forward.sh
-# If host 8080 is busy:
-#   OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh
+source versions.env
+kubectl apply -f \
+  "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
+AGENT_SANDBOX_IMAGE=ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba \
+ALLOW_UNAUTHENTICATED_OPENSHELL=1 \
+OPENSHELL_UNAUTHENTICATED_ACK=dedicated-cluster-port-forward-only \
+  ./scripts/install-openshell-k8s.sh
+```
+
+### 4. Install GPU inference and the Envoy load balancer once
+
+Skip this if `kubectl get gatewayclass eg` succeeds. The e2e scripts update the GPU chart; they do not install the Envoy load balancer.
+
+```bash
+# MicroK8s GPU addon: DCGM_NAMESPACE=gpu-operator-resources
+DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
+  ./scripts/install-hpa.sh
+kubectl get gatewayclass eg
+```
+
+### 5. Keep the OpenShell CLI tunnel attached
+
+The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to cluster `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails. On this host, **8080** is already taken by another process, so the CLI tunnel is **18080**. Full list: [Ports](#ports).
+
+Terminal 1 — keep running:
+
+```bash
+OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh
+```
+
+Terminal 2 — copy client TLS from the new gateway, then register the host URL. Skip `openshell gateway add` if `openshell status` already succeeds against **18080**. After a reinstall, refresh the certs or you get `BadSignature`.
+
+```bash
+MTLS_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/openshell/gateways/nemoclaw-k8s/mtls"
+mkdir -p "${MTLS_DIR}"
+for key in ca.crt tls.crt tls.key; do
+  kubectl get secret openshell-client-tls -n nemoclaw-sandboxes \
+    -o "jsonpath={.data.${key//./\\.}}" | base64 -d >"${MTLS_DIR}/${key}"
+done
+chmod 600 "${MTLS_DIR}"/*
+openshell gateway remove nemoclaw-k8s 2>/dev/null || true
+openshell gateway add https://127.0.0.1:18080 --local --name nemoclaw-k8s
+openshell status
 ```
 
 `openshell status` must succeed before the e2e.
 
-### 4. E2E test with multiple end users and sandboxes
+### 6. E2E test with multiple end users and sandboxes
 
 This is the multi-user architecture test for **OpenClaw + Ollama**. Queries from end users go **into the sandboxes**, one sandbox per end user. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. 
 
@@ -195,7 +227,7 @@ E2E_USERS=5 ./scripts/agentscaling_latency.sh
 E2E_USERS=5 ./scripts/client.sh
 ```
 
-OpenShell must already be connected (`openshell status`). Keep the [step 3](#3-keep-the-openshell-cli-tunnel-attached) port-forward attached. `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
+OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-keep-the-openshell-cli-tunnel-attached) port-forward attached. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
 Validated 4× L40S — GPU util > 40%:
 
@@ -220,7 +252,7 @@ NIM needs NGC Secrets (`./scripts/create-nim-ngc-secrets.sh`). Deep Agents has n
 | On-prem DGX **8× H100** (80 GB) | `MAX_REPLICAS=8` | `./scripts/hpa-load-test-dgx-8xh100.sh` (GPU util or `latency_avg`) | `./scripts/agentscaling_gpuutil.sh` or `./scripts/agentscaling_latency.sh` then `./scripts/client.sh` |
 
 
-Both paths cover chart deploy, optional Envoy LeastRequest, authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
+Both paths cover chart deploy, the Envoy load balancer (LeastRequest), authenticated inference, HPA scale-up/down, Envoy distribution, and OpenShell → `https://inference.local/v1`. Default models fit either GPU. Pin a node with `NEMOCLAW_TARGET_NODE` when other GPU nodes exist.
 
 <img width="649" height="746" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/44fc4689-91be-4af9-b25a-a4a70d63d6d4" />
 
@@ -247,7 +279,7 @@ Intermittent `401` is a control-plane aggregated-API client cert problem. This r
 
 ### TLS values
 
-Needed only when Envoy serves HTTPS. Isolated eval: `ALLOW_INSECURE_HTTP=1` (no TLS overlay). When Envoy is on, **every** recipe `helm upgrade` needs an overlay with `ingress.tls` — chart `values.yaml` alone is not enough.
+HTTPS Envoy needs a TLS overlay. Isolated eval uses `ALLOW_INSECURE_HTTP=1` (no overlay). **Every** recipe `helm upgrade` that serves HTTPS needs an overlay with `ingress.tls` — chart `values.yaml` alone is not enough.
 
 1. Create the TLS Secret in `nemoclaw-gpu` (SAN must include `ingress.host`).
 2. Overlay `./hpa-tls-values.yaml`.
@@ -275,26 +307,21 @@ ingress:
 
 `local.env` resolves paths from **its own directory**. Manual export from the recipe directory: `export HPA_VALUES="$PWD/hpa-tls-values.yaml"`. Explicit env wins over `local.env`. The chart never creates or rotates the TLS Secret.
 
-Without Envoy, skip TLS and keep `ENABLE_ENVOY_LB=0` on `install-hpa.sh`, `hpa-reset.sh`, and the load-test script you use.
-
 ### Scheduling
 
 - Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable persistence — [Persistence](#persistence)); default hostPath is single-node.
 - Pin with `export NEMOCLAW_TARGET_NODE=<node>` after Ready + GPU label + allocatable GPUs ≥ `MAX_REPLICAS`.
 - `MAX_REPLICAS` and load-test `TARGET_PODS` must not exceed allocatable GPUs in scope. Host `nvidia-smi` processes are not reserved.
-- Keep `HPA_VALUES`, `INGRESS_HOST`, `ENABLE_ENVOY_LB`, and `NEMOCLAW_TARGET_NODE` consistent across install, reset, and load test.
+- Keep `HPA_VALUES`, `INGRESS_HOST`, and `NEMOCLAW_TARGET_NODE` consistent across install, reset, and load test.
 
 ### Ingress security
 
-When Envoy is enabled:
+The Envoy dataplane Service is **ClusterIP** only (`NodePort` / `LoadBalancer` rejected). Use `kubectl port-forward` from outside.
 
-- Dataplane Service is **ClusterIP** only (`NodePort` / `LoadBalancer` rejected). Use `kubectl port-forward` from outside.
 - External HTTPS: Gateway Basic auth + inference key as `X-Api-Key`. OpenShell HTTPRoute: Bearer only.
 - TLS required by default. Isolated eval: `ALLOW_INSECURE_HTTP=1` (ClusterIP). Preflight checks reported exposure; it does not prove private-network isolation.
 - Auth Secrets use Helm `keep`. Delete to rotate; never commit keys.
 - No NetworkPolicy from the chart — add one if the cluster needs it.
-
-When Envoy is off: metrics-proxy Service only; protect with NetworkPolicy + the inference API key.
 
 ### Inference runtimes
 
@@ -415,7 +442,7 @@ Ask **In one sentence, what is an AI agent sandbox?** through authenticated infe
 
 A non-empty answer plus the final `OK:` line is a pass. Wording varies; small models may not know product names. Sample output: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#example-verify-output).
 
-N users / N OpenClaw + Ollama sandboxes through Envoy (`E2E_USERS=5` on this DGX): [OpenClaw + Ollama N-user end-to-end](#openclaw-ollama-n-user-end-to-end-sandboxes-saturate-hpa).
+N users / N OpenClaw + Ollama sandboxes through the Envoy load balancer (`E2E_USERS=5` on this DGX): [OpenClaw + Ollama N-user end-to-end](#openclaw-ollama-n-user-end-to-end-sandboxes-saturate-hpa).
 
 ### Hermes simple test
 
@@ -471,12 +498,7 @@ for key in ca.crt tls.crt tls.key; do
     -o "jsonpath={.data.${key//./\\.}}" | base64 -d >"${MTLS_DIR}/${key}"
 done
 chmod 600 "${MTLS_DIR}"/*
-openshell gateway add https://127.0.0.1:8080 \
-  --local --name nemoclaw-k8s \
-  --oidc-issuer "${OPENSHELL_OIDC_ISSUER}" \
-  --oidc-client-id "${OPENSHELL_OIDC_CLIENT_ID:-openshell-cli}" \
-  --oidc-audience "${OPENSHELL_OIDC_AUDIENCE}"
-# Unauth eval: omit --oidc-*
+openshell gateway add https://127.0.0.1:18080 --local --name nemoclaw-k8s
 openshell status
 ```
 
@@ -516,7 +538,7 @@ Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU i
 
 ### Hermes + vLLM N-user end-to-end
 
-Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy → **vLLM** HPA. Default `E2E_USERS=3`. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*`. `client_hermes.sh` only sends chats. Cleanup only destroys `hermes-e2e-*`. Do not run this while OpenClaw e2e owns the GPUs.
+Same user → sandbox path after OpenClaw + Ollama is done: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. Complete Quick start steps 1–5 first (`openshell status` Connected, `gatewayclass eg` present). Default `E2E_USERS=3`. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*`. `client_hermes.sh` only sends chats. Cleanup only destroys `hermes-e2e-*`. Do not run this while OpenClaw e2e owns the GPUs.
 
 ```bash
 # Terminal A — sandbox provision + GPU-util HPA
@@ -535,7 +557,7 @@ Each run waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`) so a 
 
 On 8× H100, `hpa-load-test-dgx-8xh100.sh` sets the metrics-proxy ServiceMonitor `release` label to `PROM_RELEASE` (default `kube-prometheus-stack`) so Prometheus scrapes `nemoclaw_llm_*` and latency HPA can read a current value instead of `?/3000`. GPU-util HPA uses DCGM and does not need that label.
 
-With Envoy on, the script prints `Envoy LeastRequest OK: <pod>:+<delta>, …`. Skip that phase with `SKIP_ENVOY_LB_TEST=1`. Keep `ENABLE_ENVOY_LB` consistent with install.
+The load-test script prints `Envoy LeastRequest OK: <pod>:+<delta>, …`. Skip that check with `SKIP_ENVOY_LB_TEST=1`.
 
 HPA still adds **one** pod per step. After each step a new GPU sits at 0% until the model is loaded, which can drop the **average** under 40% and delay the next replica (~2 min/pod when busy GPUs are only ~50%). Raise in-flight on the already-busy pods so the average stays above 40% without waiting for the new GPU (do not add two pods per step — that dip is worse). If you see many HTTP 502s on 8× H100, stay at or below the 640 in-flight cap.
 
@@ -610,7 +632,7 @@ helm uninstall openshell -n nemoclaw-sandboxes
 helm uninstall nemoclaw-gpu -n nemoclaw-gpu
 ```
 
-Shared Prometheus, Adapter, Envoy, and Agent Sandbox CRDs are left in place.
+Shared Prometheus, Adapter, the Envoy load balancer, and Agent Sandbox CRDs are left in place.
 
 ## FAQ
 
@@ -643,10 +665,10 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 
 | Name | Port | Where |
 |------|------|-------|
-| OpenShell gateway | **8080** | Cluster `service/openshell` (REMOTE). Host is **8080** (`8080:8080`), or **18080** if host 8080 is busy. `openshell status` uses the host URL. |
+| OpenShell gateway | **8080** cluster / **18080** host | Cluster `service/openshell` is **8080**. This host uses `OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh` (`18080:8080`). `openshell status` must be `https://127.0.0.1:18080`. |
 | OpenClaw agent | **18789** | Inside each OpenClaw sandbox. E2e clients talk here. Do not port-forward. |
 | Hermes gateway | **8642** | Inside each Hermes sandbox. `hermes -z` e2e does not forward it. |
-| Envoy | **443** / **80** | Cluster. Sandboxes use `https://inference.local`. |
+| Envoy load balancer | **443** / **80** | Cluster. Sandboxes use `https://inference.local`. |
 | Metrics-proxy | **8081** | Cluster `service/nemoclaw-gpu-metrics-proxy`. Optional host forward `8081:8081`. |
 | Ollama | **11434** | Inside each Ollama GPU pod. |
 | vLLM / NIM | **8000** | Inside each vLLM or NIM GPU pod. |
