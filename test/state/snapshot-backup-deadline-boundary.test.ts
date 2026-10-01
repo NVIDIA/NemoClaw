@@ -101,6 +101,7 @@ function prepareBackup(
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const servesSshConfig = args[0] === "sandbox" && args[1] === "ssh-config";
+process.stderr.write("private-transport-detail");
 fs.appendFileSync(${JSON.stringify(stageLog)}, (servesSshConfig ? "ssh-config" : "openshell") + "\\n");
 process.stdout.write(
   servesSshConfig ? "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n" : "",
@@ -207,6 +208,11 @@ describe("shared backup deadline boundaries (#11936)", () => {
 
       expect(backup.success).toBe(false);
       expect(backup.error).toBe("State dir discovery skipped: backup deadline expired");
+      expect(backup.backedUpDirs).toEqual([]);
+      expect(backup.backedUpFiles).toEqual([]);
+      expect(backup.failedDirs.length).toBeGreaterThan(0);
+      expect(backup.failedFiles).toContain("openclaw.json");
+      expect(JSON.stringify(backup)).not.toContain("private-transport-detail");
       expect(sshStagesOf(fixture)).toEqual([]);
     });
   });
