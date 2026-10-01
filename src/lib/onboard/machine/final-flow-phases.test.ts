@@ -20,6 +20,15 @@ describe("final onboard flow phases", () => {
       name: "fresh custom image",
       sessionStatus: "pending" as const,
       fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "fresh external image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      fromImage: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
       rebuild: false,
       expected: true,
     },
@@ -27,6 +36,7 @@ describe("final onboard flow phases", () => {
       name: "failed custom-image resume",
       sessionStatus: "failed" as const,
       fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
       rebuild: false,
       expected: true,
     },
@@ -34,6 +44,7 @@ describe("final onboard flow phases", () => {
       name: "completed custom-image reuse",
       sessionStatus: "complete" as const,
       fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
       rebuild: false,
       expected: false,
     },
@@ -41,6 +52,7 @@ describe("final onboard flow phases", () => {
       name: "custom-image rebuild",
       sessionStatus: "pending" as const,
       fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
       rebuild: true,
       expected: false,
     },
@@ -48,12 +60,14 @@ describe("final onboard flow phases", () => {
       name: "standard image onboarding",
       sessionStatus: "pending" as const,
       fromDockerfile: null,
+      fromImage: null,
       rebuild: false,
       expected: false,
     },
   ])("initializes the native route only for $name (#12033)", (testCase) => {
     const session = createSession();
     session.steps.openclaw.status = testCase.sessionStatus;
+    session.metadata.fromImage = testCase.fromImage;
 
     expect(
       shouldInitializeNativeOpenclawInferenceRoute(
@@ -80,6 +94,48 @@ describe("final onboard flow phases", () => {
       "chat",
       true,
       "nemoclaw-19090",
+      undefined,
+    );
+  });
+
+  it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+    const session = createSession();
+    session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
+
+    await branchPhase.run(
+      context({
+        session,
+        revalidateSandboxIdentity,
+      }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
     );
   });
 
