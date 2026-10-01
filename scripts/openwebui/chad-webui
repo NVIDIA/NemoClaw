@@ -269,6 +269,21 @@ def cmd_calendar_delete(args):
     _print(_http("DELETE", f"/calendars/{args.calendar_id}/delete"))
 
 
+def cmd_calendar_get(args):
+    # Fetch a single calendar's record (new in v0.11.4).
+    _print(_http("GET", f"/calendars/{args.calendar_id}"))
+
+
+def cmd_calendar_update(args):
+    # Update a calendar's name/color (new in v0.11.4). Send only changed fields.
+    body = {}
+    if args.name is not None:
+        body["name"] = args.name
+    if args.color is not None:
+        body["color"] = args.color
+    _print(_http("POST", f"/calendars/{args.calendar_id}/update", body=body))
+
+
 def cmd_events_list(args):
     # Defaults: today through 14 days out. Helpful for "what's coming up".
     start = args.start or datetime.now(timezone.utc).date().isoformat()
@@ -367,6 +382,19 @@ def cmd_notes_update(args):
     _print(_http("POST", f"/notes/{args.note_id}/update", body=body))
 
 
+def cmd_notes_pinned(args):
+    _print(_http("GET", "/notes/pinned"))
+
+
+def cmd_notes_search(args):
+    _print(_http("GET", "/notes/search", params={"query": args.query}))
+
+
+def cmd_notes_pin(args):
+    # Toggle pin/unpin for a note (new in v0.11.4).
+    _print(_http("POST", f"/notes/{args.note_id}/pin"))
+
+
 def cmd_notes_delete(args):
     _print(_http("DELETE", f"/notes/{args.note_id}/delete"))
 
@@ -377,7 +405,8 @@ def cmd_notes_delete(args):
 
 
 def cmd_automations_list(args):
-    _print(_http("GET", "/automations/"))
+    # v0.11.4 moved the list route to /automations/list (there is no GET / root).
+    _print(_http("GET", "/automations/list"))
 
 
 def cmd_automations_get(args):
@@ -426,6 +455,21 @@ def cmd_automations_delete(args):
     _print(_http("DELETE", f"/automations/{args.automation_id}/delete"))
 
 
+def cmd_automations_run(args):
+    # Fire an automation now, off-schedule (new in v0.11.4).
+    _print(_http("POST", f"/automations/{args.automation_id}/run"))
+
+
+def cmd_automations_toggle(args):
+    # Enable/disable without editing the RRULE (new in v0.11.4).
+    _print(_http("POST", f"/automations/{args.automation_id}/toggle"))
+
+
+def cmd_automations_runs(args):
+    # Run history / last-fire audit (new in v0.11.4).
+    _print(_http("GET", f"/automations/{args.automation_id}/runs"))
+
+
 # ─────────────────────────────────────────────────────────────────
 # Memories
 # ─────────────────────────────────────────────────────────────────
@@ -437,6 +481,20 @@ def cmd_memories_list(args):
 
 def cmd_memories_create(args):
     _print(_http("POST", "/memories/add", body={"content": args.content}))
+
+
+def cmd_memories_query(args):
+    # Semantic retrieval over this operator's memories (new in v0.11.4).
+    _print(_http("POST", "/memories/query", body={"content": args.content, "k": args.k}))
+
+
+def cmd_memories_search(args):
+    _print(_http("POST", "/memories/search", body={"query": args.query, "type": args.type}))
+
+
+def cmd_memories_reindex(args):
+    # Rebuild the memory vector index (new in v0.11.4).
+    _print(_http("POST", "/memories/reindex"))
 
 
 def cmd_memories_delete(args):
@@ -792,6 +850,8 @@ def build_parser() -> argparse.ArgumentParser:
     c = cal.add_parser("create-calendar"); c.add_argument("--name", required=True); c.add_argument("--color"); c.add_argument("--default", action="store_true"); c.set_defaults(func=cmd_calendar_create)
     c = cal.add_parser("set-default-calendar"); c.add_argument("--calendar-id", required=True); c.set_defaults(func=cmd_calendar_set_default)
     c = cal.add_parser("delete-calendar"); c.add_argument("--calendar-id", required=True); c.set_defaults(func=cmd_calendar_delete)
+    c = cal.add_parser("get-calendar"); c.add_argument("--calendar-id", required=True); c.set_defaults(func=cmd_calendar_get)
+    c = cal.add_parser("update-calendar"); c.add_argument("--calendar-id", required=True); c.add_argument("--name"); c.add_argument("--color"); c.set_defaults(func=cmd_calendar_update)
 
     c = cal.add_parser("list-events", help="Events in date range (defaults to today + 14 days)")
     c.add_argument("--start", help="ISO date or datetime; default today")
@@ -832,6 +892,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = notes.add_parser("create"); c.add_argument("--title", required=True); c.add_argument("--content"); c.add_argument("--content-file", help="Read content from this path"); c.add_argument("--tags", help="Comma-separated"); c.set_defaults(func=cmd_notes_create)
     c = notes.add_parser("update"); c.add_argument("--note-id", required=True); c.add_argument("--title"); c.add_argument("--content"); c.add_argument("--content-file"); c.add_argument("--tags"); c.set_defaults(func=cmd_notes_update)
     c = notes.add_parser("delete"); c.add_argument("--note-id", required=True); c.set_defaults(func=cmd_notes_delete)
+    c = notes.add_parser("pinned"); c.set_defaults(func=cmd_notes_pinned)
+    c = notes.add_parser("search"); c.add_argument("--query", required=True); c.set_defaults(func=cmd_notes_search)
+    c = notes.add_parser("pin"); c.add_argument("--note-id", required=True); c.set_defaults(func=cmd_notes_pin)
 
     # automations
     autos = sub.add_parser("automations", help="Scheduled automations").add_subparsers(dest="cmd", required=True)
@@ -840,6 +903,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = autos.add_parser("create"); c.add_argument("--name", required=True); c.add_argument("--prompt", required=True); c.add_argument("--rrule", required=True); c.add_argument("--model"); c.add_argument("--inactive", action="store_true"); c.set_defaults(func=cmd_automations_create)
     c = autos.add_parser("update"); c.add_argument("--automation-id", required=True); c.add_argument("--name"); c.add_argument("--prompt"); c.add_argument("--rrule"); c.add_argument("--model"); c.add_argument("--inactive", action="store_true", default=None); c.set_defaults(func=cmd_automations_update)
     c = autos.add_parser("delete"); c.add_argument("--automation-id", required=True); c.set_defaults(func=cmd_automations_delete)
+    c = autos.add_parser("run"); c.add_argument("--automation-id", required=True); c.set_defaults(func=cmd_automations_run)
+    c = autos.add_parser("toggle"); c.add_argument("--automation-id", required=True); c.set_defaults(func=cmd_automations_toggle)
+    c = autos.add_parser("runs"); c.add_argument("--automation-id", required=True); c.set_defaults(func=cmd_automations_runs)
 
     # memories
     mems = sub.add_parser("memories", help="OpenWebUI per-user memories").add_subparsers(dest="cmd", required=True)
@@ -847,6 +913,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = mems.add_parser("create"); c.add_argument("--content", required=True); c.set_defaults(func=cmd_memories_create)
     c = mems.add_parser("update"); c.add_argument("--memory-id", required=True); c.add_argument("--content", required=True); c.set_defaults(func=cmd_memories_update)
     c = mems.add_parser("delete"); c.add_argument("--memory-id", required=True); c.set_defaults(func=cmd_memories_delete)
+    c = mems.add_parser("query"); c.add_argument("--content", required=True); c.add_argument("--k", type=int, default=3); c.set_defaults(func=cmd_memories_query)
+    c = mems.add_parser("search"); c.add_argument("--query", required=True); c.add_argument("--type", default="all", choices=["user", "context", "all"]); c.set_defaults(func=cmd_memories_search)
+    c = mems.add_parser("reindex"); c.set_defaults(func=cmd_memories_reindex)
 
     # chats
     chats = sub.add_parser("chats", help="Inspect and act on chats").add_subparsers(dest="cmd", required=True)

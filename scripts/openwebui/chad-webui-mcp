@@ -60,6 +60,20 @@ TOOLS = [
     ("calendar_list_calendars", "calendar", "list-calendars", {
         "type": "object", "properties": {}
     }, "List all of the operator's calendars."),
+    ("calendar_get_calendar", "calendar", "get-calendar", {
+        "type": "object",
+        "properties": {"calendar_id": {"type": "string"}},
+        "required": ["calendar_id"]
+    }, "Fetch a single calendar by id."),
+    ("calendar_update_calendar", "calendar", "update-calendar", {
+        "type": "object",
+        "properties": {
+            "calendar_id": {"type": "string"},
+            "name": {"type": "string"},
+            "color": {"type": "string"}
+        },
+        "required": ["calendar_id"]
+    }, "Update a calendar's name/color."),
     ("calendar_list_events", "calendar", "list-events", {
         "type": "object",
         "properties": {
@@ -156,6 +170,18 @@ TOOLS = [
         "properties": {"note_id": {"type": "string"}},
         "required": ["note_id"]
     }, "Delete a note."),
+    ("notes_pinned", "notes", "pinned", {"type": "object", "properties": {}},
+     "List the operator's pinned notes."),
+    ("notes_search", "notes", "search", {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"]
+    }, "Full-text search the operator's notes."),
+    ("notes_pin", "notes", "pin", {
+        "type": "object",
+        "properties": {"note_id": {"type": "string"}},
+        "required": ["note_id"]
+    }, "Pin/unpin a note (toggle)."),
 
     # ── Automations ────────────────────────────────────────────────
     ("automations_list", "automations", "list", {"type": "object", "properties": {}},
@@ -193,6 +219,21 @@ TOOLS = [
         "properties": {"automation_id": {"type": "string"}},
         "required": ["automation_id"]
     }, "Delete an automation."),
+    ("automations_run", "automations", "run", {
+        "type": "object",
+        "properties": {"automation_id": {"type": "string"}},
+        "required": ["automation_id"]
+    }, "Fire an automation now, off-schedule."),
+    ("automations_toggle", "automations", "toggle", {
+        "type": "object",
+        "properties": {"automation_id": {"type": "string"}},
+        "required": ["automation_id"]
+    }, "Enable/disable an automation without editing its RRULE."),
+    ("automations_runs", "automations", "runs", {
+        "type": "object",
+        "properties": {"automation_id": {"type": "string"}},
+        "required": ["automation_id"]
+    }, "List an automation's run history (last-fire audit)."),
 
     # ── Memories ───────────────────────────────────────────────────
     ("memories_list", "memories", "list", {"type": "object", "properties": {}},
@@ -215,6 +256,24 @@ TOOLS = [
         "properties": {"memory_id": {"type": "string"}},
         "required": ["memory_id"]
     }, "Delete a memory."),
+    ("memories_query", "memories", "query", {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "Text to semantically match against memories"},
+            "k": {"type": "integer", "default": 3}
+        },
+        "required": ["content"]
+    }, "Semantic retrieval over the operator's memories."),
+    ("memories_search", "memories", "search", {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "type": {"type": "string", "enum": ["user", "context", "all"], "default": "all"}
+        },
+        "required": ["query"]
+    }, "Search the operator's memories."),
+    ("memories_reindex", "memories", "reindex", {"type": "object", "properties": {}},
+     "Rebuild the memory vector index."),
 
     # ── Chats ──────────────────────────────────────────────────────
     ("chats_list", "chats", "list", {
