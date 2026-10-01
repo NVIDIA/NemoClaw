@@ -151,7 +151,7 @@
       "name": "Local llama.cpp (managed)",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Uses repository-owned YAML recipes and exact GGUF verification. The selected runtime-provider boundary owns lifecycle; all currently qualified profiles require Docker. Qualified DGX Spark hosts offer NVIDIA Nemotron 3 Nano 30B-A3B. Qualifying Windows WSL N1x hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. The N1x recipe remains pending physical agent qualification."
+      "notes": "Uses repository-owned YAML recipes and exact GGUF verification. The selected runtime-provider boundary owns lifecycle; all currently qualified profiles require Docker. Qualified DGX Spark hosts offer NVIDIA Nemotron 3 Nano 30B-A3B. Qualifying Windows WSL N1x and Station GB300 hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. The WSL profiles remain pending physical agent qualification."
     },
     {
       "name": "Local NVIDIA NIM",
@@ -286,7 +286,7 @@
     {
       "name": "Other Windows-on-ARM GPU paths",
       "status": "unsupported",
-      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x paths remain pending dedicated CI and physical end-to-end validation. A matching provider proof can establish GPU availability for multiple plausible NVIDIA rows, but it does not qualify a generic host for automatic large-model selection. Unqualified providers, mismatched rows, implausible names, or failed bounded CUDA proof remain rejected. See closed issue #4565 and #12073."
+      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x and Station GB300 paths remain pending dedicated CI and physical end-to-end validation. Station GB300 qualification requires the bounded Windows product observation and a reconciled provider proof that includes an NVIDIA GB300 device. A matching provider proof alone does not qualify a generic host for automatic large-model selection. Unqualified providers, mismatched rows, implausible names, or failed bounded CUDA proof remain rejected. See closed issue #4565 and #12073."
     },
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",

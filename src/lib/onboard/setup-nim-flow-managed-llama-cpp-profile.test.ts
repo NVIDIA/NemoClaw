@@ -440,6 +440,37 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.getRuntimeProvider).toHaveBeenCalledTimes(2);
   });
 
+  it("zero-decision onboarding selects managed Qwen on Station GB300 WSL (#12476)", async () => {
+    const harness = n1xProofHarness(true, null);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux",
+      gpus: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        { name: "NVIDIA GB300", memoryMB: 256_703 },
+      ],
+      count: 2,
+      totalMemoryMB: 281_170,
+      availableMemoryMB: 270_000,
+      perGpuMB: 24_467,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    } as never;
+
+    await expect(harness.setupNim(gpu, "station-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+    });
+    expect(harness.installManagedLlamaCpp).toHaveBeenCalledWith(
+      harness.selection,
+      expect.objectContaining({
+        sandboxName: "station-agent",
+        runtimeProvider: harness.runtimeProvider,
+      }),
+    );
+  });
+
   it("passes the real N1x discovery selection directly into installation", async () => {
     const catalog = loadManagedInferenceCatalog();
     const gpu = {
