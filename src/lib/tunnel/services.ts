@@ -468,6 +468,16 @@ function stopService(
     } catch {
       /* already dead */
     }
+
+    // Signal delivery can precede process exit; allow a bounded confirmation window.
+    const killDeadline = Date.now() + 1000;
+    while (Date.now() < killDeadline && pc.isAlive(pid)) {
+      if (!pidIsOurs(pid, pc)) break;
+      const start = Date.now();
+      while (Date.now() - start < 100) {
+        /* spin */
+      }
+    }
   }
 
   if (pc.isAlive(pid)) {

@@ -516,7 +516,11 @@ describe("startAll", () => {
       commandLine: () => "cloudflared tunnel --url http://localhost:12345",
       signal: () => {},
     };
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    let now = 3000;
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockImplementation(() => (now += 100));
     try {
       await expect(startAll({ pidDir, dashboardPort: 18_791, processControl })).rejects.toThrow(
         "cloudflared could not be retargeted",
@@ -749,7 +753,11 @@ describe("stopAll", () => {
     });
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    let now = 3000;
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockImplementation(() => (now += 100));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       stopAll({ pidDir, processControl: control });
@@ -765,6 +773,35 @@ describe("stopAll", () => {
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 
+  it("confirms a delayed exit after SIGKILL before clearing service state", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, true, true, true, false],
+      cmdlines: ["cloudflared tunnel run"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345", { mode: 0o600 });
+
+    let now = 3000;
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockImplementation(() => (now += 100));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(() => stopAll({ pidDir, processControl: control })).not.toThrow();
+    } finally {
+      nowSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([
+      { pid: 4242, sig: "SIGTERM" },
+      { pid: 4242, sig: "SIGKILL" },
+    ]);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
+  });
+
   it("retains service state when cloudflared remains live after SIGKILL", () => {
     const { control, signals } = scriptedControl({
       alive: [true, true, true],
@@ -773,7 +810,11 @@ describe("stopAll", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
     writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345", { mode: 0o600 });
 
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
+    let now = 3000;
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockImplementation(() => (now += 100));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       expect(() => stopAll({ pidDir, processControl: control })).toThrow(
