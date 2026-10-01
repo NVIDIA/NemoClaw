@@ -152,7 +152,11 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
-  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
+  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
+    sb.provider,
+    sb.credentialEnv,
+    sb.endpointUrl,
+  );
   const rebuildProvider = sb.provider;
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {

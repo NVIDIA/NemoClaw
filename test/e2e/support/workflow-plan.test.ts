@@ -125,6 +125,7 @@ describe("E2E workflow plan", () => {
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",
+      "portable-hermes-finalization",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");

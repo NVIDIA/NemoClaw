@@ -83,6 +83,32 @@ afterEach(() => {
 });
 
 describe("locked npm cache seed materialization", () => {
+  it("preserves distinct archive contents when registry URLs share a filename", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    beta.locked.resolved = "https://registry.npmjs.org/beta/-/alpha-1.0.0.tgz";
+    const sources = new Map([
+      [alpha.locked.resolved, alpha.bytes],
+      [beta.locked.resolved, beta.bytes],
+    ]);
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const seed = path.join(testRoot, "seed");
+    const copied = path.join(testRoot, "copied");
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive: async (entry) => sources.get(entry.resolved)!,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+    await verifyAndCopyLockedNpmCacheSeed({ lockfile, output: copied, seed, target: TARGET });
+    expect(new Set(manifest.archives.map(({ archive }) => archive)).size).toBe(2);
+    expect(
+      readdirSync(copied)
+        .map((name) => readFileSync(path.join(copied, name), "utf8"))
+        .sort(),
+    ).toEqual(["alpha archive", "beta archive"]);
+  });
+
   it("materializes the reviewed OpenClaw 2026.9.1 archive size", async () => {
     const bytes = Buffer.alloc(55_564_082, 0x61);
     const locked: LockedArchive = {

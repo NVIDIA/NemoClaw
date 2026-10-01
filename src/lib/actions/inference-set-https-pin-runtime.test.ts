@@ -149,7 +149,11 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       expect(adapter).toHaveBeenCalledWith(
         expect.objectContaining({ credentialValue: "real-upstream-secret", providerType }),
       );
-      expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      expect(
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
+      ).toEqual([
         "alpha",
         expect.objectContaining({ provider, endpointUrl: ADAPTER_BASE_URL, credentialEnv }),
       ]);
@@ -807,7 +811,11 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       deps,
     );
 
-    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(2);
+    // Two route commits precede revocation; successful config synchronization then clears its receipt.
+    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(3);
+    expect(deps.calls.updateSandbox).toHaveBeenLastCalledWith("alpha", {
+      openClawConfigSyncPending: undefined,
+    });
     expect(deps.calls.revokeHttpsPinRuntimeAdapterRoute).toHaveBeenCalledWith(OLD_ROUTE_ID);
     expect(
       deps.calls.revokeHttpsPinRuntimeAdapterRoute.mock.invocationCallOrder[0],
@@ -919,7 +927,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         deps,
       ),
     ).resolves.toMatchObject({ sandboxName: "alpha", provider: "compatible-endpoint" });
-    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(2);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledTimes(3);
+    expect(deps.calls.updateSandbox).toHaveBeenLastCalledWith("alpha", {
+      openClawConfigSyncPending: undefined,
+    });
     expect(deps.calls.log).toHaveBeenCalledWith(expect.stringContaining("could not be revoked"));
   });
 

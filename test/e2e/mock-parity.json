@@ -537,6 +537,7 @@
       ],
       "fast": [
         "src/lib/policy/policy-live-state.test.ts",
+        "test/onboarding/onboard-policy-suggestions.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -834,7 +835,8 @@
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
-        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts"
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
@@ -843,6 +845,7 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/hosted-inference.test.ts"

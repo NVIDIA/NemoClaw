@@ -115,6 +115,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     preferredInferenceApi: string | null = null,
     initializeNativeInferenceRoute = false,
     gatewayName?: string,
+    settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
@@ -122,6 +123,11 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     if (initializeNativeInferenceRoute) {
       if (!gatewayName) {
         throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
+      if (settleOpenclawPairingBeforeRestart && !(await settleOpenclawPairingBeforeRestart())) {
+        throw new Error(
+          `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
+        );
       }
       await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
         sandboxName,
