@@ -106,7 +106,7 @@ jobs:
     needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,6 +153,19 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
+      - name: Verify exported defaults with the pinned v1 consumer
+        env:
+          NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
 
   hugging-face-models:
     needs: changes
@@ -497,29 +510,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-
-      - name: Checkout npm audit code from the base commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-reviewed-npm-audit
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-reviewed-npm-audit
-            .github/actions/setup-reviewed-npm
-            ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-          sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@5310ad0a5c25d49f06910525456ea2529506b3ae
+        uses: ./.github/actions/ci-reviewed-npm-audit
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit

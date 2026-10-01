@@ -105,7 +105,8 @@ The workflow then:
 
 1. Downloads the complete Advisor artifact set by immutable artifact ID and binds it to the live PR.
 2. Gives a credential-free OpenShell sandbox an identity-free, bounded context and a Git-free tree
-   made from the exact PR commit, then runs exactly two repair turns.
+   made from the exact PR commit, then runs exactly two repair turns. This model workspace omits
+   symlinks and submodules; validation uses the original Git checkout.
 3. Reconstructs the proposed patch in a job without model credentials or write permission. A
    separate trusted job supplies the reviewed private SDK archive without its package credential,
    then a second credential-free OpenShell sandbox runs `npm ci --ignore-scripts --prefer-offline
@@ -117,6 +118,8 @@ The workflow then:
 If the resolver cannot produce a safe patch, it restores all edits and records a bounded `blocked`
 proposal; validation stays unavailable for that outcome. The resolve job retains its
 sandbox-cleanup receipt independently so cleanup evidence survives candidate or deletion failures.
+Selection, candidate, reviewed dependency, and validated patch artifacts expire after one day.
+Separate cleanup and validation receipts remain available for 14 days.
 
 Publication is intentionally unavailable. The workflow has no branch-write permission and only
 generates and validates an artifact, while still consuming its one-shot claim. Publication must not

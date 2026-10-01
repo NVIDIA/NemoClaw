@@ -8,8 +8,10 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const JSON5_MODULE_PATH = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+
 const mocks = vi.hoisted(() => ({
-  executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
   capturePolicy: vi.fn(),
   inspectProvider: vi.fn(),
   configRoot: "/sandbox",
@@ -44,12 +46,14 @@ vi.mock("../../policy", () => ({
 vi.mock("./mcp-bridge-provider-inspection", () => ({
   inspectMcpProvider: mocks.inspectProvider,
 }));
-vi.mock("./process-recovery", () => ({
-  executeSandboxCommand: mocks.executeSandboxCommand,
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
 import {
   inspectAgentMcpSources,
+  inspectCapturedAgentMcpSources,
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
@@ -64,6 +68,44 @@ const sandbox = {
 const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 
 describe("source-backed MCP inventory", () => {
+  it.each(["native", "legacy"] as const)(
+    "reads captured Deep Agents %s MCP from the native file without sandbox execution (#11165)",
+    (kind) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-captured-dcode-mcp-"));
+      const assertCurrent = vi.fn();
+      try {
+        fs.writeFileSync(
+          path.join(directory, kind === "native" ? ".mcp.json" : ".nemoclaw-mcp.json"),
+          JSON.stringify({
+            mcpServers: {
+              github: {
+                url: "https://api.githubcopilot.com/mcp/",
+                headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+              },
+            },
+          }),
+        );
+        const observed = inspectCapturedAgentMcpSources({
+          sandboxName: "alpha",
+          agentName: "langchain-deepagents-code",
+          directory,
+          assertCurrent,
+        });
+        expect(observed[kind].github).toMatchObject({
+          agent: "langchain-deepagents-code",
+          adapter: "deepagents-config",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: ["GITHUB_TOKEN"],
+        });
+        expect(Object.keys(observed[kind === "native" ? "legacy" : "native"])).toEqual([]);
+        expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
+        expect(assertCurrent).toHaveBeenCalledTimes(2);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.capturePolicy.mockResolvedValue(`version: 1
@@ -89,6 +131,27 @@ network_policies:
       type: "nemoclaw-mcp-v1",
       credentialKeys: ["GITHUB_TOKEN"],
     });
+  });
+
+  it("bounds source inspection by the remaining recovery observation deadline", async () => {
+    mocks.executeSandboxExecCommand.mockResolvedValue({ status: 0, stdout: "[]", stderr: "" });
+    const now = vi.fn().mockReturnValue(9_000);
+
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).resolves.toEqual({ native: {}, legacy: {} });
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(String),
+      1_000,
+      expect.objectContaining({ honorCallerTimeout: true, runtimeSelection }),
+    );
+
+    now.mockReturnValue(10_000);
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).rejects.toThrow("MCP observation deadline expired");
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -137,14 +200,23 @@ network_policies:
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
         };
+        const contents = JSON.stringify(
+          agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
+        );
         fs.writeFileSync(
           path.join(root, directory, file),
-          JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
+          agent === "openclaw" ? `// Native OpenClaw JSON5\n${contents}` : contents,
           { mode: 0o600 },
         );
-        mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
+        mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
           const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
-          const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
+          const program = command
+            .split(`<<'${marker}'\n`)[1]
+            .split(`\n${marker}`)[0]
+            .replaceAll(
+              "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+              JSON5_MODULE_PATH,
+            );
           const result = spawnSync(
             marker === "NODE" ? process.execPath : "python3",
             marker === "NODE" ? ["-"] : ["-I", "-S", "-"],
@@ -168,7 +240,7 @@ network_policies:
   );
 
   it("joins native agent configuration with live policy and provider state", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -196,8 +268,35 @@ network_policies:
     });
   });
 
+  it("rejects an indeterminate provider observation for a recorded policy", async () => {
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
+  });
+
   it("keeps legacy configuration separate for explicit migration", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -220,7 +319,7 @@ network_policies:
 
   it("recovers the deterministic live provider when the policy route is missing", async () => {
     mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -242,9 +341,37 @@ network_policies:
     });
   });
 
+  it("rejects an indeterminate deterministic provider observation", async () => {
+    mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
+  });
+
   it("detects the owning agent from native MCP state after local registry loss", async () => {
     const recovered = { ...sandbox, agent: null };
-    mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => ({
+    mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => ({
       status: 0,
       stdout: command.includes("/sandbox/.hermes/config.yaml")
         ? "mcp_servers:\n  github:\n    url: https://api.githubcopilot.com/mcp/\n    headers:\n      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN\n"
@@ -259,7 +386,9 @@ network_policies:
       adapter: "hermes-config",
       source: "native",
     });
-    const commands = mocks.executeSandboxCommand.mock.calls.map(([, command]) => String(command));
+    const commands = mocks.executeSandboxExecCommand.mock.calls.map(([, command]) =>
+      String(command),
+    );
     expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
       "if [ ! -e '/sandbox/.hermes/config.yaml' ]",
     );
@@ -292,7 +421,7 @@ network_policies:
         path: /mcp/
         protocol: mcp
 `);
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -311,7 +440,7 @@ network_policies:
   });
 
   it("redacts credentials and strips terminal controls from source-read failures", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 2,
       stdout: "",
       stderr: "Authorization: Bearer source-secret\u001b[31m\n\u0007forged",

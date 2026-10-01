@@ -387,7 +387,11 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
     if (NETWORK_FAIL.test(line)) lastNetworkFail = index;
     if (/bridge did not start within/i.test(line)) lastBridgeNotStarted = index;
     if (/rejected startup probe with HTTP\s+(401|404)/i.test(line)) lastTokenRejected = index;
-    if (/credential placeholder.*(missing|mismatch|unresolved)/i.test(line)) {
+    if (
+      /credential placeholder.*(?:missing|mismatch|unresolved)|runtime TELEGRAM_BOT_TOKEN (?:is an identityless canonical placeholder|placeholder is malformed)|runtime credential available from a non-placeholder source/i.test(
+        line,
+      )
+    ) {
       lastCredentialUnresolved = index;
     }
   });

@@ -5,7 +5,7 @@ import { type HermesBuildSettings, readHermesBuildSettings } from "./build-env.t
 import {
   buildHermesManagedPolicy,
   finalizeHermesPlatformToolsets,
-  type HermesManagedPolicyV1,
+  type HermesManagedPolicyV3,
 } from "./managed-policy.ts";
 import { discoverModelSpecificSetups } from "./model-specific-setup.ts";
 import { type WrittenHermesConfig, writeHermesConfigFiles } from "./write-config.ts";
@@ -21,7 +21,7 @@ export type GeneratedHermesConfig = {
   settings: HermesBuildSettings;
   config: Record<string, unknown>;
   envLines: string[];
-  policy: HermesManagedPolicyV1;
+  policy: HermesManagedPolicyV3;
   written: WrittenHermesConfig;
 };
 

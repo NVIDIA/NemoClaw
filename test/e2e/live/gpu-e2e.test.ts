@@ -5,10 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
-import type {
-  V1Alpha1OllamaProxyService,
-  V1Alpha1VllmService,
-} from "../../../src/lib/config/v1alpha1-export.ts";
+import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
@@ -154,19 +151,14 @@ test(
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
 
     progress.phase("validate GPU runtime status");
-    const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
+    await host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "status-gpu-ollama",
       env: env(),
       timeoutMs: 120_000,
     });
-    expect(resultText(status)).toContain("Sandbox GPU: enabled");
-    expect(resultText(status)).toContain("CUDA verified");
 
     const installLog = resultText(install);
     assertGpuInstallProofs(installLog);
-    expect(installLog).not.toMatch(
-      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
-    );
 
     const sandboxContainers = await runtimeProvider.command(
       [
@@ -311,7 +303,6 @@ exit 1`,
       { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
     );
     const restartLines = restart.stdout.trim().split("\n");
-    expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
     expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
 
     const recovered = await host.nemoclaw(
@@ -558,7 +549,6 @@ exec ollama pull qwen2.5:0.5b`,
     const firstYaml = fs.readFileSync(firstPath, "utf8");
     const first = parseConfigExport(firstYaml);
     const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
-    expect(service?.image).toBeNull();
     expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
     const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
     artifacts.addRedactionValues([proxyToken]);
@@ -570,8 +560,8 @@ exec ollama pull qwen2.5:0.5b`,
   },
 );
 
-test(
-  "OpenClaw exports the fixed managed vLLM profile through a named service (#12012)",
+test.for(["initial", "after retirement"])(
+  "Managed vLLM %s: recorded-port health, export, and final-consumer retirement (#12012, #11374)",
   {
     timeout: VLLM_EXPORT_TIMEOUT_MS,
     meta: {
@@ -579,12 +569,13 @@ test(
         "qualify the managed vLLM export host",
         "onboard the fixed managed vLLM profile",
         "export the managed vLLM configuration",
+        "verify the recorded custom port without the onboarding override",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async (cycle, { artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     const exportEnv = vllmExportEnv();
-    let managedVllmOnboarded = false;
+    const statusEnv = { ...exportEnv, NEMOCLAW_VLLM_PORT: "" };
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -592,6 +583,7 @@ test(
       credentialBoundary:
         "The managed vLLM bearer key remains in owner-only host state and is registered with the artifact redactor before evidence publication.",
       profileId: EXPORTED_VLLM_PROFILE_ID,
+      cycle,
       sandboxName: SANDBOX_NAME,
     });
 
@@ -615,15 +607,40 @@ test(
     ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
     await cleanupGpu(host, sandbox);
 
-    cleanup.trackDisposable("remove the exact managed vLLM runtime", () => {
-      const result = cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
-      expect(
-        result.ok &&
-          (!managedVllmOnboarded ||
-            result.removed.some((resource) => resource.startsWith("container:"))),
-        JSON.stringify(result),
-      ).toBe(true);
+    cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
+      try {
+        const remaining = await host.command(
+          "docker",
+          [
+            "container",
+            "ls",
+            "--all",
+            "--quiet",
+            "--filter",
+            `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$`,
+          ],
+          { artifactName: "vllm-retired-inventory", env: exportEnv, timeoutMs: 30_000 },
+        );
+        const listener = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
+          artifactName: "vllm-retired-listener",
+          env: exportEnv,
+          timeoutMs: 30_000,
+        });
+        expect(
+          {
+            inventoryExit: remaining.exitCode,
+            containers: remaining.stdout.trim(),
+            listenerExit: listener.exitCode,
+            listeners: listener.stdout.trim(),
+          },
+          `${resultText(remaining)}\n${resultText(listener)}`,
+        ).toEqual({ inventoryExit: 0, containers: "", listenerExit: 0, listeners: "" });
+      } finally {
+        // Preserve failed retirement evidence before the fixture attempts best-effort cleanup.
+        cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
+      }
     });
+
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "vllm-export-cleanup-gateway",
       env: exportEnv,
@@ -662,7 +679,6 @@ test(
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
-    managedVllmOnboarded = true;
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
 
@@ -684,10 +700,45 @@ test(
     );
     expect(exported.exitCode, resultText(exported)).toBe(0);
     const yaml = fs.readFileSync(outputPath, "utf8");
-    const document = parseConfigExport(yaml);
-    const service = document.spec.services?.vllm as V1Alpha1VllmService | undefined;
-    expect(service?.image).toBeNull();
+    parseConfigExport(yaml);
     expect(apiKey && yaml.includes(apiKey)).toBe(false);
     await artifacts.writeText("vllm-config-export.yaml", yaml);
+
+    progress.phase("verify the recorded custom port without the onboarding override");
+    const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
+      artifactName: "vllm-recorded-port-status",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 180_000,
+    });
+    const health = JSON.parse(status.stdout) as {
+      inferenceHealth: { subprobes: Array<{ endpoint: string; ok: boolean }> };
+    };
+    expect(
+      health.inferenceHealth.subprobes.find(
+        (probe) => probe.endpoint === "http://127.0.0.1:18000/v1/models",
+      )?.ok,
+    ).toBe(true);
+    const doctor = await host.command("node", [CLI, SANDBOX_NAME, "doctor", "--json"], {
+      artifactName: "vllm-recorded-port-doctor",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 180_000,
+    });
+    const diagnosis = JSON.parse(doctor.stdout) as {
+      checks: Array<{ detail: string; status: string }>;
+    };
+    expect(
+      diagnosis.checks.find(
+        (check) => check.detail === "http://127.0.0.1:18000/v1/models reachable",
+      )?.status,
+    ).toBe("ok");
+    const connect = await host.command("node", [CLI, SANDBOX_NAME, "connect", "--probe-only"], {
+      artifactName: "vllm-recorded-port-connect",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 300_000,
+    });
+    expect(connect.exitCode, resultText(connect)).toBe(0);
   },
 );

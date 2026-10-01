@@ -23,6 +23,8 @@ import {
   probeHostServiceSandboxReachability,
 } from "./host-service-reachability";
 
+export { assertLoopbackNoAuthCompatibleEndpointUrl as assertNoAuthProxyEndpointEligible } from "./inference-providers/compatible-endpoint-gateway-route";
+
 export const DEFAULT_OLLAMA_PROBE_NETWORK = DEFAULT_PROBE_NETWORK;
 const OLLAMA_SERVICE_LABEL = "Ollama auth proxy";
 

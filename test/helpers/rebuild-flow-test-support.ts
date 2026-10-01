@@ -47,16 +47,7 @@ export type RebuildFlowOverrides = {
     overrideEnvVar: string | null;
     disposeImageRef?: () => boolean;
   };
-  executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
-  runOpenClawPostRestoreDoctor?: () => Promise<
-    | { ok: true }
-    | {
-        ok: false;
-        stage: "mark" | "stop" | "doctor" | "release" | "restart";
-        detail: string;
-      }
-  >;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -71,9 +62,6 @@ export type RebuildFlowOverrides = {
     options: RebuildRecreateOnboardOpts,
   ) => Promise<void> | void;
   beforeBackup?: () => void;
-  repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent"; reason: string }
-    | { applied: true; verified: boolean; errors: string[] };
   restoreSandboxState?: () => {
     success: boolean;
     restoredDirs: string[];
@@ -182,9 +170,8 @@ export type RebuildFlowHarness = {
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
-  executeSandboxCommandSpy: MockInstance;
   executeSandboxExecCommandSpy: MockInstance;
-  runOpenClawPostRestoreDoctorSpy: MockInstance;
+  finishOpenClawMaintenanceWindowSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;

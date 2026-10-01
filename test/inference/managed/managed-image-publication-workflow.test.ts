@@ -31,8 +31,8 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "5310ad0a5c25d49f06910525456ea2529506b3ae";
+const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
+const reviewedAuditSha = "${{ github.event.pull_request.base.sha }}";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -147,7 +147,7 @@ describe("complete managed-image publication workflow", () => {
       "Audit exact PR production npm graphs",
     );
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction + reviewedAuditSha);
+    expect(prAudit.uses).toBe(reviewedAuditAction);
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -486,28 +486,8 @@ describe("complete managed-image publication workflow", () => {
       path: "candidate",
       "persist-credentials": false,
     });
-    const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: reviewedAuditSha,
-      path: ".trusted-reviewed-npm-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-reviewed-npm-audit",
-    );
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
-    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
-    expect(verifyAuditIdentities.env).toEqual({
-      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: reviewedAuditSha,
-    });
-    expect(verifyAuditIdentities.run).toContain(
-      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
-    );
-    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
-      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      uses: "./candidate/.github/actions/ci-reviewed-npm-audit",
       with: {
         "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
@@ -538,7 +518,8 @@ describe("complete managed-image publication workflow", () => {
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
-    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.env?.REVIEWED_AUDIT_SHA).toBe(reviewedAuditSha);
+    expect(prepareAuditEvidence.run).toContain('rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"');
     expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
@@ -777,21 +758,34 @@ describe("complete managed-image publication workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
+    const approvalFixturePaths = [
+      "test/e2e/fixtures/admin-approval-connect.sh",
+      "test/e2e/fixtures/admin-approval-connect.ts",
+      "test/e2e/fixtures/admin-request-selector.ts",
+      "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+      "test/e2e/lib/issue-4462-admin-request-selector.py",
+      "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
+    ];
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        ...approvalFixturePaths,
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
       ]),
     );
-    expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
+    const baseImagePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
+    expect(baseImagePaths).toEqual(
       expect.arrayContaining([
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
+    );
+    expect(baseImagePaths.join("\n")).not.toMatch(
+      /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector|fresh-agent-gateway-snapshot)/u,
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
     expect(activation.if).toContain(
@@ -1278,12 +1272,12 @@ fi
     expect(promotion.run).toContain('"${descriptor_args[@]}"');
     expect(promotion.run).toContain('cmp -s "$expected_descriptors" "$actual_descriptors"');
     expect(promotion.run).toContain(') == ["linux/amd64", "linux/arm64"]');
-    expect(promotion.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(promotion.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(promotion.run).toContain(
       'aliases+=("$(jq -r \'.image\' <<<"$cohort_manifest"):${GITHUB_SHA}")',
     );
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
-    expect(pointer.run).toContain("shipped_agents=(openclaw hermes)");
+    expect(pointer.run).toContain("shipped_agents=(openclaw hermes langchain-deepagents-code)");
     expect(pointer.run).toContain(
       'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );

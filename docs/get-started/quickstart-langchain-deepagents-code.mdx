@@ -70,6 +70,8 @@ If you use the coding-agent prompt in the preceding section, you can skip this p
     If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
     Invalid or inconsistent catalog evidence fails closed before sandbox creation.
     An explicit `nemo-deepagents onboard --from <Dockerfile>` remains a separate custom-image path.
+    Start a custom Dockerfile from the published complete image, `FROM ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:<digest>`, which already carries every managed Deep Agents Code layer.
+    Releases publish that image with `:<release>` and `:<revision>` tags alongside `openclaw-sandbox` and `hermes-sandbox`; pin the digest rather than a tag so rebuilds stay reproducible.
 
   </Step>
 

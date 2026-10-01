@@ -75,9 +75,9 @@ const { EventEmitter } = require("node:events");
 
 const PRE_UPGRADE_BACKUP = "/tmp/fake-pre-upgrade-backup";
 const events = [];
-processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({
   ok: true,
-  window: { sandboxName },
+  window: { sandboxName, kind: "backup" },
 });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
@@ -233,11 +233,6 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
               release: () => {},
             };
           },
-        },
-        cleanupDeps: {
-          getSandbox: () => ({ agent: "openclaw" }),
-          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-          repairMutableConfigPerms: () => ({ applied: false }),
         },
         exit: (code) => {
           execCode = code;

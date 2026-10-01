@@ -6,8 +6,12 @@ import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "../actions/sandbox/snapshot-hermes-gateway-hint";
+import {
   abortUnregisteredOpenClawPostRestoreDoctor,
-  beginUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
@@ -73,6 +77,9 @@ export type CreatedSandboxFinalizationDeps = {
     options: RecreatedSandboxRestoreOptions,
     resolveTarget?: () => SandboxEntry | Promise<SandboxEntry>,
   ): RestoreResult | Promise<RestoreResult>;
+  migrateHermesLegacyDashboardState?(
+    sandboxName: string,
+  ): ReturnType<typeof migrateHermesLegacyDashboardState>;
   getDcodeSelectionDrift(
     sandboxName: string,
     provider: string,
@@ -580,6 +587,7 @@ type OnboardCreateContext = {
 type OnboardAgentFlags = {
   readonly customOpenClawImage: boolean;
   readonly isManagedDcodeAgent: boolean;
+  readonly externalImage?: boolean;
 };
 type OnboardInferenceSelection = {
   readonly provider: string;
@@ -602,6 +610,7 @@ type OnboardSandboxRegistrationOptions = {
 type OnboardGatewayBinding = {
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  readonly openshellGatewayStateDir?: string | null;
 };
 type OnboardPreparedPolicy = Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
@@ -708,7 +717,7 @@ export function createOnboardCreatedSandboxCompletion(
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
-        customImage: Boolean(fromDockerfile),
+        customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -729,7 +738,7 @@ export function createOnboardCreatedSandboxCompletion(
           : {}),
         runtimeFields,
         agent,
-        agentVersionKnown: !fromDockerfile,
+        agentVersionKnown: !fromDockerfile && agentFlags.externalImage !== true,
         portableLifecycle,
         toolDisclosure: sandboxRegistrationOptions.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
@@ -788,6 +797,11 @@ export function createOnboardCreatedSandboxCompletion(
         commandExecutor,
         () => gateway.gatewayName,
       ),
+      migrateHermesLegacyDashboardState: (name) =>
+        migrateHermesLegacyDashboardState(name, undefined, {
+          commandExecutor,
+          gatewayName: gateway.gatewayName,
+        }),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -842,21 +856,24 @@ export async function finalizeCreatedSandbox(
       deps.revalidateSandboxIdentity?.(
         `entering offline state restore for sandbox '${options.sandboxName}'`,
       );
-      const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(options.sandboxName);
-      if (!doctorWindow.ok) {
+      const maintenanceWindow = await beginUnregisteredOpenClawBackupQuiesce(options.sandboxName);
+      if (!maintenanceWindow.ok) {
         deps.error(
-          `  OpenClaw state restore could not enter its gateway-down maintenance window (${doctorWindow.stage}: ${doctorWindow.detail}).`,
+          `  OpenClaw state restore could not enter its gateway-down maintenance window (${maintenanceWindow.stage}: ${maintenanceWindow.detail}).`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
         return deps.exitProcess(1);
       }
-      openClawRestoreWindow = doctorWindow.window;
+      openClawRestoreWindow = maintenanceWindow.window;
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      ...(options.targetAgentType === "hermes"
+        ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] }
+        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
@@ -878,6 +895,34 @@ export async function finalizeCreatedSandbox(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
     if (restore.success) {
+      if (options.targetAgentType === "hermes") {
+        deps.revalidateSandboxIdentity?.(
+          `migrating restored Hermes dashboard state for sandbox '${options.sandboxName}'`,
+        );
+        const migrate = deps.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+        let migration: Awaited<ReturnType<typeof migrateHermesLegacyDashboardState>> = null;
+        try {
+          migration = await migrate(options.sandboxName);
+        } catch (error) {
+          deps.error(
+            `  Hermes legacy dashboard-state migration transport failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        if (migration?.status !== 0) {
+          deps.error(
+            "  Restored state could not be published because Hermes legacy dashboard-state migration did not complete.",
+          );
+          deps.error("  Registry metadata was not updated.");
+          const detail = migration?.stderr.trim();
+          if (detail) deps.error(`  ${detail.slice(0, 500)}`);
+          deps.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(options.sandboxName)}`);
+          reportUnregisteredSandboxRecovery();
+          deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+          return deps.exitProcess(1);
+        }
+      }
       deps.note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
