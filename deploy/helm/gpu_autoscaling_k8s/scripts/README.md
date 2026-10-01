@@ -29,6 +29,11 @@ what each script in this directory does — it has no instructions of its own.
 | `test-hermes-e2e-hpa.sh` | Hermes + vLLM e2e (`hermes -z`); run `uninstall-e2e.sh` first if OpenClaw sandboxes are still up |
 | `setup-hermes-e2e-sandboxes.sh` | Create / start / stop / cleanup `hermes-e2e-*` only |
 | `e2e-hermes-load-test.py` | Per-user driver used by `test-hermes-e2e-hpa.sh` |
+| `agentscaling_deepagents_gpuutil.sh` | Deep Agents + NIM sandbox provision + GPU-util HPA |
+| `agentscaling_deepagents_latency.sh` | Same Deep Agents sandboxes, LLM-latency HPA |
+| `client_deepagents.sh` | End users: 1:1 `dcode -n` into each `deepagents-e2e-*` sandbox |
+| `setup-deepagents-e2e-sandboxes.sh` | Create / cleanup `deepagents-e2e-*` only |
+| `e2e-deepagents-load-test.py` | Per-user driver used by `client_deepagents.sh` |
 | `hpa-reset.sh` | Restore idle HPA / inference |
 | `cluster-recover.sh` | Destructive release recovery for the selected release only — see script comments before use |
 | `get-metrics-proxy-pods.sh` / `get-hpa.sh` / `hpa-watch.sh` | Inspect / watch |

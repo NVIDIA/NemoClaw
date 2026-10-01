@@ -13,7 +13,7 @@
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
-#   # Stop client.sh / client_hermes.sh first (Ctrl-C in that terminal).
+#   # Stop client.sh / client_hermes.sh / client_deepagents.sh first (Ctrl-C in that terminal).
 #   ./scripts/uninstall-e2e.sh
 
 set -euo pipefail
@@ -45,7 +45,7 @@ list_e2e_sandboxes() {
 import json, subprocess, sys
 
 ns = sys.argv[1]
-prefixes = ("openclaw-ollama-e2e-", "hermes-e2e-")
+prefixes = ("openclaw-ollama-e2e-", "hermes-e2e-", "deepagents-e2e-")
 exact = {"nemoclaw-onprem", "hermes-onprem", "deepagents-onprem"}
 
 
@@ -143,4 +143,4 @@ destroy_sandboxes
 delete_providers
 
 echo "E2e agents and sandboxes uninstalled. OpenShell gateway, Envoy, and GPU inference stay."
-echo "Idle HPA should return to 1 replica. Next: ./scripts/agentscaling_gpuutil.sh or ./scripts/agentscaling_hermes_gpuutil.sh"
+echo "Idle HPA should return to 1 replica. Next: ./scripts/agentscaling_gpuutil.sh, ./scripts/agentscaling_hermes_gpuutil.sh, or ./scripts/agentscaling_deepagents_gpuutil.sh"

@@ -29,7 +29,7 @@ REGISTRY="${REGISTRY:-localhost:32000}"          # registry every cluster node c
 
 # NIM only — get a key from https://ngc.nvidia.com (Setup > API Keys). This one key
 # authenticates both the nvcr.io image pull (imagePullSecret, auto-created) and the
-# in-container model profile download (NGC_API_KEY) — see ../README.md#nvidia-nim-registry-access.
+# in-container model profile download (NGC_API_KEY) — see ../README.md#inference-runtimes.
 # export NIM_NGC_API_KEY=nvapi-...
 
 # Optional: pin everything to one GPU node (required on a shared cluster).

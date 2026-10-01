@@ -95,7 +95,7 @@ Then add these names—not the key itself—to gitignored local.env:
   export NIM_IMAGE_PULL_SECRET=ngc-registry
 
 For a short-lived evaluation only, export NIM_NGC_API_KEY=nvapi-... before running instead.
-See README.md#nvidia-nim-registry-access.
+See README.md#inference-runtimes.
 EOF
   return 1
 }

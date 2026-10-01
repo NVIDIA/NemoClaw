@@ -11,7 +11,7 @@ Choose one CPU-only agent type per OpenShell sandbox (`AGENT_NAME`). Pairing use
 [Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview).
 Set `AGENT_NAME` to select the agent. Each uses OpenShell's
 `https://inference.local/v1` proxy and the same GPU inference, HPA, and monitoring stack;
-see [Agent and runtime support](README.md#agent-and-runtime-support).
+see [README Quick start](README.md#6-e2e-test-with-multiple-end-users-and-sandboxes).
 
 Official host-installer quickstarts (this branch):
 [OpenClaw](../../../docs/get-started/quickstart.mdx),
@@ -58,11 +58,11 @@ Keep that port-forward attached. Use a second terminal in
 `deploy/helm/gpu_autoscaling_k8s`. Source `versions.env` there. The GPU Helm
 chart is agent-neutral; only the sandbox image and `AGENT_NAME` change.
 
-The loops below are optional pairing (one sandbox, no HPA). The DGX e2e path does **not** use them: `agentscaling_gpuutil.sh` / `agentscaling_latency.sh` (OpenClaw) and `agentscaling_hermes_gpuutil.sh` / `agentscaling_hermes_latency.sh` (Hermes) create the sandboxes. See [README Quick start](README.md#quick-start).
+The loops below are optional pairing (one sandbox, no HPA). The DGX e2e path does **not** use them: `agentscaling_gpuutil.sh` / `agentscaling_latency.sh` (OpenClaw), `agentscaling_hermes_gpuutil.sh` / `agentscaling_hermes_latency.sh` (Hermes), and `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` (Deep Agents + NIM) create the sandboxes. See [README Quick start](README.md#quick-start).
 
 The loops below are the recipe path. Optional developer pairing tests (one GPU
 replica, no Kubernetes autoscaling, no load test; not required for HPA) live in
-[README recipe examples](README.md#agent-and-runtime-support):
+[`scripts/README.md`](scripts/README.md):
 [`scripts/test-openclaw-ollama.sh`](scripts/test-openclaw-ollama.sh),
 [`scripts/test-hermes-nim.sh`](scripts/test-hermes-nim.sh),
 [`scripts/test-deepagents-vllm.sh`](scripts/test-deepagents-vllm.sh).
@@ -195,7 +195,7 @@ openshell sandbox exec -n deepagents-onprem -- dcode
 
 Optional pairing test (not required for autoscaling): [`scripts/test-deepagents-vllm.sh`](scripts/test-deepagents-vllm.sh).
 
-Multi-user HPA e2e for Deep Agents is the same N-user / N-sandbox example as OpenClaw and Hermes (`E2E_USERS=10` is only an example). That script is the next step after Hermes; it is not in this recipe yet.
+Multi-user HPA e2e for Deep Agents + NIM is [README Quick start 6c](README.md#6c-deep-agents-code--nim-n-user-end-to-end): `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` then `client_deepagents.sh` (`dcode -n` into each sandbox).
 
 ## Env vars
 
@@ -205,7 +205,7 @@ Multi-user HPA e2e for Deep Agents is the same N-user / N-sandbox example as Ope
 | `AGENT_SANDBOX_IMAGE` | — (required) | Published GHCR sandbox image for the selected agent |
 | `AGENT_SANDBOX_NAME` | See [Comparison](#comparison) | OpenShell sandbox name |
 | `OPENSHELL_PROVIDER_NAME` | See [Comparison](#comparison) | OpenShell inference provider name |
-| `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | Pairing `2` / `4Gi`; OpenClaw e2e `1` / `8Gi`; Hermes e2e `1` / `4Gi` | Sandbox pod requests. E2e sandboxes are light CPU front ends (inference is on GPUs). OpenClaw e2e uses 8Gi because 1Gi, 2Gi, and 4Gi OOM-kill OpenClaw at agent start. Hermes e2e uses 4Gi (`hermes -z`; 2Gi + inflight 2 OOMed dgx-19). Size `E2E_USERS × AGENT_SANDBOX_MEMORY` to the CPU node that runs the sandboxes. |
+| `AGENT_SANDBOX_CPU` / `AGENT_SANDBOX_MEMORY` | Pairing `2` / `4Gi`; OpenClaw e2e `1` / `8Gi`; Hermes and Deep Agents e2e `1` / `4Gi` | Sandbox pod requests. E2e sandboxes are light CPU front ends (inference is on GPUs). OpenClaw e2e uses 8Gi because 1Gi, 2Gi, and 4Gi OOM-kill OpenClaw at agent start. Hermes e2e uses 4Gi (`hermes -z`; 2Gi + inflight 2 OOMed dgx-19). Deep Agents e2e uses 4Gi (`dcode -n`). Size `E2E_USERS × AGENT_SANDBOX_MEMORY` to the CPU node that runs the sandboxes. |
 | `NEMOCLAW_TARGET_NODE` | unset (portable) | Pin GPU inference (and, in this demo, sandboxes) to a node. Agent sandboxes can run on a different CPU node with more memory. |
 | `VERIFY_HEALTH_TIMEOUT_SEC` | `90` | Plugin/version checks and OpenClaw/Hermes gateway readiness timeout |
 | `VERIFY_SMOKE_TIMEOUT_SEC` | `30` | `verify-agent-sandbox.sh` timeout for the Hermes/Deep Agents Code config-file existence checks and Deep Agents Code's `dcode --version` |

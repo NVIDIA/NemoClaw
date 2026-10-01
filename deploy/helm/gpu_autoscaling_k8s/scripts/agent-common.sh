@@ -18,7 +18,7 @@ agent_common_validate() {
 
 # Local-runtime ids this recipe's Helm chart can render (ollama | vllm | nim).
 # Which pairings are documented for each agent is official NemoClaw guidance —
-# see ../README.md#agent-and-runtime-support and
+# see ../README.md#6-e2e-test-with-multiple-end-users-and-sandboxes and
 # ../../../docs/inference/choose-inference-provider.mdx.
 agent_common_validate_inference_runtime() {
   case "${1:-}" in
@@ -38,7 +38,7 @@ agent_common_validate_runtime_pairing() {
   agent_common_validate "${agent}"
   if [[ "${agent}" == "deepagents" && ( -z "${runtime}" || "${runtime}" == "ollama" ) ]]; then
     echo "ERROR: AGENT_NAME=deepagents with INFERENCE_RUNTIME=${runtime:-ollama} is not an officially documented pairing." >&2
-    echo "Set INFERENCE_RUNTIME=vllm or nim. See README.md#agent-and-runtime-support and docs/inference/choose-inference-provider.mdx." >&2
+    echo "Set INFERENCE_RUNTIME=vllm or nim. See README.md#6-e2e-test-with-multiple-end-users-and-sandboxes and docs/inference/choose-inference-provider.mdx." >&2
     exit 1
   fi
   if [[ -n "${runtime}" ]]; then
@@ -55,7 +55,7 @@ agent_common_default_inference_model() {
   esac
 }
 
-# README.md#agent-and-runtime-support example pairings. TAB-separated: agent runtime model
+# README Quick start 6a/6b/6c pairings. TAB-separated: agent runtime model
 agent_common_example_pairings() {
   printf '%s\t%s\t%s\n' \
     openclaw ollama llama3.2:3b \
@@ -245,4 +245,25 @@ agent_common_pin_hermes_model() {
   local sandbox_name="${1:?sandbox}" model="${2:?model}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     hermes config set model.default "${model}" >/dev/null
+}
+
+# GHCR Deep Agents images bake NEMOCLAW_MODEL at build time (often vLLM Nemotron).
+# Point dcode -n at the chart NIM model so requests match nvidia/nemotron-3-nano.
+agent_common_pin_deepagents_model() {
+  local sandbox_name="${1:?sandbox}" model="${2:?model}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    python3 -c "
+import pathlib, re, sys
+model = sys.argv[1].removeprefix('openai:')
+path = pathlib.Path('/sandbox/.deepagents/config.toml')
+text = path.read_text()
+text, n = re.subn(r'(?m)^default = \".*\"\$', f'default = \"openai:{model}\"', text, count=1)
+if n != 1:
+    raise SystemExit('failed to set models.default')
+text, n = re.subn(r'(?m)^models = \\[.*\\]\$', f'models = [\"{model}\"]', text, count=1)
+if n != 1:
+    raise SystemExit('failed to set provider models')
+path.write_text(text)
+print('NEMOCLAW_DEEPAGENTS_MODEL_OK')
+" "${model}" >/dev/null
 }

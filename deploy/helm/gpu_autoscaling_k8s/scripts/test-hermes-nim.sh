@@ -4,7 +4,7 @@
 #
 # Optional developer test: Hermes + NIM on one GPU replica, no Kubernetes
 # autoscaling and no load test. Not required for HPA. Needs NGC Secrets first —
-# see ../README.md#nvidia-nim-registry-access and ../README.md#optional-pairing-tests.
+# see ../README.md#inference-runtimes and ../scripts/README.md.
 
 set -euo pipefail
 

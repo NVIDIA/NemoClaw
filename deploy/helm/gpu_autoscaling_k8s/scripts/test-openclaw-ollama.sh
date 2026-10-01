@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Optional developer test: OpenClaw + Ollama on one GPU replica, no Kubernetes
-# autoscaling and no load test. Not required for HPA. See ../README.md#optional-pairing-tests.
+# autoscaling and no load test. Not required for HPA. See ../scripts/README.md.
 
 set -euo pipefail
 

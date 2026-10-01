@@ -4,7 +4,7 @@
 #
 # Optional developer test: Deep Agents Code + vLLM on one GPU replica, no
 # Kubernetes autoscaling and no load test. Not required for HPA. See
-# ../README.md#optional-pairing-tests.
+# ../scripts/README.md.
 
 set -euo pipefail
 
