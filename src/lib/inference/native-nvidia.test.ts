@@ -185,6 +185,31 @@ describe("native NVIDIA OpenShell provider", () => {
     expect(updateProvider).not.toHaveBeenCalled();
   });
 
+  it("refuses to replace a recorded provider that is missing (#12558)", async () => {
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+
+    await expect(
+      ensureNativeNvidiaProvider({
+        adapter: adapter({
+          getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+            ok: false,
+            error: { kind: "command", reason: "not_found", message: "not found" },
+          })),
+          createProvider,
+        }),
+        target,
+        credentialValue: "opaque-test-secret",
+        expected: {
+          schemaVersion: 1,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "recorded-id",
+        },
+      }),
+    ).rejects.toThrow(/is missing.*No provider was changed/u);
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
   it("fails before provider mutation when the profile collides (#12558)", async () => {
     const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
     const providerAdapter = adapter({

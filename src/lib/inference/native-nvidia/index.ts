@@ -181,6 +181,12 @@ export async function ensureNativeNvidiaProvider(input: {
     return attachmentFromMetadata(observed);
   }
 
+  if (input.expected) {
+    throw new NativeNvidiaProviderError(
+      `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' is missing. Recreate the sandbox before using native NVIDIA inference. No provider was changed.`,
+    );
+  }
+
   if (!input.credentialValue && !input.reuseExistingCredential) {
     throw new NativeNvidiaProviderError(
       `A host credential is required to create OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}'.`,
