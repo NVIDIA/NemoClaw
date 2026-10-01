@@ -16,7 +16,7 @@ import {
 } from "../readiness/gateway-production";
 import {
   collectHostObservations,
-  collectN1xWslProductObservation,
+  collectWslNvidiaProductObservation,
   type HostObservationSnapshot,
   projectHostReadiness,
 } from "../readiness/host";
@@ -79,7 +79,7 @@ export interface FatalRuntimePreflightContext {
   detectGpu?: typeof detectGpu;
   createArm64ContainerGpuProver?: typeof createArm64ContainerGpuProver;
   runCaptureImpl?: DetectGpuDeps["runCaptureImpl"];
-  collectN1xWslProduct?: NonNullable<Parameters<typeof collectN1xWslProductObservation>[1]>;
+  collectWslNvidiaProduct?: NonNullable<Parameters<typeof collectWslNvidiaProductObservation>[1]>;
   warnIfHostProxyMissesLoopback?: typeof warnIfHostProxyMissesLoopback;
   assertRuntimeProviderHealthy?: typeof assertConfiguredRuntimeProviderHealthy;
   validateSandboxGpuPreflight?: typeof validateSandboxGpuPreflight;
@@ -93,6 +93,8 @@ export interface FatalRuntimePreflightResult {
   sandboxGpuConfig: SandboxGpuConfig;
   /** One immutable product observation shared by GPU and readiness classification. */
   n1xWslProduct: boolean | null;
+  /** One immutable product observation used by Station GB300 Ollama selection. */
+  stationGb300WslProduct: boolean | null;
   // Which trust-gate check rejected the newest GPU detection, so preflight can
   // name the failed check instead of the bare "no GPU detected" (#9000).
   // Absent when detection found a GPU or did not reject an nvidia-smi report.
@@ -165,12 +167,18 @@ function detectGpuWithBoundProviderProof(
   deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
   runtimeProvider?: RuntimeProviderBundle,
 ): GpuDetection | null {
-  const n1xWslProduct = Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
-    ? (deps.n1xWslProduct ?? null)
-    : collectN1xWslProductObservation(deps.isWsl ?? detectWsl());
+  const hasProductObservation =
+    Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct") ||
+    Object.prototype.hasOwnProperty.call(deps, "stationGb300WslProduct");
+  const productObservation = hasProductObservation
+    ? {
+        n1xWslProduct: deps.n1xWslProduct ?? null,
+        stationGb300WslProduct: deps.stationGb300WslProduct ?? null,
+      }
+    : collectWslNvidiaProductObservation(deps.isWsl ?? detectWsl());
   return detectGpu({
     ...deps,
-    n1xWslProduct,
+    ...productObservation,
     proveArm64ContainerGpu: createArm64ContainerGpuProver({
       ...(runtimeProvider ? { resolveRuntimeProvider: () => runtimeProvider } : {}),
     }),
@@ -345,6 +353,7 @@ interface RuntimeGpuReadiness {
   value: GpuDetection | null;
   containerGpuProof?: GpuDetection["containerGpuProof"];
   n1xWslProduct: boolean | null;
+  stationGb300WslProduct: boolean | null;
   gpuTrustGateRejection?: string;
 }
 
@@ -358,22 +367,28 @@ function collectOnboardHostReadiness(
   context: FatalRuntimePreflightContext,
   allowStorageRemediation: boolean,
   runtimeGpu?: RuntimeGpuReadiness,
-  identity?: Readonly<{ n1xWslProduct: boolean | null }>,
+  identity?: Readonly<{
+    n1xWslProduct: boolean | null;
+    stationGb300WslProduct: boolean | null;
+  }>,
 ): CollectedOnboardHostReadiness {
   const now = context.now ?? (() => new Date());
   const host = (context.assessHost ?? assessHost)();
   const runtimeProvider = runtimeProviderReadinessAuthority(host);
-  const n1xWslProduct = runtimeGpu
-    ? runtimeGpu.n1xWslProduct
-    : identity
-      ? identity.n1xWslProduct
-      : collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
+  const productObservation = runtimeGpu
+    ? {
+        n1xWslProduct: runtimeGpu.n1xWslProduct,
+        stationGb300WslProduct: runtimeGpu.stationGb300WslProduct,
+      }
+    : (identity ?? collectWslNvidiaProductObservation(host.isWsl, context.collectWslNvidiaProduct));
+  const { n1xWslProduct, stationGb300WslProduct } = productObservation;
   let gpuTrustGateRejection: string | undefined;
   const gpu = runtimeGpu
     ? runtimeGpu.value
     : (context.detectGpu ?? detectGpu)({
         proveArm64ContainerGpu: null,
         n1xWslProduct,
+        stationGb300WslProduct,
         runCaptureImpl: context.runCaptureImpl,
         onTrustGateRejection: (reason) => {
           gpuTrustGateRejection = reason;
@@ -414,6 +429,7 @@ function collectOnboardHostReadiness(
       readinessReport,
       sandboxGpuConfig,
       n1xWslProduct,
+      stationGb300WslProduct,
       ...(runtimeGpu?.gpuTrustGateRejection || gpuTrustGateRejection
         ? {
             gpuTrustGateRejection: runtimeGpu?.gpuTrustGateRejection ?? gpuTrustGateRejection,
@@ -481,7 +497,10 @@ async function collectAdmittedReadinessPair(
       context,
       isManagedGatewayReadiness(gateway),
       runtimeGpu,
-      { n1xWslProduct: collectedHost.result.n1xWslProduct },
+      {
+        n1xWslProduct: collectedHost.result.n1xWslProduct,
+        stationGb300WslProduct: collectedHost.result.stationGb300WslProduct,
+      },
     );
     collectedGateway = await context.collectGatewayReadiness();
     assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
@@ -521,11 +540,13 @@ function resolveRuntimeGpuProof(
   let gpuTrustGateRejection: string | undefined;
   let containerGpuProof: GpuDetection["containerGpuProof"];
   const n1xWslProduct = result.n1xWslProduct;
+  const stationGb300WslProduct = result.stationGb300WslProduct;
   const gpu = (context.detectGpu ?? detectGpu)({
     proveArm64ContainerGpu: (
       context.createArm64ContainerGpuProver ?? createArm64ContainerGpuProver
     )(),
     n1xWslProduct,
+    stationGb300WslProduct,
     runCaptureImpl: context.runCaptureImpl,
     onTrustGateRejection: (reason) => {
       gpuTrustGateRejection = reason;
@@ -665,7 +686,10 @@ export async function runReadinessGatedRuntimePreflight(
     context,
     managedGatewayReadiness,
     undefined,
-    { n1xWslProduct: initialHost.n1xWslProduct },
+    {
+      n1xWslProduct: initialHost.n1xWslProduct,
+      stationGb300WslProduct: initialHost.stationGb300WslProduct,
+    },
   );
   let admitted = await collectAdmittedReadinessPair(collectedHost, options, context);
   collectedHost = admitted.host;
@@ -692,6 +716,7 @@ export async function runReadinessGatedRuntimePreflight(
       // marker and remains unknown because no bounded proof was necessary.
       containerGpuProof: runtimeGpu.containerGpuProof ?? runtimeGpu.result.gpu?.containerGpuProof,
       n1xWslProduct: runtimeGpu.result.n1xWslProduct,
+      stationGb300WslProduct: runtimeGpu.result.stationGb300WslProduct,
       gpuTrustGateRejection: runtimeGpu.result.gpuTrustGateRejection,
     };
     collectedHost = collectOnboardHostReadiness(
@@ -731,10 +756,14 @@ export function runFatalOnboardRuntimePreflight(
   const now = context.now ?? (() => new Date());
   const observedAt = now().toISOString();
   const host = assess();
-  const n1xWslProduct = collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
+  const { n1xWslProduct, stationGb300WslProduct } = collectWslNvidiaProductObservation(
+    host.isWsl,
+    context.collectWslNvidiaProduct,
+  );
   const gpu = detect({
     proveArm64ContainerGpu: null,
     n1xWslProduct,
+    stationGb300WslProduct,
     runCaptureImpl: context.runCaptureImpl,
   });
   const collectedAt = now().toISOString();
@@ -757,7 +786,14 @@ export function runFatalOnboardRuntimePreflight(
     now,
     n1xWslProduct,
   });
-  let result = { gpu, host, readinessReport, sandboxGpuConfig, n1xWslProduct };
+  let result = {
+    gpu,
+    host,
+    readinessReport,
+    sandboxGpuConfig,
+    n1xWslProduct,
+    stationGb300WslProduct,
+  };
   if (!context.deferEffectfulChecks) {
     const runtimeGpu = resolveRuntimeGpuProof(result, options, context);
     if (runtimeGpu.proofRan) {
@@ -772,6 +808,7 @@ export function runFatalOnboardRuntimePreflight(
           containerGpuProof:
             runtimeGpu.containerGpuProof ?? runtimeGpu.result.gpu?.containerGpuProof,
           n1xWslProduct: runtimeGpu.result.n1xWslProduct,
+          stationGb300WslProduct: runtimeGpu.result.stationGb300WslProduct,
         })
       : runtimeGpu.result;
     runOnboardRuntimeEffectfulPreflightChecks(result, context);

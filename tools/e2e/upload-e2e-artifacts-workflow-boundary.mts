@@ -124,6 +124,23 @@ function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): bo
   );
 }
 
+function isExactPortablePodmanToolchainUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "portable-podman-toolchain" &&
+    isDeepStrictEqual(step, {
+      name: "Upload the pinned Portable Podman toolchain",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "portable-podman-e2e-toolchain-amd64",
+        path: "${{ runner.temp }}/portable-podman-e2e-toolchain/",
+        "if-no-files-found": "error",
+        "retention-days": 3,
+        "compression-level": 0,
+      },
+    })
+  );
+}
+
 function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
   const inputs = record(step.with);
   return (
@@ -242,6 +259,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}",
       path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "portable-hermes-finalization",
+    {
+      name: "e2e-portable-hermes-finalization",
+      path: "e2e-artifacts/live/portable-hermes-finalization/",
     },
   ],
   [
@@ -375,6 +399,12 @@ function validateUploadPlacement(
     ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
     ["Restore Docker CLI after native Podman public install"],
     ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
+    ["Restore Docker and retire Portable Podman runtime", "Clean up Docker auth"],
+    [
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
   ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
   if (!validTail) {
     errors.push(
@@ -521,6 +551,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
         !isExactNativeRuntimeAggregateUpload(jobName, step) &&
+        !isExactPortablePodmanToolchainUpload(jobName, step) &&
         !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
