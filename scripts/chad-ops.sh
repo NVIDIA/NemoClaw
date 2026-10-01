@@ -124,7 +124,12 @@ try: cur=json.load(open(p))
 except Exception: cur={}
 cur.update({"engine":"pglite","database_path":cur.get("database_path","/sandbox/.gbrain/brain.pglite"),
   "openai_api_key":key or "unused","openai_base_url":"https://integrate.api.nvidia.com/v1",
-  "embed_model":"nvidia/llama-nemotron-embed-1b-v2","embed_dimensions":"1536","embed_input_type":"passage"})
+  "embed_model":"nvidia/nemotron-3-embed-1b","embed_dimensions":"2048","embed_input_type":"passage"})
+# NOTE: llama-nemotron-embed-1b-v2 (1536d) hit EOL 2026-08-25 (410). nemotron-3-embed-1b
+# is the current successor but emits 2048d (no truncation), exceeding the pgvector HNSW
+# 2000-dim cap, so content_chunks.embedding is vector(2048) WITHOUT an hnsw index
+# (seq-scan; fine at this scale). A fresh gbrain init would fail the hnsw index on 2048;
+# the live brain was migrated in place (see docs MASTER-REVIEW gbrain section).
 json.dump(cur,open(p,"w"),indent=2); os.chmod(p,0o600)
 print("key_set:",bool(key and key!="unused"))
 PY'

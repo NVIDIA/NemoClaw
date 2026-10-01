@@ -231,6 +231,37 @@ wrappers incl. `chad-self-improve`, `chad-skill-watch`, `chad-memory-curator`,
 
 ---
 
+## 5b. gbrain embed stack (fixed 2026-10-01)
+
+After the ~10-day-ago pod restart, a `chad-ops doctor` found Chad badly degraded:
+0 crons, skills dark, 39 binaries absent, gbrain embed 401. Recovered **without**
+the stale-backup restore (premium chat had kept writing newer state): creds-sync
+→ deploy → **forced fresh workspace backup** → gbrain-config → **chown** (gateway
+WS connects were closing 1000 — the `/sandbox/.openclaw` ownership issue) →
+bonjour-off → restart-gateway → cron-reload (10) → skills-register →
+restart-gateway → gate-sync. One self-inflicted snag: the deploy pushed the
+gbrain **wrapper** over the real binary without the `cp gbrain → gbrain-bin`
+guard chad-setup uses, so `gbrain-bin` was missing — restored it as the launcher
+`exec bun /usr/local/lib/gbrain/node_modules/gbrain/src/cli.ts` (extracted from
+the sandbox image).
+
+**The real embed bug (pre-existing since 2026-08-25):**
+`nvidia/llama-nemotron-embed-1b-v2` (1536d) reached **EOL → 410 Gone**, so embed
+coverage had been 0% for ~5 weeks. The only available NVIDIA embed successors
+(`nemotron-3-embed-1b`, `llama-nemotron-embed-vl-1b-v2`) emit **2048d with no
+truncation** — and **2048 exceeds pgvector's HNSW 2000-dim cap**, so the
+1536-based schema could not just swap models. Fix: migrated the live
+`content_chunks.embedding` column to **`vector(2048)` with NO hnsw index**
+(seq-scan; fine at this brain's scale — 34 pages/42 chunks), repointed config to
+`nemotron-3-embed-1b @ 2048`, re-embedded → **100% coverage, health 5→7/10**,
+semantic search verified. Durability: `chad-ops.sh` (gbrain-config) + `chad-setup.sh`
+updated to the new model/dims. **Open caveat:** a fresh `gbrain init` recreates
+`vector(2048)` and its `CREATE INDEX ... hnsw` **fails** at >2000 dims — so either
+(a) patch gbrain's schema to use `halfvec(2048)` + halfvec HNSW (durable, needs
+image rebuild), or (b) switch to a local ≤2000-dim embed model (e.g. LM Studio's
+`nomic-embed-text` @ 768, which also ends the NVIDIA EOL churn). Tracked as a
+follow-up. See [[project_gbrain_embed_stack]].
+
 ## 6. Implementation research appendix (file-anchored, 2026-10-01)
 
 Concrete anchors so each workstream is build-ready, not just named.

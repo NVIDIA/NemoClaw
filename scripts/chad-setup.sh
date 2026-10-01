@@ -484,13 +484,15 @@ if [ "$skip_gbrain" -eq 0 ]; then
                rm -f /sandbox/.gbrain/brain.pglite/postmaster.pid \
                      /sandbox/.gbrain/brain.pglite/.gbrain-lock 2>/dev/null; true' || true
       # Pass GBRAIN_EMBED_* at init so the schema's vector(N) column matches
-      # the embedder configured in step 3b. Patched gbrain (tantodefi fork)
-      # reads these at module load. We standardize on 1536 dims: the live
-      # chad brain's vector column is vector(1536) (gbrain default), and a
-      # mismatched config fails at INSERT with "expected 1536 dimensions".
+      # the embedder. The prior nvidia/llama-nemotron-embed-1b-v2 (1536d) hit EOL
+      # 2026-08-25 (410 Gone); the current successor nvidia/nemotron-3-embed-1b
+      # emits 2048d. NOTE: 2048 exceeds the pgvector HNSW 2000-dim cap, so a fresh
+      # init's CREATE INDEX hnsw on vector(2048) FAILS — the live brain runs
+      # vector(2048) WITHOUT the hnsw index (seq-scan; fine at this scale). If a
+      # ≤2000-dim NVIDIA embed model returns, prefer it to restore the index.
       ssh "$REMOTE_HOST" 'HOME=/sandbox \
-        GBRAIN_EMBED_MODEL=nvidia/llama-nemotron-embed-1b-v2 \
-        GBRAIN_EMBED_DIMENSIONS=1536 \
+        GBRAIN_EMBED_MODEL=nvidia/nemotron-3-embed-1b \
+        GBRAIN_EMBED_DIMENSIONS=2048 \
         gbrain init 2>/dev/null || true'
       gbrain_status="$(ssh "$REMOTE_HOST" 'gbrain doctor 2>&1 | tail -3')"
       info "gbrain init done: ${gbrain_status}"
@@ -518,7 +520,7 @@ fi
 #   GBRAIN_EMBED_INPUT_TYPE  — NIM-only ("passage"/"query"), sent if non-empty
 # Plus the OpenAI SDK reads OPENAI_BASE_URL / OPENAI_API_KEY directly.
 #
-# We pick nvidia/llama-nemotron-embed-1b-v2 at 1536 dims because:
+# We pick nvidia/nemotron-3-embed-1b at 2048 dims because:
 #   - matryoshka model accepts the `dimensions` parameter (free model choice)
 #   - 1536 dims matches the live brain's vector(1536) column (gbrain's
 #     schema default) — a smaller value fails at INSERT time
@@ -549,16 +551,16 @@ cfg = {
   'database_path': '/sandbox/.gbrain/brain.pglite',
   'openai_api_key': os.environ['NVIDIA_KEY'] or 'unused',
   'openai_base_url': 'https://integrate.api.nvidia.com/v1',
-  'embed_model': 'nvidia/llama-nemotron-embed-1b-v2',
-  'embed_dimensions': '1536',
+  'embed_model': 'nvidia/nemotron-3-embed-1b',
+  'embed_dimensions': '2048',
   'embed_input_type': 'passage',
 }
 with open('/sandbox/.gbrain/config.json', 'w') as f:
     json.dump(cfg, f, indent=2)
 os.chmod('/sandbox/.gbrain/config.json', 0o600)
-print('gbrain configured for NVIDIA NIM embeddings (llama-nemotron-embed-1b-v2 @ 1536 dims)')
+print('gbrain configured for NVIDIA NIM embeddings (nemotron-3-embed-1b @ 2048 dims)')
 \""
-  info "gbrain configured to use NVIDIA NIM embeddings (llama-nemotron-embed-1b-v2 @ 1536 dims)"
+  info "gbrain configured to use NVIDIA NIM embeddings (nemotron-3-embed-1b @ 2048 dims)"
 
   # Install gbrain wrapper that exports OPENAI_API_KEY before invoking the
   # real binary. The OpenAI Node SDK throws if OPENAI_API_KEY is empty even
@@ -605,8 +607,8 @@ if needs_rewrite:
       'database_path': '/sandbox/.gbrain/brain.pglite',
       'openai_api_key': os.environ['NVIDIA_KEY'] or 'unused',
       'openai_base_url': 'https://integrate.api.nvidia.com/v1',
-      'embed_model': 'nvidia/llama-nemotron-embed-1b-v2',
-      'embed_dimensions': '1536',
+      'embed_model': 'nvidia/nemotron-3-embed-1b',
+      'embed_dimensions': '2048',
       'embed_input_type': 'passage',
     }
     with open('/sandbox/.gbrain/config.json', 'w') as f:
