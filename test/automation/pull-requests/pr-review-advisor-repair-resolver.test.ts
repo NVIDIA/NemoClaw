@@ -262,6 +262,9 @@ describe("PR Review Advisor two-turn resolver", () => {
     fs.writeFileSync(path.join(repository, ".gitattributes"), "docs/example.mdx export-subst\n");
     git(["add", "."]);
     git(["commit", "-m", "test: create source tree"]);
+    const submoduleSha = git(["rev-parse", "HEAD"]);
+    git(["update-index", "--add", "--cacheinfo", `160000,${submoduleSha},vendor/router`]);
+    git(["commit", "-m", "test: add submodule entry"]);
     const headSha = git(["rev-parse", "HEAD"]);
     const selectionFile = path.join(directory, "selection.json");
     fs.writeFileSync(selectionFile, JSON.stringify(selection(headSha)));
@@ -279,12 +282,17 @@ describe("PR Review Advisor two-turn resolver", () => {
       "before\n",
     );
     expect(fs.existsSync(path.join(baseDirectory, "link"))).toBe(false);
+    expect(fs.existsSync(path.join(baseDirectory, "vendor", "router"))).toBe(false);
     expect(fs.statSync(path.join(baseDirectory, "script.sh")).mode & 0o777).toBe(0o755);
     const materializedWorktree = path.join(workDirectory, "repo");
     expect(fs.readFileSync(path.join(materializedWorktree, "docs", "example.mdx"), "utf8")).toBe(
       "before\n",
     );
     expect(fs.existsSync(path.join(materializedWorktree, "link"))).toBe(false);
+    expect(fs.existsSync(path.join(materializedWorktree, "vendor", "router"))).toBe(false);
+    expect(git(["ls-tree", "HEAD", "vendor/router"])).toBe(
+      `160000 commit ${submoduleSha}\tvendor/router`,
+    );
     expect(fs.statSync(path.join(materializedWorktree, "script.sh")).mode & 0o777).toBe(0o755);
   });
 

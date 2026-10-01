@@ -164,6 +164,7 @@ export function materializeAdvisorRepairWorkspace(input: {
       throw new RepairError("repair source tree contains an invalid path or object");
     }
     if (mode === "120000" && type === "blob") continue;
+    if (mode === "160000" && type === "commit") continue;
     if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
       throw new RepairError(`repair source tree contains an unsupported object: ${file}`);
     }

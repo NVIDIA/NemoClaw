@@ -192,7 +192,7 @@ jobs:
           name: advisor-repair-selection-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/selection/
           if-no-files-found: error
-          retention-days: 31
+          retention-days: 1
 
   resolve:
     name: Resolve in credential-free OpenShell
@@ -301,7 +301,7 @@ jobs:
           name: advisor-repair-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cleanup.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
       - id: upload
         name: Upload the untrusted repair artifact
@@ -311,7 +311,7 @@ jobs:
           name: advisor-repair-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ARTIFACT_DIR }}/
           if-no-files-found: error
-          retention-days: 31
+          retention-days: 1
 
   claim:
     name: Claim the exact one-shot attempt
@@ -428,7 +428,7 @@ jobs:
           name: advisor-repair-reviewed-dependency-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/openshell-sdk/
           if-no-files-found: error
-          retention-days: 31
+          retention-days: 1
 
   validate:
     name: Validate without credentials or write authority
@@ -526,7 +526,7 @@ jobs:
           name: advisor-repair-validated-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validated/
           if-no-files-found: error
-          retention-days: 31
+          retention-days: 1
 
   audit:
     name: Record bounded repair outcome

@@ -191,10 +191,10 @@ describe("manual PR Review Advisor repair workflow", () => {
 
     expect(cleanupUpload?.if).toBe("${{ always() }}");
     expect(cleanupUpload?.with?.path).toBe("${{ runner.temp }}/cleanup.json");
-    expect(cleanupUpload?.with?.["retention-days"]).toBe(1);
+    expect(cleanupUpload?.with?.["retention-days"]).toBe(14);
   });
 
-  // source-shape-contract: security -- Validation evidence must remain available throughout the maintainer review window
+  // source-shape-contract: security -- Handoff artifacts must expire within the accepted one-day limit
   it("retains validation evidence through the review window (#10791)", () => {
     const selection = (workflow.jobs.select.steps ?? []).find((step) =>
       String(step.with?.name ?? "").startsWith("advisor-repair-selection-"),
@@ -209,10 +209,10 @@ describe("manual PR Review Advisor repair workflow", () => {
       String(step.with?.name ?? "").startsWith("advisor-repair-reviewed-dependency-"),
     );
 
-    expect(selection?.with?.["retention-days"]).toBe(31);
-    expect(candidate?.with?.["retention-days"]).toBe(31);
-    expect(validated?.with?.["retention-days"]).toBe(31);
-    expect(dependency?.with?.["retention-days"]).toBe(31);
+    expect(selection?.with?.["retention-days"]).toBe(1);
+    expect(candidate?.with?.["retention-days"]).toBe(1);
+    expect(validated?.with?.["retention-days"]).toBe(1);
+    expect(dependency?.with?.["retention-days"]).toBe(1);
   });
 
   // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate validation
