@@ -98,6 +98,9 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
         timeoutMs: 30_000,
         redact: expect.any(Function),
       });
+      expect(errorSpy.mock.calls.map((args) => args.map(String).join(" ")).join("\n")).toContain(
+        "OpenShell sandbox entered Error phase",
+      );
       const failuresDir = path.join(nemoclawStateRoot(tmpDir, GATEWAY_PORT), "onboard-failures");
       const [failureDir] = fs.readdirSync(failuresDir);
       expect(failureDir).toBeTruthy();

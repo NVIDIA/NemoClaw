@@ -347,7 +347,12 @@ export function collectDockerGpuPatchDiagnostics(
     if (containerLogs.trim()) writeDiagnosticText("docker-logs.txt", containerLogs);
   }
 
-  if (deps.openShellGpuDiagnostics) {
+  const openShellDiagnosticArtifacts = snapshot?.openShellDiagnosticArtifacts;
+  if (openShellDiagnosticArtifacts) {
+    for (const artifact of openShellDiagnosticArtifacts) {
+      if (artifact.content.trim()) writeDiagnosticText(artifact.name, artifact.content);
+    }
+  } else if (deps.openShellGpuDiagnostics) {
     try {
       const artifacts = deps.openShellGpuDiagnostics.collect({
         target: { kind: "selected" },

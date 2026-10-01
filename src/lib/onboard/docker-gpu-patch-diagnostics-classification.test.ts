@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuMode,
@@ -122,6 +123,31 @@ describe("Docker GPU patch diagnostics", () => {
     expect(snapshot.sandboxListLine).toBe("alpha   Error   1m ago");
     expect(snapshot.patchedContainerState?.ExitCode).toBe(125);
     expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
+  });
+
+  it("uses typed OpenShell observations for phase classification without raw capture", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Provisioning\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect } },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   2s ago");
+    expect(collect).toHaveBeenCalledOnce();
   });
 
   it("classifies a dead patched container as patched_container_failed with the failed mode", () => {

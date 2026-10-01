@@ -385,6 +385,16 @@ function parseSandboxPhaseFromListOutput(output: string, sandboxName: string): s
   return parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null;
 }
 
+function completedOpenShellArtifactContent(
+  artifacts: NonNullable<DockerGpuPatchSandboxSnapshot["openShellDiagnosticArtifacts"]>,
+  name: "openshell-sandbox-get.txt" | "openshell-sandbox-list.txt",
+): string | null {
+  const artifact = artifacts.find((candidate) => candidate.name === name);
+  return artifact?.outcome.kind === "completed" && artifact.outcome.exitCode === 0
+    ? artifact.content
+    : null;
+}
+
 function isFailurePhase(phase: string | null | undefined): boolean {
   return typeof phase === "string" && SANDBOX_FAILURE_PHASE_TOKENS.has(phase);
 }
@@ -428,7 +438,10 @@ export function captureDockerGpuPatchSandboxSnapshot(
   options: {
     patchedContainerId?: string | null;
   } = {},
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> = {},
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "runCaptureOpenshell" | "dockerCapture" | "openShellGpuDiagnostics"
+  > = {},
 ): DockerGpuPatchSandboxSnapshot {
   let sandboxPhase: string | null = null;
   let sandboxListLine: string | null = null;
@@ -461,6 +474,41 @@ export function captureDockerGpuPatchSandboxSnapshot(
     }
   }
 
+  let openShellDiagnosticArtifacts: DockerGpuPatchSandboxSnapshot["openShellDiagnosticArtifacts"];
+  if (deps.openShellGpuDiagnostics) {
+    try {
+      const redactor = createDockerGpuDiagnosticRedactor();
+      openShellDiagnosticArtifacts = deps.openShellGpuDiagnostics.collect({
+        target: { kind: "selected" },
+        sandboxName,
+        timeoutMs: DOCKER_GPU_PATCH_TIMEOUT_MS,
+        redact: redactor.redactText,
+      });
+      const typedGetOutput = completedOpenShellArtifactContent(
+        openShellDiagnosticArtifacts,
+        "openshell-sandbox-get.txt",
+      );
+      if (!sandboxPhase && typedGetOutput) {
+        sandboxPhase = parseSandboxPhaseFromGetOutput(typedGetOutput);
+      }
+      if (!sandboxListLine) {
+        const typedListOutput = completedOpenShellArtifactContent(
+          openShellDiagnosticArtifacts,
+          "openshell-sandbox-list.txt",
+        );
+        if (typedListOutput) {
+          sandboxListLine = findSandboxListLine(typedListOutput, sandboxName);
+          if (sandboxListLine) {
+            const listPhase = parseSandboxPhaseFromListOutput(typedListOutput, sandboxName);
+            if (listPhase) sandboxPhase = listPhase;
+          }
+        }
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
   let patchedContainerState: DockerContainerState | null = null;
   const target = String(options.patchedContainerId || "").trim();
   if (target) {
@@ -476,7 +524,12 @@ export function captureDockerGpuPatchSandboxSnapshot(
     }
   }
 
-  return { sandboxPhase, sandboxListLine, patchedContainerState };
+  return {
+    sandboxPhase,
+    sandboxListLine,
+    patchedContainerState,
+    ...(openShellDiagnosticArtifacts ? { openShellDiagnosticArtifacts } : {}),
+  };
 }
 
 // Exit code 127 alone is ambiguous because `env` propagates a child process's
