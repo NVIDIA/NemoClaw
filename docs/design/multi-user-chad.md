@@ -143,6 +143,26 @@ sensitive state, and no policy work.
 (raw API clients, another front-end) or needs a tightly controlled tool set.
 **0c** is rejected for interactive latency.
 
+## Tier model as of 2026-10-01 (current)
+
+- **Premium = the `chad` model** (full agent + gbrain + tools), gated by the shim
+  `CHAD_OPERATOR_ALLOWLIST` (`tantodefi@proton.me`, `tjcooke@protonmail.com`).
+  Non-operators selecting `chad` get the polite refusal; the model is visible but
+  refused (`BYPASS_MODEL_ACCESS_CONTROL=True`).
+- **Free = the `chad-lite` model** → **`nvidia/nemotron-3-nano-4b`** served by
+  **LM Studio on the host** (`http://host.docker.internal:1234/v1`, reached from
+  the container via `host.docker.internal`, NOT `127.0.0.1`). Native
+  tool-calling enabled, public, honest system prompt (no private data / no
+  agent). Created via `POST /api/v1/models/create` (base
+  `nvidia/nemotron-3-nano-4b`). Verified: completion to `chad-lite` returns from
+  the nano.
+- The LM Studio OWUI connection (openai index 2) is **filtered to only
+  `nvidia/nemotron-3-nano-4b`** (`openai.api_configs["2"].model_ids`) so the
+  other, larger LM Studio models (27B bonsai/qwen/gemma) that don't load well are
+  never exposed in the dropdown.
+- This supersedes the original Tier-0 "Nemotron Ultra via the cloud" idea below
+  with a **local, free, tool-capable** small model.
+
 ## What shipped (2026-06-17) — Tier 0 / 0a
 
 - **`scripts/openwebui/chad-provision-tier0.sh`** — creates the Tier-0 "Chad
