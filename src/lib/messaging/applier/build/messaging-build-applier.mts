@@ -1386,6 +1386,35 @@ function runCommand(
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if ((result.error || result.status !== 0) && options.emitOutput !== false) {
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    const knownCodes = new Set(
+      "ENOTCACHED EALLOWREMOTE EALLOWGIT ERESOLVE ETARGET E404 E403 E401 EINTEGRITY EBADPLATFORM EACCES EPERM ENOENT ENOSPC ETIMEDOUT".split(
+        " ",
+      ),
+    );
+    const npmCodes = [...output.matchAll(/\bnpm (?:ERR!|error) code (E[A-Z0-9_]+)\b/g)]
+      .map((match) => match[1]!)
+      .filter((code) => knownCodes.has(code));
+    // Emit only fixed status fields and public registry paths. Child output can
+    // contain credentials or configuration and must never be printed verbatim.
+    const registryPaths = [
+      ...output.matchAll(/https:\/\/registry\.npmjs\.org(\/[@a-zA-Z0-9%._/-]+)/g),
+    ]
+      .map((match) => match[1]!)
+      .filter((value) => value.length <= 250);
+    console.error(
+      `Messaging build command diagnostic: ${JSON.stringify({
+        command: args[0],
+        exitCode: result.status,
+        signal: result.signal,
+        errorCode: (result.error as NodeJS.ErrnoException | undefined)?.code ?? null,
+        npmCodes: [...new Set(npmCodes)],
+        timedOut: /\b(?:timed out|ETIMEDOUT|termination (?:no-output-)?timeout)\b/i.test(output),
+        registryPaths: [...new Set(registryPaths)].slice(0, 8),
+      })}`,
+    );
+  }
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT")
     throw new MessagingBuildCommandTimeoutError();
   if (result.error) throw new MessagingBuildCommandError();

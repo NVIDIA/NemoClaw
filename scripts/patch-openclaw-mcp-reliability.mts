@@ -231,6 +231,63 @@ const SHAPE_20260901 = {
   ],
 } as const;
 
+// 2026.9.2 owns connection and catalog state per server. Preserve that ownership
+// while applying the same bounded startup retry around one server's load.
+const SERVER_TRANSPORT_PATTERN = [
+  "\t\t\tconst resolved = resolveMcpTransport(serverName, transportSource, {",
+  "\t\t\t\tcfg: params.cfg,",
+  "\t\t\t\tagentDir: params.agentDir,",
+  "\t\t\t\tprepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,",
+  "\t\t\t\trequesterScope: params.requesterScope",
+  "\t\t\t});",
+].join("\n");
+const SERVER_ATTEMPT_OPEN_PATTERN = [
+  "\t\t\t\ttools: []",
+  "\t\t\t};",
+  "\t\t\tconst safeServerName = params.safeServerNamesByServer?.get(serverName) ?? serverName;",
+].join("\n");
+const SERVER_ATTEMPT_OPEN_REPLACEMENT = SERVER_ATTEMPT_OPEN_PATTERN.replace(
+  "\t\t\tconst safeServerName",
+  [
+    "\t\t\treturn await nemoClawWithMcpStartRetry({",
+    "\t\t\t\tserverName,",
+    "\t\t\t\tinitialResolved: resolved,",
+    "\t\t\t\tresolveTransport: () => resolveMcpTransport(serverName, transportSource, {",
+    "\t\t\t\t\tcfg: params.cfg,",
+    "\t\t\t\t\tagentDir: params.agentDir,",
+    "\t\t\t\t\tprepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,",
+    "\t\t\t\t\trequesterScope: params.requesterScope",
+    "\t\t\t\t}),",
+    "\t\t\t\tattempt: async (resolved) => {",
+    "\t\t\tconst safeServerName",
+  ].join("\n"),
+);
+const SERVER_ATTEMPT_CLOSE_PATTERN = "\t\t\t}\n\t\t})();\n\t\tcatalogInFlight = inFlight;";
+const SERVER_ATTEMPT_CLOSE_REPLACEMENT =
+  "\t\t\t}\n\t\t\t\t}\n\t\t\t})();\n\t\t})();\n\t\tcatalogInFlight = inFlight;";
+const SERVER_FAILURE_PATTERN = "\t\t\t\t\tdiagnostics: diags\n\t\t\t\t};";
+const SERVER_FAILURE_REPLACEMENT = [
+  "\t\t\t\t\tdiagnostics: diags,",
+  "\t\t\t\t\t[NEMOCLAW_MCP_START_FAILURE]: { error, reusedSession }",
+  "\t\t\t\t};",
+].join("\n");
+const SERVER_REPLACEMENTS = [
+  [SERVER_ATTEMPT_OPEN_PATTERN, SERVER_ATTEMPT_OPEN_REPLACEMENT],
+  [SERVER_ATTEMPT_CLOSE_PATTERN, SERVER_ATTEMPT_CLOSE_REPLACEMENT],
+  [SERVER_FAILURE_PATTERN, SERVER_FAILURE_REPLACEMENT],
+  [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
+] as const;
+const SHAPE_20260902 = {
+  unpatched: SERVER_REPLACEMENTS.map(([upstream]) => upstream),
+  required: [
+    "function createServerMcpRuntime(params) {",
+    SERVER_TRANSPORT_PATTERN,
+    ...SERVER_REPLACEMENTS.map(([upstream]) => upstream),
+  ],
+  patched: [MARKER, ...SERVER_REPLACEMENTS.map(([, patched]) => patched)],
+  replacements: SERVER_REPLACEMENTS,
+} as const;
+
 /**
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
  *
@@ -433,7 +490,11 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
     source.includes(TASK_OPEN_20260901_PATTERN) ||
     source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
     (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
-  const shape = currentLayout ? SHAPE_20260901 : LEGACY_SHAPE;
+  const shape = source.includes("function createServerMcpRuntime(params) {")
+    ? SHAPE_20260902
+    : currentLayout
+      ? SHAPE_20260901
+      : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
     for (const pattern of shape.patched) {
       const count = countOccurrences(source, pattern);
