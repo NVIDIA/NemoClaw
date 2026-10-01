@@ -652,6 +652,7 @@ describe("GPU E2E helpers", () => {
     } as unknown as LifecyclePhaseFixture;
 
     await expect(cleanupGpu(host, lifecycle, sandbox)).rejects.toThrow(/still listens/u);
+    expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith({ manageUserService: false });
     expect(cleanupOrder).toEqual(["stop gateway runtime", "remove gateway registration"]);
     expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
       "nemoclaw",

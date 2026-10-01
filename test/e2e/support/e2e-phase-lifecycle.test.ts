@@ -336,6 +336,21 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(discovery?.args).toEqual(["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]);
   });
 
+  it("bypasses user-service management for permanent runtime cleanup", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "")); // no gateway container
+
+    await fixture(runner, new FakeCleanup()).stopGatewayRuntime({ manageUserService: false });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-pid-stop",
+      "lifecycle-gateway-runtime-discover",
+    ]);
+  });
+
   it("stops a supported user service without invoking legacy runtime controls (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop

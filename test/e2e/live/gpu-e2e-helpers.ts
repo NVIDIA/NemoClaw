@@ -232,7 +232,9 @@ export async function cleanupGpu(
       timeoutMs: 60_000,
     }),
   );
-  await lifecycle.stopGatewayRuntime();
+  // GPU runners can expose systemctl without a user bus. This is permanent
+  // teardown, so stop the owned PID/container runtime without lifecycle restart tracking.
+  await lifecycle.stopGatewayRuntime({ manageUserService: false });
   await preCleanBestEffort("remove OpenShell gateway registration", () =>
     host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-gpu",

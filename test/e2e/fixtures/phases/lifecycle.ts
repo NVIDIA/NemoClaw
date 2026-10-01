@@ -200,6 +200,10 @@ export interface SandboxReadyOptions {
   timeoutMs?: number;
 }
 
+export interface StopGatewayRuntimeOptions {
+  manageUserService?: boolean;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -352,7 +356,9 @@ export class LifecyclePhaseFixture {
     assertExitZero(result, "remove staged OpenShell gateway user service");
   }
 
-  async stopGatewayRuntime(): Promise<HostGatewayRuntime | null> {
+  async stopGatewayRuntime(
+    options: StopGatewayRuntimeOptions = {},
+  ): Promise<HostGatewayRuntime | null> {
     const runtime = (await this.gateway?.resolveHostRuntime()) ?? null;
     await this.host.command(
       "sh",
@@ -363,7 +369,9 @@ export class LifecyclePhaseFixture {
         timeoutMs: 30_000,
       },
     );
-    if (await this.stopOpenShellGatewayUserService()) return runtime;
+    if (options.manageUserService !== false && (await this.stopOpenShellGatewayUserService())) {
+      return runtime;
+    }
 
     const pidFileStop = await this.host.command(
       "sh",
