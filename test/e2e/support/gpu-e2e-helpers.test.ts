@@ -19,6 +19,7 @@ import {
   env,
   hasExactReadyPhase,
   ollamaCleanupScript,
+  ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
   REPO_ROOT,
   startAttachedOllama,
@@ -626,18 +627,26 @@ describe("GPU E2E helpers", () => {
 
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
     const host = {
       command: async (command: string) =>
         command === "bash"
           ? { exitCode: 1, stderr: "Ollama still listens on 127.0.0.1:11434", stdout: "" }
           : success,
+      cleanupGatewayRegistration,
     } as unknown as HostCliClient;
+    const openshell = vi.fn(async () => success);
     const sandbox = {
       cleanupSandbox: async () => success,
-      openshell: async () => success,
+      openshell,
     } as unknown as SandboxClient;
 
     await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "cleanup-gateway-destroy-gpu" }),
+    );
+    expect(openshell).not.toHaveBeenCalled();
   });
 
   it("forwards the workflow-owned Ollama model pull timeout", () => {
@@ -662,6 +671,12 @@ describe("GPU E2E helpers", () => {
     expect(
       env({ NEMOCLAW_MODEL: "qwen2.5:0.5b" }, { NEMOCLAW_MODEL: GPU_MODEL }).NEMOCLAW_MODEL,
     ).toBe("qwen2.5:0.5b");
+  });
+
+  it("resolves the proxy token from the export scenario's private home", () => {
+    expect(ollamaProxyTokenFile("/private/export-home")).toBe(
+      "/private/export-home/.nemoclaw/ollama-proxy-token",
+    );
   });
 
   it("forwards the workflow-owned trace directory through availability probes", () => {

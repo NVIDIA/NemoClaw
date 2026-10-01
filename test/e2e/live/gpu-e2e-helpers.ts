@@ -113,8 +113,7 @@ export async function preCleanBestEffort(
   }
 }
 
-export function ollamaProxyTokenFile(): string {
-  const home = process.env.HOME;
+export function ollamaProxyTokenFile(home = process.env.HOME): string {
   if (!home) throw new Error("HOME environment variable is required");
   return path.join(home, ".nemoclaw", "ollama-proxy-token");
 }
@@ -228,8 +227,8 @@ export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): P
       timeoutMs: 60_000,
     }),
   );
-  await preCleanBestEffort("destroy OpenShell gateway", () =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+  await preCleanBestEffort("remove OpenShell gateway registration", () =>
+    host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-gpu",
       env: env(),
       timeoutMs: 60_000,

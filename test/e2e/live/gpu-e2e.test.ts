@@ -438,7 +438,12 @@ test(
       credentialBoundary:
         "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
+    cleanup.trackDisposable("remove private Ollama export state and documents", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
     const exportEnv = env({
+      HOME: directory,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
@@ -454,10 +459,6 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     });
     cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
-    cleanup.trackDisposable("remove private Ollama export documents", () =>
-      fs.rmSync(directory, { recursive: true, force: true }),
-    );
     await cleanupGpu(host, sandbox);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
@@ -550,7 +551,7 @@ exec ollama pull qwen2.5:0.5b`,
     const first = parseConfigExport(firstYaml);
     const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
     expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
-    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile(directory)).token;
     artifacts.addRedactionValues([proxyToken]);
     expect(
       firstYaml.includes(proxyToken) ||
