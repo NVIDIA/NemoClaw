@@ -125,12 +125,14 @@ export interface BaselineInferenceConfig {
   apiKey: string;
   endpointUrl: string;
   env: NodeJS.ProcessEnv;
+  model: typeof MOCK_BASELINE_MODEL;
 }
 
 export function mockBaselineInference(endpointUrl: string): BaselineInferenceConfig {
   return {
     apiKey: MOCK_BASELINE_API_KEY,
     endpointUrl,
+    model: MOCK_BASELINE_MODEL,
     env: {
       COMPATIBLE_API_KEY: MOCK_BASELINE_API_KEY,
       NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,

@@ -2,15 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs, { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
+import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
+  externalImageActivationAgents,
+  externalImageActivationMatches,
+  externalImageActivationOnboardArgs,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
@@ -21,6 +29,66 @@ import {
   waitForManagedActivationSandboxDeletion,
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
+import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
+
+const MANAGED_ADMIN_PUBLIC_KEY_BYTES = Buffer.from(
+  Array.from({ length: 32 }, (_value, index) => index),
+);
+const MANAGED_ADMIN_PUBLIC_KEY = MANAGED_ADMIN_PUBLIC_KEY_BYTES.toString("base64url");
+const MANAGED_ADMIN_DEVICE_ID = createHash("sha256")
+  .update(MANAGED_ADMIN_PUBLIC_KEY_BYTES)
+  .digest("hex");
+
+function prepareManagedAdminState(root: string, requestId: string): NodeJS.ProcessEnv {
+  const stateRoot = join(root, "state");
+  const devicesPath = join(root, "devices.json");
+  const helperPath = join(root, "openclaw_pairing_state.py");
+  const identity = { deviceId: MANAGED_ADMIN_DEVICE_ID, publicKey: MANAGED_ADMIN_PUBLIC_KEY };
+  const state = {
+    pending: [
+      {
+        requestId,
+        deviceId: MANAGED_ADMIN_DEVICE_ID,
+        publicKey: MANAGED_ADMIN_PUBLIC_KEY,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing", "operator.read", "operator.write", "operator.admin"],
+      },
+    ],
+    paired: [
+      {
+        deviceId: MANAGED_ADMIN_DEVICE_ID,
+        publicKey: MANAGED_ADMIN_PUBLIC_KEY,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing", "operator.write"],
+        approvedScopes: ["operator.pairing", "operator.write"],
+        tokens: [
+          {
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+          },
+        ],
+      },
+    ],
+  };
+  fs.mkdirSync(stateRoot, { recursive: true });
+  fs.writeFileSync(join(stateRoot, "pairing-state.json"), JSON.stringify({ identity }));
+  fs.writeFileSync(devicesPath, JSON.stringify(state));
+  fs.writeFileSync(
+    helperPath,
+    `import json\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    return records, {"timeout": timeout}\n`,
+  );
+  return {
+    FAKE_DEVICES_STATE: devicesPath,
+    NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
+    OPENCLAW_STATE_DIR: stateRoot,
+  };
+}
 
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
   const fixture = createHostProcessWorkspace("nemoclaw-openclaw-restart-ready-");
@@ -111,6 +179,305 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it("adopts public OpenClaw and Hermes digests only through Docker", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);
+    expect(externalImageActivationAgents("podman")).toEqual([]);
+    expect(externalImageActivationOnboardArgs(reference, "openclaw", "ext-img-openclaw")).toEqual([
+      "onboard",
+      "--from-image",
+      reference,
+      "--fresh",
+      "--recreate-sandbox",
+      "--non-interactive",
+      "--yes",
+      "--no-gpu",
+      "--agent",
+      "openclaw",
+      "--name",
+      "ext-img-openclaw",
+    ]);
+  });
+
+  it("binds external-image success to disclosure, receipt, Docker identity, and cleanup", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    const imageId = `sha256:${"b".repeat(64)}`;
+    const evidence = {
+      agent: "hermes" as const,
+      reference,
+      platform: "linux/amd64" as const,
+      onboardExitCode: 0,
+      destroyExitCode: 0,
+      beforeInspectExitCode: 0,
+      afterInspectExitCode: 0,
+      beforeImageId: imageId,
+      afterImageId: imageId,
+      toolDisclosure: "progressive",
+      receipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId: imageId,
+        shared: true,
+      },
+    };
+
+    expect(externalImageActivationMatches(evidence)).toBe(true);
+    expect(
+      externalImageActivationMatches({
+        ...evidence,
+        receipt: { ...evidence.receipt, runtimeImageContentId: `sha256:${"c".repeat(64)}` },
+      }),
+    ).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, toolDisclosure: "direct" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterInspectExitCode: 1 })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterImageId: "" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, destroyExitCode: 1 })).toBe(false);
+  });
+
+  it("binds explicit admin approval to the exact request from the failed agent turn", () => {
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const result = {
+      exitCode: 1,
+      stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+      stdout: "",
+      timedOut: false,
+    };
+
+    expect(pendingAdminRequestId(result)).toBe(requestId);
+    const input = adminApprovalConnectScript(
+      "/fixture/nemoclaw",
+      "fixture-sandbox",
+      "managed-cron",
+      requestId,
+    );
+    expect(input).toContain(`expected_request_id='${requestId}'`);
+    expect(input).toContain('"$request_id_file" "$expected_request_id"');
+    expect(input).toContain('openclaw devices approve "$request_id"');
+    expect(input).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(input).not.toContain(result.stderr);
+  });
+
+  it("proves the approved admin scope with a successful cron consumer", async () => {
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const now = 1_790_145_221_718;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const sandboxExec = vi.fn().mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+      stdout: "",
+      timedOut: false,
+    });
+    const hostCommand = vi.fn(async (_command: string, _args: string[]) => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
+      timedOut: false,
+    }));
+
+    try {
+      await approveOpenClawAdminScope(
+        { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never,
+        { exec: sandboxExec } as never,
+        "fixture-sandbox",
+        {},
+      );
+
+      expect(hostCommand).toHaveBeenCalledOnce();
+      expect(sandboxExec).toHaveBeenCalledOnce();
+      expect(sandboxExec).toHaveBeenCalledWith(
+        "fixture-sandbox",
+        [
+          "openclaw",
+          "cron",
+          "add",
+          "--name",
+          `openclaw-admin-approval-${now}`,
+          "--every",
+          "2h",
+          "--agent",
+          "main",
+          "--session",
+          "isolated",
+          "--message",
+          "hello",
+        ],
+        expect.objectContaining({ artifactName: "openclaw-cron-add-before-admin-approval" }),
+      );
+      const [command, args] = hostCommand.mock.calls[0]!;
+      expect(command).toBe("bash");
+      expect(args.slice(0, 1)).toEqual(["-c"]);
+      expect(args[1]).toContain(`openclaw-admin-approval-${now}`);
+      expect(args[1]).toContain(`expected_request_id='${requestId}'`);
+      expect(args[1]).toContain('openclaw cron run "$cron_id"');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("preserves feature approval success without running host logout hooks or creating a cron job", async () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const commandLog = fixture.path("commands.log");
+    const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fs.writeFileSync(join(fixture.homeDir, ".bash_logout"), "echo HOST_LOGOUT_RAN; false\n");
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$ADMIN_COMMAND_LOG"
+case "$1:$2" in
+  devices:list) cat "$FAKE_DEVICES_STATE"; exit 0 ;;
+  devices:approve) exit 0 ;;
+  *) exit 91 ;;
+esac
+`,
+    );
+    try {
+      const env = fixture.environment({
+        ...prepareManagedAdminState(fixture.root, requestId),
+        ADMIN_COMMAND_LOG: commandLog,
+        OPENCLAW_GATEWAY_PORT: "18789",
+        OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+      });
+      const hostCommand = vi.fn(async (command: string, args: string[]) => {
+        // Keep the synthetic HOME and PATH while retaining the caller's login mode.
+        const result = fixture.run(command, ["--noprofile", ...args], { env, timeout: 10_000 });
+        return { ...result, exitCode: result.status, timedOut: false };
+      });
+      await approveOpenClawAdminScope(
+        { command: hostCommand, commandPath: cliPath } as never,
+        {
+          exec: async () => ({
+            exitCode: 1,
+            stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+            stdout: "",
+            timedOut: false,
+          }),
+        } as never,
+        "fixture-sandbox",
+        env,
+        [],
+        false,
+      );
+      const result = await hostCommand.mock.results[0]!.value;
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+      expect(result.stdout).not.toContain("HOST_LOGOUT_RAN");
+      expect(fs.readFileSync(commandLog, "utf8")).toBe(
+        `devices list --json\ndevices approve ${requestId}\n`,
+      );
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("retains a fixed diagnostic without approval output secrets when approval fails", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const secret = "approval-diagnostic-secret-value";
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf 'approval denied by policy token=%s\n' "$APPROVAL_DIAGNOSTIC_SECRET" >&2
+exit 91
+`,
+    );
+
+    try {
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requestId)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, requestId),
+            APPROVAL_DIAGNOSTIC_SECRET: secret,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(27);
+      expect(result.stderr).toContain("ADMIN_APPROVE_FAILED");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=authorization-rejected");
+      expect(result.stderr).not.toContain(secret);
+      expect(result.stderr).not.toContain(requestId);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("refuses an output request ID that disagrees with canonical pending state", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-selection-");
+    const outputRequestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const canonicalRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf '%s\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
+`,
+    );
+
+    try {
+      const approveLog = fixture.path("approve.log");
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outputRequestId)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, canonicalRequestId),
+            MANAGED_ADMIN_APPROVE_LOG: approveLog,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("ADMIN_REQUEST_SELECTION_FAILED");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=command-failed");
+      expect(existsSync(approveLog)).toBe(false);
+      expect(result.stderr).not.toContain(outputRequestId);
+      expect(result.stderr).not.toContain(canonicalRequestId);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("rejects ambiguous admin request IDs", () => {
+    const first = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const second = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
+    expect(
+      pendingAdminRequestId({
+        exitCode: 1,
+        stderr: [first, second]
+          .map((requestId) => `scope upgrade pending approval (requestId: ${requestId})`)
+          .join("\n"),
+        stdout: "",
+        timedOut: false,
+      }),
+    ).toBeNull();
+  });
+
   it("waits only for the exact OpenShell Deleting phase and records each observation", async () => {
     const list = vi
       .fn()
@@ -316,9 +683,14 @@ describe("managed image activation failure diagnostics", () => {
   });
   it("gates only the post-restart OpenClaw turn on inner gateway readiness (#7744)", () => {
     const command = ["openclaw", "agent", "--session-id", "quoted session"];
-    const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+    const script = managedActivationPostRestartAgentTurnScript(
+      "openclaw",
+      "after",
+      command,
+      "http://127.0.0.1:18791/health",
+    );
 
-    expect(script).toContain("http://127.0.0.1:18789/health");
+    expect(script).toContain("http://127.0.0.1:18791/health");
     expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
     expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
     expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();

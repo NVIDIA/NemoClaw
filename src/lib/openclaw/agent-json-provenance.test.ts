@@ -327,11 +327,40 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["livenessState=abandoned"]);
   });
 
-  it("detects replayInvalid on the run metadata", () => {
-    const raw = JSON.stringify({
-      status: "ok",
-      result: { payloads: [], meta: { replayInvalid: true } },
-    });
+  it.each([
+    ["local", {}, false],
+    ["gateway", {}, false],
+    ["gateway", { aborted: true }, true],
+    ["gateway", { stopReason: "tool_calls" }, true],
+    ["gateway", { toolSummary: { calls: 1, failures: 1 } }, true],
+  ] as const)(
+    "classifies replay risk for a %s tool turn [case %#]",
+    (kind, override, incomplete) => {
+      const response = {
+        payloads: [{ text: "TOOLS_COMPLETE" }],
+        meta: {
+          aborted: false,
+          replayInvalid: true,
+          stopReason: "stop",
+          finalAssistantVisibleText: "TOOLS_COMPLETE",
+          toolSummary: { calls: 1, failures: 0, tools: ["exec"] },
+          ...override,
+        },
+      };
+      const raw = JSON.stringify(
+        kind === "local" ? response : { status: "ok", summary: "completed", result: response },
+      );
+      expect(openClawAgentIncompleteTurnSignal(raw)).toEqual(
+        incomplete ? { markers: ["replayInvalid=true"] } : null,
+      );
+    },
+  );
+
+  it.each(["local", "gateway"])("rejects an uncorroborated %s replay-risk response", (kind) => {
+    const response = { payloads: [{ text: "partial" }], meta: { replayInvalid: true } };
+    const raw = JSON.stringify(
+      kind === "local" ? response : { status: "ok", summary: "completed", result: response },
+    );
     expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["replayInvalid=true"]);
   });
 
@@ -581,6 +610,14 @@ describe("openClawAgentIncompleteTurnSignal", () => {
           { meta: { finalAssistantVisibleText: "[[reply_to_current]] 56" } },
         ],
         ["a trailing newline in the reply", { payloads: [{ text: "56\n" }] }],
+        ["no declared liveness state", { meta: { livenessState: undefined } }],
+        [
+          "a reply with text and media",
+          {
+            meta: { finalAssistantVisibleText: "56\nMEDIA:/tmp/plot.png" },
+            payloads: [{ text: "56", mediaUrl: "/tmp/plot.png" }],
+          },
+        ],
         [
           "a media-only reply",
           {
@@ -599,7 +636,6 @@ describe("openClawAgentIncompleteTurnSignal", () => {
       it.each<[string, Turn]>([
         ["a paused compaction turn", { meta: { livenessState: "paused" } }],
         ["a blocked turn", { meta: { livenessState: "blocked" } }],
-        ["an undeclared liveness state", { meta: { livenessState: undefined } }],
         ["an error stop reason", { meta: { stopReason: "error" } }],
         ["an aborted turn", { meta: { aborted: true } }],
         ["a run error", { meta: { error: { kind: "provider_error" } } }],
@@ -617,6 +653,13 @@ describe("openClawAgentIncompleteTurnSignal", () => {
         ["only an error payload", { payloads: [{ text: "exec failed", isError: true }] }],
         ["only a reasoning payload", { payloads: [{ text: "thinking", isReasoning: true }] }],
         ["an empty media URL", { payloads: [{ text: "", mediaUrls: [""] }] }],
+        [
+          "media that differs from the visible MEDIA: reply",
+          {
+            meta: { finalAssistantVisibleText: "MEDIA:/tmp/plot.png" },
+            payloads: [{ text: "", mediaUrl: "/tmp/other.png" }],
+          },
+        ],
         ["a pending continuation", { meta: { continuationPending: true } }],
         [
           "the fallback reply OpenClaw writes when no final answer was produced",

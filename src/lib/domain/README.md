@@ -22,6 +22,8 @@ src/lib/domain/<area>/<topic>.ts
 
 Configuration export represents retained startup intent from a validated managed-image receipt.
 Preserve image authority and full residual profile comparison when admitting a supported setting.
+Export translates Landlock `strict` to the pinned v1 consumer's `hard_requirement` value.
+Keep fail-closed enforcement and preserve `best_effort` unchanged.
 
 V1alpha1 configuration export omits corporate CA material and its digest. An otherwise supported
 managed sandbox with an imported CA remains exportable after its retained bundle and startup-profile

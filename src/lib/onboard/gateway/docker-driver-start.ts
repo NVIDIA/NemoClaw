@@ -9,6 +9,7 @@ import {
   buildSelectedOpenShellSubprocessEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/command-argv";
+import { gatewayHostRuntimeEnvironment } from "../runtime-provider/configured-runtime";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
 import { reportDockerDriverGatewayStartFailure } from "../docker-driver-gateway-failure";
@@ -194,7 +195,10 @@ export function createDockerDriverGatewayStart(
       );
     }
     const selectedRuntimeEnv = runtimeSelection
-      ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
+      ? {
+          ...buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          ...gatewayHostRuntimeEnvironment(process.env),
+        }
       : undefined;
     const runtimeOptions = selectedRuntimeEnv
       ? {

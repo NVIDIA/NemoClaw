@@ -82,7 +82,7 @@ flowchart TB
 | Layer | What it protects | Enforcement point | Changeable at runtime |
 | --- | --- | --- | --- |
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
-| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Configuration ownership depends on the agent runtime. Refer to [Understand Filesystem Controls](./security-controls/filesystem-controls). |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
@@ -216,6 +216,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 |---|---|---|
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. The sandbox base image includes the `brew` binary; this preset opens network egress to GitHub and the Homebrew formulae index so `brew install` can fetch bottles. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
+| `brew-balanced` | The same Homebrew endpoints and binaries as `brew`, with GET and HEAD only for `raw.githubusercontent.com`. Balanced selects this preset; Open keeps `brew`. | Allows downloading and installing arbitrary Homebrew packages, which may contain malicious code. |
 | `claude-code` | Claude Code CLI API, browser login, telemetry, and crash-report endpoints. | Allows a separately installed Claude Code CLI to reach Anthropic and telemetry hosts with its own credentials. On `platform.claude.com` the preset allows GET and POST on `/v1/oauth/**` only, which the browser login uses to exchange its authorization code. Do not use this preset for NemoClaw inference routing. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
@@ -337,7 +338,7 @@ After NemoClaw qualifies the native N1x identity, you must provide explicit Expr
 A qualifying Windows WSL N1x host uses managed llama.cpp through Windows Express.
 The installer leaves provider and recipe selection to onboarding.
 When no provider is requested or recorded and `NEMOCLAW_MODEL` is unset, onboarding selects managed llama.cpp; an optional compatible `NEMOCLAW_LLAMACPP_RECIPE` value makes the managed recipe explicit.
-Onboarding recognizes one proof-backed GPU only when its normalized NVIDIA identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`; the Windows chassis product name does not participate in selection.
+Onboarding recognizes one proof-backed GPU only when its normalized NVIDIA identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`; the Windows chassis product name does not participate in selection.
 Qualification also requires Linux Arm64 WSL, local Docker Desktop on the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
 If a required check fails after managed selection starts, onboarding stops before installation.
@@ -364,7 +365,7 @@ They provide guidance on which controls to keep tight or relax.
 Use for always-on assistants with minimal external access.
 
 - Select the Restricted tier during onboarding.
-  Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew` presets.
+  Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew-balanced` package presets.
 - Choose no web search when prompted.
   Enabling web search adds the selected `brave` or `tavily` preset even with the Restricted tier.
 - Keep the remaining defaults and do not add other presets.

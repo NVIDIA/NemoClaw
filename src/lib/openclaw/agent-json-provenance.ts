@@ -365,67 +365,82 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
   return null;
 }
 
-type AgentResponse = { doc: unknown; response: UnknownRecord; meta: UnknownRecord };
-
 /** Select the final agent response without treating JSON log records as responses. */
-function finalAgentResponse(docs: unknown[]): AgentResponse | null {
+function finalAgentResponse(docs: unknown[]): {
+  document: UnknownRecord;
+  response: UnknownRecord;
+  meta: UnknownRecord;
+} | null {
   for (let index = docs.length - 1; index >= 0; index -= 1) {
-    const doc = docs[index];
-    const response = openClawAgentResponseRecord(doc);
-    if (response && isObjectRecord(response.meta)) return { doc, response, meta: response.meta };
+    const document = docs[index];
+    const response = openClawAgentResponseRecord(document);
+    if (isObjectRecord(document) && response && isObjectRecord(response.meta)) {
+      return { document, response, meta: response.meta };
+    }
   }
   return null;
 }
 
+const WORKING_LIVENESS_VALUE = "working";
 const SETTLED_TOOL_FALLBACK_TEXT =
   "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
 
-function isNonEmptyString(value: unknown): boolean {
-  return typeof value === "string" && value.trim().length > 0;
+/** The final assistant text without leading reply directives such as [[reply_to_current]]. */
+function visibleReplyText(value: unknown): string {
+  return typeof value === "string" ? value.replace(/^(?:\s*\[\[[^\]]*\]\])+/, "").trim() : "";
 }
 
-/** A payload with visible text or media that is not an error or reasoning. */
-function isDeliveredReply(payload: unknown): boolean {
-  if (!isObjectRecord(payload) || payload.isError === true || payload.isReasoning === true) {
-    return false;
-  }
+/** Whether a payload carries the visible text, with its MEDIA: lines as payload media. */
+function payloadMatchesVisibleReply(payload: unknown, visible: string): boolean {
+  if (!isObjectRecord(payload) || payload.isError === true) return false;
+  const lines = visible.split("\n").map((line) => line.trim());
+  const media = lines
+    .filter((line) => line.startsWith("MEDIA:"))
+    .map((line) => line.slice("MEDIA:".length).trim());
+  const text = lines
+    .filter((line) => !line.startsWith("MEDIA:"))
+    .join("\n")
+    .trim();
+  const urls = [payload.mediaUrl, ...(Array.isArray(payload.mediaUrls) ? payload.mediaUrls : [])];
   return (
-    isNonEmptyString(payload.text) ||
-    isNonEmptyString(payload.mediaUrl) ||
-    (Array.isArray(payload.mediaUrls) && payload.mediaUrls.some(isNonEmptyString))
+    (typeof payload.text === "string" ? payload.text.trim() : "") === text &&
+    media.every((url) => url.length > 0 && urls.includes(url))
   );
 }
 
-/** OpenClaw's fixed reply when a tool turn settles without a final answer. */
-function isSettledToolFallback(payload: unknown): boolean {
-  return isObjectRecord(payload) && String(payload.text).trim() === SETTLED_TOOL_FALLBACK_TEXT;
-}
-
-/**
- * OpenClaw sets replayInvalid on every turn that ran a mutating tool, so it
- * alone does not mean the turn is incomplete (#11844).
- */
-function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
+/** Require a completed tool run and a final reply before accepting replay risk. */
+function hasCompletedToolReply(
+  document: UnknownRecord,
+  response: UnknownRecord,
+  meta: UnknownRecord,
+): boolean {
+  if (meta.aborted === true || meta.error !== undefined) return false;
+  if (meta.stopReason !== undefined && normalized(meta.stopReason) !== "stop") return false;
+  if (meta.continuationPending === true || timedOutPhase(meta)) return false;
+  // A missing liveness state is accepted; any declared state other than working is not.
   if (
-    doc !== response &&
-    (!isObjectRecord(doc) || doc.status !== "ok" || doc.summary !== "completed")
+    meta.livenessState !== undefined &&
+    normalized(meta.livenessState) !== WORKING_LIVENESS_VALUE
   ) {
     return false;
   }
-  const tools = meta.toolSummary;
+  const completed =
+    document === response
+      ? meta.aborted === false && normalized(meta.stopReason) === "stop"
+      : document.status === "ok" && document.summary === "completed";
+  const summary = meta.toolSummary;
+  const visible = visibleReplyText(meta.finalAssistantVisibleText);
+  if (visible === SETTLED_TOOL_FALLBACK_TEXT) return false;
   return (
-    meta.livenessState === "working" &&
-    meta.stopReason === "stop" &&
-    meta.aborted !== true &&
-    meta.error === undefined &&
-    meta.continuationPending !== true &&
-    isObjectRecord(tools) &&
-    typeof tools.calls === "number" &&
-    tools.calls > 0 &&
-    tools.failures === 0 &&
+    completed &&
+    isObjectRecord(summary) &&
+    typeof summary.calls === "number" &&
+    Number.isSafeInteger(summary.calls) &&
+    summary.calls > 0 &&
+    summary.failures === 0 &&
+    visible.length > 0 &&
     Array.isArray(response.payloads) &&
-    response.payloads.some(isDeliveredReply) &&
-    !response.payloads.some(isSettledToolFallback)
+    response.payloads.some((payload) => payloadMatchesVisibleReply(payload, visible))
   );
 }
 
@@ -437,12 +452,8 @@ function timedOutPhase(meta: UnknownRecord): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-const REPLAY_INVALID_MARKER = "replayInvalid=true";
-
-/** The incomplete-turn markers present in the run metadata. */
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push(REPLAY_INVALID_MARKER);
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
@@ -456,10 +467,9 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 }
 
 /**
- * Detect a turn the run metadata itself marks incomplete, abandoned, or timed
- * out. Returns null when no marker is present, so a healthy turn is never
- * reclassified. A timed-out run also carries its declared phase, which the
- * caller uses to pick deadline-specific recovery guidance.
+ * Detect incomplete, abandoned, timed-out, or uncorroborated replay-risk turns.
+ * Corroborated completed tool replies remain successful. A timed-out run also
+ * carries its declared phase for deadline-specific recovery guidance.
  */
 export function openClawAgentIncompleteTurnSignal(
   raw: string,
@@ -468,12 +478,13 @@ export function openClawAgentIncompleteTurnSignal(
   if (docs.length === 0) return null;
   const final = finalAgentResponse(docs);
   if (!final) return null;
-  const { meta } = final;
+  const { document, response, meta } = final;
   const markers = dedupe(turnMetaMarkers(meta));
-  if (markers.length === 0) return null;
-  if (markers.length === 1 && markers[0] === REPLAY_INVALID_MARKER && isCompletedToolTurn(final)) {
-    return null;
+  // Replay risk alone is not failure, but uncertain side effects need inspection.
+  if (meta.replayInvalid === true && !hasCompletedToolReply(document, response, meta)) {
+    markers.unshift("replayInvalid=true");
   }
+  if (markers.length === 0) return null;
   const timeoutPhase = timedOutPhase(meta);
   return timeoutPhase ? { markers, timeoutPhase } : { markers };
 }

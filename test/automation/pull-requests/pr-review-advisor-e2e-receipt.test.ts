@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import type { TrustedE2eRecommendationInventory } from "../../../tools/advisors/e2e-recommendations.mts";
+import {
+  trustedE2eRecommendationInventory,
+  type TrustedE2eRecommendationInventory,
+} from "../../../tools/advisors/e2e-recommendations.mts";
 import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
 import {
   buildSpecialistE2eReceipt,
@@ -46,6 +49,12 @@ const hostedEnvironment = {
 };
 
 describe("Review queue context", () => {
+  it("exposes Pi qualification as a trusted Advisor selector (#11083)", () => {
+    const trustedInventory = trustedE2eRecommendationInventory();
+
+    expect(trustedInventory.allowedJobIds).toContain("pi-agent-qualification");
+  });
+
   it("exports the complete existing plan and inventories without session parsing (#11489)", () => {
     const input = {
       ...expected,

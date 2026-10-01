@@ -240,9 +240,9 @@ export const googlechatManifest = {
       //           route → inbound 404s, bot goes silent ~60s after every start.
       // 3. Alts:  none in-sandbox — the self-write is OpenClaw's; a periodic restart
       //           only resets the timer. Real fix is upstream (5).
-      // 4. Risk:  low — the sandbox openclaw.json is build-time-sealed (0600 +
-      //           integrity hash), so nothing legitimately reloads it at runtime;
-      //           NemoClaw still restarts the gateway explicitly on rebuild/restart.
+      // 4. Risk:  bounded — this sets only the initial managed configuration.
+      //           OpenClaw owns the file after launch, so native changes may
+      //           re-enable reload; NemoClaw still restarts the gateway explicitly.
       // 5. Exit:  upstream reload re-mounts channels (not just plugins) on config
       //           reload → drop this fragment.
       id: "googlechat-openclaw-gateway-reload-off",
@@ -348,10 +348,13 @@ export const googlechatManifest = {
       spec: "npm:@openclaw/googlechat@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
+        "2026.9.2":
+          "sha512-LUO8Lg07IhzJfEzxn+GSij8WMS/uX3hTmv0SydTy/0fKSN7iZksf74TaZg50kOoBi8FzeqeXo/zoGVuk0Mj1Ig==",
         "2026.9.1":
           "sha512-Q5VTAJpfcrI7BSEw5Ugq3wf7JEg5QhTBwpi+BByGbfZsTTVjwZc7OIvNbKsVTh16I5/EWqHEnD+0WNeHqsteqw==",
       },
       tarballUrlByVersion: {
+        "2026.9.2": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.2.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.1.tgz",
       },
       required: true,
