@@ -131,17 +131,13 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Do not run `client.sh`, `client_hermes.sh`, and `client_deepagents.sh` at the same time. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). Optional sandbox teardown is in [Uninstall](#optional-e2e-sandboxes--only-if-you-want-to-save-cpu-ram).
+Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). 
 
-Validation is on DGX **8× H100** (80 GB) on-prem:
+Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**.. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. 
+
 <img width="643" height="584" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/2c940d43-c304-4e0a-ac32-55f13da5f722" />
 
-
-The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX's CPUs. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users; see [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
-
 #### 6a. OpenClaw + Ollama
-
-Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
@@ -222,7 +218,7 @@ Check the log to see the end users, sandboxes, and chats:
 
 #### 6b. Hermes + vLLM 
 
- After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
 
 ```text
 E2E test: Hermes + vLLM
