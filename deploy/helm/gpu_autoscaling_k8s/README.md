@@ -203,7 +203,7 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 ```
 
 
-### 6. E2E test: OpenClaw + Ollama N-user end-to-end 
+### 6. E2E test with multiple end users and sandboxes
 
 This is the multi-user architecture test for **OpenClaw + Ollama**. 
 ```text
@@ -223,11 +223,9 @@ E2E test: OpenClaw + Ollama
             1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
 ```
 
-Queries go **into the sandboxes**. They are not POSTed at Envoy or metrics-proxy pod IPs. The Job (`hpa-load-test-dgx-8xh100.sh`) remains the fast HPA-only test.
+Queries go **into the sandboxes**. 
 
-The client does **not** build images, create sandboxes, or choose the HPA metric. Pick the provision script for the metric, then use the same client.
-
-**GPU util (this DGX success path).** HPA metric `gpu_utilization_percent`, target 40%. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. GPU % can cross 40% both ways, so replicas may step 3↔4 or 6↔7 before they settle.
+**GPU util** HPA metric `gpu_utilization_percent`, target 40%. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. 
 
 ```bash
 cd deploy/helm/gpu_autoscaling_k8s
@@ -249,7 +247,6 @@ DURATION_SEC=180 \
 ./scripts/client.sh
 ```
 
-`DURATION_SEC=180` is the short demo from that run. Raise it (default in `client.sh` is 900) if you need chats to stay up while HPA steps to 8. This k3s rejects `kubectl get hpa,deploy,svc`; watch one resource type per command, or use `get-hpa.sh`.
 
 **LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`).
 
@@ -266,37 +263,6 @@ E2E_USERS=5 ./scripts/client.sh
 
 OpenShell must already be connected (`openshell status`). `ENABLE_ENVOY_LB=1`. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
-Optional one-process wrappers (same two steps in one terminal):
-
-```bash
-./scripts/test-openclaw-ollama-e2e-hpa.sh
-./scripts/test-openclaw-ollama-e2e-latency-hpa.sh
-```
-
-Results land in `e2e-results/openclaw-ollama/` (gitignored).
-
-Terminal A — provision (sandboxes and GPUs)
-```bash
-cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
-E2E_USERS=5 ./scripts/agentscaling_latency.sh
-```
-
-Terminal B — client (end users)
-```bash
-cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
-E2E_USERS=5 \
-E2E_INFLIGHT_START_PER_USER=1 \
-E2E_INFLIGHT_PER_USER=2 \
-MAX_TOKENS=608 \
-DURATION_SEC=180 \
-./scripts/client.sh
-```
-
-Optional watch (percentages become ms for this metric, e.g. 46514/3000):
-```bash
-cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
-./scripts/get-hpa.sh -n nemoclaw-gpu -w
-```
 
 ## Install details
 
