@@ -194,9 +194,9 @@ Validated 8xH100 — latency > 3000 ms:
 <img width="841" height="251" alt="Screenshot 2026-09-30 at 5 02 10 PM" src="https://github.com/user-attachments/assets/6235b4f9-9156-43d6-8196-c3e75ee1d7c9" />
 
 
-
 Check the log to see the end users, sandboxes, and chats: 
-<img width="807" height="321" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/41f33bf1-9fbc-4d6e-986e-63310a69f375" />
+<img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
+
 
 
 ## Agents
