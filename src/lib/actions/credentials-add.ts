@@ -17,6 +17,7 @@ import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  nativeNvidiaProviderProfilePath,
 } from "../inference/native-nvidia";
 import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
@@ -132,6 +133,9 @@ async function providerConfigEndpointFailure(
 
 function bundledProviderProfile(type: string): { profileType: string; profilePath: string } | null {
   const profileType = type.toLowerCase();
+  if (profileType === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
+    return { profileType, profilePath: nativeNvidiaProviderProfilePath() };
+  }
   const profilePath = path.join(
     ROOT,
     "nemoclaw-blueprint",
