@@ -384,21 +384,23 @@ function finalAgentResponse(docs: unknown[]): {
 const WORKING_LIVENESS_VALUE = "working";
 const SETTLED_TOOL_FALLBACK_TEXT =
   "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
+// The reply directives OpenClaw strips from payload text.
+const LEADING_REPLY_DIRECTIVES_RE =
+  /^(?:\s*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+|audio_as_voice)\s*\]\])+/i;
 
 /** The final assistant text without leading reply directives such as [[reply_to_current]]. */
 function visibleReplyText(value: unknown): string {
-  return typeof value === "string" ? value.replace(/^(?:\s*\[\[[^\]]*\]\])+/, "").trim() : "";
+  return typeof value === "string" ? value.replace(LEADING_REPLY_DIRECTIVES_RE, "").trim() : "";
 }
 
 /** Whether a payload carries the visible text, with its MEDIA: lines as payload media. */
 function payloadMatchesVisibleReply(payload: unknown, visible: string): boolean {
   if (!isObjectRecord(payload) || payload.isError === true) return false;
-  const lines = visible.split("\n").map((line) => line.trim());
-  const media = lines
-    .filter((line) => line.startsWith("MEDIA:"))
-    .map((line) => line.slice("MEDIA:".length).trim());
+  const lines = visible.split("\n");
+  const isMedia = (line: string) => line.trimStart().startsWith("MEDIA:");
+  const media = lines.filter(isMedia).map((line) => line.trim().slice("MEDIA:".length).trim());
   const text = lines
-    .filter((line) => !line.startsWith("MEDIA:"))
+    .filter((line) => !isMedia(line))
     .join("\n")
     .trim();
   const urls = [payload.mediaUrl, ...(Array.isArray(payload.mediaUrls) ? payload.mediaUrls : [])];

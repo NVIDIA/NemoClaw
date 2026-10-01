@@ -609,6 +609,14 @@ describe("openClawAgentIncompleteTurnSignal", () => {
           "a reply directive in the visible text",
           { meta: { finalAssistantVisibleText: "[[reply_to_current]] 56" } },
         ],
+        [
+          "a reply target directive in the visible text",
+          { meta: { finalAssistantVisibleText: "[[reply_to: 42]] 56" } },
+        ],
+        [
+          "bracketed reply text",
+          { meta: { finalAssistantVisibleText: "[[56]]" }, payloads: [{ text: "[[56]]" }] },
+        ],
         ["a trailing newline in the reply", { payloads: [{ text: "56\n" }] }],
         ["no declared liveness state", { meta: { livenessState: undefined } }],
         [
@@ -616,6 +624,13 @@ describe("openClawAgentIncompleteTurnSignal", () => {
           {
             meta: { finalAssistantVisibleText: "56\nMEDIA:/tmp/plot.png" },
             payloads: [{ text: "56", mediaUrl: "/tmp/plot.png" }],
+          },
+        ],
+        [
+          "an indented reply beside media",
+          {
+            meta: { finalAssistantVisibleText: "total:\n  56\nMEDIA:/tmp/plot.png" },
+            payloads: [{ text: "total:\n  56", mediaUrl: "/tmp/plot.png" }],
           },
         ],
         [
@@ -659,6 +674,10 @@ describe("openClawAgentIncompleteTurnSignal", () => {
             meta: { finalAssistantVisibleText: "MEDIA:/tmp/plot.png" },
             payloads: [{ text: "", mediaUrl: "/tmp/other.png" }],
           },
+        ],
+        [
+          "bracketed text the reply does not carry",
+          { meta: { finalAssistantVisibleText: "[[draft]] 56" } },
         ],
         ["a pending continuation", { meta: { continuationPending: true } }],
         [
