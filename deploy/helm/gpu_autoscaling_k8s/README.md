@@ -48,52 +48,7 @@ The chart generates a local inference API key (Bearer on `/v1`). OpenShell injec
 
 ## Prerequisites
 
-Install Kubernetes with [k3s](https://docs.k3s.io/quick-start) or [MicroK8s](https://microk8s.io/docs/getting-started). Either works for this recipe. After `kubectl get nodes` succeeds, the rest of the install is the same.
-
-Pick one:
-
-**[k3s](https://docs.k3s.io/quick-start)**
-
-```bash
-curl -sfL https://get.k3s.io | sh -
-mkdir -p "${HOME}/.kube"
-sudo cp /etc/rancher/k3s/k3s.yaml "${HOME}/.kube/config"
-sudo chown "$(id -u):$(id -g)" "${HOME}/.kube/config"
-export KUBECONFIG="${HOME}/.kube/config"
-kubectl get nodes
-```
-
-If `kubectl` prints connection refused to `127.0.0.1:6443`, start k3s: `sudo systemctl start k3s`. Then retry `kubectl get nodes`.
-
-**[MicroK8s](https://microk8s.io/docs/getting-started)**
-
-```bash
-sudo snap install microk8s --classic
-sudo microk8s status --wait-ready
-mkdir -p "${HOME}/.kube"
-sudo microk8s config > "${HOME}/.kube/config"
-export KUBECONFIG="${HOME}/.kube/config"
-kubectl get nodes
-```
-
-If `kubectl` cannot reach the API, start MicroK8s: `sudo microk8s start` and `sudo microk8s status --wait-ready`.
-
-Then:
-
-- Kubernetes 1.25+ (`kubectl`; 1.28+ preferred with Gateway API), Helm 3
-- NVIDIA GPU Operator + DCGM Exporter. Helm GPU Operator: `export DCGM_NAMESPACE=gpu-operator` (set `driver.enabled=false` when the host already has the NVIDIA driver). MicroK8s addon: `install-hpa.sh` can run `microk8s enable gpu` and `microk8s enable metrics-server`; DCGM namespace is then `gpu-operator-resources`.
-- Allocatable `nvidia.com/gpu`; nodes labeled `nvidia.com/gpu.present=true`
-- Metrics Server (`kubectl get apiservice v1beta1.metrics.k8s.io` is True)
-- OpenShell path: OpenShell CLI matching `versions.env`; Agent Sandbox CRDs; OIDC **or** the unauthenticated eval exception. E2e sandboxes pull the published GHCR image.
-
-```bash
-# Helm GPU Operator: export DCGM_NAMESPACE=gpu-operator
-# microk8s enable gpu: default gpu-operator-resources
-kubectl get nodes \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" GPUs="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
-kubectl get nodes -l nvidia.com/gpu.present=true
-kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
-```
+Install Kubernetes and make sure `kubectl get nodes` succeeds. Cluster install scripts: [Cluster install](#cluster-install).
 
 ## Quick start guide
 
@@ -675,3 +630,55 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 | Grafana | **3000** | Host, optional `3000:80` (Service port 80). |
 | k3s API | **6443** | Host. Connection refused here means the cluster is down. |
 | MicroK8s API | **16443** | Host. Same role as k3s 6443. |
+| minikube API | **8443** | Host, when using [minikube](#cluster-install). |
+
+## Cluster install
+
+Pick one of [k3s](https://docs.k3s.io/quick-start), [MicroK8s](https://microk8s.io/docs/getting-started), or [minikube](https://minikube.sigs.k8s.io/docs/start/). Then `kubectl get nodes` must succeed. Return to [Quick start](#quick-start-guide).
+
+This DGX demo uses **k3s**. The [Brev](https://brev.nvidia.com) 4× L40S HPA test used **MicroK8s**. **minikube** was not used on this DGX or Brev. After nodes are Ready, Quick start is the same.
+
+### k3s
+
+If k3s is already installed, do not run `get.k3s.io` again.
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+mkdir -p "${HOME}/.kube"
+sudo cp /etc/rancher/k3s/k3s.yaml "${HOME}/.kube/config"
+sudo chown "$(id -u):$(id -g)" "${HOME}/.kube/config"
+export KUBECONFIG="${HOME}/.kube/config"
+kubectl get nodes
+```
+
+If `kubectl` prints connection refused to `127.0.0.1:6443`, start k3s: `sudo systemctl start k3s`. Then retry `kubectl get nodes`.
+
+This k3s host uses Helm GPU Operator with `DCGM_NAMESPACE=gpu-operator` (`driver.enabled=false` when the host already has the NVIDIA driver).
+
+### MicroK8s
+
+```bash
+sudo snap install microk8s --classic
+sudo microk8s status --wait-ready
+mkdir -p "${HOME}/.kube"
+sudo microk8s config > "${HOME}/.kube/config"
+export KUBECONFIG="${HOME}/.kube/config"
+kubectl get nodes
+```
+
+If `kubectl` cannot reach the API, start MicroK8s: `sudo microk8s start` and `sudo microk8s status --wait-ready`.
+
+MicroK8s GPU addon: `install-hpa.sh` can run `microk8s enable gpu` and `microk8s enable metrics-server`. DCGM namespace is then `gpu-operator-resources`.
+
+### minikube
+
+```bash
+curl -LO https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube
+rm -f minikube-linux-amd64
+minikube start
+export KUBECONFIG="${HOME}/.kube/config"
+kubectl get nodes
+```
+
+GPU on minikube is outside this DGX path. Use the [minikube NVIDIA GPU tutorial](https://minikube.sigs.k8s.io/docs/tutorials/nvidia/) if you need GPUs there.
