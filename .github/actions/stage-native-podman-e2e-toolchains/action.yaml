@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: stage-native-podman-e2e-toolchains
-description: Copy the reviewed native Podman toolchains into the current E2E run.
+description: Copy the reviewed native Podman release assets into the current E2E run.
 
 inputs:
   enabled:
@@ -10,7 +10,7 @@ inputs:
     required: false
     default: "false"
   github-token:
-    description: Read-only token for retrieving the immutable source-run artifacts.
+    description: Read-only token for retrieving the immutable toolchain release assets.
     required: true
 
 runs:
@@ -21,51 +21,82 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        SOURCE_RUN_ID: "33211526093"
+        SOURCE_RELEASE_ID: "400756116"
       run: |
         set -euo pipefail
-        verify_artifact() {
-          local artifact_id="$1"
-          local artifact_name="$2"
-          local artifact_digest="$3"
-          gh api "repos/NVIDIA/NemoClaw/actions/artifacts/$artifact_id" \
-            --jq '[.id,.name,.expired,.digest,.workflow_run.id] | @tsv' \
-            | awk -F '\t' \
-                -v expected_id="$artifact_id" \
-                -v expected_name="$artifact_name" \
-                -v expected_digest="$artifact_digest" \
-                -v expected_run="$SOURCE_RUN_ID" \
-                '$1 == expected_id && $2 == expected_name && $3 == "false" && $4 == expected_digest && $5 == expected_run { found = 1 }
-                 END { exit found ? 0 : 1 }'
+        release="$(gh api "repos/NVIDIA/NemoClaw/releases/$SOURCE_RELEASE_ID")"
+        jq -e --argjson releaseId "$SOURCE_RELEASE_ID" '
+          .id == $releaseId and
+          .tag_name == "ci-native-podman-e2e-2026-10-01" and
+          .target_commitish == "1ccec4e141b0a830229ef68c96639851d24810fd" and
+          .draft == false
+        ' <<<"$release" >/dev/null
+        verify_asset() {
+          local asset_id="$1"
+          local asset_name="$2"
+          local asset_digest="$3"
+          local asset_size="$4"
+          jq -e \
+            --argjson assetId "$asset_id" \
+            --arg assetName "$asset_name" \
+            --arg assetDigest "$asset_digest" \
+            --argjson assetSize "$asset_size" '
+              [.assets[] | select(
+                .id == $assetId and .name == $assetName and
+                .state == "uploaded" and .digest == $assetDigest and .size == $assetSize
+              )] | length == 1
+            ' <<<"$release" >/dev/null
         }
-        verify_artifact \
-          10385514729 \
-          native-runtime-podman-toolchain-amd64 \
-          sha256:1f73b66ef2a70862e860b0897e191ed05b8976d3b10b0f84b41e76d8f1cb58ba
-        verify_artifact \
-          10386378988 \
-          native-runtime-podman-toolchain-arm64 \
-          sha256:470487563f801c77b95f1665510fe1a11894c913e2787ebfb9994f56bac8cf56
+        verify_asset \
+          602749331 \
+          podman-toolchain-amd64.zip \
+          sha256:2a07674b09da33f24772936e5fc3e8d7e80dbbe096cc70e9fa32babc9177a006 \
+          85029836
+        verify_asset \
+          602749330 \
+          podman-toolchain-arm64.zip \
+          sha256:dba39bc41923592bef67980e4d179c8b6d8442a6157e67621e53abf969072e3a \
+          80376484
 
     - name: Download immutable native Podman amd64 toolchain
       if: ${{ inputs.enabled == 'true' }}
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      with:
-        github-token: ${{ inputs.github-token }}
-        repository: NVIDIA/NemoClaw
-        run-id: "33211526093"
-        artifact-ids: "10385514729"
-        path: ${{ runner.temp }}/native-podman-e2e-toolchain-amd64
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/native-podman-e2e-amd64.zip"
+        directory="$RUNNER_TEMP/native-podman-e2e-toolchain-amd64"
+        [[ ! -e "$archive" && ! -L "$archive" && ! -e "$directory" && ! -L "$directory" ]]
+        gh api -H 'Accept: application/octet-stream' \
+          repos/NVIDIA/NemoClaw/releases/assets/602749331 >"$archive"
+        printf '%s  %s\n' \
+          2a07674b09da33f24772936e5fc3e8d7e80dbbe096cc70e9fa32babc9177a006 \
+          "$archive" | sha256sum --check --strict -
+        mkdir "$directory"
+        unzip -q "$archive" -d "$directory"
+        (cd "$directory" && sha256sum --check --strict SHA256SUMS)
+        rm -f "$archive"
 
     - name: Download immutable native Podman arm64 toolchain
       if: ${{ inputs.enabled == 'true' }}
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      with:
-        github-token: ${{ inputs.github-token }}
-        repository: NVIDIA/NemoClaw
-        run-id: "33211526093"
-        artifact-ids: "10386378988"
-        path: ${{ runner.temp }}/native-podman-e2e-toolchain-arm64
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/native-podman-e2e-arm64.zip"
+        directory="$RUNNER_TEMP/native-podman-e2e-toolchain-arm64"
+        [[ ! -e "$archive" && ! -L "$archive" && ! -e "$directory" && ! -L "$directory" ]]
+        gh api -H 'Accept: application/octet-stream' \
+          repos/NVIDIA/NemoClaw/releases/assets/602749330 >"$archive"
+        printf '%s  %s\n' \
+          dba39bc41923592bef67980e4d179c8b6d8442a6157e67621e53abf969072e3a \
+          "$archive" | sha256sum --check --strict -
+        mkdir "$directory"
+        unzip -q "$archive" -d "$directory"
+        (cd "$directory" && sha256sum --check --strict SHA256SUMS)
+        rm -f "$archive"
 
     - name: Publish native Podman amd64 toolchain for this run
       if: ${{ inputs.enabled == 'true' }}
