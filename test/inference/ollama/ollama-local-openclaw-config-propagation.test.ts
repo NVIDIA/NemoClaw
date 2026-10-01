@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildConfig,
   buildManagedInferenceSafeguardCompaction,
@@ -134,6 +134,35 @@ describe("ollama-local OpenClaw config propagation", () => {
 });
 
 describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
+  it("carries the selected N1x preset through a legacy Dockerfile build and clears a removed selection (#12297)", () => {
+    const dockerfilePath = dockerfileWith(
+      fs.readFileSync(path.resolve(import.meta.dirname, "../../../Dockerfile"), "utf8"),
+    );
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+    vi.stubEnv("NEMOCLAW_MAX_TOKENS", "4096");
+    const patchArgs = [
+      dockerfilePath,
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "http://127.0.0.1:18789",
+      "n1x-legacy",
+      "vllm-local",
+    ] as const;
+
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4");
+    patchStagedDockerfile(...patchArgs);
+    expect(buildConfig(readDockerArgs(dockerfilePath)).agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 300,
+      qualityGuard: { enabled: true, maxRetries: 1 },
+    });
+
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", undefined);
+    patchStagedDockerfile(...patchArgs);
+    expect(buildConfig(readDockerArgs(dockerfilePath)).agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 120,
+      qualityGuard: { enabled: true, maxRetries: 0 },
+    });
+  });
+
   it("delegates small Local Ollama reserve clamping to OpenClaw 2026.9.1", () => {
     const config = buildConfig({
       NEMOCLAW_MODEL: "qwen2.5:0.5b",
