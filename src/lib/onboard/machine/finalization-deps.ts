@@ -485,15 +485,8 @@ export const finalizationHandlerDeps = {
     environment: NodeJS.ProcessEnv,
   ): Promise<SandboxProcessReadinessResult> {
     let registry: ReturnType<typeof finalizationHandlerRuntime.loadRegistryPersistence>;
-    let entry: import("../../state/registry/types").SandboxEntry | undefined;
-    let gatewayName: string;
     try {
       registry = finalizationHandlerRuntime.loadRegistryPersistence(environment);
-      entry = registry.load().sandboxes[name];
-      if (!entry || typeof entry.gatewayName !== "string") {
-        return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
-      }
-      gatewayName = entry.gatewayName;
     } catch {
       return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
     }
@@ -515,6 +508,10 @@ export const finalizationHandlerDeps = {
             }
           };
           try {
+            const entry = readRegistry(name);
+            if (!entry || typeof entry.gatewayName !== "string") {
+              return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
+            }
             portableLifecycle.qualifyPortableAgentLifecycleAuthority(name, {
               env: environment,
               readRegistry,
@@ -523,7 +520,7 @@ export const finalizationHandlerDeps = {
               name,
               {
                 agent: entry.agent,
-                gatewayName,
+                gatewayName: entry.gatewayName,
                 lifecycleGeneration: entry.lifecycleGeneration,
                 openshellDriver: entry.openshellDriver,
                 provider: entry.provider,

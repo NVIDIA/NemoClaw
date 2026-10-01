@@ -811,7 +811,9 @@ describe("Hermes portable finalization readiness", () => {
       .spyOn(finalizationHandlerRuntime, "loadRegistryPersistence")
       .mockReturnValue({ load });
     const assertHermesPortableAgentLifecycleAuthority = vi.fn(assertReady);
-    const qualifyPortableAgentLifecycleAuthority = vi.fn(() => undefined as never);
+    const qualifyPortableAgentLifecycleAuthority = vi.fn<
+      typeof import("../experimental/portable-agent-lifecycle").qualifyPortableAgentLifecycleAuthority
+    >(() => undefined as never);
     vi.spyOn(finalizationHandlerRuntime, "loadPortableAgentLifecycle").mockReturnValue({
       assertHermesPortableAgentLifecycleAuthority,
       HermesPortableLifecycleAuthorityError,
@@ -864,6 +866,44 @@ describe("Hermes portable finalization readiness", () => {
     );
     const readinessDeps = harness.assertHermesPortableAgentLifecycleAuthority.mock.calls[0]?.[2];
     expect(readinessDeps?.readRegistry?.("alpha")).toEqual(harness.entry);
+  });
+
+  it("uses the registry authority observed under the lifecycle lock (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    const lockedEntry = {
+      ...harness.entry,
+      gatewayName: "nemoclaw-19081",
+      lifecycleGeneration: "generation-2",
+    };
+    harness.withMcpLifecycleLock.mockImplementation(async (_name, operation) => {
+      harness.load.mockReturnValue({
+        defaultSandbox: "alpha",
+        sandboxes: { alpha: lockedEntry },
+      });
+      return await operation();
+    });
+    harness.qualifyPortableAgentLifecycleAuthority.mockImplementation((_name, deps) => {
+      expect(deps.readRegistry?.("alpha")).toEqual(lockedEntry);
+      return undefined as never;
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toBe(true);
+
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledWith(
+      "alpha",
+      {
+        agent: "hermes",
+        gatewayName: "nemoclaw-19081",
+        lifecycleGeneration: "generation-2",
+        openshellDriver: "docker",
+        provider: "ollama-local",
+      },
+      expect.objectContaining({ readRegistry: expect.any(Function) }),
+    );
   });
 
   it("preserves a readable receipt and registry disagreement for diagnosis (#11892)", async () => {
