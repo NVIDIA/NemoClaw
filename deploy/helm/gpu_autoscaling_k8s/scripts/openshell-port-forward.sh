@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Keep the OpenShell CLI tunnel on 127.0.0.1:8080. kubectl port-forward
+# Keep the OpenShell CLI tunnel on 127.0.0.1:18080. kubectl port-forward
 # exits when the terminal closes, SSH drops, or the API connection
 # resets. Then openshell fails with Connection refused (os error 111).
 # This loop starts the forward again.
@@ -18,7 +18,7 @@ set -uo pipefail
 
 NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
 SERVICE="${OPENSHELL_SERVICE:-openshell}"
-LOCAL_PORT="${OPENSHELL_LOCAL_PORT:-8080}"
+LOCAL_PORT="${OPENSHELL_LOCAL_PORT:-18080}"
 REMOTE_PORT="${OPENSHELL_REMOTE_PORT:-8080}"
 RETRY_SEC="${OPENSHELL_PORT_FORWARD_RETRY_SEC:-2}"
 

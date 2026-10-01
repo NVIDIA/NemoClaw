@@ -33,6 +33,7 @@ agentscaling_hermes_common_pin() {
     agentscaling_hermes_common_fail "uses NAMESPACE=nemoclaw-gpu RELEASE=nemoclaw-gpu (got ${NAMESPACE}/${RELEASE})"
   fi
   export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
+  export ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP:-1}"
   export ENABLE_AUTOSCALING="${ENABLE_AUTOSCALING:-1}"
   export MIN_REPLICAS="${MIN_REPLICAS:-1}"
   export MAX_REPLICAS="${MAX_REPLICAS:-8}"
@@ -106,6 +107,7 @@ agentscaling_hermes_common_apply_hpa() {
       INFERENCE_RUNTIME=vllm \
       INFERENCE_MODEL="${INFERENCE_MODEL}" \
       HPA_METRIC="${wanted}" \
+      ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP}" \
       "${SCRIPT_DIR}/install-hpa.sh"
   fi
   kubectl get gateway "${HPA_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1 \
@@ -143,7 +145,7 @@ agentscaling_hermes_common_main() {
   command -v kubectl >/dev/null 2>&1 || agentscaling_hermes_common_fail "missing command: kubectl"
   command -v python3 >/dev/null 2>&1 || agentscaling_hermes_common_fail "missing command: python3"
   openshell status >/dev/null \
-    || agentscaling_hermes_common_fail "OpenShell CLI cannot reach 127.0.0.1:8080. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+    || agentscaling_hermes_common_fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
   hpa_common_verify_target_node 1 || exit 1
   hpa_common_verify_gpu_capacity "${MAX_REPLICAS}" || exit 1
   kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True \

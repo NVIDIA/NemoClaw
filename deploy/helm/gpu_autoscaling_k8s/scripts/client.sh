@@ -53,7 +53,7 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
 openshell status >/dev/null \
-  || fail "OpenShell CLI cannot reach 127.0.0.1:8080. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+  || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
 
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0

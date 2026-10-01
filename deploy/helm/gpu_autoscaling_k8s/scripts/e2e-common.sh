@@ -157,7 +157,7 @@ else
       -o "jsonpath={.data.${key//./\\.}}" | base64 -d >"${MTLS_DIR}/${key}"
   done
   chmod 600 "${MTLS_DIR}"/*
-  openshell gateway add https://127.0.0.1:8080 --local --name nemoclaw-k8s
+  openshell gateway add https://127.0.0.1:18080 --local --name nemoclaw-k8s
 fi
 openshell status
 

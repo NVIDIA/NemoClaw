@@ -98,17 +98,15 @@ DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP
 kubectl get gatewayclass eg
 ```
 
-### 5. Keep the OpenShell CLI tunnel attached
+### 5. Connect the OpenShell CLI
 
-The OpenShell CLI talks to a **host** port. `kubectl port-forward` maps that host port to cluster `service/openshell` port **8080**. Leave this process attached. If it exits, `openshell status` fails. On this host, **8080** is already taken by another process, so the CLI tunnel is **18080**. Full list: [Ports](#ports).
-
-Terminal 1 — keep running:
+Keep this attached:
 
 ```bash
-OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh
+./scripts/openshell-port-forward.sh
 ```
 
-Terminal 2 — copy client TLS from the new gateway, then register the host URL. Skip `openshell gateway add` if `openshell status` already succeeds against **18080**. After a reinstall, refresh the certs or you get `BadSignature`.
+In another terminal, copy client TLS and register the gateway. After a reinstall, refresh the certs or you get `BadSignature`.
 
 ```bash
 MTLS_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/openshell/gateways/nemoclaw-k8s/mtls"
@@ -182,7 +180,7 @@ E2E_USERS=5 ./scripts/agentscaling_latency.sh
 E2E_USERS=5 ./scripts/client.sh
 ```
 
-OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-keep-the-openshell-cli-tunnel-attached) port-forward attached. Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
+OpenShell must already be connected (`openshell status`). Keep the [step 5](#5-connect-the-openshell-cli) tunnel attached. This e2e uses Envoy with `ALLOW_INSECURE_HTTP=1` (same isolated eval as step 4). Do not source `e2e-common.sh` (it forces `ENABLE_AUTOSCALING=0`). Do not set `minReplicas=8`. Tear down sandboxes with `./scripts/agentscaling_gpuutil.sh cleanup` or `./scripts/agentscaling_latency.sh cleanup`.
 
 Validated 4× L40S — GPU util > 40%:
 
@@ -388,7 +386,7 @@ Ask **In one sentence, what is an AI agent sandbox?** through authenticated infe
 
 | Path | Port-forward | Local URL |
 |------|----------------|-----------|
-| OpenShell (recommended) | `kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080` | `https://127.0.0.1:8080` |
+| OpenShell (recommended) | `./scripts/openshell-port-forward.sh` | `https://127.0.0.1:18080` |
 | Metrics-proxy | `kubectl port-forward -n nemoclaw-gpu service/nemoclaw-gpu-metrics-proxy 8081:8081` | `http://127.0.0.1:8081` |
 
 ```bash
@@ -420,7 +418,7 @@ treats `-m` as the prompt). OpenShell must already be connected (`openshell stat
 and not in a browser. Skip that script unless `./scripts/run-agent-sandbox.sh`
 is already attached and healthy. Per-agent loops: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#hermes).
 
-Direct curl (loopback only; Bearer still required; **8081** not 8080):
+Direct curl (loopback only; Bearer still required; **8081**):
 
 ```bash
 kubectl port-forward -n nemoclaw-gpu service/nemoclaw-gpu-metrics-proxy 8081:8081
@@ -620,7 +618,7 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 
 | Name | Port | Where |
 |------|------|-------|
-| OpenShell gateway | **8080** cluster / **18080** host | Cluster `service/openshell` is **8080**. This host uses `OPENSHELL_LOCAL_PORT=18080 ./scripts/openshell-port-forward.sh` (`18080:8080`). `openshell status` must be `https://127.0.0.1:18080`. |
+| OpenShell CLI | **18080** | Host. `./scripts/openshell-port-forward.sh`. `openshell status` uses `https://127.0.0.1:18080`. |
 | OpenClaw agent | **18789** | Inside each OpenClaw sandbox. E2e clients talk here. Do not port-forward. |
 | Hermes gateway | **8642** | Inside each Hermes sandbox. `hermes -z` e2e does not forward it. |
 | Envoy load balancer | **443** / **80** | Cluster. Sandboxes use `https://inference.local`. |
@@ -636,7 +634,7 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 
 Pick one of [k3s](https://docs.k3s.io/quick-start), [MicroK8s](https://microk8s.io/docs/getting-started), or [minikube](https://minikube.sigs.k8s.io/docs/start/). Then `kubectl get nodes` must succeed. Return to [Quick start](#quick-start-guide).
 
-This DGX demo uses **k3s**. The [Brev](https://brev.nvidia.com) 4× L40S HPA test used **MicroK8s**. **minikube** was not used on this DGX or Brev. After nodes are Ready, Quick start is the same.
+This DGX demo uses **k3s**. The [Brev](https://brev.nvidia.com) 4× L40S HPA test used **MicroK8s**.
 
 ### k3s
 
