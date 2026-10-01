@@ -101,27 +101,30 @@ nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --ou
 ```
 
 With a bundle, onboarding runs isolated OpenTofu data-source plans for the selected Fabric image and inference model catalog.
-For a managed gateway, it also checks engine prerequisites and hardware advertisements.
+For a managed gateway, it also checks engine prerequisites and reads hardware advertisements.
+Hardware observations do not affect questions or readiness yet.
 For an external gateway, set `spec.gateway.engine` in the template to the engine containing the selected immutable sandbox image.
 Onboarding uses that engine only to inspect the image; the image store's compute driver and hardware do not describe the external gateway.
-Changing the image engine discards the previous image observation.
-Omitting it leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
+Observations for a different engine or image are ignored.
+Omitting `spec.gateway.engine` leaves image discovery unverified and does not select a local socket; the saved deployment still needs it before planning.
 Image compatibility does not verify the external gateway's execution platform or readiness.
 Independent requests share a plan, and duplicate requests are read once.
-It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes the relevant observations when entering review.
+It reads the model catalog when a model question opens for a new endpoint request.
+It reads target observations again each time you delegate with **Ctrl+D** or enter review.
+Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
 Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
 Discovery supports cancellation and does not pull images or start containers.
 An ordinary discovery plan has a 30-second overall bound; the separate gateway query has a 35-second bound.
 The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
-Without a usable bundle, onboarding uses bundled Fabric metadata and marks the target unverified.
+Without a usable bundle, onboarding cannot inspect the target and marks it unverified.
 The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after answering individually, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
-Discovery supplies choices and validation without displaying hardware inventories, model counts or successful-check summaries.
+Discovery supplies model choices and readiness checks without displaying hardware inventories, model counts or successful-check summaries.
 The TUI has no detailed diagnostic view.
 It retains incompatibility and unverified-target messages; review names missing credentials without blocking ordinary YAML authoring.
 These observations do not establish deployment readiness, successful authentication for every operation, model loading, or working inference.
@@ -130,16 +133,17 @@ Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
 
-When discovery returns a catalog for the current engine and image, its exact adapter IDs determine the offered harness choices.
+Harness choices and settings schemas come from the bundled catalog generated through the pinned Fabric discovery API, for the whole run.
+The selected image's catalog does not change the offered choices.
+Review checks the selected harness and its configuration against that image's catalog.
+If the image does not advertise the harness or rejects its requirements, review reports the conflict and saving stays blocked until you correct the selection.
+Without a usable image catalog, target compatibility remains unverified.
 Provider presets offer their transport protocols; Fabric's planner checks the selected protocol and complete configuration against the canonical adapter contract.
-The questionnaire keeps a currently selected value visible but disabled if that image does not advertise it; discovery does not silently replace an accepted answer.
-Observations from another engine or image do not constrain the current choices.
-Without a usable current image catalog, the questionnaire uses the bundled catalog generated through the pinned Fabric discovery API, and keeps target compatibility unverified.
 Authoring reads canonical adapter IDs, orders them alphabetically, and preserves the deployment fields owned by the SDK.
 Short aliases are not translated; use the exact adapter identifier.
 Onboarding and authoring contain no harness-specific allowlist, labels, ordering, or inference rules.
 The default selection comes from the bundled YAML template.
-A discovered identifier can be offered without changing the SDK identifier type or adding a frontend branch.
+A new catalog identifier can be offered without changing the SDK identifier type or adding a frontend branch.
 The SDK validates identifier syntax and the document structure; Fabric owns adapter availability and native settings validation.
 Custom adapters require an explicit immutable image containing their descriptor and implementation.
 For exact adapter IDs, Fabric's canonical descriptor `settings_schema` supplies setting questions, types, enum choices, defaults, and required fields.

@@ -109,12 +109,13 @@ With a verified native bundle, the CLI reads discovery through the same provider
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
 It does not create deployment state.
 Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
-Changing the engine invalidates target observations; changing the compute driver invalidates the engine check, and changing the image invalidates its catalog observation.
-Changing only the harness re-evaluates the existing image catalog; unrelated identity or inference edits preserve those observations.
+Onboarding reads target observations for the current document and ignores observations whose engine, compute driver, image, or inference endpoint request no longer match it.
+Changing only the harness re-evaluates the existing image catalog against the new requirement.
 Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
 Known engine incompatibility or conflicting image/adapter requirements block review and saving.
-Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies provisional choices when target inspection is unavailable.
-Onboarding and planning share engine, hardware-advertisement, image, adapter, and model-catalog observations.
+Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies harness choices whether or not target inspection is available, and target inspection only assesses compatibility.
+Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same OpenTofu data sources.
+Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
 Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.

@@ -46,7 +46,7 @@ Consumers use the state API; they do not coordinate these private objects themse
 | [JourneyPosition](../../crates/nemoclaw-authoring/src/journey_state/journey_position.rs) | Selected structural forms, current inference route, and visited route completion markers. | Run progress |
 | [QuestionResolver](../../crates/nemoclaw-authoring/src/journey_state/resolver/mod.rs) | Read-only interpretation of the run, guidance, and schemas; assembles questions and assessments. | Rebuilt for each resolution |
 | [QuestionPolicy](../../crates/nemoclaw-authoring/src/journey_state/resolver/policy.rs) | Prompt dependencies, omissions, preset API restrictions, and presentation order applied to candidate questions. | One resolution pass |
-| JourneyQuestion | ID, typed answer target, reason, requiredness, schema, choices, suggestion, and reopening cause for an applicable decision. | Resolution snapshot |
+| JourneyQuestion | ID, typed answer target, reason, requiredness, schema, choices, suggestion, reopening cause, and optional title and description for an applicable decision. | Resolution snapshot |
 | JourneyResolution | Current questions, omissions, warnings, unverified constraints, partial assessment, and target assessment. | Resolution snapshot |
 
 The decision record is current decision status, rather than an event log or undo history.
@@ -145,9 +145,11 @@ An SDK document or a ready authoring result does not establish successful deploy
 
 [DiscoveryEvidence](../../crates/nemoclaw-authoring/src/evidence.rs) holds engine and image observations keyed to the selected discovery inputs.
 [AuthoringFacts](../../crates/nemoclaw-authoring/src/facts.rs) holds endpoint, hardware, gateway, and credential-availability observations.
+Hardware and gateway observations do not affect questions or readiness yet.
+Both types need an SDK-valid document, because discovery reads its inputs from a `Document`.
 `resolve_with_evidence` supplements current model suggestions with matching endpoint observations and assesses target compatibility.
 Observations do not silently replace authored values.
-`delegate_remaining` is an explicit bulk answer transition gated by compatible current target evidence, advertised model, and available credential references.
+`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target evidence, advertised model, and available credential references.
 
 The [TUI](../../examples/onboarding-tui/README.md) owns keys, rendering, state snapshots for Back, discovery calls, cancellation, and saving the returned document.
 Authoring owns question resolution and answer transitions; the SDK owns discovery operations and subsequent plan/apply behavior.
@@ -160,6 +162,7 @@ It prints a preview with explicit frontiers and limits, rather than storing a se
 - String selectors remain the public guidance language even though resolved answer operations are typed internally.
 - Question dependencies are code policy; there is no general declarative dependency graph.
 - Native model questions depend on complete SDK projection, and target prerequisites currently cover engine and image compatibility.
+- Target observations never change questions; they only assess compatibility, and they need an SDK-valid document.
 - Journey state is an in-memory run; the public API has no persisted session or decision history format.
 
 These limits and their inspection criteria belong to the [prototype plan](onboarding-journeys.md#remaining-work).
