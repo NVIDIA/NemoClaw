@@ -103,6 +103,10 @@ describe("portable profile rootless runtime workflow", () => {
       "src/lib/onboard/machine/finalization-deps.ts",
       "src/lib/onboard/machine/handlers/finalization.ts",
     ];
+    const doctorSources = [
+      "src/lib/actions/sandbox/doctor-system-checks.ts",
+      "src/lib/actions/sandbox/doctor.ts",
+    ];
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
     expect(workflow.on.pull_request.paths).toEqual(
@@ -127,6 +131,7 @@ describe("portable profile rootless runtime workflow", () => {
     expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
     expect(workflow.on.push.paths).toContain(finalizationHelper);
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
+    expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");

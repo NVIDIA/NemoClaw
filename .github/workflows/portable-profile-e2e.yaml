@@ -16,6 +16,8 @@ on:
       - "src/lib/actions/sandbox/exec.ts"
       - "src/lib/actions/sandbox/launch*.ts"
       - "src/lib/actions/sandbox/launch-readiness/**"
+      - "src/lib/actions/sandbox/doctor-system-checks.ts"
+      - "src/lib/actions/sandbox/doctor.ts"
       - "src/lib/actions/sandbox/gateway-state.ts"
       - "src/lib/onboard/portable-retirement-authority.ts"
       - "src/lib/onboard/session-bootstrap.ts"
