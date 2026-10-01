@@ -17,7 +17,7 @@ HPA scales GPU inference from 1 to **N** replicas (1 GPU each) so spikes stay re
 
 Set `AGENT_NAME` once and reuse it. Do not install two agents in one sandbox. Optional pairing checks (no HPA): [recipe examples](#agent-and-runtime-support).
 
-GPU runtime is **Ollama** (default), **vLLM**, or **NVIDIA NIM** (`INFERENCE_RUNTIME`). Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
+GPU inference runtime is **Ollama**, **vLLM**, or **NVIDIA NIM**. Metrics-proxy, HPA, and Envoy stay the same. Official pairings: [Agent and runtime support](#agent-and-runtime-support).
 
 HPA uses Pods **`AverageValue`**. Built-in metrics: **GPU utilization** (scale out when average per-pod util **> 40%**) and **LLM latency** (scale out when average per-pod chat proxy latency **> 3000 ms**).
 
@@ -200,7 +200,8 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 # deepagents only: ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
-### 6. HPA-only load test
+### 6. HPA-only load test (Optional): 
+This is not an e2d test, it only tests if K8s HPA can autoscale the number of pods and GPUs based on inference requests
 
 ```bash
 # 8× H100 on-prem
@@ -210,7 +211,31 @@ Create does **not** start Hermes/OpenClaw. Do not use `nemohermes launch` / `nem
 ./scripts/hpa-load-test-brev-4xl40s.sh
 ```
 
-Latency instead of GPU util: prefix `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`. Watch with `./scripts/hpa-watch.sh` or `./scripts/get-metrics-proxy-pods.sh -n nemoclaw-gpu`. Details: [Test autoscaling and load balancing](#test-autoscaling-and-load-balancing).
+
+### 7. E2E test: multiple end users and sandboxes
+
+Terminal A — provision (sandboxes and GPUs)
+```bash
+cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
+E2E_USERS=5 ./scripts/agentscaling_latency.sh
+```
+
+Terminal B — client (end users)
+```bash
+cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
+E2E_USERS=5 \
+E2E_INFLIGHT_START_PER_USER=1 \
+E2E_INFLIGHT_PER_USER=2 \
+MAX_TOKENS=608 \
+DURATION_SEC=180 \
+./scripts/client.sh
+```
+
+Optional watch (percentages become ms for this metric, e.g. 46514/3000):
+```bash
+cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
+./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
 
 ## Install details
 
