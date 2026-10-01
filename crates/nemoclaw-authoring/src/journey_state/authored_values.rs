@@ -40,6 +40,24 @@ impl AuthoredValues {
         Ok(())
     }
 
+    /// Generate the deployment identity when the base omits it. A supplied
+    /// identity is kept so editing an existing deployment preserves it.
+    pub(super) fn ensure_uid(&mut self) -> Result<(), Diagnostics> {
+        let root = self
+            .values
+            .as_object_mut()
+            .ok_or_else(|| diagnostic("journey", "The document root must be an object."))?;
+        let metadata = root
+            .entry("metadata")
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .ok_or_else(|| diagnostic("journey", "Metadata must be an object."))?;
+        if !metadata.contains_key("uid") {
+            metadata.insert("uid".into(), Value::String(new_deployment_uid()?));
+        }
+        Ok(())
+    }
+
     pub(super) fn put_harness(
         &mut self,
         position: &JourneyPosition,

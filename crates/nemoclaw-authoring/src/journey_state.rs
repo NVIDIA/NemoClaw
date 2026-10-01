@@ -16,6 +16,7 @@ use crate::{
     AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryAssessment,
     DiscoveryEvidence, PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset,
     diagnostics::diagnostic,
+    identity::new_deployment_uid,
     journey_definition::{
         HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
         adapter_schema, native_field,
@@ -253,7 +254,7 @@ pub struct JourneyState {
 }
 
 impl JourneyState {
-    pub(crate) fn new(definition: JourneyDefinition) -> Self {
+    pub(crate) fn new(definition: JourneyDefinition) -> Result<Self, Diagnostics> {
         let values = definition.base.supplied().clone();
         let selected_route = (routes_path(&values)
             .and_then(|path| values.pointer(&path))
@@ -261,12 +262,14 @@ impl JourneyState {
             .map_or(0, Vec::len)
             <= 1)
             .then_some(0);
-        Self {
+        let mut authored = AuthoredValues::new(values);
+        authored.ensure_uid()?;
+        Ok(Self {
             definition,
-            authored: AuthoredValues::new(values),
+            authored,
             decisions: DecisionRecord::default(),
             position: JourneyPosition::new(selected_route),
-        }
+        })
     }
 
     pub fn values(&self) -> &Value {

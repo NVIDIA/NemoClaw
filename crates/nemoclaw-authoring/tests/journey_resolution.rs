@@ -3204,6 +3204,42 @@ fn adapter_setting_questions_carry_fabric_descriptions() {
 }
 
 #[test]
+fn deployment_identity_is_generated_when_missing_and_never_asked() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
+    let journey = JourneyDefinition::new("minimum-inline", base)
+        .start(&capabilities)
+        .unwrap();
+    let uid = journey.values().pointer("/metadata/uid").cloned();
+    assert!(
+        uid.as_ref().is_some_and(serde_json::Value::is_string),
+        "{uid:?}"
+    );
+    assert!(
+        journey
+            .resolve(&capabilities)
+            .unwrap()
+            .question("/metadata/uid")
+            .is_none()
+    );
+
+    let supplied = "12345678-1234-4234-9234-123456789abc";
+    let mut values = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml"))
+        .unwrap()
+        .supplied()
+        .clone();
+    values["metadata"] = json!({"uid": supplied});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let journey = JourneyDefinition::new("supplied-identity", base)
+        .start(&capabilities)
+        .unwrap();
+    assert_eq!(
+        journey.values().pointer("/metadata/uid"),
+        Some(&json!(supplied))
+    );
+}
+
+#[test]
 fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
     let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
     let capabilities = Capabilities::available();
@@ -3219,10 +3255,6 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
         .unwrap();
     let answers = [
         ("/metadata/name", json!("minimum-inline")),
-        (
-            "/metadata/uid",
-            json!("12345678-1234-4234-9234-123456789abc"),
-        ),
         ("/spec/gateway/management", json!("managed")),
         ("/spec/inferenceProviders/0/provider", json!("openai")),
         ("/spec/sandboxes/0/name", json!("assistant")),

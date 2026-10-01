@@ -134,7 +134,7 @@ impl JourneyDefinition {
                 "The v1 journey requires exactly one sandbox object.",
             ));
         }
-        Ok(crate::JourneyState::new(self.clone()))
+        crate::JourneyState::new(self.clone())
     }
 
     pub(crate) fn validate_guidance(&self, capabilities: &Capabilities) -> Result<(), Diagnostics> {

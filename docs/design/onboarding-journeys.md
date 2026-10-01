@@ -85,7 +85,7 @@ Add assertions for agreed behavior before relying on the printer as a regression
 
 Run `cargo run -p nemoclaw-authoring --example print_journey_tree` from the repository root to print the offline structural-frontier, minimum-inline, express, and guided previews.
 The first preview shows an unresolved SDK frontier rather than claiming to enumerate all questions.
-The checked-in `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml` supplies inline harness and inference forms, one route, and an external endpoint while leaving identity, gateway management, harness, provider kind, route name, and model unanswered. It materializes through one resolver after those answers and explicit optional omissions; the example TUI also completes it through the watchable replay.
+The checked-in `crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml` supplies inline harness and inference forms, one route, and an external endpoint while leaving the deployment name, gateway management, harness, provider kind, route name, and model unanswered. Starting a journey generates a missing deployment uid, so the uid is never a question. It materializes through one resolver after those answers and explicit optional omissions; the example TUI also completes it through the watchable replay.
 The express preview reports zero questions for its current single-sandbox document. The resolver checks native model settings without prompt guidance; target compatibility remains a separate assessment. This preview does not establish complete coverage of arbitrary partial documents.
 
 The prototype now also exposes `JourneyDefinition::start`, `JourneyState::answer`, and `JourneyState::resolve`.
