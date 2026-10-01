@@ -25,6 +25,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import {
   ensureManagedGatewayStateRoot,
   resolveGatewayStateDirName,
@@ -45,7 +46,6 @@ import {
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
-
 function writeScopedGatewayState(
   home: string,
   port = 8080,
@@ -53,6 +53,7 @@ function writeScopedGatewayState(
 ): void {
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(
@@ -71,7 +72,6 @@ function writeScopedGatewayState(
   fs.chmodSync(configPath, 0o600);
   writeManagedGatewayRuntimeProof(stateDir, port);
 }
-
 function writeOnboardLock(stateRoot: string): void {
   fs.writeFileSync(path.join(stateRoot, "onboard.lock"), "active\n", { mode: 0o600 });
 }

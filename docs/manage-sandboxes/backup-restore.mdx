@@ -172,9 +172,9 @@ Run `$$nemoclaw <name> gateway restart` to make the gateway open the restored da
 </AgentOnly>
 
 <Note>
-`--to` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
-NemoClaw reports that the restore is not available and stops before it creates, deletes, or changes the destination sandbox.
-Restore that snapshot into its source sandbox without `--to`.
+  `--to` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image. NemoClaw
+  reports that the restore is not available and stops before it creates, deletes, or changes the
+  destination sandbox. Restore that snapshot into its source sandbox without `--to`.
 </Note>
 
 To clone a snapshot into a different sandbox name, pass `--to <name>`. If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
@@ -321,8 +321,8 @@ $$nemoclaw backup-all
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered standard sandbox is stopped, `backup-all` asks OpenShell to start that exact sandbox for the duration of the backup and asks OpenShell to return it to `Stopped` afterward. If either lifecycle transition fails, the backup run fails with the affected sandbox named. Correct the reported OpenShell lifecycle problem, run `$$nemoclaw <name> start` when appropriate, and rerun `$$nemoclaw backup-all`; do not start or stop the provider container directly.
 
-For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it asks OpenShell to start a stopped sandbox when required, copies sandbox state, and asks OpenShell to return that sandbox to `Stopped`.
+For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation.
+After OpenShell accepts the start, one lifecycle transaction covers readiness, state capture, and returning the sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available. Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

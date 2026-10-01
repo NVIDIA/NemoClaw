@@ -178,6 +178,12 @@ These are two required acceptance executions, not retries; either failure remain
 OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
 that require elevated scopes. It approves only the request ID emitted by the current sandbox's
 non-admin CLI, after the existing selector verifies that device and its requested scopes.
+The fixture transfers its approval script through non-terminal `exec --stdin`, then runs the
+verified script bytes in a subshell of the prepared `connect` shell. The subshell inherits its
+approval wrapper while isolating the script's exit and cleanup trap. This preserves the credential boundary
+without feeding a bulk script through terminal line editing. Cleanup removes the temporary
+script after success or failure; a cleanup failure also fails the fixture. The fixture checks
+the transferred bytes against the host's digest before evaluation and rejects a replaced script.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
@@ -567,6 +573,10 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
+The `openclaw-inference-switch` target owns fresh custom-image route initialization.
+Its fixture contains only a different baked model and stale limits.
+The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 
@@ -754,6 +764,26 @@ do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
+## Full E2E inference availability
+
+`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
+It requires a successful response containing the expected answer.
+`live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
+`support/full-e2e-inference-probe.test.ts` verifies that behavior.
+The stateless request has no tools or conversation persistence, so repeating it
+has no application mutation. It may consume another inference request.
+
+The probe retries once after five seconds only when curl exits 22 with empty
+stdout and exactly reports HTTP 503. This reports service unavailability but
+does not identify whether the gateway or upstream produced it. Every request
+has its own command artifact and a 90-second curl limit. Each reply-budget
+attempt logs bounded availability evidence, including recovery or exhaustion,
+before writing its artifact. The aggregate log survives an artifact-write failure
+and is retained after Brev cleanup; the artifact exists only when its write succeeds.
+The existing two reply budgets permit at most four requests in total.
+Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
+The existing response validation and answer assertion remain unchanged.
+
 ## Launch-readiness locked-image acceptance
 
 Use the repository helper to test an existing OpenClaw sandbox without
@@ -774,12 +804,28 @@ The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
 runs two logical `launch` sessions during the same fixed lease. Each logical
 session may retry once with a fresh run ID and input only when the OpenClaw
 session store contains a structured transient provider-unavailability record
-and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+and cleanup succeeds. A managed `openai-completions` assistant record with empty
+array content, `stopReason=error`, and string `errorCode=503` qualifies regardless
+of provider error wording. Conflicting error classes and authentication or policy
+diagnostics still prevent retry. Other eligible server codes require the known
+`InternalServerError` or `ServiceUnavailableError` class.
+Authentication, authorization, policy, malformed-response,
 cleanup, and unknown failures stop the acceptance test without retrying.
 Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
+Empty-message failures include the message index, role, and allowlisted provider
+error metadata from JSONL or SQLite. Provider error text and unknown field values
+are omitted. These diagnostics do not change failure classification or retries.
+Failed launch attempts also retain the last turn-verifier exit status and fixed
+cleanup stages: started, child reaped, and completed with cleanup status. Only the
+existing final provider marker authorizes a retry after successful cleanup.
+Baseline and PTY cleanup calls run independently so a fatal shell error in one
+cannot skip the other. Failed calls retain their last 2 KiB of error output through
+the fixture's normal redaction boundary, and any cleanup failure prevents retry.
+The host launch harness uses a non-login Bash shell with its supplied environment.
+It does not source user login or logout files. A failing logout file can disrupt Bash 5.1 exit-trap cleanup.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
@@ -982,6 +1028,11 @@ lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
+
+On Docker, managed-image activation also adopts the published OpenClaw and
+Hermes digests through `--from-image`. It confirms OpenShell readiness, the
+durable external-image receipt, NemoClaw destruction, and shared image
+retention. The external-image check does not run on Podman.
 
 ## Device-auth health classification
 
@@ -1623,6 +1674,19 @@ Validate phase coverage without executing test bodies with:
 ```bash
 npm run test:e2e-phases:check
 ```
+
+### Managed vLLM final-consumer lifecycle
+
+The existing `gpu-e2e` target runs its managed vLLM case twice. Each cycle onboards
+the supported fixed profile on port 18000, exports its configuration, then checks
+status, doctor, and connect with the port override cleared. Normal cleanup destroys
+the final sandbox and checks actual container and listener absence before any
+fixture fallback cleanup. The second cycle proves that onboarding can reacquire
+the released GPU resources.
+
+Source tests own shared-consumer retention, receipt ownership, invalid recorded
+routes, and interrupted-cleanup recovery. The physical Spark Express test retains
+its existing platform-specific qualification.
 
 ### DGX Spark Express vLLM
 

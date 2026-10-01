@@ -67,6 +67,32 @@ it("publishes sanitized declared state from a stopped source without a sandbox c
   );
 });
 
+it("removes an unpublished stopped-state copy after the work deadline expires", () => {
+  const captured = source("stopped-expired-copy");
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  captured.assertCurrent
+    .mockImplementationOnce(() => undefined)
+    .mockImplementationOnce(() => now.mockReturnValue(2_000));
+
+  const result = state.backupSandboxState("stopped-expired-copy", {
+    capturedAgentState: captured,
+    deadlineMs: 1_500,
+  });
+
+  now.mockRestore();
+  expect(result.success).toBe(false);
+  expect(result.error).not.toContain("requires cleanup");
+  expect(state.listBackups("stopped-expired-copy")).toEqual([]);
+  expect(
+    fs
+      .readdirSync(home, { recursive: true, encoding: "utf8" })
+      .filter((entry) => entry.includes("rebuild-backups/stopped-expired-copy/")),
+  ).toEqual([]);
+  expect(fs.readFileSync(path.join(captured.directory, "workspace", "keep.txt"), "utf8")).toBe(
+    "operator data",
+  );
+});
+
 it("preserves stopped Deep Agents state and nested skills while excluding private MCP input and credentials (#11165)", () => {
   const name = "stopped-dcode";
   registry.registerSandbox({ name, agent: "langchain-deepagents-code" });

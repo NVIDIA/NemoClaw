@@ -8,6 +8,8 @@ import { assertHermesPortableCommandUnavailable } from "../../../onboard/experim
 export { isSandboxPolicyCredentialFree } from "../../../policy/sandbox-policy-validation";
 import type { SandboxEntry } from "../../../state/registry/types";
 
+export { preflightExternalImageRebuild } from "../lifecycle/rebuild-external-image-preflight";
+export { resolveSandboxWorkloadRuntimeCapabilities } from "../../../onboard/workload/runtime";
 export {
   confirmHostLocalInferenceAuthority,
   type PreparedHostLocalInferenceAuthority,
