@@ -47,3 +47,15 @@ secrets.yaml
 service-account*.json
 token.json
 .gstack/
+
+# Chad runtime state + backups (never source — see docs/design/MASTER-REVIEW-2026-10.md §1b)
+*.db.bak*
+mcp-health.db
+token-optimize.db
+scripts/chad-smithers/*.db
+scripts/chad-smithers/*.db.bak*
+
+# Terminal loader build backups + vendored CheerpX binaries (reproducible, huge — never source)
+scripts/openwebui/static/loader.js.bak.*
+scripts/owui_probe_served.py
+scripts/openwebui/static/vendor/
