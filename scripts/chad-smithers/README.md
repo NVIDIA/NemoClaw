@@ -32,6 +32,8 @@ resume guarantees to hold.
 | `lib/directives.test.js` | `node --test lib/directives.test.js` — 9 tests, all green. |
 | `lib/opencode.js` | `runOpencodeDirect()` — host opencode big-pickle coder (the `direct` coder path for coding-task/landing-lab). Runs under a shell with stdout→file (opencode only uses tools that way) + `--pure`; isolated `/tmp` workdir; never throws. |
 | `lib/notify.js` | `moshiPing(title,message)` — one-way phone push via the Moshi device-token webhook (`MOSHI_DEVICE_TOKEN` from `credentials.json`). No Pro / no claude-hook; works from nemotron/cron/workflows. Never throws. |
+| `GATEWAY-UI-MIGRATION-PLAN.md` | Plan for the two runs-dashboard upgrades — live sync via `@smithers-orchestrator/gateway-client` and drop-in `gateway-ui` components — with phased todos, test plan, and doc-update tasks. Both land behind `CHAD_RUNS_GATEWAY`. |
+| `lib/gateway-adapter.test.js` | `node --test lib/gateway-adapter.test.js` — 7 **todo** tests (scaffold; CI-safe, exit 0). Spec for the gateway↔UI shape adapter from the migration plan (task T.1); fill in as `lib/gateway-adapter.js` lands. |
 | `chad-moshi-notify` | CLI wrapper over `moshiPing` (`chad-moshi-notify "<title>" "<message>"`). |
 | `chad-claude` | Launch Claude inside a routable tmux so Moshi approve/deny **buttons** work (`context.kind=tmux`). |
 | `chad-moshi-hook-refresh.sh` + `dev.nemoclaw.moshi-hook-refresh.plist` | launchd guard that re-installs the Moshi claude hooks when they go stale after a moshi-hook update. |

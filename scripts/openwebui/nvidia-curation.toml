@@ -14,16 +14,17 @@
 # Edit, then either wait for the 04:00 daily sweep or rerun manually:
 #   /opt/homebrew/bin/python3 ~/.nemoclaw/source/scripts/openwebui/nvidia-liveness.py
 
-# Top-N picks per provider. 1 = strict flagship-only (~28 models total today),
-# 2 = flagship + runner-up (~50). Single-model providers get their one model
-# regardless.
-per_provider_limit = 1
+# Top-N picks per provider. 0 = every live model from every provider is
+# featured (ranked newest-version / largest-params first). Picks a number
+# (>1) to restrict to the top-N per provider instead.
+per_provider_limit = 0
 
 # Never include — applied after auto-selection. Glob `*` supported.
 # Used to override the heuristic when it picks a model you don't want
 # (e.g. a vision-only or guardrail variant that landed as provider top-pick).
 exclude = [
     # Content-safety and guardrail models — narrow-purpose, not general assistants
+    "meta/llama-guard-*",
     "nvidia/nemotron-3.5-content-safety",
     "nvidia/nemotron-3-content-safety",
     "nvidia/nemotron-content-safety-reasoning-4b",
@@ -31,6 +32,7 @@ exclude = [
     "nvidia/llama-3.1-nemotron-safety-guard*",
     # Specialized / infrastructure models
     "nvidia/gliner-pii",
+    "nvidia/nemotron-parse-*",
     "nvidia/riva-translate-*",
     "nvidia/ising-calibration-*",
     # Nano / mini tiers — not flagship

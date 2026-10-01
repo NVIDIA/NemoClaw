@@ -19,7 +19,9 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CREDS = process.env.CHAD_HOST_CREDS || "/Users/r/.nemoclaw/credentials.json";
 const OUT = process.env.CHAD_MODELS_FILE || join(HERE, "state/models.json");
-const FEATURED_MAX = Number(process.env.CHAD_MODELS_FEATURED_MAX || 8);
+// 0 = no cap: every chat-capable model is featured (ranked by PRIORITY then
+// FLAGSHIP padding). Any positive number restricts featured to that many.
+const FEATURED_MAX = Number(process.env.CHAD_MODELS_FEATURED_MAX || 0);
 
 // Drop narrow-purpose models — keep general chat/agentic ones.
 const EXCLUDE = /embed|safety|guard|pii|translate|rerank|calibrat|ocr|parse|reward|gliner|riva|ising|moderation|vision-?only|nv-rerank/i;
@@ -28,11 +30,12 @@ const EXCLUDE = /embed|safety|guard|pii|translate|rerank|calibrat|ocr|parse|rewa
 // their pattern is here. Add a line when a new top model lands. FLAGSHIP is the
 // fallback to pad with any other large/general model.
 const PRIORITY = [
-  /nemotron-3-ultra/i, /gpt-oss-120b/i, /deepseek-v4-pro/i, /llama-4-maverick/i,
-  /kimi-k2/i, /qwen3\.5-397b/i, /glm-5/i, /minimax-m3/i, /mistral-large-3/i,
-  /nemotron-3-nano-omni/i, /step-3\.7/i, /nemotron-3-super/i,
+  /nemotron-3-ultra/i, /gpt-oss/i, /deepseek-v\d/i, /kimi-k\d/i, /qwen3\.5/i,
+  /glm-5/i, /minimax-m\d/i, /mistral-large/i, /mistral-nemotron/i,
+  /nemotron-3\.5-lightning/i, /nemotron-3-nano-omni/i, /step-/i,
+  /llama-4/i, /diffusiongemma/i, /muse-glimmer/i, /nemotron-3-super/i,
 ];
-const FLAGSHIP = /ultra|gpt-oss|deepseek-v4|llama-4|kimi-k2|qwen3\.5|glm-5|minimax-m|mistral-large|nemotron-3|step-3/i;
+const FLAGSHIP = /ultra|gpt-oss|deepseek-v\d|kimi-k\d|qwen3\.5|glm-5|minimax-m\d|mistral|nemotron|step|llama-4|diffusiongemma|muse|gemma-4/i;
 
 const key = (() => {
   try { return JSON.parse(readFileSync(CREDS, "utf8")).NVIDIA_API_KEY || ""; } catch { return ""; }
@@ -50,8 +53,12 @@ const chat = ids.filter((id) => !EXCLUDE.test(id));
 // large/general model, capped at FEATURED_MAX.
 const featured = [];
 for (const re of PRIORITY) { const hit = chat.find((id) => re.test(id) && !featured.includes(id)); if (hit) featured.push(hit); }
-for (const id of chat) { if (featured.length >= FEATURED_MAX) break; if (FLAGSHIP.test(id) && !featured.includes(id)) featured.push(id); }
-featured.length = Math.min(featured.length, FEATURED_MAX);
+const padLimit = () => FEATURED_MAX > 0 && featured.length >= FEATURED_MAX;
+for (const id of chat) { if (padLimit()) break; if (FLAGSHIP.test(id) && !featured.includes(id)) featured.push(id); }
+// Append anything still not featured so EVERY chat-capable model is in the list
+// (ordered: priority flagships first, then the rest). FEATURED_MAX=0 => uncapped.
+for (const id of chat) { if (padLimit()) break; if (!featured.includes(id)) featured.push(id); }
+if (FEATURED_MAX > 0) featured.length = Math.min(featured.length, FEATURED_MAX);
 
 const prev = existsSync(OUT) ? JSON.parse(readFileSync(OUT, "utf8")) : { chat: [] };
 const added = chat.filter((id) => !(prev.chat || []).includes(id));

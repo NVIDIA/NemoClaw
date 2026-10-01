@@ -6,7 +6,7 @@
 Answers "are Chad's cron tasks duplicated with the equivalent Smithers workflows?"
 Inventory taken 2026-06-22 (`openclaw cron list` on the pod + `launchctl list | grep chad` on the host).
 
-**Short answer: partially, by design — not fully.** Five pod crons have a direct
+**Short answer: partially, by design — not fully.** Five pod crons have a directcontinue 
 Smithers-workflow equivalent and run in *shadow coexistence* (the
 `dev.nemoclaw.chad-experiments.plist` comment documents this: "coexistence with a
 pod-based shadow cron until parity is proven"). The rest are either infrastructure

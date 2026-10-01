@@ -10,11 +10,14 @@
 #   3. Mark live/dead in ~/.nemoclaw/openwebui/liveness.json (consumed by
 #      nvidia-proxy at request time)
 #   4. Toggle is_active=0 on rows in webui.db whose base_model_id is dead,
-#      so the curated 14-model picker (seed-models.sql) auto-prunes too
+#      so the curated picker auto-prunes too.
 #
-# Dead promotion is gated by DEAD_AFTER_FAILS consecutive failures so a single
-# NVIDIA outage can't hide a healthy model. Lenient by design: unknown/new
-# models stay visible until proven dead.
+# Dead promotion is gated twice: a single sweep must see DEAD_AFTER_FAILS
+# consecutive failures OR an explicit 410, AND the row is only disabled after
+# TWO consecutive sweeps both classify the model dead — so one flaky probe
+# pass (rate-limit 429s, transient 5xx, cold-start slowness) can never gut
+# the picker. 429/5xx are treated as transient (no failure credit). Lenient
+# by design: unknown/new models stay visible until proven dead.
 #
 # Triggered by ~/Library/LaunchAgents/dev.nemoclaw.nvidia-liveness.plist daily.
 # Manual run: python3 nvidia-liveness.py
@@ -168,6 +171,11 @@ def probe(model_id: str, api_key: str) -> tuple[str, str, float, int]:
         detail = json.dumps(payload)[:240]
         if e.code == 410:
             return "dead", f"HTTP 410 Gone: {detail}", latency_ms, e.code
+        if e.code == 429 or e.code >= 500:
+            # Rate limits and server-side hiccups are NOT evidence the model is
+            # gone. Treat as transient so they don't tick the failure counter
+            # and can't promote a healthy model to dead.
+            return "transient", f"HTTP {e.code}: {detail}", latency_ms, e.code
         return "fail", f"HTTP {e.code}: {detail}", latency_ms, e.code
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         latency_ms = (time.monotonic() - t0) * 1000
@@ -342,10 +350,17 @@ def main() -> None:
     })
     log(f"wrote {LIVENESS_FILE.name}: live={live_n} dead={dead_n} unknown={unknown_n} featured={len(featured)}")
 
-    dead_ids = {mid for mid, m in new_state.items() if m["status"] == "dead"}
+    # Only disable rows after TWO consecutive sweeps agree the model is dead.
+    # A single flaky probe pass (rate limits, transient 5xx, cold-start hangs)
+    # must not silently remove models from the picker.
+    dead_ids = {
+        mid
+        for mid, m in new_state.items()
+        if m["status"] == "dead" and prev.get(mid, {}).get("status") == "dead"
+    }
     disabled = disable_dead_curated_models(dead_ids)
     if disabled:
-        log(f"disabled {disabled} curated rows referencing dead base_model_id")
+        log(f"disabled {disabled} curated rows (dead across 2 consecutive sweeps)")
 
 
 if __name__ == "__main__":
