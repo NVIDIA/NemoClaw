@@ -104,6 +104,7 @@ $script:calls = @()
 $script:probes = 0
 function Invoke-WslNativeOutput {
   param([string[]]$ArgumentList)
+  $script:probeCommand = $ArgumentList[-1]
   $script:probes += 1
   if ($script:probes -eq 1) {
     return [pscustomobject]@{ ExitCode = 1; Output = @('Failed to connect to system scope bus via local transport: Connection refused') }
@@ -121,15 +122,21 @@ function Invoke-WslScript {
 }
 Stop-WslContainerRuntime -Distro 'Ubuntu CI'
 Stop-WslContainerRuntime -Distro 'Ubuntu CI'
-ConvertTo-Json -Compress -InputObject @($script:calls)
+[pscustomobject]@{ calls = @($script:calls); probeCommand = $script:probeCommand } | ConvertTo-Json -Compress
 `,
     (result) => {
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!)).toEqual([
+      const observed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!);
+      expect(observed.calls).toEqual([
         "--terminate Ubuntu CI",
         "stop Ubuntu CI as root",
         "stop Ubuntu CI as root",
       ]);
+      expect(runWslContainerRuntimeScript(observed.probeCommand, "bus-unavailable")).toMatchObject({
+        status: 1,
+        stdout: "Failed to connect to bus: Connection refused\n",
+        stderr: "",
+      });
     },
   );
 

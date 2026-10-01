@@ -302,8 +302,10 @@ function Install-WslUbuntuDependencies {
 function Repair-WslSystemdAfterInstall {
     param([Parameter(Mandatory = $true)] [string]$Distro)
 
-    $probe = @('-d', $Distro, '--user', 'root', '--', 'timeout', '10s',
-        'systemctl', 'show', '--property=Version', '--value')
+    # Windows PowerShell 5.1 can throw on redirected native stderr before
+    # returning an exit code. Capture expected manager errors inside Linux.
+    $probe = @('-d', $Distro, '--user', 'root', '--', 'bash', '-c',
+        'timeout 10s systemctl show --property=Version --value 2>&1')
     $result = Invoke-WslNativeOutput -ArgumentList $probe
     if ($result.ExitCode -eq 0) { return }
 

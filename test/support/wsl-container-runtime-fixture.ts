@@ -9,7 +9,7 @@ import path from "node:path";
 /** Model Docker socket activation while executing the helper's real shell script. */
 export function runWslContainerRuntimeScript(
   script: string,
-  mode: "normal" | "mask-fails" | "reachable" | "health-timeout" = "normal",
+  mode: "normal" | "mask-fails" | "reachable" | "health-timeout" | "bus-unavailable" = "normal",
   initiallyMasked = false,
 ) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-runtime-"));
@@ -32,7 +32,13 @@ systemctl() {
       ;;
     unmask) rm -f "$WSL_RUNTIME_FIXTURE_DIR/masked" ;;
     start) test ! -f "$WSL_RUNTIME_FIXTURE_DIR/masked" ;;
-    show) echo 'ActiveState=inactive' ;;
+    show)
+      if [ "$WSL_RUNTIME_FIXTURE_MODE" = bus-unavailable ]; then
+        echo 'Failed to connect to bus: Connection refused' >&2
+        return 1
+      fi
+      echo 'ActiveState=inactive'
+      ;;
     *) return 99 ;;
   esac
 }
@@ -62,6 +68,7 @@ export -f systemctl docker
     );
     return {
       status: result.status,
+      stdout: result.stdout,
       stderr: result.stderr,
       masked: fs.existsSync(path.join(directory, "masked")),
       commands: fs.readFileSync(path.join(directory, "commands"), "utf8").trim().split("\n"),
