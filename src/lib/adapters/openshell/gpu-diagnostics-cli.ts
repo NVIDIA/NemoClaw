@@ -12,7 +12,10 @@ import {
   type OpenShellGpuDiagnosticError,
   type OpenShellGpuDiagnostics,
 } from "./gpu-diagnostics";
-import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
+import {
+  buildOpenShellDiagnosticEnvironment,
+  resolveOpenshellBinaryOrNull,
+} from "./resolve-shared";
 import { assertCliOpenShellSandboxName, assertCliOpenShellTarget } from "./target-validation";
 
 const GPU_DIAGNOSTIC_OUTPUT_LIMIT_BYTES = 1024 * 1024;
@@ -84,19 +87,6 @@ function commands(
       args: ["doctor", "logs", ...gateway, "--name", "nemoclaw"],
     },
   ];
-}
-
-function diagnosticEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment = buildOpenShellSubprocessEnv(source);
-  for (const name of [
-    "OPENSHELL_GATEWAY",
-    "OPENSHELL_WORKSPACE",
-    "OPENSHELL_LOCAL_TLS_DIR",
-  ] as const) {
-    const value = source[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  return environment;
 }
 
 function validateRequest(
@@ -297,7 +287,7 @@ export function createCliOpenShellGpuDiagnostics(
         });
       }
 
-      const environment = diagnosticEnvironment(sourceEnvironment);
+      const environment = buildOpenShellDiagnosticEnvironment(sourceEnvironment);
       return createRunnerOpenShellGpuDiagnostics({
         now: deps.now,
         run: (args, timeout) =>

@@ -18,7 +18,10 @@ import {
   type OpenShellDebugDiagnosticError,
   type OpenShellDebugDiagnostics,
 } from "./debug-diagnostics";
-import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
+import {
+  buildOpenShellDiagnosticEnvironment,
+  resolveOpenshellBinaryOrNull,
+} from "./resolve-shared";
 
 const DEBUG_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
@@ -54,19 +57,6 @@ function commands(request: CollectOpenShellDebugDiagnosticsRequest): readonly De
       ? [{ name: "openshell-gateway-info" as const, args: ["gateway", "info", ...gateway] }]
       : []),
   ];
-}
-
-function diagnosticEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment = buildOpenShellSubprocessEnv(source);
-  for (const name of [
-    "OPENSHELL_GATEWAY",
-    "OPENSHELL_WORKSPACE",
-    "OPENSHELL_LOCAL_TLS_DIR",
-  ] as const) {
-    const value = source[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  return environment;
 }
 
 function errorFor(error: Error, redact: (value: string) => string): OpenShellDebugDiagnosticError {
@@ -141,7 +131,7 @@ export function createCliOpenShellDebugDiagnostics(
         );
       }
 
-      const environment = diagnosticEnvironment(sourceEnvironment);
+      const environment = buildOpenShellDiagnosticEnvironment(sourceEnvironment);
       const artifacts: OpenShellDebugArtifact[] = [];
       for (const command of commands(request)) {
         let result: Awaited<ReturnType<OpenShellBufferedCommandRunner>>;

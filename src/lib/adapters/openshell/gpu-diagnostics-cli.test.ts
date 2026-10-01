@@ -41,7 +41,10 @@ describe("CLI OpenShell Docker GPU diagnostics (#11832)", () => {
       environment: {
         HOME: "/fixture/home",
         PATH: "/fixture/bin",
+        OPENSHELL_GATEWAY: "fixture-gateway",
+        OPENSHELL_LOCAL_TLS_DIR: "/fixture/tls",
         OPENSHELL_WORKSPACE: "/fixture/workspace",
+        OPENSHELL_UNSUPPORTED: "must-not-leak",
         NVIDIA_INFERENCE_API_KEY: "nvapi-fixture-secret",
       },
       hostCwd: "/fixture/repo",
@@ -65,6 +68,8 @@ describe("CLI OpenShell Docker GPU diagnostics (#11832)", () => {
       env: {
         HOME: "/fixture/home",
         PATH: "/fixture/bin",
+        OPENSHELL_GATEWAY: "fixture-gateway",
+        OPENSHELL_LOCAL_TLS_DIR: "/fixture/tls",
         OPENSHELL_WORKSPACE: "/fixture/workspace",
       },
       killSignal: "SIGKILL",
