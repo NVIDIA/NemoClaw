@@ -212,3 +212,8 @@ It also supports publisher-managed Docker images pinned by digest and strengthen
   Otherwise, it exits with status `1` and inspect-before-retry guidance because retrying can repeat side effects.
   Related change: [PR #12502](https://github.com/NVIDIA/NemoClaw/pull/12502).
   Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-agent).
+- Deep Agents Code skill installation verifies the staged and placed canonical-root copies before publication.
+  After placement and private staging cleanup succeed, it prints a SHA-256 digest of sorted relative paths, normalized executable modes, and file digests.
+  The digest attests the placed copy at that time; it does not identify which same-name skill Deep Agents Code activates.
+  Related change: [PR #12483](https://github.com/NVIDIA/NemoClaw/pull/12483).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands#nemoclaw-name-skill-install-path).
