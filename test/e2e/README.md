@@ -45,8 +45,9 @@ The install refuses package removals, preserving the runner's Docker and contain
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
-  rootless Podman 5.7. It builds Podman from the pinned v5.7.0 source commit while
-  reusing the reviewed native helper toolchain. Select it with
+  rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
+  source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
+  components. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
   gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
