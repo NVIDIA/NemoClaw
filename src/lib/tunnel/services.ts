@@ -849,15 +849,20 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       warn(ollamaCleanupError.message);
     }
   }
-  const finishOllamaCleanup = (): OllamaUnloadResult | void => {
+  let cloudflaredCleanupComplete = true;
+  const finishCleanup = (): OllamaUnloadResult | void => {
     if (ollamaCleanupError) throw ollamaCleanupError;
+    if (!cloudflaredCleanupComplete) {
+      throw new Error(
+        "Cloudflared cleanup is incomplete. Keep the PID record until the process exits, then retry cleanup.",
+      );
+    }
     return ollamaCleanup;
   };
 
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
-  let cloudflaredCleanupComplete = true;
   if (pidDir) {
     cloudflaredCleanupComplete = stopService(
       pidDir,
@@ -893,7 +898,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
         ? "Host services stopped; managed gateway not released."
         : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway was not released.",
     );
-    return finishOllamaCleanup();
+    return finishCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
@@ -902,7 +907,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
         ? "Host services stopped; managed gateway release was not confirmed."
         : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway release was not confirmed.",
     );
-    return finishOllamaCleanup();
+    return finishCleanup();
   }
 
   if (!cloudflaredCleanupComplete) {
@@ -912,7 +917,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   } else {
     info("All services stopped.");
   }
-  return finishOllamaCleanup();
+  return finishCleanup();
 }
 
 /**

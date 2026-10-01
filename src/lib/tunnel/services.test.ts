@@ -21,7 +21,8 @@ import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 // Import source directly so tests cannot pass against a stale build.
 import { registerTunnelOrigin } from "./allowed-origins";
-import { resolveDefaultSandboxName } from "./service-command";
+import * as gatewayStop from "./gateway-stop";
+import { resolveDefaultSandboxName, runStopCommand } from "./service-command";
 import {
   getServiceStatuses,
   getTunnelUrl,
@@ -757,6 +758,36 @@ describe("stopAll", () => {
     },
   );
 
+  it.each([false, true])(
+    "fails the stop command when cloudflared remains unverified (gateway release: %s)",
+    (releaseGatewayPort) => {
+      vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockReturnValue("not-scoped");
+      const { control, signals } = scriptedControl({ alive: [true], cmdlines: [null] });
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(() =>
+          runStopCommand({
+            listSandboxes: () => ({}),
+            releaseGatewayPort,
+            stopAll: (options) =>
+              stopAll({
+                ...options,
+                sandboxName: "",
+                pidDir,
+                processControl: control,
+                cleanupOllamaModels: false,
+              }),
+          }),
+        ).toThrow("Cloudflared cleanup is incomplete");
+      } finally {
+        logSpy.mockRestore();
+      }
+      expect(signals).toEqual([]);
+      expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    },
+  );
+
   it("does not signal a live PID when process identity cannot be read", () => {
     const { control, signals } = scriptedControl({
       alive: [true],
@@ -767,7 +798,9 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     let output = "";
     try {
-      stopAll({ pidDir, processControl: control });
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
     } finally {
       output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       logSpy.mockRestore();
@@ -794,7 +827,9 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     let output = "";
     try {
-      stopAll({ pidDir, processControl });
+      expect(() => stopAll({ pidDir, processControl })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
     } finally {
       output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       logSpy.mockRestore();
@@ -816,7 +851,9 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     let output = "";
     try {
-      stopAll({ pidDir, processControl });
+      expect(() => stopAll({ pidDir, processControl })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
     } finally {
       output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       logSpy.mockRestore();
@@ -980,7 +1017,9 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     let output = "";
     try {
-      stopAll({ pidDir, processControl: control });
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
     } finally {
       output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       nowSpy.mockRestore();
@@ -1055,7 +1094,9 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     let output = "";
     try {
-      stopAll({ pidDir, processControl: control });
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "Cloudflared cleanup is incomplete",
+      );
     } finally {
       output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       nowSpy.mockRestore();

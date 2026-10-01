@@ -388,16 +388,18 @@ describe("stopAll gateway-stop wiring", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       try {
-        stopAll({
-          pidDir,
-          releaseGatewayPort: true,
-          unloadOllamaModels: neutralOllamaCleanup,
-          processControl: {
-            isAlive: () => true,
-            commandLine: () => null,
-            signalCloudflared,
-          },
-        });
+        expect(() =>
+          stopAll({
+            pidDir,
+            releaseGatewayPort: true,
+            unloadOllamaModels: neutralOllamaCleanup,
+            processControl: {
+              isAlive: () => true,
+              commandLine: () => null,
+              signalCloudflared,
+            },
+          }),
+        ).toThrow("Cloudflared cleanup is incomplete");
       } finally {
         rmSync(pidDir, { recursive: true, force: true });
       }
