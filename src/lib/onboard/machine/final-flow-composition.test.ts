@@ -195,4 +195,44 @@ describe("createFinalOnboardFlowPhases", () => {
     expect(genericRecovery).toHaveBeenCalledWith("portable-openclaw", { quiet: true });
     expect(hermesReadiness).not.toHaveBeenCalled();
   });
+
+  it("keeps generic recovery for Portable custom-agent finalization (#11892)", async () => {
+    const genericRecovery = vi
+      .spyOn(finalizationHandlerDeps, "checkAndRecoverSandboxProcesses")
+      .mockResolvedValue(true);
+    const hermesReadiness = vi.spyOn(
+      finalizationHandlerDeps,
+      "checkHermesPortableSandboxReadiness",
+    );
+    vi.spyOn(finalizationHandlerDeps, "readRegistryAgent").mockReturnValue("custom-agent");
+    vi.spyOn(finalizationHandlerDeps, "reportDeploymentReadiness").mockImplementation(() => {});
+    createFinalOnboardFlowPhases({
+      branchState: "agent_setup",
+      agentSetupDeps: {},
+      policiesDeps: {},
+      finalization: {
+        stagedLegacyKeys: [],
+        migratedLegacyKeys: new Set(),
+        webSearchEnabled: () => false,
+        webSearchProvider: () => "brave",
+      },
+      finalizationDeps: {
+        setDefaultSandbox: vi.fn(),
+        removeLegacyCredentialsFile: vi.fn(),
+        cleanupStaleHostFiles: vi.fn(),
+        error: vi.fn(),
+      },
+      portableRuntimeContext: null,
+    } as never);
+    const composedOptions = mocks.createFinalFlowPhases.mock.calls[0]![0];
+    const phases = mocks.actualCreateFinalFlowPhases!(composedOptions as never);
+
+    await expect(
+      phases[2].run(context({ agent: { name: "custom-agent" }, sandboxName: "portable-custom" })),
+    ).resolves.toMatchObject({
+      result: { type: "transition", next: "post_verify" },
+    });
+    expect(genericRecovery).toHaveBeenCalledWith("portable-custom", { quiet: true });
+    expect(hermesReadiness).not.toHaveBeenCalled();
+  });
 });
