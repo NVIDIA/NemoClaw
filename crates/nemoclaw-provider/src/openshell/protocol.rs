@@ -2,32 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_sdk::Error;
+use nemoclaw_sdk::{Error, image_runtime::path_is_granted};
 use serde::Deserialize;
 use serde_json::Value;
 
 pub(super) const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const REQUEST_LIMIT: usize = 512 * 1024;
-
-// Sandbox paths use Linux semantics on every client platform.
-fn writable_directory(path: &str, grants: &[String]) -> bool {
-    let valid = |path: &str| {
-        path.starts_with('/') && !path.contains('\0') && !path.split('/').any(|part| part == "..")
-    };
-    valid(path)
-        && grants.iter().any(|grant| {
-            if !valid(grant) {
-                return false;
-            }
-            let mut parts = path
-                .split('/')
-                .filter(|part| !part.is_empty() && *part != ".");
-            grant
-                .split('/')
-                .filter(|part| !part.is_empty() && *part != ".")
-                .all(|part| parts.next() == Some(part))
-        })
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -237,7 +217,7 @@ impl OpenShell {
         let directory = ["HOME", "TMPDIR"]
             .into_iter()
             .filter_map(|key| environment.get(key))
-            .find(|directory| writable_directory(directory, &filesystem.read_write))
+            .find(|directory| path_is_granted(directory, &filesystem.read_write))
             .ok_or(Error::Conflict(
                 "image does not advertise a writable Fabric input directory",
             ))?;
@@ -326,29 +306,6 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn staging_uses_linux_directory_grants_on_every_client_platform() {
-        for (path, grant, expected) in [
-            ("/sandbox", "/sandbox", true),
-            ("/work/tmp", "/work", true),
-            ("/work/./tmp", "/work//", true),
-            ("/work", "/", true),
-            ("/work-other", "/work", false),
-            ("/work/../elsewhere", "/work", false),
-            ("/work", "/other/../work", false),
-            ("work", "/", false),
-            (r"C:\work", r"C:\work", false),
-            ("/work\0file", "/work", false),
-        ] {
-            assert_eq!(
-                writable_directory(path, &[grant.into()]),
-                expected,
-                "{path:?} in {grant:?}"
-            );
-        }
-        assert!(!writable_directory("/work", &[]));
-    }
 
     #[test]
     fn contradictory_or_incomplete_envelopes_never_confirm_an_outcome() {

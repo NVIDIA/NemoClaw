@@ -292,7 +292,7 @@ async fn relocated_image_owns_bridge_commands_environment_and_staged_files() {
         "config_json".into(),
         serde_json::json!({"metadata":{"name":name}}).to_string(),
     );
-    let result = client.configure_agent(&binding, false).await;
+    let result = client.configure_agent(&binding).await;
     let calls = fixture.state.lock().unwrap().exec_calls.clone();
     assert_eq!(
         calls[0],
@@ -349,4 +349,92 @@ async fn relocated_image_owns_bridge_commands_environment_and_staged_files() {
         );
     }
     assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls.len());
+    let snapshot = client.agent_snapshot(&binding).await.unwrap();
+    assert_eq!(snapshot.generation.as_deref(), Some("fixture:1"));
+    assert_eq!(snapshot.runtime_state, "running");
+    assert!(
+        snapshot
+            .runtime_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn staging_uses_writable_tmpdir_when_home_has_only_read_access() {
+    let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture");
+    runtime
+        .runtime
+        .environment
+        .insert("HOME".into(), "/read-only".into());
+    runtime
+        .runtime
+        .environment
+        .insert("TMPDIR".into(), "/work//./tmp/".into());
+    let filesystem = runtime.runtime.policy.filesystem_policy.as_mut().unwrap();
+    filesystem
+        .read_only
+        .get_or_insert_default()
+        .push("/read-only".into());
+    filesystem.read_write = Some(vec!["/work/.".into()]);
+    let (fixture, client, mut binding) = sandbox_with_runtime(Some(runtime)).await;
+    binding.insert(
+        "config_json".into(),
+        serde_json::json!({
+            "metadata":{"name":binding["agent_name"]}
+        })
+        .to_string(),
+    );
+    client.configure_agent(&binding).await.unwrap();
+    let state = fixture.state.lock().unwrap();
+    let calls = &state.exec_calls;
+    assert_eq!(calls.len(), 4);
+    let path = &calls[1][3];
+    assert!(path.starts_with("/work//./tmp/.nemoclaw-"), "{path}");
+    assert!(calls[2].windows(2).any(|args| args == ["--config", path]));
+    assert_eq!(calls[3].last(), Some(path));
+    assert!(state.staged_files.is_empty());
+}
+
+#[tokio::test]
+async fn staging_refuses_ungranted_directories_before_executing_commands() {
+    for home in [
+        "/read-only",
+        "/work-other",
+        "/work/../elsewhere",
+        "work",
+        r"C:\work",
+    ] {
+        let mut runtime = nemoclaw_e2e::image_runtime::binding("fixture");
+        runtime
+            .runtime
+            .environment
+            .insert("HOME".into(), home.into());
+        runtime
+            .runtime
+            .environment
+            .insert("TMPDIR".into(), "/read-only".into());
+        let filesystem = runtime.runtime.policy.filesystem_policy.as_mut().unwrap();
+        filesystem
+            .read_only
+            .get_or_insert_default()
+            .push("/read-only".into());
+        filesystem.read_write = Some(vec!["/work".into()]);
+        let (fixture, client, binding) = sandbox_with_runtime(Some(runtime)).await;
+        let result = client
+            .invoke_agent(&binding, &serde_json::json!({"prompt":"hello"}))
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(nemoclaw_sdk::Error::Conflict(
+                    "image does not advertise a writable Fabric input directory"
+                ))
+            ),
+            "{home:?}: {result:?}"
+        );
+        let state = fixture.state.lock().unwrap();
+        assert!(state.exec_calls.is_empty(), "{home:?}");
+        assert!(state.staged_files.is_empty());
+    }
 }

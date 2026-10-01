@@ -911,7 +911,7 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
             for configure in [false, true] {
                 let error = tokio::time::timeout(std::time::Duration::from_secs(2), async {
                     if configure {
-                        client.configure_agent(&binding, false).await
+                        client.configure_agent(&binding).await
                     } else {
                         client
                             .ready(&binding, &nemoclaw_sdk::CancellationToken::new())

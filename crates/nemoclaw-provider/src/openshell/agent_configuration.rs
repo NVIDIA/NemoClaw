@@ -102,7 +102,7 @@ impl OpenShell {
                 return Err(ObservationError::BindingMismatch);
             }
             parent.insert("config_json".into(), encoded);
-            self.configure_agent(&parent, false)
+            self.configure_agent(&parent)
                 .await
                 .map_err(Error::into_observation)?;
             let mut row = desired.clone();

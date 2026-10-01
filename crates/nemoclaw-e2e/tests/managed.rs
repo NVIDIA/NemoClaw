@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 #[test]
 #[ignore = "requires explicit retained runtime state, OpenTofu and production provider paths; reads owned storage only"]
@@ -25,15 +26,7 @@ fn provider_refreshes_retained_storage_without_changes() {
         2,
         "requires the two retained storage resources"
     );
-    let directory = tempfile::tempdir().unwrap();
-    fs::copy(
-        provider,
-        directory.path().join(nemoclaw_sdk::bundle::executable(
-            "terraform-provider-nemoclaw",
-        )),
-    )
-    .unwrap();
-    fs::write(directory.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(directory.path().to_str().unwrap()).unwrap())).unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let mut graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw","version":"0.1.0"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:17681"}},"resource":{}});
     for resource in resources {
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
@@ -49,14 +42,7 @@ fn provider_refreshes_retained_storage_without_changes() {
     .unwrap();
     fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str]| {
-        let output = Command::new(&tofu)
-            .args(args)
-            .current_dir(directory.path())
-            .env("TF_CLI_CONFIG_FILE", directory.path().join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap();
+        let output = directory.command().args(args).output().unwrap();
         assert!(
             output.status.success(),
             "{}\n{}",

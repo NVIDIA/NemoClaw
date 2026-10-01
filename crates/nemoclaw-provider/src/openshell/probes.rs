@@ -89,7 +89,7 @@ impl OpenShell {
         .await
         .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
     }
-    pub async fn configure_agent(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
+    pub async fn configure_agent(&self, binding: &Row) -> Result<(), Error> {
         let generation = tokio::time::timeout(Duration::from_secs(120), async {
             loop {
                 let phase = self.gateway.sandbox_phase(binding, true).await?;
@@ -105,9 +105,8 @@ impl OpenShell {
         .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
         let config: serde_json::Value = serde_json::from_str(value(binding, "config_json"))
             .map_err(|_| ObservationError::Query)?;
-        let operation = if prepare { "prepare" } else { "configure" };
         let response = self
-            .bridge_file(binding, operation, &config, Some(&generation))
+            .bridge_file(binding, "configure", &config, Some(&generation))
             .await?;
         if response.status != "succeeded" {
             let failure = response
@@ -129,10 +128,8 @@ impl OpenShell {
             .as_ref()
             .ok_or(ObservationError::Incomplete)?;
         if result["generation"].as_str().is_none_or(str::is_empty)
-            || (prepare && (result["prepared"] != true || result["runtime_state"] != "stopped"))
-            || (!prepare
-                && (result["runtime_state"] != "running"
-                    || result["runtime_id"].as_str().is_none_or(str::is_empty)))
+            || result["runtime_state"] != "running"
+            || result["runtime_id"].as_str().is_none_or(str::is_empty)
         {
             return Err(ObservationError::Incomplete.into());
         }

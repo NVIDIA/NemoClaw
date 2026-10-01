@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -36,21 +37,12 @@ async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_u
             .await
             .unwrap();
     });
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"),format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(root).unwrap())).unwrap();
     let graph = json!({"terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},"provider":{"nemoclaw":{}},"data":{"nemoclaw_inference_capabilities":{"current":{"endpoint":endpoint,"api":"openai-responses"}}},"output":{"observation":{"value":"${data.nemoclaw_inference_capabilities.current.observation_json}"}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str]| {
-        let result = Command::new(&tofu)
-            .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
-            .output()
-            .unwrap();
+        let result = directory.command().args(args).output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -74,6 +66,7 @@ async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_u
     server.await.unwrap();
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated HTTP and gateway fixtures"]
 async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_uncertainty() {
@@ -81,9 +74,12 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
         CancellationToken, Deployment,
         config::{Document, InferenceApi, InferenceProviderKind},
     };
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        process::Command,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -132,6 +128,7 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
             Document::parse(include_bytes!("../../../examples/fabric-openclaw.yaml").as_slice())
                 .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         document.spec.inference_providers[0].provider = provider;
         document.spec.inference_providers[0].api = Some(api);
         document.spec.inference_providers[0].endpoint = endpoint.clone();
