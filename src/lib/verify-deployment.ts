@@ -30,6 +30,7 @@ import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
+import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
@@ -895,6 +896,7 @@ export async function probeOnboardInferenceInvocation(
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
+    ...(isNativeNvidiaProvider(provider) ? { nativeProvider: true } : {}),
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }

@@ -13,6 +13,7 @@ import {
   apiKeyShape,
   chatContent,
   cleanupHermesSwitch,
+  CLI,
   compatibleAnthropicMetadataArgs,
   env,
   envHash,
@@ -26,7 +27,7 @@ import {
   hermesApiCommand,
   hermesGatewayPid,
   hostedInstallModel,
-  inferenceLocalCommand,
+  sandboxInferenceCommand,
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
@@ -51,7 +52,6 @@ import {
 } from "./hermes-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
-  registerPublicNvidiaSwitchProvider,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
@@ -75,7 +75,7 @@ test(
         "install baseline Hermes runtime",
         "switch Hermes inference provider",
         "validate switched route and mutable config",
-        "exercise inference.local and Hermes API",
+        "exercise sandbox inference and Hermes API",
         "run Hermes CLI adapter forms against switched provider",
         "prove split provider/model credential resolution",
       ],
@@ -179,10 +179,6 @@ test(
       model: hostedInstallModel(installEnv),
     });
     const baselineSession = structuredClone(registryState().session);
-    const publicProvider = publicApiKey
-      ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, env())
-      : null;
-    publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
@@ -199,6 +195,7 @@ test(
       {
         artifacts,
         compatibleBinding: switchBinding,
+        publicNvidiaApiKey: publicApiKey,
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
@@ -227,8 +224,8 @@ test(
     expect(health.exitCode, resultText(health)).toBe(0);
     expect(resultText(health)).toMatch(/ok/i);
 
-    const route = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: "openshell-inference-route",
+    const route = await host.command("node", [CLI, "inference", "get"], {
+      artifactName: "nemoclaw-inference-route",
       env: env(),
       timeoutMs: 30_000,
     });
@@ -324,8 +321,7 @@ test(
       publicSwitch ? null : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
-
-    progress.phase("exercise inference.local and Hermes API");
+    progress.phase("exercise sandbox inference and Hermes API");
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -334,14 +330,14 @@ test(
     const inferenceLocal = await runHermesPongWithRetry({
       expectedModel: SWITCH_MODEL,
       onEvidence: async (evidence) => {
-        await artifacts.writeJson("retry/hermes-inference-local-after-switch.json", evidence);
+        await artifacts.writeJson("retry/hermes-sandbox-inference-after-switch.json", evidence);
       },
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
-          trustedSandboxShellScript(inferenceLocalCommand(inferenceLocalPayload)),
+          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
           {
-            artifactName: `hermes-inference-local-chat-after-switch-${attempt}`,
+            artifactName: `hermes-sandbox-inference-chat-after-switch-${attempt}`,
             env: env(),
             redactionValues,
             timeoutMs: 120_000,
@@ -411,7 +407,6 @@ test(
       apiKey,
       host,
       mockBaseline,
-      publicProvider,
       redactionValues,
     });
     const persistedProxyRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {

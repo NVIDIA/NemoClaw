@@ -121,6 +121,46 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it("maps the NVIDIA credential alias to the internal native provider", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const recordExtraProvider = vi.fn(() => true);
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider,
+      forgetExtraProvider: () => true,
+    });
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringMatching(/provider-profiles\/nemoclaw-nvidia-inference-v1\.yaml$/u),
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "nemoclaw-nvidia-prod-v1",
+      type: "nemoclaw-nvidia-inference-v1",
+      credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-value" }],
+      config: [],
+      fromExisting: false,
+      timeoutMs: 30_000,
+    });
+    expect(recordExtraProvider).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
   it("registers both Langfuse keys through the checked-in endpoint profile (#10840)", async () => {
     vi.stubEnv("LANGFUSE_PUBLIC_KEY", "pk-lf-host-only");
     vi.stubEnv("LANGFUSE_SECRET_KEY", "sk-lf-host-only");

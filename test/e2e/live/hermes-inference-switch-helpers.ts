@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -221,13 +222,11 @@ export async function prepareProxyResolutionRoute({
   apiKey,
   host,
   mockBaseline,
-  publicProvider,
   redactionValues,
 }: {
   apiKey: string;
   host: HostCliClient;
   mockBaseline: FakeOpenAiCompatibleServer | undefined;
-  publicProvider: ShellProbeResult | null;
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
@@ -237,7 +236,7 @@ export async function prepareProxyResolutionRoute({
 
   // Hosted mode already registered and attached the exact nvidia-prod
   // provider. The mock path needs an OpenAI provider for its local fixture.
-  if (publicProvider !== null) {
+  if (!mockBaseline) {
     return { model, requestOffset };
   }
 
@@ -669,6 +668,7 @@ export async function runHermesInferenceSetWithRetry(
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
+    publicNvidiaApiKey?: string | null;
   } = {},
 ): Promise<ShellProbeResult> {
   const args = [
@@ -692,7 +692,12 @@ export async function runHermesInferenceSetWithRetry(
     run: (attempt) =>
       host.command("node", args, {
         artifactName: `hermes-inference-set-${attempt}`,
-        env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
+        env: env(undefined, {
+          ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
+          ...(options.publicNvidiaApiKey
+            ? { NVIDIA_INFERENCE_API_KEY: options.publicNvidiaApiKey }
+            : {}),
+        }),
         redactionValues,
         timeoutMs: 180_000,
       }),
@@ -734,6 +739,7 @@ export function maybeAssertPidStable(
 }
 
 export function expectedBaseUrl(): string {
+  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
@@ -811,7 +817,12 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-export function inferenceLocalCommand(payload: string): string {
+const NATIVE_NVIDIA_AUTH_HEADER = "Author" + "ization: Bearer nemoclaw-openshell-provider";
+
+export function sandboxInferenceCommand(payload: string): string {
+  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
+    return `curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H '${NATIVE_NVIDIA_AUTH_HEADER}' -d '${quotePayload(payload)}'`;
+  }
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
     : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;

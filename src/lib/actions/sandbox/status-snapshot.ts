@@ -19,6 +19,7 @@ import { retryUntilAsync } from "../../core/retry";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   getLlamaCppRouteDetails,
+  normalizeNativeNvidiaProviderAttachment,
   type GatewayInference,
   type LlamaCppRouteDetails,
   planInferenceRouteReconcile,
@@ -683,6 +684,9 @@ export async function collectSandboxStatusSnapshot(
           };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
+    const nativeNvidia = Boolean(
+      normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
+    );
     const canProbeInvocation = Boolean(invocationModel && invocationProvider);
     let invocation: Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>> | null = null;
     try {
@@ -690,9 +694,13 @@ export async function collectSandboxStatusSnapshot(
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
       await retryUntilAsync(
         async () => {
-          gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
+          gatewayChain = nativeNvidia
+            ? null
+            : gatewayName
+              ? await probe(sandboxName, { gatewayName })
+              : null;
           invocation =
-            gatewayChain?.ok && canProbeInvocation
+            (nativeNvidia || gatewayChain?.ok) && canProbeInvocation
               ? await runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
@@ -701,6 +709,7 @@ export async function collectSandboxStatusSnapshot(
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
+                    ...(nativeNvidia ? { nativeProvider: true } : {}),
                   },
                   opts.deps?.probeSandboxInferenceInvocationImpl,
                   (error) =>
@@ -714,6 +723,9 @@ export async function collectSandboxStatusSnapshot(
         },
         {
           accept: ({ gatewayChain: chain, invocation: result }) => {
+            if (nativeNvidia) {
+              return result?.ok === true || !isTransientInferenceInvocationFailure(result);
+            }
             if (chain?.ok && (!canProbeInvocation || result?.ok)) return true;
             // After this run recovered a managed gateway, keep waiting for the
             // restarted chain to settle whatever the failure shape (#8572).
@@ -748,6 +760,7 @@ export async function collectSandboxStatusSnapshot(
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
       agentName: sb?.agent ?? null,
       provider: invocationRoute.provider ?? null,
+      nativeNvidia,
     });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.

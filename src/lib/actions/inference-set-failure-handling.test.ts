@@ -97,7 +97,7 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+      runInferenceSet({ provider: "openai-api", model: "openai/model-a" }, deps),
     ).rejects.toThrow(/OpenShell inference route update failed/);
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -207,7 +207,7 @@ describe("runInferenceSet failure handling", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      { provider: "openai-api", model: "openai/model-a" },
       deps,
     ).catch((e: Error) => e);
 

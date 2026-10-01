@@ -79,3 +79,8 @@ export function namedOpenShellGateway(gatewayName: string): OpenShellGatewayTarg
 export function selectedOpenShellGateway(): OpenShellGatewayTarget {
   return { kind: "selected" };
 }
+export type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+  OpenShellProviderMetadata,
+} from "./provider-adapter";

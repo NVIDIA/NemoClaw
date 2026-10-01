@@ -16,6 +16,7 @@ import {
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
+import { normalizeNativeNvidiaProviderAttachment } from "../../../inference/native-nvidia";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
@@ -291,6 +292,35 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
+    const nativeNvidia = Boolean(
+      normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment),
+    );
+    if (nativeNvidia) {
+      const provider = normalizedString(entry.provider);
+      const model = normalizedString(entry.model);
+      if (!provider || !model) {
+        recordLaunchReadinessObservationFailure(deps, "inference-route");
+        throw new LaunchReadinessEvidenceError();
+      }
+      try {
+        const invocation = await (
+          deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+        )({
+          sandboxName,
+          gatewayName,
+          agentName,
+          provider,
+          model,
+          preferredInferenceApi: normalizedString(entry.preferredInferenceApi),
+          nativeProvider: true,
+        });
+        if (invocation.ok) return;
+        recordLaunchReadinessObservationFailure(deps, "inference-route");
+        throw new LaunchReadinessObservationError("health", "inference request");
+      } finally {
+        recordObservationTiming(deps, "inference-route", inferenceStartedAt);
+      }
+    }
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
     try {
       const inferenceProbe =

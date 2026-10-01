@@ -21,6 +21,12 @@ import {
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
+  ensureNativeNvidiaProvider,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  type NativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
+import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
   loadPendingOllamaModelCleanup,
@@ -658,23 +664,25 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        const compatibility = deps.checkGatewayRouteCompatibility({
-          gatewayName,
-          sandboxName,
-          route: {
-            provider,
-            model,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi: options.preferredInferenceApi ?? null,
-          },
-        });
-        if (!compatibility.ok) {
-          if (!isAdvisoryGatewayRouteConflict(compatibility)) {
-            deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-            return deps.exitProcess(1);
+        if (!isNativeNvidiaProvider(provider)) {
+          const compatibility = deps.checkGatewayRouteCompatibility({
+            gatewayName,
+            sandboxName,
+            route: {
+              provider,
+              model,
+              endpointUrl,
+              credentialEnv,
+              preferredInferenceApi: options.preferredInferenceApi ?? null,
+            },
+          });
+          if (!compatibility.ok) {
+            if (!isAdvisoryGatewayRouteConflict(compatibility)) {
+              deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+              return deps.exitProcess(1);
+            }
+            deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
           }
-          deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
@@ -736,6 +744,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -754,6 +763,7 @@ export function createSetupInference(
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
               : {}),
@@ -908,6 +918,21 @@ export function createSetupInference(
                 lookup: deps.lookup,
               },
             );
+          }
+
+          if (isNativeNvidiaProvider(provider)) {
+            const resolvedCredentialEnv = credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV;
+            const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv) || null;
+            const providerAdapter = deps.providerAdapter;
+            if (!providerAdapter) {
+              throw new Error("Native NVIDIA setup is missing its OpenShell provider adapter.");
+            }
+            nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
+              adapter: providerAdapter,
+              target: { kind: "selected" },
+              credentialValue,
+            });
+            return null;
           }
 
           if (inferenceProviders.isRemoteProviderName(provider)) {
@@ -1084,7 +1109,7 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          commonDeps.verifyInferenceRoute(provider, model);
+          if (!nativeNvidiaProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
@@ -1228,7 +1253,11 @@ export function createSetupInference(
         revalidateSandboxIdentity,
       );
       if (shouldLogSuccessfulRoute && "ok" in result) {
-        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+        deps.log(
+          isNativeNvidiaProvider(provider)
+            ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
+            : `  ✓ Inference route set: ${provider} / ${model}`,
+        );
       }
       return result;
     };

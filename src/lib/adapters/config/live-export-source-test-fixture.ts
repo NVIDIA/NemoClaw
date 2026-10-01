@@ -22,11 +22,11 @@ export const startupInput = {
     routeProvider: "inference",
     upstreamProvider: "nvidia-prod",
     model: "model-a",
-    routedBaseUrl: "https://inference.local/v1",
+    routedBaseUrl: endpoint,
     upstreamEndpointUrl: null,
     api: "openai-completions",
     primaryModelRef: "inference/model-a",
-    compatibility: {},
+    compatibility: { supportsStore: false },
   },
   dashboard: {
     agent: "openclaw",

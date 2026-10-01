@@ -7,6 +7,13 @@ import { runInferenceSet } from "./inference-set";
 import { defaultInferenceGatewayRestart } from "./inference-set-gateway-restart";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
+const nativeNvidiaReceipt = {
+  schemaVersion: 1 as const,
+  profileId: "nemoclaw-nvidia-inference-v1" as const,
+  providerName: "nemoclaw-nvidia-prod-v1" as const,
+  providerId: "11111111-2222-4333-8444-555555555555",
+};
+
 describe("runInferenceSet OpenClaw gateway restart", () => {
   it("pins restart readiness and forwards to the recorded gateway (#11764)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
@@ -40,14 +47,26 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
             headers: {
               "X-NemoClaw-Upstream-Provider": "nvidia-prod",
             },
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },
     };
     const deps = createDeps({
       config,
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+      },
       session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
     });
 
@@ -181,20 +200,32 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         mode: "merge",
         providers: {
           inference: {
-            baseUrl: "https://inference.local/v1",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
             apiKey: "unused",
             api: "openai-completions",
             headers: {
               "X-NemoClaw-Upstream-Provider": "nvidia-prod",
             },
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },
     };
     const deps = createDeps({
       config,
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+      },
       session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
     });
 

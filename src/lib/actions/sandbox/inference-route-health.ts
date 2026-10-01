@@ -7,6 +7,10 @@ import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/opens
 import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../inference/native-nvidia";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
@@ -240,6 +244,7 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   agentName: string | null;
   provider: string | null;
+  nativeNvidia?: boolean;
 };
 
 /**
@@ -292,6 +297,32 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
+  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+    const endpoint =
+      invocation && !invocation.ok && invocation.endpoint
+        ? invocation.endpoint
+        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+    const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
+    const nativeHealth: ProviderHealthStatus = invocation?.ok
+      ? {
+          ok: true,
+          probed: true,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+        }
+      : {
+          ok: false,
+          probed: invocation !== null,
+          providerLabel: "Inference route",
+          endpoint,
+          detail: invocation
+            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
+            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+          failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
+        };
+    return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
+  }
   const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
   const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
   const accepted =
