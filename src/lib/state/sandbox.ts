@@ -3058,6 +3058,12 @@ async function restoreSandboxStateInternal(
       }
 
       if (tarResult.status !== 0 || tarResult.error || tarResult.signal) {
+        const stderr = (tarResult.stderr?.toString() || "").trim();
+        const detail =
+          stderr ||
+          tarResult.error?.message ||
+          (tarResult.signal ? `signal ${tarResult.signal}` : `exit ${String(tarResult.status)}`);
+        _log(`FAILED: local restore archive creation failed: ${detail.substring(0, 200)}`);
         return {
           success: false,
           restoredDirs,
@@ -3114,7 +3120,26 @@ async function restoreSandboxStateInternal(
         closeSync(archiveFd);
       }
 
-      if (sshResult.status === 0) {
+      const extractClean = sshResult.status === 0 && !sshResult.error && !sshResult.signal;
+      const extractStderr = (sshResult.stderr?.toString() || "").trim();
+      const extractSummary = `exit=${String(sshResult.status)} signal=${sshResult.signal ?? "none"} error=${sshResult.error?.message ?? "none"} stderr=${extractStderr.substring(0, 200)}`;
+      const extractWarningOnly =
+        !extractClean && sshResult.status === 1 && !sshResult.error && !sshResult.signal;
+      if (!extractClean && !extractWarningOnly) {
+        _log(`FAILED: state archive extraction failed: ${extractSummary}`);
+        return {
+          success: false,
+          restoredDirs,
+          failedDirs: [...cleanupStateDirs],
+          restoredFiles,
+          failedFiles: localFiles.map((f) => f.path),
+        };
+      } else {
+        if (extractWarningOnly) {
+          _log(
+            `WARNING: state archive extraction reported a non-zero result: ${extractSummary}; verifying restored state usability per directory`,
+          );
+        }
         const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
 
         // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
@@ -3137,37 +3162,35 @@ async function restoreSandboxStateInternal(
           );
         }
 
-        const usabilityCmd = restoredPaths
-          .map(
-            (p) =>
-              `[ -d ${shellQuote(p)} ] && [ ! -L ${shellQuote(p)} ] && [ -r ${shellQuote(p)} ] && [ -w ${shellQuote(p)} ]`,
-          )
-          .join(" && ");
-        _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
-        if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
-          restoredDirs.push(...localDirs);
-        } else {
-          const stderr = (usabilityResult.stderr?.toString() || "").trim();
-          const detail =
-            stderr ||
-            usabilityResult.error?.message ||
-            (usabilityResult.signal
-              ? `signal ${usabilityResult.signal}`
-              : `exit ${String(usabilityResult.status)}`);
-          _log(`FAILED: restored state usability check failed: ${detail.substring(0, 200)}`);
-          failedDirs.push(...localDirs);
+        for (const dirName of localDirs) {
+          const targetPath = `${dir}/${dirName}`;
+          const usabilityCmd = `[ -d ${shellQuote(targetPath)} ] && [ ! -L ${shellQuote(targetPath)} ] && [ -r ${shellQuote(targetPath)} ] && [ -w ${shellQuote(targetPath)} ]`;
+          _log(`Verifying restored state usability: ${usabilityCmd}`);
+          const usabilityResult = spawnSync(
+            "ssh",
+            [...sshArgs(configFile, sandboxName), usabilityCmd],
+            {
+              ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 30000,
+            },
+          );
+          if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
+            restoredDirs.push(dirName);
+          } else {
+            const stderr = (usabilityResult.stderr?.toString() || "").trim();
+            const detail =
+              stderr ||
+              usabilityResult.error?.message ||
+              (usabilityResult.signal
+                ? `signal ${usabilityResult.signal}`
+                : `exit ${String(usabilityResult.status)}`);
+            _log(
+              `FAILED: restored state usability check failed for '${dirName}': ${detail.substring(0, 200)}`,
+            );
+            failedDirs.push(dirName);
+          }
         }
-      } else {
-        failedDirs.push(...localDirs);
       }
     }
 

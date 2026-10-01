@@ -1,0 +1,198 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import * as openshellClient from "../adapters/openshell/client.js";
+import { restoreRecreatedSandboxState } from "./sandbox.js";
+import {
+  createRestoreWarningHarness,
+  spawnResult,
+  type RestoreWarningHarness,
+  type SpawnHandler,
+} from "./sandbox-restore-extract-warning-fixture.js";
+
+const spawnRouter = vi.hoisted(() => ({
+  handler: ((_command: string, _args?: readonly string[]) => undefined) as SpawnHandler,
+}));
+
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawnSync: (command: string, args?: readonly string[], options?: object) =>
+      spawnRouter.handler(command, args) ?? actual.spawnSync(command, args, options),
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawnSync: (command: string, args?: readonly string[], options?: object) =>
+      spawnRouter.handler(command, args) ?? actual.spawnSync(command, args, options),
+  };
+});
+
+describe("restoreSandboxState tar-warning handling (#12358)", () => {
+  let harness: RestoreWarningHarness;
+
+  beforeEach(async () => {
+    harness = createRestoreWarningHarness();
+    const defs = await import("../agent/defs.js");
+    vi.spyOn(defs, "loadAgent").mockImplementation(() => harness.agent);
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", process.execPath);
+    vi.spyOn(openshellClient, "captureSandboxSshConfigCommand").mockReturnValue({
+      status: 0,
+      output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
+    });
+    spawnRouter.handler = harness.spawnHandler;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    harness.dispose();
+  });
+
+  it("marks dirs restored when tar exits 1 but every dir is usable", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    harness.behavior.extract = spawnResult(
+      1,
+      "tar: sessions: Cannot utime: Operation not permitted\ntar: Exiting with failure status due to previous errors\n",
+    );
+    harness.behavior.usability = spawnResult(0);
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.restoredDirs).toEqual(["memories", "sessions"]);
+    expect(result.failedDirs).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "WARNING: state archive extraction reported a non-zero result: exit=1 signal=none error=none stderr=tar: sessions: Cannot utime: Operation not permitted",
+      ),
+    );
+  });
+
+  it("marks dirs failed when tar exits non-zero and usability fails", async () => {
+    harness.behavior.extract = spawnResult(1, "tar: memories: Cannot open: Permission denied\n");
+    harness.behavior.usability = spawnResult(1);
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual([]);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+  });
+
+  it("keeps clean-extract behavior when tar exits 0", async () => {
+    harness.behavior.extract = spawnResult(0);
+    harness.behavior.usability = spawnResult(0);
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.restoredDirs).toEqual(["memories", "sessions"]);
+    expect(result.failedDirs).toEqual([]);
+  });
+
+  it("splits dirs when one dir is usable and another is not", async () => {
+    harness.behavior.extract = spawnResult(0);
+    harness.behavior.usabilityByDir = {
+      memories: spawnResult(0),
+      sessions: spawnResult(1, "sessions: Permission denied\n"),
+    };
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual(["memories"]);
+    expect(result.failedDirs).toEqual(["sessions"]);
+  });
+
+  it("fails closed without usability checks when extraction exits 2", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    harness.behavior.extract = spawnResult(
+      2,
+      "tar: sessions: Cannot open: Permission denied\ntar: Exiting with failure status due to previous errors\n",
+    );
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual([]);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+    expect(
+      harness.recordedSshCommands.some(
+        (command) => command.includes("[ -d ") || command.includes("chown -R"),
+      ),
+    ).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("FAILED: state archive extraction failed: exit=2"),
+    );
+  });
+
+  it("marks state files failed when extraction exits 2 and the backup contains state files", async () => {
+    harness.behavior.extract = spawnResult(
+      2,
+      "tar: sessions: Cannot open: Permission denied\ntar: Exiting with failure status due to previous errors\n",
+    );
+
+    const result = await restoreRecreatedSandboxState(
+      "alpha",
+      harness.writeBackup([
+        { path: "config.toml", strategy: "copy", contents: "backed-up state\n" },
+      ]),
+      { targetAgentType: "fake-agent" },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual([]);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+    expect(result.restoredFiles).toEqual([]);
+    expect(result.failedFiles).toEqual(["config.toml"]);
+    expect(
+      harness.recordedSshCommands.some(
+        (command) =>
+          command.includes("[ -d ") ||
+          command.includes("chown -R") ||
+          command.includes("config.toml"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed without touching the sandbox when local archive creation fails", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    harness.behavior.localTar = spawnResult(
+      2,
+      "tar: /tmp/missing: Cannot stat: No such file or directory\n",
+    );
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+    expect(harness.recordedSshCommands).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "FAILED: local restore archive creation failed: tar: /tmp/missing: Cannot stat: No such file or directory",
+      ),
+    );
+  });
+});
