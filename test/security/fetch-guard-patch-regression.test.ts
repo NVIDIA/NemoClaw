@@ -90,7 +90,7 @@ function readDockerfileMcporterIntegrity(): string {
 function readDockerfileOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_9_1_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_9_2_INTEGRITY=([^\s]+)/m,
     "OpenClaw runtime integrity",
   );
 }
@@ -98,7 +98,7 @@ function readDockerfileOpenClawIntegrity(): string {
 function readDockerfileOpenClawTarball(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_9_1_TARBALL=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_9_2_TARBALL=([^\s]+)/m,
     "OpenClaw runtime tarball",
   );
 }
@@ -183,8 +183,8 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
     `BASE_IMAGE=${JSON.stringify("registry.example/nemoclaw-test-base:latest")}`,
     `MCPORTER_VERSION=${JSON.stringify(expectedMcporterVersion)}`,
-    `OPENCLAW_2026_9_1_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
-    `OPENCLAW_2026_9_1_TARBALL=${JSON.stringify(openclawTarball)}`,
+    `OPENCLAW_2026_9_2_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
+    `OPENCLAW_2026_9_2_TARBALL=${JSON.stringify(openclawTarball)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(mcporterIntegrity)}`,
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(mcporterTarball)}`,
     "node() {",
@@ -208,8 +208,8 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "      return 0;",
     "    fi",
     '    [ "$#" -eq 10 ] && [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "openclaw@${OPENCLAW_VERSION}" ] || return 95;',
-    '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_9_1_INTEGRITY" ] || return 96;',
-    '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_9_1_TARBALL" ] || return 97;',
+    '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_9_2_INTEGRITY" ] || return 96;',
+    '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_9_2_TARBALL" ] || return 97;',
     '    [ "${9:-}" = "--label" ] && [ "${10:-}" = "OpenClaw ${OPENCLAW_VERSION}" ] || return 98;',
     '    printf "npm pack %s --pack-destination reviewed-temp\\n" "${8:-}" >> "$call_log";',
     '    printf "%s\\n" "$reviewed_archive"; return 0;',
@@ -221,7 +221,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_9_1_INTEGRITY";',
+    '    printf "%s\\n" "$OPENCLAW_2026_9_2_INTEGRITY";',
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "mcporter@${MCPORTER_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
@@ -229,7 +229,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.tarball" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_9_1_TARBALL";',
+    '    printf "%s\\n" "$OPENCLAW_2026_9_2_TARBALL";',
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "pack" ]; then',
@@ -241,7 +241,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     '    test -n "$pack_dir";',
     '    pack_file="openclaw-${OPENCLAW_VERSION}.tgz";',
     '    printf "fake openclaw tarball" > "$pack_dir/$pack_file";',
-    '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_9_1_INTEGRITY";',
+    '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_9_2_INTEGRITY";',
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "install" ]; then return 0; fi',
@@ -371,7 +371,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.calls).not.toContain("npm install -g");
     expect(current.calls).not.toContain("npm pack");
 
-    const newer = runOpenClawUpgradeBlock("2026.9.2");
+    const newer = runOpenClawUpgradeBlock("2026.9.3");
     expect(newer.result.status).toBe(1);
     expect(newer.result.stderr).toContain(
       "newer than reviewed target " + CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
@@ -1316,7 +1316,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "Patch 6 applied to OpenClaw 2026.9.1 cron preflight trusted env-proxy",
+        "Patch 6 applied to OpenClaw 2026.9.2 cron preflight trusted env-proxy",
       );
       const patched = fs.readFileSync(preflightPath, "utf-8");
       expect(
@@ -1372,7 +1372,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "OpenClaw 2026.9.1 has no cron model-provider preflight; Patch 6 not needed",
+        "OpenClaw 2026.9.2 has no cron model-provider preflight; Patch 6 not needed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
