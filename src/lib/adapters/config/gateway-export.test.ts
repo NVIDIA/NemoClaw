@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { openRegularFileNoFollow } from "../fs/regular-file";
 import {
@@ -75,9 +77,9 @@ function mockSource(selected: GatewayManagementDeclaration = declaration) {
       hasPackagedService: false,
     }),
   );
-  const readUtf8 = vi.fn(() => JSON.stringify(session));
+  const readBytes = vi.fn(() => Buffer.from(JSON.stringify(session)));
   const close = vi.fn();
-  vi.mocked(openRegularFileNoFollow).mockReturnValue({ readUtf8, close } as unknown as ReturnType<
+  vi.mocked(openRegularFileNoFollow).mockReturnValue({ readBytes, close } as unknown as ReturnType<
     typeof openRegularFileNoFollow
   >);
   vi.mocked(loadGatewayManagementDeclaration).mockReturnValue({
@@ -97,7 +99,7 @@ function mockSource(selected: GatewayManagementDeclaration = declaration) {
     resolveOwner: vi.fn(),
     observeManagedGateway: vi.fn(),
   });
-  return { session, readUtf8, close, probeAttachment, lstat };
+  return { session, readBytes, close, probeAttachment, lstat };
 }
 
 describe("gateway export observation", () => {
@@ -201,12 +203,58 @@ describe("gateway export observation", () => {
   );
 
   it("refuses malformed checkpoint data and closes the read handle (#11861)", async () => {
-    const { readUtf8, close } = mockSource();
-    readUtf8.mockReturnValue("not JSON");
+    const { readBytes, close } = mockSource();
+    readBytes.mockReturnValue(Buffer.from("not JSON"));
     await expect(observeExportGateway(entry)).rejects.toThrow();
     expect(close).toHaveBeenCalledTimes(1);
     expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
   });
+
+  it.runIf(process.platform === "linux")(
+    "rejects same-inode checkpoint changes during the read before probing (#11861)",
+    async () => {
+      const { session, lstat, probeAttachment } = mockSource();
+      lstat.mockRestore();
+      const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-checkpoint-"));
+      try {
+        vi.stubEnv("HOME", temporaryHome);
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8080");
+        vi.spyOn(os, "homedir").mockReturnValue(temporaryHome);
+        vi.resetModules();
+        const { saveSession, SESSION_FILE } = await import("../../state/onboard-session");
+        expect(SESSION_FILE.startsWith(temporaryHome + path.sep)).toBe(true);
+        saveSession(session);
+        const { openRegularFileNoFollow: openActual } =
+          await vi.importActual<typeof import("../fs/regular-file")>("../fs/regular-file");
+        vi.mocked(openRegularFileNoFollow).mockImplementation(openActual);
+
+        expect(await observeExportGateway(entry)).toMatchObject({ management: "external" });
+        vi.mocked(observeOpenShellGatewayRegistration).mockClear();
+        probeAttachment.mockClear();
+        const before = fs.statSync(SESSION_FILE);
+        const original = fs.readFileSync(SESSION_FILE, "utf8");
+        const replacement = original.replace("gateway.service", "changed.service");
+        expect(replacement).not.toBe(original);
+        const originalRead = fs.readSync.bind(fs);
+        const read = vi.spyOn(fs, "readSync").mockImplementationOnce(((...args: unknown[]) => {
+          const count = Reflect.apply(originalRead, fs, args);
+          fs.writeFileSync(SESSION_FILE, replacement);
+          fs.utimesSync(SESSION_FILE, before.atime, new Date(before.mtimeMs + 10_000));
+          return count;
+        }) as typeof fs.readSync);
+
+        await expect(observeExportGateway(entry)).rejects.toThrow("changed while reading");
+
+        expect(read).toHaveBeenCalledTimes(1);
+        const after = fs.statSync(SESSION_FILE);
+        expect([after.dev, after.ino, after.size]).toEqual([before.dev, before.ino, before.size]);
+        expect(observeOpenShellGatewayRegistration).not.toHaveBeenCalled();
+        expect(probeAttachment).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(temporaryHome, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves a legacy managed source without an onboarding checkpoint (#11861)", async () => {
     mockSource();

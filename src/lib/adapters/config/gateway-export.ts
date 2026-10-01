@@ -100,7 +100,7 @@ function readRecordedOwner(port: number): GatewayOwner | null {
   if (!fs.lstatSync(sessionPath, { throwIfNoEntry: false })) return null;
   const file = openRegularFileNoFollow(sessionPath);
   try {
-    const value: unknown = JSON.parse(file.readUtf8(1024 * 1024));
+    const value: unknown = JSON.parse(file.readBytes(1024 * 1024).toString("utf-8"));
     return inspectRecordedOwner(value);
   } finally {
     file.close();
