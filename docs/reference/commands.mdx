@@ -3530,6 +3530,10 @@ $$nemoclaw tunnel start
 
 Stop host auxiliary services that `$$nemoclaw tunnel start` started (for example cloudflared).
 
+If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains the process, PID file, and dashboard-port record.
+Stop that `cloudflared` process manually.
+Then retry `$$nemoclaw tunnel stop`.
+
 Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one messaging bridge.
 
 ```bash
