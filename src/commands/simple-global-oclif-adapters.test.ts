@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => {
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
     getSandbox: vi.fn(() => ({ dashboardPort: 18_791 })),
     listSandboxes: vi.fn(() => ({ sandboxes: [], defaultSandbox: "resolved-sandbox" })),
+    createOpenShellDebugDiagnostics: vi.fn(() => ({ collect: vi.fn() })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
     runDashboardUrlCommand: vi.fn(async () => undefined),
@@ -60,7 +61,10 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
-vi.mock("../lib/diagnostics/debug", () => ({ runDebug: vi.fn() }));
+vi.mock("../lib/diagnostics/debug", () => ({
+  createOpenShellDebugDiagnostics: mocks.createOpenShellDebugDiagnostics,
+  runDebug: vi.fn(),
+}));
 vi.mock("../lib/diagnostics/debug-command", () => ({
   runDebugCommandWithOptions: mocks.runDebugCommandWithOptions,
 }));

@@ -3,12 +3,14 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { captureOpenshell, enableAuditLogs } = vi.hoisted(() => ({
-  captureOpenshell: vi.fn(),
+const { readLogs, enableAuditLogs } = vi.hoisted(() => ({
+  readLogs: vi.fn(),
   enableAuditLogs: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({ captureOpenshell }));
+vi.mock("../../adapters/openshell/sandbox-logs-cli", () => ({
+  cliOpenShellSandboxLogs: { read: readLogs },
+}));
 vi.mock("../../adapters/openshell/sandbox-settings-cli", () => ({
   cliOpenShellSandboxSettings: { enableAuditLogs },
 }));
@@ -31,7 +33,11 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
 
   it("enables audit and reads the bounded OpenShell log tail through the runtime adapter", async () => {
     enableAuditLogs.mockResolvedValue({ ok: true, value: undefined });
-    captureOpenshell.mockReturnValueOnce({ output: DENIED_LINE, status: 0 });
+    readLogs.mockResolvedValueOnce({
+      content: DENIED_LINE,
+      diagnostic: "",
+      outcome: { kind: "completed", exitCode: 0 },
+    });
     const stderr: string[] = [];
 
     const hint = await maybeEmitPolicyDenialHint(
@@ -53,24 +59,14 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
       sandboxName: "runtime-sandbox",
       timeoutMs: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
     });
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      1,
-      [
-        "logs",
-        "-g",
-        "nemoclaw-8091",
-        "runtime-sandbox",
-        "-n",
-        String(POLICY_HINT_TAIL_LINES),
-        "--source",
-        "all",
-      ],
-      expect.objectContaining({
-        ignoreError: true,
-        includeStderr: true,
-        timeout: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
-      }),
-    );
+    expect(readLogs).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      sandboxName: "runtime-sandbox",
+      source: "openshell",
+      lines: String(POLICY_HINT_TAIL_LINES),
+      since: null,
+      timeoutMs: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
+    });
     expect(hint).toContain("example.com:443");
     expect(stderr).toEqual([hint]);
   });
@@ -80,7 +76,15 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
       code: "ETIMEDOUT",
     });
     enableAuditLogs.mockResolvedValue({ ok: true, value: undefined });
-    captureOpenshell.mockReturnValueOnce({ error: timeout, output: "", status: null });
+    readLogs.mockResolvedValueOnce({
+      content: "",
+      diagnostic: "",
+      outcome: {
+        kind: "failed",
+        error: { kind: "timeout", message: timeout.message },
+        exitCode: 1,
+      },
+    });
     const sleep = vi.fn(async () => {});
 
     const hint = await maybeEmitPolicyDenialHint(
@@ -93,7 +97,7 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
     );
 
     expect(hint).toBeNull();
-    expect(captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(readLogs).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
 });
@@ -124,7 +128,11 @@ describe("post-exec policy hint integration (#11763)", () => {
     "does not inspect pending devices after a %s command",
     async (_label, commandCode, calls, expectedArgv) => {
       enableAuditLogs.mockResolvedValue({ ok: true, value: undefined });
-      captureOpenshell.mockReturnValue({ output: "", status: 0 });
+      readLogs.mockResolvedValue({
+        content: "",
+        diagnostic: "",
+        outcome: { kind: "completed", exitCode: 0 },
+      });
       const complete = preparePolicyHint(
         "nemoclaw",
         "oc-fresh",
@@ -137,8 +145,19 @@ describe("post-exec policy hint integration (#11763)", () => {
 
       await complete({ commandCode });
 
-      expect(captureOpenshell).toHaveBeenCalledTimes(calls);
-      expect(captureOpenshell.mock.calls[0]?.[0]).toEqual(expectedArgv);
+      expect(readLogs).toHaveBeenCalledTimes(calls);
+      expect(readLogs.mock.calls[0]?.[0]).toEqual(
+        expectedArgv
+          ? {
+              target: { kind: "named", gatewayName: "nemoclaw-8091" },
+              sandboxName: "oc-fresh",
+              source: "openshell",
+              lines: String(POLICY_HINT_TAIL_LINES),
+              since: null,
+              timeoutMs: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
+            }
+          : undefined,
+      );
     },
   );
 });

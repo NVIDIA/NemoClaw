@@ -381,6 +381,12 @@ Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
+WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
+probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
+Other errors stop setup. The helper masks `docker.service` and `docker.socket` in the job-owned
+distro so the masks survive a restart. The test script checks Docker again immediately before
+Vitest. The helper removes the masks and requires Docker health before the live step.
+
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.

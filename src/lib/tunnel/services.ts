@@ -722,7 +722,11 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared");
+  if (!stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)) {
+    throw new Error(
+      "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
+    );
+  }
 }
 
 /**
