@@ -828,12 +828,14 @@ Do not copy, recreate, or edit a registry entry or lifecycle receipt by hand. If
 If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
 Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
 
-Re-image the sandbox with a current Hermes build before retrying recovery:
+Re-image the sandbox with a current Hermes build through a fresh onboarding run:
 
 ```bash
-nemohermes <sandbox-name> rebuild --yes
-nemohermes <sandbox-name> recover
+nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+Portable Hermes does not support the sandbox `rebuild` command.
+The fresh onboarding run is the supported terminal action for replacing the outdated image.
 
 </AgentOnly>
 
