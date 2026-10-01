@@ -31,7 +31,7 @@ import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { webSearchEnvFor } from "../../inference/web-search";
-import { webSearchProviderProfileId } from "../../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../../inference/web-search/provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 

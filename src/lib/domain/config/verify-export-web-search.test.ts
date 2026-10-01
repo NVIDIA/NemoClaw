@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { exportWebSearchBinding } from "./export-evidence";
-import { webSearchProviderProfileId } from "../../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../../inference/web-search/provider-profile";
 import {
   canonicalPolicy,
   entry,
