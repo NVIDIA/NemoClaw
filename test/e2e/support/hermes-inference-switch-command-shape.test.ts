@@ -540,4 +540,24 @@ describe("Hermes inference switch command shape", () => {
       expect.objectContaining({ outcome: "passed-after-retry" }),
     );
   });
+
+  it("passes the public NVIDIA credential only to the native provider switch", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
+
+    await runHermesInferenceSetWithRetry(
+      { command } as unknown as HostCliClient,
+      ["nvapi-hosted-key"],
+      [],
+      {
+        attempts: 1,
+        publicNvidiaApiKey: "nvapi-hosted-key",
+      },
+    );
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: { NVIDIA_INFERENCE_API_KEY: "nvapi-hosted-key" },
+      redactionValues: ["nvapi-hosted-key"],
+    });
+  });
 });
