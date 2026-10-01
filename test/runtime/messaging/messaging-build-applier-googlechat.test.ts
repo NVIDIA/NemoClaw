@@ -56,7 +56,7 @@ function officialPluginFixture(channelId: string) {
       'const fs = require("node:fs");',
       "const args = process.argv.slice(2);",
       'fs.appendFileSync(process.env.OPENCLAW_TRACE, `openclaw|${args.join("|")}|offline=${process.env.NPM_CONFIG_OFFLINE || ""}/${process.env.npm_config_offline || ""}\\n`);',
-      'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.exit(44); }',
+      'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.stdout.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stderr.write("npm error code ENOTCACHED\\nnpm error request to https://registry.npmjs.org/@openclaw%2fdiscord?token=" + process.env.OPENCLAW_INSPECTION_CANARY); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
       'if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { setInterval(() => {}, 1000); return; }',
       'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY } })); process.exit(0); }',
@@ -165,12 +165,15 @@ it.each(["slack", "discord", "teams", "whatsapp", "googlechat"])(
         "Report this failure, the plugin name and your NemoClaw version",
       );
       expect(failedInspection.stdout + failedInspection.stderr).not.toContain(canary);
-      expect(() =>
-        applyMessagingBuildPhase(serializedPlan, "agent-install", {
-          ...env,
-          OPENCLAW_CACHE_MISS: "1",
-        }),
-      ).toThrow();
+      const failedInstall = spawnSync(process.execPath, CLI_ARGS, {
+        encoding: "utf8",
+        env: { ...env, OPENCLAW_CACHE_MISS: "1", OPENCLAW_INSPECTION_CANARY: canary },
+      });
+      expect(failedInstall.status).toBe(2);
+      expect(failedInstall.stderr).toContain('"exitCode":44');
+      expect(failedInstall.stderr).toContain('"npmCodes":["ENOTCACHED"]');
+      expect(failedInstall.stderr).toContain('"registryPaths":["/@openclaw%2fdiscord"]');
+      expect(failedInstall.stdout + failedInstall.stderr).not.toContain(canary);
       expect(fs.readFileSync(tracePath, "utf8")).not.toContain("registry-fallback");
       expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
     } finally {

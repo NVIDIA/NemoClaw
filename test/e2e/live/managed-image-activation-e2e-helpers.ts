@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { resolveSandboxHealthProbeUrl } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
@@ -250,6 +251,7 @@ export function managedActivationPostRestartAgentTurnScript(
   agent: ShippedManagedImageAgent,
   phase: "before" | "boundary" | "after",
   command: readonly string[],
+  healthProbeUrl = "http://127.0.0.1:18789/health",
 ): TrustedSandboxShellScript | null {
   if (agent !== "openclaw" || phase !== "after") return null;
 
@@ -257,7 +259,7 @@ export function managedActivationPostRestartAgentTurnScript(
 deadline=$(( $(date +%s) + ${OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS} ))
 last_status=000
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18789/health || true)"
+  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 ${shellQuote(healthProbeUrl)} || true)"
   case "$last_status" in
     200|401) break ;;
   esac
@@ -401,7 +403,14 @@ async function runAgentTurn(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
-  const postRestartScript = managedActivationPostRestartAgentTurnScript(agent, phase, command);
+  const postRestartScript = managedActivationPostRestartAgentTurnScript(
+    agent,
+    phase,
+    command,
+    agent === "openclaw" && phase === "after"
+      ? resolveSandboxHealthProbeUrl(sandboxName)
+      : undefined,
+  );
   const options = {
     artifactName: `${agent}-agent-turn-${phase}-restart`,
     env,
