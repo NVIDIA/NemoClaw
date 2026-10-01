@@ -104,6 +104,10 @@ def _load_operator_allowlist() -> set:
 
 
 OPERATOR_ALLOWLIST = _load_operator_allowlist()
+# When an allowlist is set, anonymous (header-less) callers are denied the
+# premium agent by default. Opt in to allowing them only for trusted
+# local/dev direct-API testing.
+ALLOW_ANON = os.environ.get("CHAD_SHIM_ALLOW_ANON", "").strip().lower() in ("1", "true", "yes")
 DENY_MESSAGE = os.environ.get(
     "CHAD_SHIM_DENY_MESSAGE",
     "This assistant isn't available on your account. Please use the **Chad Lite** "
@@ -407,13 +411,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": {"message": "no user message in body"}})
             return
 
-        # Operator allowlist gate (opt-in via CHAD_OPERATOR_ALLOWLIST). A
-        # non-operator who selects the `chad` model never reaches the agent;
-        # they get DENY_MESSAGE. Unset allowlist or anonymous caller = allowed.
-        if OPERATOR_ALLOWLIST and op["email"] and op["email"] not in OPERATOR_ALLOWLIST:
-            _emit_trace(status="denied", reply_chars=len(DENY_MESSAGE))
-            self._send_assistant_text(body, DENY_MESSAGE)
-            return
+        # Operator allowlist gate. When an allowlist is set the premium agent is
+        # FAIL-CLOSED: the caller must present an operator email that is on the
+        # list. Anonymous / header-less callers are denied too — the old
+        # `and op["email"]` short-circuit let a request with no email slip past
+        # the gate and reach the agent (an un-authenticated path to premium).
+        # Unset allowlist = allow-all (opt-in, backward-compatible). Set
+        # CHAD_SHIM_ALLOW_ANON=1 only for trusted local/dev direct-API testing.
+        if OPERATOR_ALLOWLIST:
+            email = op["email"]
+            if not email and not ALLOW_ANON:
+                _emit_trace(status="denied", reply_chars=len(DENY_MESSAGE), error="anonymous")
+                self._send_assistant_text(body, DENY_MESSAGE)
+                return
+            if email and email not in OPERATOR_ALLOWLIST:
+                _emit_trace(status="denied", reply_chars=len(DENY_MESSAGE))
+                self._send_assistant_text(body, DENY_MESSAGE)
+                return
 
         prefix = self._format_operator_prefix(op)
         final_message = prefix + message if prefix else message

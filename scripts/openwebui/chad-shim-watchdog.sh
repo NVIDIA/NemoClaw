@@ -51,6 +51,22 @@ mkdir -p "$(dirname "$LOG")"
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG"; }
 
+SHIM_SRC="${CHAD_SHIM_SRC:-${HOME}/.nemoclaw/source/scripts/openwebui/chad-shim.py}"
+# Self-heal: the pod's container filesystem resets on pod recreate, so both the
+# sandbox-writable and image shim copies can vanish. Restore from the host copy
+# before the probe/restart logic decides the shim is dead.
+PROVISIONED=0
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" \
+    "test -x '$SHIM_PATCHED' -o -x '$SHIM_FALLBACK'" 2>/dev/null; then
+  if [ -f "$SHIM_SRC" ]; then
+    log "self-heal: uploading chad-shim.py to pod"
+    cat "$SHIM_SRC" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" \
+      "cat > '$SHIM_PATCHED' && chmod +x '$SHIM_PATCHED'" && PROVISIONED=1
+  else
+    log "self-heal: host source missing at $SHIM_SRC"
+  fi
+fi
+
 # Trim local log to last ~1000 lines.
 trim_log() {
   if [ -f "$LOG" ] && [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 1000 ]; then
