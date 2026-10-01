@@ -42,6 +42,8 @@ impl QuestionResolver<'_> {
                     choices: field.choices,
                     suggestion: field.suggestion,
                     schema: field.schema,
+                    title: field.title,
+                    description: field.description,
                 });
             }
         }

@@ -109,6 +109,8 @@ impl QuestionResolver<'_> {
                         choices: field.choices,
                         suggestion: field.suggestion,
                         schema: field.schema,
+                        title: field.title,
+                        description: field.description,
                     });
                 }
             }
@@ -171,8 +173,8 @@ pub(super) fn native_questions_for_values(
         }
         fields.push(SettingQuestion {
             path: "workflow:/target_id".into(),
-            title: "Workflow target".into(),
-            description: "Select a workflow target advertised by this Fabric adapter.".into(),
+            title: Some("Workflow target".into()),
+            description: Some("Select a workflow target advertised by this Fabric adapter.".into()),
             required: workflow_required,
             schema,
             choices,

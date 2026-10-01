@@ -121,6 +121,8 @@ pub struct JourneyQuestion {
     kind: JourneyQuestionKind,
     suggestion: Option<Value>,
     schema: Value,
+    title: Option<String>,
+    description: Option<String>,
 }
 
 impl JourneyQuestion {
@@ -152,6 +154,16 @@ impl JourneyQuestion {
     }
     pub fn schema(&self) -> &Value {
         &self.schema
+    }
+    /// Display title from the SDK or Fabric schema, when one is advertised.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+    /// Why the field exists, from the SDK or Fabric schema, when advertised.
+    pub fn description(&self) -> Option<&str> {
+        self.description
+            .as_deref()
+            .or_else(|| self.schema["description"].as_str())
     }
 }
 

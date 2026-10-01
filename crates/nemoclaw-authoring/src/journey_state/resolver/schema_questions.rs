@@ -37,6 +37,8 @@ pub(super) fn collect_required_leaf_questions(
                         choices: finite_choices(&choice_schema),
                         suggestion: supplied.cloned(),
                         schema: choice_schema,
+                        title: None,
+                        description: None,
                     });
                 }
                 return;
@@ -96,6 +98,8 @@ pub(super) fn collect_required_leaf_questions(
                             choices,
                             suggestion: supplied.cloned(),
                             schema: child_schema,
+                            title: None,
+                            description: None,
                         });
                     } else {
                         collect_required_leaf_questions(
@@ -125,6 +129,8 @@ pub(super) fn collect_required_leaf_questions(
                         .collect(),
                     suggestion: None,
                     schema: serde_json::json!({"type": "string", "enum": fields}),
+                    title: None,
+                    description: None,
                 });
             }
         }
@@ -163,6 +169,8 @@ pub(super) fn collect_required_leaf_questions(
                     .cloned()
                     .or_else(|| child_schema.get("default").cloned()),
                 schema: child_schema,
+                title: None,
+                description: None,
             });
         } else {
             collect_required_leaf_questions(

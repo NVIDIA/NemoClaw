@@ -3172,6 +3172,38 @@ fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
 }
 
 #[test]
+fn adapter_setting_questions_carry_fabric_descriptions() {
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    values["spec"]["sandboxes"][0]["harness"] = json!({"kind": "nvidia.fabric.hermes"});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let capabilities = Capabilities::available();
+    let resolution = JourneyDefinition::new("described-settings", base)
+        .ask([
+            "adapter:nvidia.fabric.hermes:/api_mode",
+            "adapter:nvidia.fabric.hermes:/mode",
+        ])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
+    let described = resolution
+        .question("adapter:nvidia.fabric.hermes:/api_mode")
+        .expect("described setting");
+    assert_eq!(
+        described.description(),
+        Some("Explicit native Hermes wire protocol.")
+    );
+    // Fabric does not describe `mode`; no generic text stands in for it.
+    let undescribed = resolution
+        .question("adapter:nvidia.fabric.hermes:/mode")
+        .expect("undescribed setting");
+    assert_eq!(undescribed.title(), None);
+    assert_eq!(undescribed.description(), None);
+}
+
+#[test]
 fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
     let base = PartialDocument::from_yaml(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
     let capabilities = Capabilities::available();

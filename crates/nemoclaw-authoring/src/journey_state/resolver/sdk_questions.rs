@@ -48,6 +48,8 @@ impl QuestionResolver<'_> {
                 choices: Vec::new(),
                 suggestion: name.cloned(),
                 schema: serde_json::json!({"type":"string"}),
+                title: None,
+                description: None,
             });
         }
 
@@ -87,6 +89,8 @@ impl QuestionResolver<'_> {
                     choices: finite_choices(&schema),
                     suggestion: value.cloned().or_else(|| schema.get("default").cloned()),
                     schema,
+                    title: None,
+                    description: None,
                 });
             }
         }
@@ -152,6 +156,8 @@ impl QuestionResolver<'_> {
                 choices,
                 suggestion: supplied.cloned().or_else(|| schema.get("default").cloned()),
                 schema,
+                title: None,
+                description: None,
             });
         }
     }

@@ -83,6 +83,8 @@ impl QuestionResolver<'_> {
                     .collect(),
                 suggestion: chosen.map(|kind| Value::String(kind.into())),
                 schema: serde_json::json!({"type":"string"}),
+                title: None,
+                description: None,
             });
         } else if let Some(harness) = chosen {
             if let Some(schema) = adapter_schema(capabilities, harness)? {
@@ -106,8 +108,8 @@ impl QuestionResolver<'_> {
                     fields.clear();
                     fields.push(SettingQuestion {
                         path: String::new(),
-                        title: "Adapter settings".into(),
-                        description: "Review the adapter settings object.".into(),
+                        title: Some("Adapter settings".into()),
+                        description: Some("Review the adapter settings object.".into()),
                         required: true,
                         schema: schema.clone(),
                         choices: Vec::new(),
@@ -172,6 +174,8 @@ impl QuestionResolver<'_> {
                             choices: field.choices,
                             suggestion: field.suggestion,
                             schema: field.schema,
+                            title: field.title,
+                            description: field.description,
                         });
                     }
                 }

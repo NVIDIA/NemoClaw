@@ -91,6 +91,20 @@ fn unknown_supplied_deployment_field_can_be_removed() {
 }
 
 #[test]
+fn deployment_questions_carry_titles_and_sdk_descriptions() {
+    let capabilities = Capabilities::available();
+    let resolution = journey("fabric-pi.yaml").resolve(&capabilities).unwrap();
+    let endpoint = resolution
+        .question("/spec/gateway/endpoint")
+        .expect("gateway endpoint question");
+    assert_eq!(endpoint.title(), Some("Gateway: endpoint"));
+    assert_eq!(
+        endpoint.description(),
+        Some("Gateway HTTP(S) origin, without a path.")
+    );
+}
+
+#[test]
 fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_answers() {
     let capabilities = Capabilities::available();
     let mut state = journey("fabric-pi.yaml");

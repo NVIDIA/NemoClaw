@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SettingQuestion {
     pub path: String,
-    pub title: String,
-    pub description: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
     pub required: bool,
     pub schema: Value,
     pub choices: Vec<Value>,
@@ -116,11 +116,13 @@ pub(crate) fn collect(
                 // Ambiguous unions stay one typed JSON question; never guess a branch.
                 fields.push(SettingQuestion {
                     path: path.into(),
-                    title: schema["title"].as_str().unwrap_or(path).into(),
-                    description: schema["description"]
-                        .as_str()
-                        .unwrap_or("Enter a JSON value matching one advertised alternative.")
-                        .into(),
+                    title: schema["title"].as_str().map(Into::into),
+                    description: Some(
+                        schema["description"]
+                            .as_str()
+                            .unwrap_or("Enter a JSON value matching one advertised alternative.")
+                            .into(),
+                    ),
                     required,
                     schema: schema.clone(),
                     choices: Vec::new(),
@@ -173,10 +175,11 @@ pub(crate) fn collect(
                 if shared.is_empty() {
                     fields.push(SettingQuestion {
                         path: String::new(),
-                        title: "Adapter settings".into(),
-                        description:
+                        title: Some("Adapter settings".into()),
+                        description: Some(
                             "Enter a JSON object matching the adapter's advertised alternatives."
                                 .into(),
+                        ),
                         required: true,
                         schema: schema.clone(),
                         choices: Vec::new(),
@@ -295,11 +298,8 @@ pub(crate) fn collect(
             .collect();
         fields.push(SettingQuestion {
             path: path.into(),
-            title: effective["title"].as_str().unwrap_or(path).into(),
-            description: effective["description"]
-                .as_str()
-                .unwrap_or("Enter the adapter setting.")
-                .into(),
+            title: effective["title"].as_str().map(Into::into),
+            description: effective["description"].as_str().map(Into::into),
             required,
             schema: field_schema,
             choices,

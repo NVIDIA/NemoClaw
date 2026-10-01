@@ -77,9 +77,11 @@ fn collect(
             // (remove) the supplied field.
             out.push(SettingQuestion {
                 path: path.into(),
-                title: title(path),
-                description: "The SDK schema does not define this field. Omit it to remove the value."
-                    .into(),
+                title: Some(title(path)),
+                description: Some(
+                    "The SDK schema does not define this field. Omit it to remove the value."
+                        .into(),
+                ),
                 required: false,
                 schema: Value::Bool(false),
                 choices: Vec::new(),
@@ -93,13 +95,8 @@ fn collect(
         }
         out.push(SettingQuestion {
             path: path.into(),
-            title: title(path),
-            description: schema["description"]
-                .as_str()
-                .unwrap_or(
-                    "Edit this deployment value; the SDK validates the complete configuration.",
-                )
-                .into(),
+            title: Some(title(path)),
+            description: schema["description"].as_str().map(Into::into),
             required,
             schema,
             choices,
