@@ -11,7 +11,12 @@ use nemoclaw_runtime::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, process::Command, time::Duration};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 fn docker(arguments: &[&str]) -> String {
     let result = Command::new("docker").args(arguments).output().unwrap();
@@ -128,7 +133,18 @@ async fn pinned_ollama_reads_verified_cache_and_matches_declared_version() {
     let port = docker(&["port", &container.0, "11434/tcp"]);
     let endpoint = format!("http://{port}");
     let models = Models::new(&format!("{endpoint}/v1")).unwrap();
-    models.ready(name).await.unwrap();
+    // Docker's loopback proxy resets connections until Ollama listens.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match models.ready(name).await {
+            Err(nemoclaw_runtime::Error::Observation(
+                nemoclaw_runtime::ObservationError::Transport,
+            )) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            result => break result.unwrap(),
+        }
+    }
     let observed = models.read(name).await.unwrap().expect("installed model");
     assert_eq!(observed.digest, digest);
     assert_eq!(observed.size, (config.len() + model.len()) as u64);
