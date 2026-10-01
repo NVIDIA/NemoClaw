@@ -137,6 +137,23 @@ describe("external gateway live source reader", () => {
     expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
   });
 
+  it("refuses export when the external SDK connection remains pending at the deadline (#11861)", async () => {
+    mockExternalSource();
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    vi.mocked(connectExternalHttpOpenShellSdk).mockImplementationOnce(() => {
+      controller.abort();
+      return new Promise(() => {});
+    });
+
+    const exported = await exportLiveSource();
+
+    expectExportRefusal(exported, { category: "live-verification-failed" });
+    expect(connectExternalHttpOpenShellSdk).toHaveBeenCalledTimes(1);
+    expect(raw.getSandbox).not.toHaveBeenCalled();
+    expect(connectManagedOpenShellSdk).not.toHaveBeenCalled();
+  });
+
   it("does not connect when gateway provenance cannot be verified (#11861)", async () => {
     mockExternalSource();
     vi.mocked(observeExportGateway).mockRejectedValue(new Error(readFailureCanary));
