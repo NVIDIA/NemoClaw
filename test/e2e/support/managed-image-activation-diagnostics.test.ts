@@ -683,9 +683,14 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
   });
   it("gates only the post-restart OpenClaw turn on inner gateway readiness (#7744)", () => {
     const command = ["openclaw", "agent", "--session-id", "quoted session"];
-    const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+    const script = managedActivationPostRestartAgentTurnScript(
+      "openclaw",
+      "after",
+      command,
+      "http://127.0.0.1:18791/health",
+    );
 
-    expect(script).toContain("http://127.0.0.1:18789/health");
+    expect(script).toContain("http://127.0.0.1:18791/health");
     expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
     expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
     expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();
