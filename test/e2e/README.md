@@ -47,7 +47,12 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. Select it with
+  components. The scenario proves that mismatched receipt and registry authority
+  pauses onboarding and makes `doctor` fail. It then restores valid authority
+  and requires finalization and `doctor` to accept the same authenticated
+  readiness evidence. Deterministic finalization tests own unhealthy gateway,
+  missing secret, and redacted-diagnostic failures. This job does not qualify
+  Hermes inference or widen Portable profile support. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
   gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
@@ -479,20 +484,6 @@ Catalogue and external-gateway health jobs add each reviewed archive to npm's ca
 This preserves the locked dependency versions and avoids npm resolving a new peer dependency graph during SDK installation.
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
-
-The `portable-hermes-finalization` target owns the live readiness handoff for Issue #11892. The
-planner selects it when a changed source file matches the target's `owningPaths`. It is not part of
-default or release-required selections. For a manual PR run, select it with
-`targets=portable-hermes-finalization` and `gateway_runtimes=podman`. The current trusted x86-64
-NVIDIA GPU lane uses RTX PRO 6000 hardware,
-while the issue's A100 environment remains the original reproducer. The target removes Docker from
-the execution boundary, starts the candidate Hermes image through the pinned rootless Podman
-gateway, publishes the exact receipt and registry authority, and requires onboarding finalization
-and `doctor` to agree that the managed Hermes gateway's authenticated health endpoint is ready. It
-also proves that mismatched receipt and registry authority pauses onboarding and makes `doctor`
-fail before restoring the valid authority and completing the healthy path. Deterministic
-finalization tests own unhealthy gateway, missing secret, and redacted-diagnostic failures. This
-target does not qualify Hermes inference or widen Portable profile support.
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
 After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.

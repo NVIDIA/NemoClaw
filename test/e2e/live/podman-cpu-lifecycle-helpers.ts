@@ -36,11 +36,7 @@ import {
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "nemoclaw-18080";
 export const OPENSHELL_VERSION = OPENSHELL_V0116_QUALIFICATION.version;
-export function podmanSocketPath(environment: NodeJS.ProcessEnv = process.env): string {
-  return environment.E2E_PODMAN_SOCKET ?? environment.OPENSHELL_PODMAN_SOCKET ?? "";
-}
-
-export const SOCKET_PATH = podmanSocketPath();
+export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
 const MAX_GATEWAY_DIAGNOSTIC_CHARS = 32 * 1024;

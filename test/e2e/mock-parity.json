@@ -29,7 +29,13 @@
     },
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
+      ],
       "fast": [
+        "src/lib/actions/sandbox/doctor-flow.test.ts",
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "src/lib/onboard/machine/handlers/finalization.test.ts",
         "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
@@ -129,9 +135,7 @@
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-lifecycle-helpers.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-        "test/e2e/support/workflow-plan.test.ts"
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
       ]
     },
     {
