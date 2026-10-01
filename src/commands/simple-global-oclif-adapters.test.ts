@@ -464,6 +464,24 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     );
   });
 
+  it("shows the registered dashboard port for an explicit sandbox selection", async () => {
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "selected");
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { name: "resolved-sandbox", dashboardPort: 18_789 },
+        { name: "selected", dashboardPort: 18_791 },
+      ],
+      defaultSandbox: "resolved-sandbox",
+    } as never);
+
+    await TunnelStatusCommand.run([], rootDir);
+
+    expect(mocks.showStatus).toHaveBeenCalledWith({
+      sandboxName: "selected",
+      dashboardPort: 18_791,
+    });
+  });
+
   it("passes uninstall runtime dependencies to the uninstall action", async () => {
     const originalEnv = process.env;
     await UninstallCliCommand.run(["--yes"], rootDir);

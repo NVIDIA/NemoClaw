@@ -429,6 +429,17 @@ describe("startAll", () => {
     await startAll({ pidDir, dashboardPort: 12_345 });
     const oldPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
     unlinkSync(join(pidDir, "cloudflared.dashboard-port"));
+    const signal = vi.fn();
+    await expect(
+      startAll({
+        pidDir,
+        dashboardPort: 18_789,
+        processControl: { isAlive: () => true, commandLine: () => null, signal },
+      }),
+    ).rejects.toThrow("could not be retargeted");
+    expect(signal).not.toHaveBeenCalled();
+    expect(readCloudflaredState(pidDir)).toEqual({ kind: "running", pid: oldPid });
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
     let oldProcessAlive = true;
     const processControl: ProcessControl = {
       isAlive: (pid) => pid === oldPid && oldProcessAlive,
@@ -559,7 +570,7 @@ describe("startAll", () => {
     );
   });
 
-  it("starts a named tunnel from CLOUDFLARE_TUNNEL_TOKEN without putting the token in argv", async () => {
+  it("keeps a named tunnel running when a later start omits its token", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
     const fakeCloudflared = join(binDir, "cloudflared");
@@ -587,6 +598,15 @@ describe("startAll", () => {
     expect(log).toContain("token-env-present");
     expect(log).not.toContain("named-secret");
     expect(output).toContain("https://agent.example.com");
+
+    const namedState = readCloudflaredState(pidDir);
+    expect(namedState.kind).toBe("running");
+    delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
+    await startAll({ pidDir, dashboardPort: 12345 });
+
+    expect(readCloudflaredState(pidDir)).toEqual(namedState);
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
   });
 });
 

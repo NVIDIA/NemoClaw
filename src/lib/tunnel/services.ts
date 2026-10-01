@@ -776,9 +776,24 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         removeCloudflaredDashboardPort(pidDir);
       }
     } else {
-      if (isRunning(pidDir, "cloudflared")) {
+      const runningState = readCloudflaredState(pidDir);
+      const commandArgs =
+        runningState.kind === "running"
+          ? (opts.processControl ?? REAL_PROCESS_CONTROL)
+              .commandLine(runningState.pid)
+              ?.split(/\0|\s+/)
+              .filter(Boolean)
+          : undefined;
+      const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
+      const runningNamedTunnel = tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run";
+      const runningQuickTunnel =
+        tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
+      // A later shell need not retain the token for an already running named tunnel.
+      if (runningState.kind === "running" && !runningNamedTunnel) {
         const runningPort = readCloudflaredDashboardPort(pidDir);
-        if (runningPort !== dashboardPort) {
+        if (!runningQuickTunnel) {
+          tunnelTargetReady = false;
+        } else if (runningPort !== dashboardPort) {
           tunnelTargetReady = stopService(
             pidDir,
             "cloudflared",
@@ -786,7 +801,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
           );
         }
       }
-      if (tunnelTargetReady) {
+      if (tunnelTargetReady && !runningNamedTunnel) {
         startService(pidDir, "cloudflared", "cloudflared", [
           "tunnel",
           "--url",

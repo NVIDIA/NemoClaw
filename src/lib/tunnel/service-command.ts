@@ -50,10 +50,15 @@ export function resolveDefaultSandboxServiceOptions(deps: ServiceTargetDeps): {
   dashboardPort?: number;
 } {
   const envName = resolveSandboxNameOverride();
-  if (envName) return { sandboxName: envName };
-
-  const registrySnapshot = deps.listSandboxes();
-  const sandboxName = resolveDefaultSandboxName(() => registrySnapshot);
+  let registrySnapshot: SandboxSummary;
+  try {
+    registrySnapshot = deps.listSandboxes();
+  } catch (error) {
+    // An explicit selection still works when the registry cannot be read.
+    if (envName) return { sandboxName: envName };
+    throw error;
+  }
+  const sandboxName = envName ?? resolveDefaultSandboxName(() => registrySnapshot);
   const dashboardPort = sandboxName
     ? registrySnapshot.sandboxes?.find((sandbox) => sandbox.name === sandboxName)?.dashboardPort
     : undefined;
