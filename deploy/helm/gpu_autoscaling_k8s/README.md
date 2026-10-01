@@ -15,13 +15,12 @@
 | Harness | OpenClaw 2026.7.1 |
 | OpenShell | 0.0.85 |
 
-This experimental recipe demonstrates a cost-efficient architecture that runs AI agents securely inside CPU-only OpenShell sandboxes (one sandbox per end user) while independently autoscaling GPU-backed inference. The CPU agent is one of **`AGENT_NAME=openclaw | hermes | deepagents`**. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts capacity from one to **N** replicas (1 GPU each) as demand changes—maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
+This experimental recipe demonstrates a cost-efficient architecture that runs AI agents securely inside CPU-only OpenShell sandboxes (one sandbox per end user) while independently autoscaling GPU-backed inference. The agents running in OpenShell sandboxes are one of **`penclaw | hermes | deepagents`**. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts capacity from one to **N** replicas (1 GPU each) as demand changes—maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
 
-The e2e demo shares `inference.local` → Envoy load balancer → GPU inference runtimes (`ollama` / `vllm` / `nim`). The CPU agent is an OpenShell Kubernetes sandbox (Agent Sandbox CRD + OpenShell 0.0.85); GPU inference is a separate Helm chart with HPA. Pairings: OpenClaw + Ollama (`AGENT_NAME=openclaw`), Hermes + vLLM (`AGENT_NAME=hermes`), Deep Agents Code + NIM (`AGENT_NAME=deepagents`).
+Supported GPU inference runtimes include **`ollama` / `vllm` / `nim`**.  Example pairings for e2e demo include: OpenClaw + Ollama (`AGENT_NAME=openclaw`), Hermes + vLLM (`AGENT_NAME=hermes`), Deep Agents Code + NIM (`AGENT_NAME=deepagents`).
 
 Kubernetes HPA scales those inference pods using a Pods **`AverageValue`** metric (average across Ready pods). Example HPA metrics: **GPU utilization** (scale out when average per-pod util is **above 40%**) and **LLM latency** (scale out when average per-pod latency is **above 3000 ms**).
 
-Keep `versions.env` aligned: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. Bump all three together when upstream moves.
 
 ## Deployment Architecture
 
@@ -48,7 +47,6 @@ Authenticated inference endpoints
 HPA (GPU util >40% or latency >3000 ms)
 ```
 
-Provision sandboxes with `agentscaling_gpuutil.sh` or `agentscaling_latency.sh`, then send chats with the same `client.sh`. This DGX demo uses 5 end users, `E2E_USERS=5` and 8Gi sandboxes, one sandbox per user. 
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
@@ -144,12 +142,10 @@ The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This
 
 #### 6a. OpenClaw + Ollama
 
-This is the multi-user architecture test for **OpenClaw + Ollama**. `agentscaling_gpuutil.sh` and `agentscaling_latency.sh` create the sandboxes (`openclaw-ollama-e2e-*`) and set the HPA metric. `client.sh` only sends chats. Users talk only to sandbox `:18789`.
-
-This DGX demo uses **5** end users (one sandbox each). Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
+Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. Sandboxes use DGX **CPU cores and DRAM**, not the H100 GPUs.
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
-- inflight **1** per sandbox (inflight 2 OOMed a CPU node)
+- inflight **1** per sandbox (one agent per sandbox)
 - Job-like chats (`files/load-generator.ts`, `stream=false`). Questions average **~38 llama3.2 tokens**; `MAX_TOKENS` defaults to **608**
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
@@ -225,9 +221,9 @@ Check the log to see the end users, sandboxes, and chats:
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 </p>
 
-#### 6b. Hermes + vLLM N-user end-to-end
+#### 6b. Hermes + vLLM 
 
-Same user → sandbox path as OpenClaw + Ollama: load generator → N OpenShell sandboxes (`hermes -z`) → `inference.local` → Envoy load balancer → **vLLM** HPA. After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `agentscaling_hermes_gpuutil.sh` and `agentscaling_hermes_latency.sh` create `hermes-e2e-*` and helm-upgrade the GPU chart to vLLM. `client_hermes.sh` only sends chats.
+ After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
 
 ```text
 E2E test: Hermes + vLLM
@@ -290,9 +286,9 @@ Check the log to see the end users, sandboxes, and `hermes -z` chats:
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 </p>
 
-#### 6c. Deep Agents Code + NIM N-user end-to-end
+#### 6c. Deep Agents Code + NIM 
 
-Same user → sandbox path as 6a/6b: load generator → N OpenShell sandboxes (`dcode -n`) → `inference.local` → Envoy load balancer → **NIM** HPA. After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. NIM needs NGC Secrets first (`./scripts/apply-local-secrets.sh` or `./scripts/create-nim-ngc-secrets.sh`). Run `./scripts/uninstall-e2e.sh` first if OpenClaw or Hermes sandboxes are still up. `agentscaling_deepagents_gpuutil.sh` and `agentscaling_deepagents_latency.sh` create `deepagents-e2e-*` and helm-upgrade the GPU chart to NIM. `client_deepagents.sh` only sends chats. Deep Agents has no long-running gateway.
+NIM needs NGC Secrets first (`./scripts/apply-local-secrets.sh` or `./scripts/create-nim-ngc-secrets.sh`). Deep Agents has no long-running gateway.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -429,30 +425,9 @@ The Envoy dataplane Service is **ClusterIP** only (`NodePort` / `LoadBalancer` r
 
 These are registry/model credentials, not the chart inference API key. Put **Secret names** in `local.env`, never key values. For `nvcr.io` pulls (vLLM image and NIM), run `./scripts/apply-local-secrets.sh` from gitignored `secrets.env` — do not put `nvapi-` keys on the kubectl command line.
 
-#### Ollama model tags
-
-| Tag | Typical VRAM | Notes |
-|-----|--------------|--------|
-| `llama3.2:3b` | ~2 GB | Recipe default |
-| `nemotron-3-nano:30b` | ~24–40 GB | Nemotron on L40S/H100 via Ollama |
-| `qwen3.5:9b` / `qwen3.6:35b` | ~12 GB / ~30 GB | Alternatives that fit GPU memory |
-
-```bash
-export INFERENCE_MODEL=nemotron-3-nano:30b
-./scripts/install-hpa.sh
-./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh
-```
-
-Helm: `inference.runtime`, `inference.model`. Scripts: `INFERENCE_RUNTIME`, `INFERENCE_MODEL`.
-
 #### Persistence
 
-Each runtime has its own hostPath cache (`ollama` / `vllm` / `nim` under `/var/lib/nemoclaw-gpu/…`). Multi-node: RWX StorageClass, or disable persistence (`emptyDir` → re-pull on replace).
-
-### Recovery
-
-Selected release only: `./scripts/cluster-recover.sh` (optional `RESTART_MICROK8S=1`). Read the script comments first.
+This is the **on-disk cache for downloaded model weights**, not a database. On this single-node DGX the chart writes them to a folder on the GPU node (`/var/lib/nemoclaw-gpu/ollama`, `/vllm`, or `/nim`). The first pod pulls the model once; later HPA replicas on the same node reuse that folder. If you turn persistence off, each new pod downloads the model again. Shared storage (RWX) is only needed if inference pods run on more than one node.
 
 ### Kubernetes HPA metrics
 
@@ -469,20 +444,11 @@ kubectl get --raw \
 
 Latency load tests send a smoke request first, then wait up to 180s for Prometheus/Adapter (`LATENCY_METRIC_WAIT_SEC` to raise). Other Prometheus → Adapter metrics: extend `monitoring/prometheus-adapter-gpu-values.yaml` and `nemoclaw-gpu.hpaMetric`.
 
-## Verify
-
-```bash
-kubectl get pods,service,hpa -n nemoclaw-gpu
-./scripts/get-hpa.sh -n nemoclaw-gpu
-./scripts/hpa-watch.sh
-./scripts/get-metrics-proxy-pods.sh -n nemoclaw-gpu
-```
-
-Idle: one Running inference pod (two containers), HPA at 1 replica. GPU-util target `current/40`; latency `current/3000` (ms). Prefer `get-hpa.sh` over raw kubectl Quantity suffixes.
-
 ## Example test
 
-Ask **In one sentence, what is an AI agent sandbox?** through authenticated inference.
+### OpenClaw simple test
+
+Ask **In one sentence, what is an AI agent sandbox?** through authenticated inference. This is the pairing check for OpenClaw (`AGENT_NAME=openclaw`). Keep `./scripts/run-agent-sandbox.sh` attached so `:18789` is up.
 
 | Path | Port-forward | Local URL |
 |------|----------------|-----------|
@@ -490,12 +456,12 @@ Ask **In one sentence, what is an AI agent sandbox?** through authenticated infe
 | Metrics-proxy | `kubectl port-forward -n nemoclaw-gpu service/nemoclaw-gpu-metrics-proxy 8081:8081` | `http://127.0.0.1:8081` |
 
 ```bash
+export AGENT_NAME=openclaw
 ./scripts/verify-agent-sandbox.sh
 ```
 
 A non-empty answer plus the final `OK:` line is a pass. Wording varies; small models may not know product names. Sample output: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#example-verify-output).
 
-N users / N OpenClaw + Ollama sandboxes through the Envoy load balancer (`E2E_USERS=5` on this DGX): [6a. OpenClaw + Ollama](#6a-openclaw--ollama). N users / N Hermes + vLLM sandboxes: [6b. Hermes + vLLM](#6b-hermes--vllm-n-user-end-to-end). N users / N Deep Agents + NIM sandboxes: [6c. Deep Agents Code + NIM](#6c-deep-agents-code--nim-n-user-end-to-end).
 
 ### Hermes simple test
 
@@ -558,36 +524,34 @@ openshell status
 
 `create-agent-sandbox.sh` stores the inference key, strips `integrate.api.nvidia.com` where the agent policy grants it, and smokes `/v1/models` plus a version check. It does not start the OpenClaw agent or send the example prompt — that is `verify-agent-sandbox.sh`. OpenClaw/Hermes need `run-agent-sandbox.sh` attached; Deep Agents Code uses `run-agent-prompt.sh`. Combined topology may need `SYS_ADMIN` / `NET_ADMIN` — check admission policy.
 
-## Test autoscaling and load balancing
-
-On 8× H100  `minReplicas=1` and `maxReplicas=8`. 
+## Simple HPA only test 
 
 - **Fast HPA-only test:** it only tests if K8s HPA can autoscale the number of pods and GPUs based on inference requests, not an e2e test.
 
-Use this for GPU-util HPA and for `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`.
+Use GPU utilization as a HPA metric
 
 ```bash
 # 8× H100 on-prem
 ./scripts/hpa-load-test-dgx-8xh100.sh
-HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test-dgx-8xh100.sh
 
 # 4× L40S on AWS (Brev)
 ./scripts/hpa-load-test-brev-4xl40s.sh
+```
+
+
+Use LLM latency as a HPA metric: 
+
+```bash
+# 8× H100 on-prem
+HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test-dgx-8xh100.sh
+
+# 4× L40S on AWS (Brev)
 HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test-brev-4xl40s.sh
 ```
 
-The HPA-only test was also verified on [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), `MAX_REPLICAS=4`, using `./scripts/hpa-load-test-brev-4xl40s.sh` (that run used MicroK8s; k3s works the same). LLM latency on the same script: `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/hpa-load-test-brev-4xl40s.sh`.
+The HPA-only test has been verified on DGX 8xH100 on-prem `maxReplicas=8`, and [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), `MAX_REPLICAS=4`.
 
 HPA still adds **one** pod per step. After each step a new GPU sits at 0% until the model is loaded, which can drop the **average** under 40% and delay the next replica (~2 min/pod when busy GPUs are only ~50%). Raise in-flight on the already-busy pods so the average stays above 40% without waiting for the new GPU (do not add two pods per step — that dip is worse). If you see many HTTP 502s on 8× H100, stay at or below the 640 in-flight cap.
-
-| Knob | Default | Purpose |
-|------|---------|---------|
-| `SKIP_ENVOY_LB_TEST` | `0` | Skip Envoy distribution check |
-| `LB_TEST_REQUESTS` / `LB_TEST_CONCURRENCY` | `48` / `12` | Envoy check load |
-| `DURATION_SEC` / `HPA_TARGET_GPU` | script / `40` | Load duration / util target |
-| `INFLIGHT_PER_GPU` | `320` on 8× H100; `64` on 4× L40S | Concurrent chats aimed at each GPU |
-| `LOAD_MULTIPLIER` | `2` | Extra in-flight vs `INFLIGHT_PER_GPU` |
-| `MAX_INFLIGHT_PER_POD` | `640` on 8× H100; `512` on 4× L40S | Hard cap per pod |
 
 
 ## Grafana: watch workload balancing
@@ -679,9 +643,9 @@ This 8×H100 path is a **demo**. Agents and OpenShell sandboxes use **CPU cores 
 
 On this demo cluster the sandboxes run on the same DGX H100 node as Ollama. That node's CPU RAM limits how many 8Gi OpenShell sandboxes you can start.
 
-This DGX H100 uses **dual Intel Xeon Platinum 8480C** processors (56 cores each, 112 cores total) and **2 TB** DRAM. See the [DGX H100/H200 hardware overview](https://docs.nvidia.com/dgx/dgxh100-user-guide/introduction-to-dgxh100.html). It does not include an NVIDIA CPU.
+This DGX H100 uses **dual Intel Xeon Platinum 8480C** processors (56 cores each, 112 cores total) and **2 TB** DRAM. See the [DGX H100/H200 hardware overview](https://docs.nvidia.com/dgx/dgxh100-user-guide/introduction-to-dgxh100.html). 
 
-Agent sandboxes do not need GPUs. They can run on a **different CPU node** with more memory. That node can hold more sandboxes and more end users. Keep Ollama and GPU HPA on the H100 node. This recipe does not add that CPU node. In this demo, `NEMOCLAW_TARGET_NODE` pins inference and sandboxes to the same GPU node. Multi-node sandbox disks need RWX storage (or disable persistence).
+Agent sandboxes do not need GPUs. They can run on a **different CPU node** with more memory. That node can hold more sandboxes and more end users. Keep inference runtimes and autoscaling on the GPUs. 
 
 NVIDIA's data center CPU is **NVIDIA Grace** (Arm Neoverse V2):
 
@@ -690,7 +654,6 @@ NVIDIA's data center CPU is **NVIDIA Grace** (Arm Neoverse V2):
 
 See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/grace-cpu-superchip/). NVIDIA also pairs Grace with GPUs in GH200 and GB200; those are GPU systems, not extra CPU-only capacity on this H100 box.
 
-On this demo, OpenClaw e2e sandboxes are **1 CPU / 8Gi**. 1Gi, 2Gi, and 4Gi **OOMKill** OpenClaw at sandbox start (`exit 137`) because leftover Node.js workers fill the cgroup before `:18789` binds. Keep **one sandbox per user** and inflight **1**. Inflight 2 OOMed a CPU node. Prefer more sandboxes × fewer prompts over packing Job-sized inflight into one sandbox.
 
 ### How is LLM latency calculated for HPA?
 
