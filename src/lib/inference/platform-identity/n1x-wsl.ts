@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDgxStationGb300Product } from "../dgx-station-identity";
+
 const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
 const N1X_WSL_PRODUCT_PROBE_TIMEOUT_MS = 10_000;
 const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
@@ -13,11 +15,18 @@ export interface N1xWslProductOptions {
   ) => string;
 }
 
+export interface WslNvidiaProductObservation {
+  n1x: boolean;
+  stationGb300: boolean;
+}
+
 export function isN1xWslProductName(value: string): boolean {
   return N1X_WSL_PRODUCT_PATTERN.test(value.trim());
 }
 
-export function collectN1xWslProduct(options: N1xWslProductOptions): boolean | undefined {
+export function collectWslNvidiaProduct(
+  options: N1xWslProductOptions,
+): WslNvidiaProductObservation | undefined {
   if (!options.isWsl || !options.runCaptureImpl) return undefined;
   try {
     const raw = options.runCaptureImpl(
@@ -41,8 +50,15 @@ export function collectN1xWslProduct(options: N1xWslProductOptions): boolean | u
     ) {
       return undefined;
     }
-    return isN1xWslProductName(normalized);
+    return {
+      n1x: isN1xWslProductName(normalized),
+      stationGb300: isDgxStationGb300Product(normalized),
+    };
   } catch {
     return undefined;
   }
+}
+
+export function collectN1xWslProduct(options: N1xWslProductOptions): boolean | undefined {
+  return collectWslNvidiaProduct(options)?.n1x;
 }

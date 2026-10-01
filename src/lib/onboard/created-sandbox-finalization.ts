@@ -17,6 +17,7 @@ import {
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
+import { resolveExternalDashboardUrl } from "../dashboard/url";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
@@ -104,6 +105,7 @@ type RegistrationSeed = Omit<
   | "workload"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardExternalUrl"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -357,6 +359,7 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -396,6 +399,7 @@ export function createCreatedSandboxCompletionActions(
       );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
+    dashboardExternalUrl = resolveExternalDashboardUrl(chatUiUrl);
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
@@ -500,6 +504,7 @@ export function createCreatedSandboxCompletionActions(
           workload: resolved.workloadReceipt,
           hermesDashboardState,
           dashboardPort,
+          dashboardExternalUrl,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,

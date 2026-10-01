@@ -122,6 +122,7 @@ describe("E2E workflow plan", () => {
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",
+      "portable-hermes-finalization",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -1015,7 +1016,6 @@ describe("E2E workflow plan", () => {
       [],
     );
   });
-
   it("retains known native-state catalogue targets for the requested runtime", () => {
     const podmanPlan = buildE2eWorkflowPlan(
       {},
