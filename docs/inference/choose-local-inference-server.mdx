@@ -179,7 +179,7 @@ After a successful full uninstall, `docker container inspect nemoclaw-vllm` must
 Choose llama.cpp when you already operate an authenticated server or want NemoClaw to materialize an experimental managed profile on a qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host.
 The existing-server path owns only provider registration and routing.
 The managed path owns the exact YAML-selected model, launch, Docker lifecycle, diagnostics, and cleanup.
-NVIDIA Nemotron is the recommended managed profile on DGX Spark and Linux x86_64. Windows WSL N1x automatically uses managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. Meta Muse Glimmer remains available on DGX Spark only through explicit selection.
+NVIDIA Nemotron is the recommended managed profile on DGX Spark and Linux x86_64. Qualifying Windows WSL N1x and Station GB300 hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. Meta Muse Glimmer remains available on DGX Spark only through explicit selection.
 
 Refer to [Set Up llama.cpp](set-up-llama-cpp).
 
