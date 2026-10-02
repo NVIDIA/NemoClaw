@@ -166,7 +166,9 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
     let document = base.assessment().document().unwrap();
     let facts = AuthoringFacts {
         endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(document, state.current_route()).unwrap(),
+            request: inference_request_for_document(document, state.current_route())
+                .unwrap()
+                .unwrap(),
             observation: EndpointObservation {
                 status: ObservationStatus::Available,
                 reason: None,

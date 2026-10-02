@@ -19,8 +19,9 @@ impl JourneyState {
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
-        let Some(request) =
-            crate::inference_request_for_document(document, self.current_route()).ok()
+        let Some(request) = crate::inference_request_for_document(document, self.current_route())
+            .ok()
+            .flatten()
         else {
             return Ok(resolution);
         };
@@ -123,7 +124,13 @@ impl JourneyState {
                 "Target engine and image compatibility is not verified.",
             ));
         }
-        let request = crate::inference_request_for_document(document, self.current_route())?;
+        let request = crate::inference_request_for_document(document, self.current_route())?
+            .ok_or_else(|| {
+                diagnostic(
+                    "delegation",
+                    "The selected route has no external model catalog to verify.",
+                )
+            })?;
         let endpoint = facts
             .endpoint
             .as_ref()

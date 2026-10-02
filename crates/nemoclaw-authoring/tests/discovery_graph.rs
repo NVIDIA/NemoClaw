@@ -6,7 +6,7 @@ use nemoclaw_authoring::{
     PartialDocument, discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, HarnessKind},
+    config::{ComputeDriver, Document, HarnessKind, InferenceApi, InferenceProviderKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
 };
@@ -251,15 +251,27 @@ fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
 }
 
 #[test]
-fn managed_provider_discovery_uses_sdk_publication_without_rewriting_service() {
+fn managed_service_route_has_no_external_catalog_to_discover() {
     let document =
         Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
     let before = document.clone();
-    let expected = document.inference_connection().unwrap();
-    let request = inference_request_for_document(&document, None).unwrap();
-    assert_eq!(request.endpoint, expected.endpoint);
-    request.validate().unwrap();
+    assert_eq!(
+        inference_request_for_document(&document, None).unwrap(),
+        None
+    );
     assert_eq!(document, before);
+}
+
+#[test]
+fn provider_without_an_explicit_api_is_probed_with_its_protocol_default() {
+    let mut document = document();
+    let provider = document.inference_provider_mut().unwrap();
+    provider.provider = InferenceProviderKind::Anthropic;
+    provider.api = None;
+    let request = inference_request_for_document(&document, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.api, InferenceApi::AnthropicMessages);
 }
 
 fn external_document(engine: &str) -> Document {

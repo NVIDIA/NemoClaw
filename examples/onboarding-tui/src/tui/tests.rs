@@ -494,7 +494,9 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         .unwrap()
         .clone();
     wizard.facts.endpoint = Some(EndpointEvidence {
-        request: inference_request_for_document(&document, wizard.state.current_route()).unwrap(),
+        request: inference_request_for_document(&document, wizard.state.current_route())
+            .unwrap()
+            .unwrap(),
         observation: EndpointObservation {
             status: ObservationStatus::Available,
             reason: None,
@@ -612,7 +614,9 @@ async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
         .document()
         .unwrap()
         .clone();
-    let request = inference_request_for_document(&document, state.current_route()).unwrap();
+    let request = inference_request_for_document(&document, state.current_route())
+        .unwrap()
+        .unwrap();
     let missing = std::path::Path::new("/definitely/missing/nemoclaw-bundle");
     let observed = observe_models(missing, request, &CancellationToken::new())
         .await

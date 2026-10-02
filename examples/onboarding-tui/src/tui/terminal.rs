@@ -85,7 +85,7 @@ pub(crate) async fn run(
             })
             && let Ok(resolution) = wizard.state.resolve(&wizard.capabilities)
             && let Some(document) = resolution.assessment().document()
-            && let Ok(request) =
+            && let Ok(Some(request)) =
                 inference_request_for_document(document, wizard.state.current_route())
             && !attempted_requests.contains(&request)
         {
@@ -429,7 +429,7 @@ async fn observe_target(
 
 fn discovery_queries(
     key: &DiscoveryKey,
-    request: nemoclaw_sdk::inference_discovery::EndpointRequest,
+    request: Option<nemoclaw_sdk::inference_discovery::EndpointRequest>,
 ) -> Vec<DiscoveryQuery> {
     let mut queries = Vec::new();
     // An external gateway's engine only stores images: read their metadata,
@@ -451,7 +451,7 @@ fn discovery_queries(
             engine: key.engine.clone(),
         });
     }
-    if request.validate().is_ok() {
+    if let Some(request) = request.filter(|request| request.validate().is_ok()) {
         queries.push(DiscoveryQuery::Inference(request));
     }
     queries
@@ -472,10 +472,9 @@ mod tests {
             &key,
             inference_request_for_document(&document, None).unwrap(),
         );
+        // The service-backed route has no external catalog to read either.
         assert!(
-            queries
-                .iter()
-                .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
+            queries.is_empty(),
             "unresolved engine must not target the local daemon: {queries:?}"
         );
     }
@@ -492,9 +491,11 @@ mod tests {
         .unwrap();
         document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
         let key = discovery_key_for_document(&document).unwrap();
-        let request = inference_request_for_document(&document, None).unwrap();
+        let request = inference_request_for_document(&document, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            discovery_queries(&key, request.clone()),
+            discovery_queries(&key, Some(request.clone())),
             vec![
                 DiscoveryQuery::Fabric {
                     engine: "ssh://images@example.com".into(),

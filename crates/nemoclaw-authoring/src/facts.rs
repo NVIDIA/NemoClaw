@@ -3,7 +3,7 @@
 
 use crate::Diagnostics;
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway, InferenceApi},
+    config::{ComputeDriver, Document, Gateway},
     discovery::GatewayObservation,
     hardware_discovery::HardwareObservation,
     inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
@@ -38,10 +38,12 @@ pub struct AuthoringFacts {
 }
 
 /// Read the currently selected route's endpoint request from SDK-valid state.
+/// A route backed by a managed service has no external catalog to read, and
+/// the SDK leaves its readiness to the service owner, so it returns `None`.
 pub fn inference_request_for_document(
     document: &Document,
     route_name: Option<&str>,
-) -> Result<EndpointRequest, Diagnostics> {
+) -> Result<Option<EndpointRequest>, Diagnostics> {
     let [sandbox] = document.spec.sandboxes.as_slice() else {
         return Err(crate::diagnostics::diagnostic(
             "sandbox",
@@ -60,12 +62,6 @@ pub fn inference_request_for_document(
     let provider = document
         .sandbox_route_provider(sandbox, route)
         .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
-    let connection = document
-        .provider_connection(provider)
-        .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
-    Ok(EndpointRequest {
-        endpoint: connection.endpoint,
-        api: provider.api.unwrap_or(InferenceApi::OpenaiCompletions),
-        credential_env: connection.credential.map(|credential| credential.env),
-    })
+    EndpointRequest::for_external_provider(provider)
+        .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))
 }

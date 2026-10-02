@@ -1286,7 +1286,9 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         .clone();
     let facts = AuthoringFacts {
         endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route()).unwrap(),
+            request: inference_request_for_document(&document, state.current_route())
+                .unwrap()
+                .unwrap(),
             observation: EndpointObservation {
                 status: ObservationStatus::Available,
                 reason: None,
@@ -1512,7 +1514,9 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
     };
     let facts = AuthoringFacts {
         endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route()).unwrap(),
+            request: inference_request_for_document(&document, state.current_route())
+                .unwrap()
+                .unwrap(),
             observation: EndpointObservation {
                 status: ObservationStatus::Available,
                 reason: None,
