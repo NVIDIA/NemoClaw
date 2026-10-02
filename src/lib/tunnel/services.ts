@@ -286,6 +286,11 @@ function namedTunnelTargetsDashboard(pidDir: string, dashboardPort: number): boo
   return extractNamedCloudflareUrl(readFileSync(logFile, "utf-8"), dashboardPort) !== null;
 }
 
+function hasNamedTunnelConfiguration(pidDir: string): boolean {
+  const logFile = join(pidDir, "cloudflared.log");
+  return existsSync(logFile) && readFileSync(logFile, "utf-8").includes("ingress");
+}
+
 export function readCloudflaredState(pidDir: string): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
@@ -415,13 +420,14 @@ function startService(
 /**
  * The recorded process may have exited and had its PID recycled by the OS to an
  * unrelated (possibly system) process. Signalling it would terminate a
- * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. A null/unreadable command line stays conservative and is
- * treated as ours, matching readCloudflaredState.
+ * bystander, so only signal a live PID when its command line confirms
+ * cloudflared. A null/unreadable command line is unknown and must be retained
+ * without signal.
  */
-function pidIsOurs(pid: number, pc: ProcessControl): boolean {
+function pidIdentity(pid: number, pc: ProcessControl): "cloudflared" | "other" | "unknown" {
   const cmdline = pc.commandLine(pid);
-  return cmdline === null || commandLineNamesCloudflared(cmdline);
+  if (cmdline === null) return "unknown";
+  return commandLineNamesCloudflared(cmdline) ? "cloudflared" : "other";
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
@@ -438,11 +444,24 @@ function stopService(
 
   // A dead PID, or a live PID recycled to a non-cloudflared process, means our
   // service is not running. Drop the stale pid file without signalling.
-  if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
+  if (!pc.isAlive(pid)) {
     info(`${name} was not running`);
     removePid(pidDir, name);
     removeCloudflaredDashboardPort(pidDir);
     return true;
+  }
+  const initialIdentity = pidIdentity(pid, pc);
+  if (initialIdentity === "other") {
+    info(`${name} was not running`);
+    removePid(pidDir, name);
+    removeCloudflaredDashboardPort(pidDir);
+    return true;
+  }
+  if (initialIdentity === "unknown") {
+    warn(
+      `${name} identity could not be confirmed (PID ${String(pid)}); process state was retained.`,
+    );
+    return false;
   }
 
   // Send SIGTERM
@@ -472,11 +491,18 @@ function stopService(
   // Escalate to SIGKILL if still alive. Re-verify identity first: the PID could
   // have exited and been recycled to an unrelated process during the poll.
   if (pc.isAlive(pid)) {
-    if (!pidIsOurs(pid, pc)) {
+    const identity = pidIdentity(pid, pc);
+    if (identity === "other") {
       removePid(pidDir, name);
       removeCloudflaredDashboardPort(pidDir);
       info(`${name} was not running`);
       return true;
+    }
+    if (identity === "unknown") {
+      warn(
+        `${name} identity could not be confirmed (PID ${String(pid)}); process state was retained.`,
+      );
+      return false;
     }
     try {
       pc.signal(pid, "SIGKILL");
@@ -487,7 +513,7 @@ function stopService(
     // Signal delivery can precede process exit; allow a bounded confirmation window.
     const killDeadline = Date.now() + 1000;
     while (Date.now() < killDeadline && pc.isAlive(pid)) {
-      if (!pidIsOurs(pid, pc)) break;
+      if (pidIdentity(pid, pc) !== "cloudflared") break;
       const start = Date.now();
       while (Date.now() - start < 100) {
         /* spin */
@@ -496,11 +522,18 @@ function stopService(
   }
 
   if (pc.isAlive(pid)) {
-    if (!pidIsOurs(pid, pc)) {
+    const identity = pidIdentity(pid, pc);
+    if (identity === "other") {
       removePid(pidDir, name);
       removeCloudflaredDashboardPort(pidDir);
       info(`${name} was not running`);
       return true;
+    }
+    if (identity === "unknown") {
+      warn(
+        `${name} identity could not be confirmed (PID ${String(pid)}); process state was retained.`,
+      );
+      return false;
     }
     warn(`${name} could not be stopped (PID ${String(pid)})`);
     return false;
@@ -794,6 +827,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const tunnelTransition = await withMcpLifecycleLock(cloudflaredLifecycleLockName(pidDir), () => {
     let targetReady = true;
     let dashboardPortBound = false;
+    let namedTunnelStarted = false;
     let targetFailure: string | null = null;
     let runningState = readCloudflaredState(pidDir);
     // A dead or recycled PID is not a running tunnel. Clear its owned state
@@ -849,6 +883,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
           startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
             TUNNEL_TOKEN: tunnelToken,
           });
+          namedTunnelStarted = isRunning(pidDir, "cloudflared");
         }
         if (targetReady && isRunning(pidDir, "cloudflared")) {
           removeCloudflaredDashboardPort(pidDir);
@@ -906,6 +941,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       targetFailure,
       pid: readPid(pidDir, "cloudflared"),
       dashboardPortBound,
+      namedTunnelStarted,
     };
   });
 
@@ -929,10 +965,22 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       if (getTunnelUrl(pidDir, dashboardPort)) {
         break;
       }
+      if (tunnelTransition.namedTunnelStarted && hasNamedTunnelConfiguration(pidDir)) break;
       await new Promise((resolve) => {
         setTimeout(resolve, 1000);
       });
     }
+  }
+
+  if (
+    tunnelTransition.namedTunnelStarted &&
+    stillOwnsTunnel() &&
+    isRunning(pidDir, "cloudflared") &&
+    !namedTunnelTargetsDashboard(pidDir, dashboardPort)
+  ) {
+    throw new Error(
+      "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.",
+    );
   }
 
   let tunnelUrl = "";

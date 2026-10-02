@@ -1546,6 +1546,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life",
+      NEMOCLAW_DASHBOARD_PORT: "18790",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),

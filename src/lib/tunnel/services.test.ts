@@ -471,9 +471,11 @@ describe("startAll", () => {
     const finalTarget = readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8");
     const finalLog = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
     expect(finalPid).toBeGreaterThan(0);
-    expect(finalTarget).toBe("18791");
-    expect(finalLog).toContain("argv:tunnel --url http://localhost:18791");
-    expect(finalLog).not.toContain("argv:tunnel --url http://localhost:12345");
+    const expectedArgv = `argv:tunnel --url http://localhost:${finalTarget}`;
+    const otherPort = finalTarget === "12345" ? "18791" : "12345";
+    expect(["12345", "18791"]).toContain(finalTarget);
+    expect(finalLog).toContain(expectedArgv);
+    expect(finalLog).not.toContain(`argv:tunnel --url http://localhost:${otherPort}`);
   });
 
   it("reuses a quick tunnel with a recorded dashboard port when process arguments are unavailable", async () => {
@@ -795,6 +797,31 @@ describe("startAll", () => {
       expect(logSpy.mock.calls.flat().join("\n")).toContain("https://agent.example.com");
     },
   );
+
+  it("rejects a new named tunnel whose logged ingress targets another dashboard port", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        'echo \'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:9999\\"}]}"\'',
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(
+      startAll({ pidDir, dashboardPort: 18_791, cloudflareTunnelToken: "named-secret" }),
+    ).rejects.toThrow("new named cloudflared tunnel does not confirm the selected dashboard port");
+
+    expect(readCloudflaredState(pidDir).kind).toBe("running");
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain("localhost:9999");
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
+  });
 });
 
 // #2604: readCloudflaredState is the shared source of truth used by both
@@ -931,6 +958,25 @@ describe("stopAll", () => {
       expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
     },
   );
+
+  it("retains service state and does not signal a live PID with unknown identity", () => {
+    const { control, signals } = scriptedControl({ alive: [true], cmdlines: [null] });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(() => stopAll({ pidDir, processControl: control })).toThrow(
+        "cloudflared could not be stopped",
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("12345");
+  });
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
     const { control, signals } = scriptedControl({

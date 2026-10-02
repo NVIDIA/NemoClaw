@@ -14,6 +14,7 @@ import {
   getCloudflaredLogPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
+  tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
 
@@ -109,6 +110,16 @@ describe("tunnel lifecycle cleanup registration", () => {
 });
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
+  it("does not override the registered dashboard port in tunnel commands", () => {
+    expect(tunnelLifecycleCommandEnv({}, { NEMOCLAW_DASHBOARD_PORT: "18790" })).not.toHaveProperty(
+      "NEMOCLAW_DASHBOARD_PORT",
+    );
+    expect(tunnelLifecycleCommandEnv({ NEMOCLAW_DASHBOARD_PORT: "18790" })).toHaveProperty(
+      "NEMOCLAW_DASHBOARD_PORT",
+      "18790",
+    );
+  });
+
   it("starts onboarding fresh so stale runner sessions cannot block the tunnel contract", () => {
     expect(tunnelLifecycleInstallArgs()).toEqual([
       "install.sh",

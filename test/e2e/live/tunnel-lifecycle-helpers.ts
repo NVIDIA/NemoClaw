@@ -53,9 +53,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+export function tunnelLifecycleCommandEnv(
+  extra: NodeJS.ProcessEnv = {},
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   return {
-    ...buildAvailabilityProbeEnv(),
+    ...buildAvailabilityProbeEnv(base),
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
@@ -63,9 +66,6 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_PROVIDER: "cloud",
     OPENSHELL_GATEWAY: "nemoclaw",
-    ...(process.env.NEMOCLAW_DASHBOARD_PORT
-      ? { NEMOCLAW_DASHBOARD_PORT: process.env.NEMOCLAW_DASHBOARD_PORT }
-      : {}),
     ...extra,
   };
 }
@@ -207,7 +207,7 @@ export function registerTunnelLifecycleCleanup(
   cleanup.add("stop cloudflared quick tunnel", async () => {
     const stop = await host.nemoclaw(["tunnel", "stop"], {
       artifactName: "cleanup-tunnel-stop",
-      env: commandEnv(),
+      env: tunnelLifecycleCommandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
     if (stop.exitCode === 0) return;
@@ -274,12 +274,14 @@ export async function runTunnelLifecycleContract({
     timeoutMs: 15 * 60_000,
   });
 
+  progress.phase("register the non-default dashboard port");
   const install = await host.command("bash", tunnelLifecycleInstallArgs(), {
     artifactName: "install-sh-tunnel-lifecycle",
     cwd: REPO_ROOT,
-    env: commandEnv({
+    env: tunnelLifecycleCommandEnv({
       ...hosted.env,
       NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_DASHBOARD_PORT: LOCAL_DASHBOARD_PORT,
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
     }),
     redactionValues: [apiKey],
@@ -325,7 +327,7 @@ export async function runTunnelLifecycleContract({
   progress.phase("start the quick tunnel and discover its URL");
   const start = await host.nemoclaw(["tunnel", "start"], {
     artifactName: "tunnel-start",
-    env: commandEnv(),
+    env: tunnelLifecycleCommandEnv(),
     timeoutMs: 90_000,
   });
   if (start.exitCode !== 0) {
@@ -334,7 +336,7 @@ export async function runTunnelLifecycleContract({
       await bestEffortRecovery(() =>
         host.nemoclaw(["tunnel", "stop"], {
           artifactName: "tunnel-stop-after-cloudflare-start-failure",
-          env: commandEnv(),
+          env: tunnelLifecycleCommandEnv(),
           timeoutMs: COMMAND_TIMEOUT_MS,
         }),
       );
@@ -352,7 +354,7 @@ export async function runTunnelLifecycleContract({
   for (let attempt = 1; attempt <= 15; attempt += 1) {
     const status = await host.nemoclaw(["status"], {
       artifactName: `status-with-tunnel-url-${attempt}`,
-      env: commandEnv(),
+      env: tunnelLifecycleCommandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
     lastStatusText = resultText(status);
@@ -367,7 +369,7 @@ export async function runTunnelLifecycleContract({
     await bestEffortRecovery(() =>
       host.nemoclaw(["tunnel", "stop"], {
         artifactName: "tunnel-stop-after-missing-url",
-        env: commandEnv(),
+        env: tunnelLifecycleCommandEnv(),
         timeoutMs: COMMAND_TIMEOUT_MS,
       }),
     );
@@ -455,7 +457,7 @@ export async function runTunnelLifecycleContract({
   progress.phase("stop the tunnel and confirm status removal");
   const stop = await host.nemoclaw(["tunnel", "stop"], {
     artifactName: "tunnel-stop",
-    env: commandEnv(),
+    env: tunnelLifecycleCommandEnv(),
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(stop.exitCode, resultText(stop)).toBe(0);
@@ -465,7 +467,7 @@ export async function runTunnelLifecycleContract({
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     const status = await host.nemoclaw(["status"], {
       artifactName: `status-after-tunnel-stop-${attempt}`,
-      env: commandEnv(),
+      env: tunnelLifecycleCommandEnv(),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
     if (status.exitCode !== 0) {
