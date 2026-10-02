@@ -98,7 +98,18 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     const dockerLogs = vi.fn((target: string, _options?: { tail?: number; timeout?: number }) =>
       target === "new-container-id" ? `failed clone log ${secretCanary}\n` : "",
     );
-    const collectOpenShellGpuDiagnostics = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => []);
+    const collectOpenShellGpuDiagnostics = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: `Phase: Error\ndetail=${secretCanary} ${discoveredSecretCanary}\n`,
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: `alpha  Error  ${secretCanary} ${discoveredSecretCanary}\n`,
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
 
     try {
       const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {

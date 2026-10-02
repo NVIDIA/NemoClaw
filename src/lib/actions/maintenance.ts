@@ -80,7 +80,7 @@ async function withHermesPortableMaintenanceAdmission<T>(
 }
 
 function notRunningBackupSkipMessage(name: string): string {
-  return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh snapshot)`;
+  return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh complete native-home/workspace backup)`;
 }
 
 interface BackupAllSandboxAttempt {
