@@ -29,7 +29,7 @@ pub use evidence::{
     discovery_key_for_document,
 };
 pub use facts::{
-    AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence,
+    AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence, fact_needs,
     inference_request_for_document,
 };
 pub use identity::new_deployment_uid;
