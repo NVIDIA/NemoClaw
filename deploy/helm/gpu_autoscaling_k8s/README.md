@@ -289,7 +289,8 @@ E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
 Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
-<img width="820" height="387" alt="Screenshot 2026-10-01 at 2 08 53 PM" src="https://github.com/user-attachments/assets/7f90447e-ce20-4e14-80bf-5716be28001a" />
+<img width="821" height="383" alt="Screenshot 2026-10-01 at 6 24 21 PM" src="https://github.com/user-attachments/assets/99f9ae4a-8427-4651-a5d8-69118d00f6f3" />
+
 
 
 Validated on DGX 8xH100, HPA metric for autoscaling: LLM latency (target 3000 ms):
