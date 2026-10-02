@@ -199,13 +199,13 @@ MAX_TOKENS=608 \
 ./scripts/client.sh
 ```
 
-Validated 8×H100 — GPU util > 40%:
+Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
 <p align="center">
 <img width="818" height="561" alt="Screenshot 2026-09-30 at 2 28 52 PM" src="https://github.com/user-attachments/assets/f2152e25-bde8-4156-9391-db3bee85aa1b" />
 </p>
 
 
-Validated 8xH100 — latency > 3000 ms:
+Validated on DGX 8xH100, HPA metric for autoscaling: LLM latency (target 3000 ms):
 <p align="center">
 <img width="841" height="251" alt="Screenshot 2026-09-30 at 5 02 10 PM" src="https://github.com/user-attachments/assets/6235b4f9-9156-43d6-8196-c3e75ee1d7c9" />
 </p>
@@ -288,11 +288,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
-Validated 8×H100 — Hermes + vLLM GPU util (target 40%):
+Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
 <img width="820" height="387" alt="Screenshot 2026-10-01 at 2 08 53 PM" src="https://github.com/user-attachments/assets/7f90447e-ce20-4e14-80bf-5716be28001a" />
 
 
-Validated 8xH100 — Hermes + vLLM latency (target 3000 ms):
+Validated on DGX 8xH100, HPA metric for autoscaling: LLM latency (target 3000 ms):
 <img width="849" height="521" alt="Screenshot 2026-10-01 at 1 53 17 PM" src="https://github.com/user-attachments/assets/2c0c3b90-761a-4b9b-9a34-0551219d4441" />
 
 
