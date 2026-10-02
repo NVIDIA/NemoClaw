@@ -17,6 +17,9 @@ import {
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
+// Docker state belongs to each fixture, not the developer or WSL host.
+fs.rmSync(path.join(TEST_SYSTEM_PATH, "docker"), { force: true });
+
 function installerCheckout(prefix: string) {
   const checkout = createInstallerCheckout(prefix);
   onTestFinished(() => checkout.remove());
