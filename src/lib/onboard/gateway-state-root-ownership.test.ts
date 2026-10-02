@@ -19,7 +19,7 @@ function target(stateDir: string, gatewayPort = 9123) {
 
 describe("managed gateway state root ownership", () => {
   it("rejects an existing nonempty directory that NemoClaw does not own", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-unowned-gateway-root-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-unowned-gateway-root-"));
     const stateDir = path.join(root, "gateway");
     try {
       fs.mkdirSync(stateDir, { mode: 0o700 });
