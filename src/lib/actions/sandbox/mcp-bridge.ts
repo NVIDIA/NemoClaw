@@ -358,7 +358,7 @@ FLAGS
 
 FLAGS
   --deny-tool TOOL         Replace the denied-tool list with exact names or globs; repeatable
-  --allow-tool TOOL        Replace the allowlist with exact names or globs; repeatable
+  --allow-tool TOOL        Replace the allowlist with exact tool names (deny-by-default mode); repeatable
   --clear-deny-tools       Remove every denied-tool rule
   --clear-allow-tools      Remove the allowlist and return to denylist mode
   --refresh-public-pins    Refresh existing public address pins in live OpenShell policy`);
