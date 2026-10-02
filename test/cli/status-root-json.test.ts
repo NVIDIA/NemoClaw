@@ -15,7 +15,7 @@ describe("CLI root status JSON", () => {
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     const sandboxName = `a-${process.pid.toString(36).slice(-3)}-${Date.now().toString(36).slice(-8)}`;
-    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    const serviceDir = path.join(home, ".nemoclaw", "state", "tunnel");
     fs.rmSync(serviceDir, { recursive: true, force: true });
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });

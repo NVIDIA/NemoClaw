@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -18,7 +17,12 @@ import {
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState } from "../../tunnel/services";
+import {
+  findUnmanagedCloudflaredPids,
+  migrateLegacyCloudflaredState,
+  readCloudflaredState,
+  resolveTunnelPidDir,
+} from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -157,8 +161,22 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+export function cloudflaredDoctorCheck(_sandboxName: string): DoctorCheck {
+  migrateLegacyCloudflaredState();
+  const state = readCloudflaredState(resolveTunnelPidDir());
+  const unmanagedPids =
+    state.kind === "running"
+      ? []
+      : findUnmanagedCloudflaredPids(state.kind === "stale-pid-process" ? state.pid : null);
+  if (unmanagedPids.length > 0) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: `unmanaged PID${unmanagedPids.length === 1 ? "" : "s"} ${unmanagedPids.join(", ")}`,
+      hint: "cloudflared is running without NemoClaw ownership; stop it through its process manager before running `nemoclaw tunnel start`",
+    };
+  }
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();

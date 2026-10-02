@@ -26,6 +26,7 @@ test(
         "wait for the local dashboard origin",
         "start the quick tunnel and discover its URL",
         "probe public tunnel reachability",
+        "destroy the sandbox without stopping the host tunnel",
         "stop the tunnel and confirm status removal",
       ],
     },

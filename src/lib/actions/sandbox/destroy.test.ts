@@ -25,6 +25,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         withOllamaModelOwnershipLock: (operation) => operation(),
         loadPersistedOllamaHost: () => "127.0.0.1",
         loadPendingOllamaModelCleanup: () => [],
+        migrateLegacyCloudflaredState: vi.fn(() => false),
         rmSync: vi.fn(),
         runOpenshell,
         stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
@@ -62,6 +63,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         {
           stopAll,
           getSandbox,
+          migrateLegacyCloudflaredState: vi.fn(() => false),
           rmSync,
           runOpenshell,
           stopGooglechatWebhookTunnel,
@@ -85,6 +87,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
   it("removes the Google Chat PID directory after a successful tunnel stop", async () => {
     const rmSync = vi.fn();
     const stopAll = vi.fn();
+    const migrateLegacyCloudflaredState = vi.fn(() => false);
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
@@ -93,6 +96,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
       { stopHostServices: true, channelStopTransport: "openshell" },
       {
         stopAll,
+        migrateLegacyCloudflaredState,
         getSandbox: vi.fn(() => null),
         rmSync,
         runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -102,8 +106,13 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith({ sandboxName: SANDBOX });
     expect(stopAll).toHaveBeenCalledWith(
-      expect.objectContaining({ channelStopTransport: "openshell", sandboxName: SANDBOX }),
+      expect.objectContaining({
+        channelStopTransport: "openshell",
+        sandboxName: SANDBOX,
+        stopCloudflared: false,
+      }),
     );
   });
 });
@@ -130,6 +139,7 @@ describe("cleanupSandboxServices Ollama ownership", () => {
         getSandbox: () => own,
         listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
         loadPersistedOllamaHost: () => "127.0.0.1",
+        migrateLegacyCloudflaredState: vi.fn(() => false),
         unloadOllamaModels,
         withOllamaModelOwnershipLock: (operation) => operation(),
         rmSync: vi.fn(),

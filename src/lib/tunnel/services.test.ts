@@ -17,15 +17,19 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+import { resolveNemoclawStateDir } from "../state/paths";
 
 // Import source directly so tests cannot pass against a stale build.
 import { registerTunnelOrigin } from "./allowed-origins";
-import { resolveDefaultSandboxName } from "./service-command";
 import {
+  findUnmanagedCloudflaredPids,
   getServiceStatuses,
   getTunnelUrl,
+  migrateLegacyCloudflaredState,
   type ProcessControl,
   readCloudflaredState,
+  resolveServicePidDir,
+  resolveTunnelPidDir,
   showStatus,
   startAll,
   stopAll,
@@ -36,23 +40,31 @@ import {
 // sandbox-name discovery plus the skip/guard branches), never openshell/docker.
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
-const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
-const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
-const INTEGRATION_ENV_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_ENV_SANDBOX}`;
-const INTEGRATION_REGISTRY_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_REGISTRY_SANDBOX}`;
-
-function resetIntegrationPidDirs(): void {
-  for (const dir of [INTEGRATION_ENV_PID_DIR, INTEGRATION_REGISTRY_PID_DIR]) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function seedAliveCloudflaredPid(pidDir: string): void {
-  mkdirSync(pidDir, { recursive: true, mode: 0o700 });
-  writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid), { mode: 0o600 });
-}
-
 const ollamaProxySourcePath = resolve(import.meta.dirname, "..", "inference", "ollama", "proxy.ts");
+
+describe("findUnmanagedCloudflaredPids", () => {
+  it("finds only executable cloudflared processes not already managed", () => {
+    const pids = findUnmanagedCloudflaredPids(200, () =>
+      [
+        "  100 cloudflared cloudflared tunnel --url http://localhost:18789",
+        "  200 /usr/local/bin/cloudflared /usr/local/bin/cloudflared tunnel run",
+        "  300 bash bash /tmp/cloudflared tunnel run",
+        "  400 node node test-cloudflared.js",
+        "  500 cloudflared.exe cloudflared.exe tunnel run",
+      ].join("\n"),
+    );
+
+    expect(pids).toEqual([100, 500]);
+  });
+
+  it("fails closed to no discovery when the process list is unavailable", () => {
+    expect(
+      findUnmanagedCloudflaredPids(null, () => {
+        throw new Error("ps unavailable");
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("getTunnelUrl", () => {
   let pidDir: string;
@@ -136,19 +148,30 @@ describe("getServiceStatuses", () => {
     expect(existsSync(nested)).toBe(true);
     expect(statuses).toHaveLength(1);
   });
+
+  it("reports an unmanaged cloudflared process instead of stopped (#11628)", () => {
+    const statuses = getServiceStatuses({
+      pidDir,
+      unmanagedCloudflaredPids: () => [4242],
+    });
+
+    expect(statuses).toEqual([{ name: "cloudflared", running: true, pid: 4242 }]);
+  });
 });
 
 describe("sandbox name validation", () => {
   it("rejects names with path traversal", () => {
-    expect(() => getServiceStatuses({ sandboxName: "../escape" })).toThrow("Invalid sandbox name");
+    expect(() => resolveServicePidDir({ sandboxName: "../escape" })).toThrow(
+      "Invalid sandbox name",
+    );
   });
 
   it("rejects names with slashes", () => {
-    expect(() => getServiceStatuses({ sandboxName: "foo/bar" })).toThrow("Invalid sandbox name");
+    expect(() => resolveServicePidDir({ sandboxName: "foo/bar" })).toThrow("Invalid sandbox name");
   });
 
   it("rejects empty names", () => {
-    expect(() => getServiceStatuses({ sandboxName: "" })).toThrow("Invalid sandbox name");
+    expect(() => resolveServicePidDir({ sandboxName: "" })).toThrow("Invalid sandbox name");
   });
 
   it("accepts valid alphanumeric names", () => {
@@ -161,76 +184,119 @@ describe("sandbox name validation", () => {
   });
 });
 
-describe("status host service PID dir matches start/stop env (#1077)", () => {
-  const savedSandboxName = process.env.SANDBOX_NAME;
-  const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
-  const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+describe("host-scoped tunnel PID directory (#11628)", () => {
+  it("uses one dashboard tunnel directory for every sandbox selection", () => {
+    const alpha = resolveTunnelPidDir({ sandboxName: "alpha" });
+    const beta = resolveTunnelPidDir({ sandboxName: "beta" });
+
+    expect(alpha).toBe(beta);
+    expect(alpha).toBe(join(resolveNemoclawStateDir(), "tunnel"));
+  });
+
+  it("keeps purpose-specific service directories sandbox scoped", () => {
+    expect(resolveServicePidDir({ sandboxName: "alpha" })).toBe("/tmp/nemoclaw-services-alpha");
+    expect(resolveServicePidDir({ sandboxName: "beta" })).toBe("/tmp/nemoclaw-services-beta");
+  });
+
+  it("honors an explicit PID directory for dedicated tunnel consumers", () => {
+    const pidDir = join(tmpdir(), "googlechat-owned-tunnel");
+    expect(resolveTunnelPidDir({ pidDir, sandboxName: "alpha" })).toBe(pidDir);
+  });
+});
+
+describe("legacy tunnel state migration (#11628)", () => {
+  const targetPidDir = resolveTunnelPidDir();
+  let legacyPidDirs: string[];
 
   beforeEach(() => {
-    delete process.env.SANDBOX_NAME;
-    delete process.env.NEMOCLAW_SANDBOX;
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
+    legacyPidDirs = [];
+    rmSync(targetPidDir, { recursive: true, force: true });
   });
 
   afterEach(() => {
-    if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
-    else delete process.env.SANDBOX_NAME;
-    if (savedNemoclawSandbox !== undefined) process.env.NEMOCLAW_SANDBOX = savedNemoclawSandbox;
-    else delete process.env.NEMOCLAW_SANDBOX;
-    if (savedNemoclawSandboxName !== undefined) {
-      process.env.NEMOCLAW_SANDBOX_NAME = savedNemoclawSandboxName;
-    } else {
-      delete process.env.NEMOCLAW_SANDBOX_NAME;
-    }
-    resetIntegrationPidDirs();
+    for (const pidDir of legacyPidDirs) rmSync(pidDir, { recursive: true, force: true });
+    rmSync(targetPidDir, { recursive: true, force: true });
   });
 
-  it("reports running cloudflared when status passes env-resolved sandboxName", () => {
-    resetIntegrationPidDirs();
-    process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
-    seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
+  function createLegacyState(pid: number): string {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-services-legacy-11628-"));
+    legacyPidDirs.push(pidDir);
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com\n", {
+      mode: 0o600,
+    });
+    return pidDir;
+  }
 
-    const resolved = resolveDefaultSandboxName(() => ({
-      defaultSandbox: INTEGRATION_REGISTRY_SANDBOX,
-    }));
-    expect(resolved).toBe(INTEGRATION_ENV_SANDBOX);
-
-    const statuses = getServiceStatuses({ sandboxName: resolved });
-    const cloudflared = statuses.find((service) => service.name === "cloudflared");
-    expect(cloudflared?.running).toBe(true);
-    expect(cloudflared?.pid).toBe(process.pid);
-  });
-
-  it("reports stopped cloudflared when status passes registry sandbox but env PID dir has the process", () => {
-    resetIntegrationPidDirs();
-    process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
-    seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
-
-    const statuses = getServiceStatuses({ sandboxName: INTEGRATION_REGISTRY_SANDBOX });
-    const cloudflared = statuses.find((service) => service.name === "cloudflared");
-    expect(cloudflared?.running).toBe(false);
-    expect(cloudflared?.pid).toBeNull();
-  });
-
-  it("showStatus prints running cloudflared from env-resolved production PID dir", () => {
-    resetIntegrationPidDirs();
-    process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
-    seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
-
+  it("adopts one verified legacy record into host state", () => {
+    const legacyPidDir = createLegacyState(4242);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
     try {
-      showStatus({
-        sandboxName: resolveDefaultSandboxName(() => ({
-          defaultSandbox: INTEGRATION_REGISTRY_SANDBOX,
-        })),
-      });
-      const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-      // Wrong PID dir would report "(stopped)" with no PID; env-resolved dir finds our pid file.
-      expect(output).not.toContain("cloudflared  (stopped)");
-      expect(output).toContain(`cloudflared  (stale PID ${String(process.pid)})`);
+      expect(
+        migrateLegacyCloudflaredState(
+          {},
+          {
+            legacyPidDirs: () => [legacyPidDir],
+            readState: (pidDir) =>
+              pidDir === legacyPidDir ? { kind: "running", pid: 4242 } : { kind: "stopped" },
+          },
+        ),
+      ).toBe(true);
     } finally {
       logSpy.mockRestore();
     }
+
+    expect(readFileSync(join(targetPidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readFileSync(join(targetPidDir, "cloudflared.log"), "utf-8")).toContain(
+      "legacy.trycloudflare.com",
+    );
+    expect(existsSync(join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("fails closed when multiple verified legacy records are live", () => {
+    const first = createLegacyState(4242);
+    const second = createLegacyState(4343);
+
+    expect(() =>
+      migrateLegacyCloudflaredState(
+        {},
+        {
+          legacyPidDirs: () => [first, second],
+          readState: (pidDir) => {
+            if (pidDir === first) return { kind: "running", pid: 4242 };
+            if (pidDir === second) return { kind: "running", pid: 4343 };
+            return { kind: "stopped" };
+          },
+        },
+      ),
+    ).toThrow("Multiple recorded cloudflared processes are running");
+
+    expect(existsSync(join(targetPidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(first, "cloudflared.pid"))).toBe(true);
+    expect(existsSync(join(second, "cloudflared.pid"))).toBe(true);
+  });
+
+  it("fails closed when host and legacy records are both live", () => {
+    const legacyPidDir = createLegacyState(4343);
+    mkdirSync(targetPidDir, { recursive: true });
+    writeFileSync(join(targetPidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    expect(() =>
+      migrateLegacyCloudflaredState(
+        {},
+        {
+          legacyPidDirs: () => [legacyPidDir],
+          readState: (pidDir) =>
+            pidDir === targetPidDir
+              ? { kind: "running", pid: 4242 }
+              : { kind: "running", pid: 4343 },
+        },
+      ),
+    ).toThrow("Multiple recorded cloudflared processes are running");
+
+    expect(readFileSync(join(targetPidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+    expect(readFileSync(join(legacyPidDir, "cloudflared.pid"), "utf-8")).toBe("4343");
   });
 });
 
@@ -265,6 +331,18 @@ describe("showStatus", () => {
     // Should NOT show the URL since cloudflared is not actually running
     expect(output).not.toContain("Public URL");
     logSpy.mockRestore();
+  });
+
+  it("reports an unmanaged process with process-manager recovery (#11628)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    showStatus({ pidDir, unmanagedCloudflaredPids: () => [4242] });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("cloudflared  (unmanaged PID 4242)");
+    expect(output).toContain("stop it through its process manager");
+    expect(output).not.toContain("cloudflared  (stopped)");
   });
 
   // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
@@ -395,6 +473,16 @@ describe("startAll", () => {
     expect(log).toContain("token-env-present");
     expect(log).not.toContain("named-secret");
     expect(output).toContain("https://agent.example.com");
+  });
+
+  it("refuses to shadow an unmanaged cloudflared process (#11628)", async () => {
+    await expect(
+      startAll({
+        pidDir,
+        unmanagedCloudflaredPids: () => [4242],
+      }),
+    ).rejects.toThrow(/already running outside NemoClaw ownership.*PID 4242/);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 });
 
@@ -585,6 +673,45 @@ describe("stopAll", () => {
     logSpy.mockRestore();
 
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("preserves the host tunnel when sandbox cleanup opts out (#11628)", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["cloudflared tunnel run"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      stopAll({
+        pidDir,
+        processControl: control,
+        cleanupOllamaModels: false,
+        stopCloudflared: false,
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([]);
+    expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
+  });
+
+  it("does not claim an unmanaged cloudflared process stopped (#11628)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      expect(() =>
+        stopAll({
+          pidDir,
+          cleanupOllamaModels: false,
+          unmanagedCloudflaredPids: () => [4242],
+        }),
+      ).toThrow(/remains running outside NemoClaw ownership.*PID 4242/);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("is idempotent — calling twice does not throw", () => {
