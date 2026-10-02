@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** One monotonic allowance shared by the commands and waits of an owning operation. */
+export class OpenShellOperationAllowanceExhaustedError extends Error {
+  constructor(phase: string) {
+    super(`OpenShell operation allowance exhausted during ${phase}`);
+    this.name = "OpenShellOperationAllowanceExhaustedError";
+  }
+}
+
 export function createOpenShellOperationDeadline(
   timeoutMs: number,
   now: () => number = () => performance.now(),
@@ -22,8 +29,7 @@ export function createOpenShellOperationDeadline(
       }
       previous = current;
       const remaining = Math.floor(deadline - current);
-      if (remaining <= 0)
-        throw new Error(`OpenShell operation allowance exhausted during ${phase}`);
+      if (remaining <= 0) throw new OpenShellOperationAllowanceExhaustedError(phase);
       return Math.min(maximumMs, remaining);
     },
   });

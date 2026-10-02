@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
-import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import {
+  createConnectHarness,
+  requireDist,
+} from "../../../../test/support/connect-flow-test-harness";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
 import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
 import type { SandboxEntry } from "../../state/registry";
@@ -278,6 +281,48 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(output).toContain(
       "Hermes Portable inspection timing: preGuard=13ms preGuardCount=14 podmanCapture=15ms podmanCaptureCount=16 postGuard=17ms postGuardCount=18 jsonParse=19ms jsonParseCount=20 identityCompare=21ms identityCompareCount=22",
     );
+  });
+
+  it("reuses final probe evidence once and gives settlement retries fresh observers", async () => {
+    const harness = missingHermesHarness("stopped");
+    const publicationDeps: Array<Record<string, unknown>> = [];
+    harness.publishLaunchReadinessSpy.mockImplementationOnce(async (_publication, deps) => {
+      publicationDeps.push(deps as Record<string, unknown>);
+      const captureCount = harness.captureResolvedOpenshellSpy.mock.calls.length;
+      const forwardsHealthy = deps?.forwardsHealthy as (
+        sandboxName: string,
+        gatewayName: string,
+      ) => boolean;
+      const inferenceProbe = deps?.inferenceProbe as (
+        sandboxName: string,
+        agent: { name: string },
+        gatewayName: string,
+      ) => Promise<{ healthy: boolean }>;
+      expect(forwardsHealthy("alpha", "nemoclaw")).toBe(true);
+      expect(await inferenceProbe("alpha", { name: "hermes" }, "nemoclaw")).toEqual(
+        expect.objectContaining({ healthy: true }),
+      );
+      expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(captureCount);
+      return { kind: "validation-failed", category: "health" };
+    });
+    harness.publishLaunchReadinessSpy.mockImplementationOnce(async (_publication, deps) => {
+      publicationDeps.push(deps as Record<string, unknown>);
+      return { kind: "published" };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(publicationDeps).toHaveLength(2);
+    expect(publicationDeps[0]).toEqual(
+      expect.objectContaining({
+        assertPublicationCurrent: expect.any(Function),
+        forwardsHealthy: expect.any(Function),
+        inferenceProbe: expect.any(Function),
+      }),
+    );
+    expect(publicationDeps[1]?.assertPublicationCurrent).toBeUndefined();
+    expect(publicationDeps[1]?.forwardsHealthy).not.toBe(publicationDeps[0]?.forwardsHealthy);
+    expect(publicationDeps[1]?.inferenceProbe).not.toBe(publicationDeps[0]?.inferenceProbe);
   });
 
   it("routes an unhealthy exact forward to existing recovery without fast publication", async () => {
@@ -595,6 +640,25 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /lifecycleAction=recovered forwardAction=verified result=ready/,
     );
+  });
+
+  it("uses the operator-facing refusal when Portable authority appears after preflight", async () => {
+    const harness = missingHermesHarness();
+    const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js") as {
+      qualifyPortableAgentLifecycleAuthority: MockInstance;
+    };
+    gatewayState.qualifyPortableAgentLifecycleAuthority.mockImplementationOnce(() => ({
+      kind: "openclaw",
+    }));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Hermes portable lifecycle authority for 'alpha' is missing, incomplete, or changed",
+    );
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("rejects recovered lifecycle drift before stopped inference recovery", async () => {
