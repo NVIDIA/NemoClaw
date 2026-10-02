@@ -181,6 +181,7 @@ describe("current Podman runtime provider", () => {
       supported: true,
       identities: expect.arrayContaining([
         expect.objectContaining({ operation: "host-doctor", engineId: "podman" }),
+        expect.objectContaining({ operation: "external-image-preparation", engineId: "podman" }),
         expect.objectContaining({ operation: "gateway-inspection", engineId: "podman" }),
         expect.objectContaining({ operation: "host-local-inference", engineId: "podman" }),
         expect.objectContaining({ operation: "sandbox-lifecycle", engineId: "podman" }),

@@ -256,7 +256,9 @@ Custom Dockerfile rebuilds use the recorded Dockerfile source.
 
 <AgentOnly variant="openclaw,hermes">
 A sandbox created with `--from-image` rebuilds from its recorded digest instead.
-Before backup or deletion, NemoClaw makes that digest available in Docker and validates its platform, runtime metadata, tool disclosure mode, and immutable local content identity.
+Before backup or deletion, NemoClaw makes that digest available in its selected Docker or rootless
+Podman runtime and validates its platform, runtime metadata, tool disclosure mode, and immutable
+local content identity.
 If a pull or validation fails, rebuild keeps the existing sandbox and stops before replacement.
 </AgentOnly>
 
