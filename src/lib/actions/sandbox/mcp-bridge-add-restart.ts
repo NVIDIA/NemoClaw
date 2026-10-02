@@ -889,7 +889,10 @@ async function addMcpBridgeUnlocked(
   // Resolve transport independently of identity pinning
   const transport = options.transport ?? inferTransportFromUrl(normalizedUrl);
 
-  // Build server identity if provided
+  // Build server identity if provided.
+  // The digest is an operator pin that is recorded verbatim; nothing here
+  // fetches the artifact or compares it against the digest, so `verifiedAt`
+  // records when the pin was stored rather than when an artifact was verified.
   const serverIdentity = options.serverIdentity
     ? {
         digest: options.serverIdentity,

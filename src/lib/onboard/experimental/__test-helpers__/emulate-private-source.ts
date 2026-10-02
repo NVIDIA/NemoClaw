@@ -31,8 +31,12 @@ export function emulatePrivateSourceAncestor(): void {
   const wrapStat = (stat: fs.Stats): fs.Stats =>
     new Proxy(stat, {
       get(value, property) {
-        const mode = BigInt(Reflect.get(value, "mode", value));
-        return property === "mode" ? mode & ~0o22n : Reflect.get(value, property, value);
+        if (property !== "mode") return Reflect.get(value, property, value);
+        const mode = Reflect.get(value, property, value);
+        // Preserve the original Stats.mode type. Consumers mix numeric masks
+        // (`mode & 0o022`) with bigint masks (`mode & 0o22n`), and coercing to
+        // bigint makes the numeric callers throw a TypeError.
+        return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o022;
       },
     });
   vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {

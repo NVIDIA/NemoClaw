@@ -58,6 +58,8 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 }));
 
 import { refreshMcpBridgePublicPins, updateMcpBridgeDenyTools } from "./mcp-bridge-add-restart";
+import { assertMcpBridgePolicyTarget } from "./mcp-bridge-policy";
+import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { dispatchMcpBridgeCommand } from "./mcp-bridge";
 
 const entry: McpSourceEntry = {
@@ -294,14 +296,19 @@ describe("source-backed MCP denied-tool policy updates", () => {
       native: { github: privateEntry },
       legacy: {},
     });
+    // Reissue real in-process trusted-private capability authority from the durable
+    // private pins, matching what the SSRF preflight hands the action.
+    const replay = replayTrustedPrivateEndpoint("mcp.example.test", ["10.20.30.40"], {
+      requireAllPrivate: true,
+    });
     mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
       new Map([
         [
           "github",
           {
-            addresses: ["10.20.30.40"],
-            trustedPrivateCapability: true,
-            trustedPrivateHost: "mcp.example.test",
+            addresses: replay.addresses,
+            trustedPrivateHost: replay.host,
+            trustedPrivateCapability: replay.trustedPrivateCapability,
           },
         ],
       ]),
@@ -309,7 +316,29 @@ describe("source-backed MCP denied-tool policy updates", () => {
 
     // Should NOT throw drift error for trusted-private
     await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
-    expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
-    expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+
+    // Assert the resulting policy inputs rather than only the mock-call counts:
+    // the durable entry must keep its trusted-private intent and exact pins,
+    // carry the replacement denylist, and retain no allowlist.
+    const [appliedSandbox, updatedEntry, appliedTarget] = mocks.applyGeneratedPolicy.mock
+      .calls[0] as [string, McpSourceEntry, Record<string, unknown>];
+    expect(appliedSandbox).toBe("alpha");
+    expect(updatedEntry).toMatchObject({
+      server: "github",
+      trustedPrivateHost: "mcp.example.test",
+      allowedIps: ["10.20.30.40"],
+      denyTools: ["delete_repo"],
+    });
+    expect(updatedEntry).not.toHaveProperty("allowTools");
+    expect(appliedTarget).toMatchObject({
+      addresses: ["10.20.30.40"],
+      trustedPrivateCapability: replay.trustedPrivateCapability,
+      trustedPrivateHost: "mcp.example.test",
+    });
+
+    // The trusted-private capability gate must accept this entry and target.
+    expect(() =>
+      assertMcpBridgePolicyTarget(updatedEntry, appliedTarget as never),
+    ).not.toThrow();
   });
 });

@@ -19,11 +19,19 @@ export class McpBridgeError extends Error {
 export type McpTransport = "sse" | "stdio";
 
 export interface McpServerIdentity {
-  /** SHA-256 digest of the MCP server binary/image (e.g., "sha256:abc123...") */
+  /**
+   * Operator-supplied SHA-256 digest pin for the MCP server binary/image
+   * (e.g., "sha256:abc123..."). This is a recorded operator assertion, not a
+   * verified artifact digest.
+   */
   digest: string;
   /** Transport protocol used by the server */
   transport: McpTransport;
-  /** When this identity was verified */
+  /**
+   * When the operator pin was recorded. This is not attestation evidence:
+   * nothing at the registration or retry boundary fetches the artifact and
+   * compares it against `digest`. Use `provenanceRef` for real attestation.
+   */
   verifiedAt: number;
   /** Optional: provenance attestation reference (SLSA, sigstore, etc.) */
   provenanceRef?: string;
