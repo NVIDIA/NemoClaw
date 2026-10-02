@@ -456,22 +456,27 @@ function signalCloudflaredWithWindowsHandle(
       ],
       {
         encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
         timeout: 7000,
         env: { ...process.env, NEMOCLAW_CLOUDFLARED_PROCESS_ID: String(pid) },
       },
     ).trim();
-    if (
-      result === "signaled" ||
-      result === "not-running" ||
-      result === "not-cloudflared" ||
-      result === "unavailable"
-    )
+    if (result === "signaled" || result === "not-running" || result === "not-cloudflared") {
       return result;
+    }
+    if (result === "unavailable") {
+      console.log("[services] Windows cloudflared identity helper returned unavailable");
+    }
     if (result.startsWith("unavailable-")) {
       console.log(`[services] Windows cloudflared identity helper returned ${result}`);
     }
-  } catch {
+  } catch (error) {
+    const stderr =
+      typeof error === "object" && error !== null && "stderr" in error
+        ? String(error.stderr).trim()
+        : "";
+    const detail = stderr || (error instanceof Error ? error.message : String(error));
+    console.log(`[services] Windows cloudflared identity helper failed: ${detail.slice(0, 500)}`);
     // Never fall back to a raw PID signal when the identity-bound helper fails.
   }
   return "unavailable";
