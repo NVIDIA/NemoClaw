@@ -3240,6 +3240,12 @@ wait_for_hermes_gateway_recovery_request() {
 
 relaunch_hermes_gateway_current_user() {
   mark_hermes_gateway_stopped
+  # The native home can change while the gateway is stopped (notably when a
+  # rebuild restores the complete pre-delete home). Re-establish the same
+  # validated mutable-config posture used at initial startup before every
+  # supervised replacement reads it. This also mints fresh machine-local API
+  # authority after the archive sanitizer deliberately removes the old token.
+  prepare_hermes_nonroot_runtime || return $?
   launch_hermes_gateway_current_user || return $?
   wait_for_hermes_gateway_internal "$GATEWAY_PID" || return $?
   ensure_hermes_supervised_auxiliaries || return $?
