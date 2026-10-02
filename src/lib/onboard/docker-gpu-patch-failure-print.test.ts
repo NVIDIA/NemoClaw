@@ -98,6 +98,9 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
         timeoutMs: 30_000,
         redact: expect.any(Function),
       });
+      expect(errorSpy.mock.calls.map((args) => args.map(String).join(" ")).join("\n")).toContain(
+        "OpenShell sandbox entered Error phase",
+      );
       const failuresDir = path.join(nemoclawStateRoot(tmpDir, GATEWAY_PORT), "onboard-failures");
       const [failureDir] = fs.readdirSync(failuresDir);
       expect(failureDir).toBeTruthy();
@@ -109,6 +112,102 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
       errorSpy.mockRestore();
       logSpy.mockRestore();
       homeSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry a typed diagnostic collection that throws", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-collect-failure-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => {
+      throw new Error("typed diagnostics unavailable");
+    });
+    const runCaptureOpenshell = vi.fn(() => "alpha   Ready   1m ago\n");
+    const output: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      expect(() =>
+        printDockerGpuPatchFailureAndExit("alpha", new Error("supervisor did not reconnect"), {
+          openShellGpuDiagnostics: { collect },
+          runCaptureOpenshell,
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            rolledBack: true,
+            replacementPresence: "unknown",
+          },
+        }),
+      ).toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledOnce();
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(output.join("\n")).toContain("supervisor did not reconnect");
+      expect(output.join("\n")).toContain("Replacement container cleanup could not be confirmed");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps original failure reporting when a retained artifact cannot be written", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-write-failure-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const writeFileSync = fs.writeFileSync.bind(fs);
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
+      return String(file).endsWith("openshell-sandbox-get.txt")
+        ? (() => {
+            throw new Error("artifact write denied");
+          })()
+        : writeFileSync(file, data, options);
+    }) as typeof fs.writeFileSync);
+    const output: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      expect(() =>
+        printDockerGpuPatchFailureAndExit("alpha", new Error("supervisor did not reconnect"), {
+          openShellGpuDiagnostics: { collect },
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            rolledBack: true,
+            replacementPresence: "unknown",
+          },
+        }),
+      ).toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledOnce();
+      expect(output.join("\n")).toContain("supervisor did not reconnect");
+      expect(output.join("\n")).toContain("Replacement container cleanup could not be confirmed");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      writeSpy.mockRestore();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

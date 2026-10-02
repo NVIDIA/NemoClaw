@@ -23,6 +23,7 @@ import {
   chatContent,
   cleanupGpu,
   cleanupOllama,
+  createGpuPrivateHome,
   detectOllamaModel,
   ensureOllama,
   env,
@@ -35,6 +36,7 @@ import {
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
+  trackGpuGatewayCleanup,
   waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
@@ -87,7 +89,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -107,11 +109,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-gateway-destroy-gpu",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-gateway-destroy-gpu");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-delete-gpu",
@@ -124,7 +122,7 @@ test(
       env: cleanupEnv,
       timeoutMs: 120_000,
     });
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info",
@@ -346,7 +344,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -359,11 +357,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-hermes-response-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-hermes-response-gateway",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-hermes-response-gateway");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-hermes-response-openshell-sandbox",
@@ -377,7 +371,7 @@ test(
       timeoutMs: 120_000,
     });
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info-hermes-response",
@@ -430,7 +424,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -438,7 +432,10 @@ test(
       credentialBoundary:
         "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
+    // The SDK rejects gateway state below a world-writable ancestor such as /tmp.
+    const directory = createGpuPrivateHome(os.homedir());
     const exportEnv = env({
+      HOME: directory,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
@@ -448,17 +445,16 @@ test(
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
     });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "export-cleanup-gateway", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
     let daemonOwner: ReturnType<typeof startAttachedOllama> | undefined;
     cleanup.trackDisposable("stop Ollama processes after export qualification", async () => {
       const result = await cleanupOllama(host, "export-cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
     cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
-    cleanup.trackDisposable("remove private Ollama export documents", () =>
-      fs.rmSync(directory, { recursive: true, force: true }),
-    );
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
       scenarioLabel: "attached Ollama export",
@@ -481,11 +477,6 @@ exec ollama pull qwen2.5:0.5b`,
       },
     );
     expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "export-cleanup-gateway",
-      env: exportEnv,
-      timeoutMs: 60000,
-    });
     cleanup.trackDisposable("delete the export sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "export-cleanup-openshell",
@@ -550,7 +541,7 @@ exec ollama pull qwen2.5:0.5b`,
     const first = parseConfigExport(firstYaml);
     const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
     expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
-    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile(directory)).token;
     artifacts.addRedactionValues([proxyToken]);
     expect(
       firstYaml.includes(proxyToken) ||
@@ -573,7 +564,7 @@ test.for(["initial", "after retirement"])(
       ],
     },
   },
-  async (cycle, { artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async (cycle, { artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     const exportEnv = vllmExportEnv();
     const statusEnv = { ...exportEnv, NEMOCLAW_VLLM_PORT: "" };
     await artifacts.target.declare({
@@ -605,7 +596,7 @@ test.for(["initial", "after retirement"])(
       `${String(preflight.exitCode)}\n${resultText(preflight)}`,
       `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
     ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
 
     cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
       try {
@@ -641,11 +632,7 @@ test.for(["initial", "after retirement"])(
       }
     });
 
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "vllm-export-cleanup-gateway",
-      env: exportEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "vllm-export-cleanup-gateway");
     cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "vllm-export-cleanup-openshell",

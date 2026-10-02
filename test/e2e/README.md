@@ -658,6 +658,9 @@ The fixture retries read-only daemon readiness checks on connection refusal or c
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
 Cleanup destroys each sandbox before its inference runtime and removes private output files.
+The attached-Ollama export scenario gives the candidate CLI a private per-test `HOME`. Cleanup
+removes its sandbox, stops the gateway runtime, and removes the gateway registration before it
+removes that state and the exported YAML.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
