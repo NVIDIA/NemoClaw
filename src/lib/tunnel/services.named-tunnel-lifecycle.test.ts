@@ -71,7 +71,7 @@ describe("startAll named tunnel validation", () => {
   });
 
   it(
-    "keeps a new named tunnel running when its ingress configuration has not been logged yet",
+    "stops a new named tunnel when its ingress configuration is not confirmed",
     testTimeoutOptions(25_000),
     async () => {
       const binDir = join(tmpDir, "bin");
@@ -81,34 +81,30 @@ describe("startAll named tunnel validation", () => {
       chmodSync(fakeCloudflared, 0o700);
       process.env.PATH = `${binDir}:${originalPath ?? ""}`;
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const signal = vi.fn();
+      let alive = true;
+      const signal = vi.fn(() => {
+        alive = false;
+      });
       const processControl: ProcessControl = {
-        isAlive: () => true,
+        isAlive: () => alive,
         commandLine: () => "cloudflared tunnel run",
         signal,
       };
 
-      await startAll({
-        pidDir,
-        dashboardPort: 18_791,
-        cloudflareTunnelToken: "named-secret",
-        processControl,
-      });
+      await expect(
+        startAll({
+          pidDir,
+          dashboardPort: 18_791,
+          cloudflareTunnelToken: "named-secret",
+          processControl,
+        }),
+      ).rejects.toThrow("did not log its ingress route");
 
       const tunnelState = readCloudflaredState(pidDir, processControl);
-      expect(tunnelState.kind).toBe("running");
-      expect(signal).not.toHaveBeenCalled();
-      expect(logSpy.mock.calls.flat().join("\n")).toContain(
-        "ingress route has not been logged yet",
-      );
-      const pid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
-      cleanup = () => {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // The fake tunnel may have exited already.
-        }
-      };
+      expect(tunnelState.kind).toBe("stopped");
+      expect(signal).toHaveBeenCalledWith(expect.any(Number), "SIGTERM");
+      expect(logSpy.mock.calls.flat().join("\n")).not.toContain("dashboard target is unconfirmed");
+      expect(() => readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toThrow();
     },
   );
 

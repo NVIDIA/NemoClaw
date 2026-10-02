@@ -1046,8 +1046,27 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     isRunning(pidDir, "cloudflared")
   ) {
     if (!hasNamedTunnelConfiguration(pidDir)) {
-      warn(
-        "The new named cloudflared tunnel is still running, but its ingress route has not been logged yet. Its dashboard target is unconfirmed; check tunnel status before relying on it.",
+      const rejectionOutcome = await withMcpLifecycleLock(
+        cloudflaredLifecycleLockName(pidDir),
+        () => {
+          if (!stillOwnsTunnel()) return "superseded" as const;
+          return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)
+            ? ("stopped" as const)
+            : ("unconfirmed" as const);
+        },
+      );
+      if (rejectionOutcome === "superseded") {
+        throw new Error(
+          "The new named cloudflared tunnel stopped or changed during ingress validation; its dashboard target is unconfirmed. Check tunnel status, then retry.",
+        );
+      }
+      if (rejectionOutcome === "unconfirmed") {
+        throw new Error(
+          "The new named cloudflared tunnel did not log its ingress route and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+        );
+      }
+      throw new Error(
+        "The new named cloudflared tunnel did not log its ingress route. Its dashboard target is unconfirmed; check the tunnel route in Cloudflare, then retry.",
       );
     } else if (!namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
       const rejectionOutcome = await withMcpLifecycleLock(
