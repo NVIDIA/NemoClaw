@@ -95,6 +95,36 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
     )
 
 
+def print_chat_table(
+    results: list[dict[str, object]],
+    duration_sec: int,
+    inflight_start: int,
+    inflight_per_user: int,
+) -> None:
+    rows: list[tuple[int, int, int]] = []
+    for item in results:
+        user_id = int(item.get("user_id") or 0)
+        chats_ok = int(item.get("ok") or 0)
+        chats_err = int(item.get("err") or 0)
+        rows.append((user_id, chats_ok, chats_err))
+    rows.sort(key=lambda row: row[0])
+    all_err_zero = all(err == 0 for _, _, err in rows)
+    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-sandbox chat counts"
+    print(
+        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}:"
+    )
+    print("")
+    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6}")
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6}")
+    for user_id, chats_ok, chats_err in rows:
+        print(f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} {chats_ok:>16} {chats_err:>6}")
+    print("")
+    print(
+        "Path in use: user → OpenShell sandbox (dcode -n) → inference.local → "
+        "Envoy load balancer → NIM."
+    )
+
+
 async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
@@ -338,11 +368,12 @@ async def run_test(args: argparse.Namespace) -> int:
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(f"Wrote {csv_path}")
     print(f"Wrote {summary_path}")
+    print_chat_table(results, args.duration, args.inflight_start, args.inflight_per_user)
     print(
         f"HPA max={max_replicas} target={args.target_pods} "
         f"scale_up={'ok' if summary['reached_target'] else 'FAIL'} "
         f"scale_down={'ok' if scale_down_ok else 'FAIL'} "
-        f"user→sandbox queries ok={successful} err={failed}"
+        f"user→sandbox chats ok={successful} err={failed}"
     )
     if successful < 1:
         print("No successful user→sandbox Deep Agents queries.", file=sys.stderr)

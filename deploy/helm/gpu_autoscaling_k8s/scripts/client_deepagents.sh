@@ -23,6 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=agent-common.sh
 source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -32,6 +34,8 @@ fail() {
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-3}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
+export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
+agent_common_validate_inference_runtime "${INFERENCE_RUNTIME}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
@@ -53,6 +57,8 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
 openshell status >/dev/null \
   || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
+  || fail "client_deepagents.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_deepagents_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n). No sandbox create. HPA metric is not set here."
 missing=0

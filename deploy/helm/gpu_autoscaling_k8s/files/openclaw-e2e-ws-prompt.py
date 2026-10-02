@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import os
+import signal
 import socket
 import struct
 import sys
@@ -275,19 +276,35 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     lock = threading.Lock()
     workers: list[threading.Thread] = []
 
+    def send_or_retry(text: str, session: str) -> int:
+        # One retry covers Envoy/Ollama blips while HPA adds or removes pods.
+        # Do not start a retry after SIGTERM / duration stop.
+        for attempt in (0, 1):
+            if stop.is_set() and attempt > 0:
+                return 1
+            try:
+                rc = send_one(text, session, timeout, token, quiet=True)
+            except (TimeoutError, OSError, ConnectionError):
+                rc = 1
+            if rc == 0:
+                return 0
+            if attempt == 0 and not stop.is_set():
+                time.sleep(2)
+        return 1
+
     def worker(wid: int) -> None:
         nonlocal ok, err
         turn = 0
         while not stop.is_set():
             text = prompts[(wid + turn) % len(prompts)]
             session = f"{session_base}:w{wid}:t{turn}"
-            try:
-                rc = send_one(text, session, timeout, token, quiet=True)
-            except (TimeoutError, OSError, ConnectionError):
-                rc = 1
+            rc = send_or_retry(text, session)
             with lock:
                 if rc == 0:
                     ok += 1
+                elif stop.is_set():
+                    # SIGTERM / duration: in-flight turn was cancelled, not a failed chat.
+                    pass
                 else:
                     err += 1
             turn += 1
@@ -298,6 +315,12 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             t = threading.Thread(target=worker, args=(wid,), name=f"e2e-w{wid}", daemon=True)
             workers.append(t)
             t.start()
+
+    def request_stop(_signum: int | None = None, _frame: object = None) -> None:
+        stop.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
 
     spawn_upto(start_n)
     print(f"[load] start inflight={start_n} max={max_n} duration={duration}s", flush=True)
@@ -318,6 +341,15 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             last_log = now
         time.sleep(0.5)
     stop.set()
+    # Finish the current chat.send instead of dying on SIGTERM (client stops
+    # load when HPA hits 8). That last in-flight used to increment err.
+    drain = float(os.environ.get("E2E_DRAIN_SEC", "45"))
+    join_deadline = time.monotonic() + max(1.0, drain)
+    for worker_thread in workers:
+        remaining = join_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        worker_thread.join(timeout=remaining)
     print(f"[load] done inflight={current} ok={ok} err={err}", flush=True)
     return 0 if ok > 0 else 1
 

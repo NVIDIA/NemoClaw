@@ -13,16 +13,13 @@ agentscaling_common_fail() {
 
 agentscaling_common_pin_openclaw_ollama() {
   export PATH="${HOME}/.local/bin:${PATH}"
-  if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "ollama" ]]; then
-    agentscaling_common_fail "OpenClaw + Ollama e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
-  fi
   if [[ -n "${AGENT_NAME:-}" && "${AGENT_NAME}" != "openclaw" ]]; then
-    agentscaling_common_fail "OpenClaw + Ollama e2e (got AGENT_NAME=${AGENT_NAME})"
+    agentscaling_common_fail "OpenClaw e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
   export AGENT_NAME="openclaw"
-  export INFERENCE_RUNTIME="ollama"
+  export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime openclaw)}"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+  INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
   export INFERENCE_MODEL
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -65,6 +62,11 @@ agentscaling_common_hpa_mode() {
     -o jsonpath='{.metadata.annotations.nemoclaw\.ai/hpa-mode}' 2>/dev/null || true
 }
 
+agentscaling_common_chart_runtime() {
+  hpa_common_live_inference_runtime "${NAMESPACE}" \
+    "$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)"
+}
+
 agentscaling_common_wait_baseline() {
   local deadline=$((SECONDS + HPA_BASELINE_WAIT_SEC))
   local hpa_status current desired
@@ -83,22 +85,28 @@ agentscaling_common_wait_baseline() {
 }
 
 agentscaling_common_apply_hpa() {
-  local current_mode wanted="${HPA_METRIC}"
+  local current_mode wanted="${HPA_METRIC}" current_runtime
   HPA_NAME="${HPA_NAME:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)}"
   export HPA_NAME
   export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
   current_mode="$(agentscaling_common_hpa_mode)"
+  current_runtime="$(agentscaling_common_chart_runtime)"
+  echo "Live GPU runtime=${current_runtime:-missing} HPA metric=${current_mode:-unknown} (want INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + ${wanted})"
   if [[ "${SKIP_INSTALL_HPA}" == "1" ]]; then
-    echo "SKIP_INSTALL_HPA=1; leaving HPA metric as ${current_mode:-unknown}"
-  elif [[ "${current_mode}" == "${wanted}" ]]; then
-    echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${wanted}"
+    echo "SKIP_INSTALL_HPA=1; leaving runtime=${current_runtime:-unknown} HPA metric=${current_mode:-unknown}"
+  elif [[ "${current_runtime}" == "${INFERENCE_RUNTIME}" && "${current_mode}" == "${wanted}" ]]; then
+    echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${INFERENCE_RUNTIME} and ${wanted}"
   else
-    echo "Setting HPA ${NAMESPACE}/${RELEASE} metric to ${wanted} (minReplicas=1 maxReplicas=8)"
+    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1 maxReplicas=8)"
     SKIP_MONITORING=1 USE_EXISTING_PROMETHEUS=1 \
+      INFERENCE_RUNTIME="${INFERENCE_RUNTIME}" \
+      INFERENCE_MODEL="${INFERENCE_MODEL}" \
       HPA_METRIC="${wanted}" \
       ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP}" \
       "${SCRIPT_DIR}/install-hpa.sh"
   fi
+  hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
+    || agentscaling_common_fail "OpenClaw will not start sandboxes until the GPU pods are ${INFERENCE_RUNTIME}"
   kubectl get gateway "${HPA_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1 \
     || agentscaling_common_fail "Gateway ${HPA_NAME} missing in ${NAMESPACE}; sandboxes cannot use Envoy"
   hpa_common_wait_for_envoy_dataplane_on_target_node "${NAMESPACE}" "${HPA_NAME}" 180

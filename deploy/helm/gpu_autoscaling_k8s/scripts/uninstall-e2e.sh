@@ -7,14 +7,15 @@
 #   - OpenShell providers (onprem-ollama / onprem-hermes / onprem-deepagents)
 #
 # Does not uninstall GPU inference (Ollama/vLLM/NIM), OpenShell, Envoy
-# GatewayClass eg, or Prometheus. With no client and no sandboxes, nothing
-# sends chats; idle HPA returns to 1 replica. The next agentscaling_* script
-# helm-upgrades nemoclaw-gpu to that pairing's runtime.
+# GatewayClass eg, or Prometheus. Idle GPU pods stay so a later pairing can
+# helm-upgrade the same release. The next agentscaling_* script points that
+# release at its runtime.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   # Stop client.sh / client_hermes.sh / client_deepagents.sh first (Ctrl-C in that terminal).
 #   ./scripts/uninstall-e2e.sh
+#   RESET_GPU_REPLICAS=1 ./scripts/uninstall-e2e.sh   # scale leftover GPU pods to 1
 
 set -euo pipefail
 
@@ -38,7 +39,7 @@ else
   echo "OpenShell CLI is not connected. Keep ./scripts/openshell-port-forward.sh attached, then rerun, or this script will delete sandbox CRs/pods only."
 fi
 
-echo "Uninstalling e2e agents and sandboxes (GPU inference stays; next pairing switches the runtime)"
+echo "Uninstalling e2e agents and sandboxes (GPU inference stays for later pairings)"
 
 list_e2e_sandboxes() {
   python3 - "${E2E_SANDBOX_NS}" <<'PY'
@@ -148,5 +149,20 @@ delete_providers() {
 destroy_sandboxes
 delete_providers
 
+NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
+RELEASE="${RELEASE:-nemoclaw-gpu}"
+HPA_NAME="${HPA_NAME:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)}"
+live_runtime="$(hpa_common_live_inference_runtime "${NAMESPACE}" "${HPA_NAME}" || true)"
+live_replicas="$(kubectl get deploy "${HPA_NAME}" -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "?")"
+
 echo "E2e agents and sandboxes uninstalled. OpenShell gateway, Envoy, and GPU inference stay."
-echo "Idle HPA should return to 1 replica. Next: ./scripts/agentscaling_gpuutil.sh, ./scripts/agentscaling_hermes_gpuutil.sh, or ./scripts/agentscaling_deepagents_gpuutil.sh"
+if [[ -n "${live_runtime}" ]]; then
+  echo "Live GPU Deployment is still ${live_runtime} (replicas=${live_replicas}). NIM appears as VLLM::EngineCore in nvidia-smi."
+  echo "Those GPU pods were left on purpose. Next pairing: INFERENCE_RUNTIME=ollama|vllm|nim on that pairing's agentscaling_* script helm-upgrades this same release."
+fi
+if [[ "${RESET_GPU_REPLICAS:-0}" == "1" ]]; then
+  echo "RESET_GPU_REPLICAS=1: scaling ${NAMESPACE}/${HPA_NAME} to 1"
+  kubectl scale "deploy/${HPA_NAME}" -n "${NAMESPACE}" --replicas=1 >/dev/null
+fi
+echo "Next: ./scripts/agentscaling_gpuutil.sh, ./scripts/agentscaling_hermes_gpuutil.sh, or ./scripts/agentscaling_deepagents_gpuutil.sh"

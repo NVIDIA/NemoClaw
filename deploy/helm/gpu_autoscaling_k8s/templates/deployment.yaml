@@ -15,9 +15,10 @@ spec:
   {{- end }}
   {{- /* Default progressDeadlineSeconds is 600s; NIM profile download exceeds that. */}}
   progressDeadlineSeconds: {{ add $startupSec 60 }}
-  {{- if .Values.autoscaling.enabled }}
-  replicas: {{ include "nemoclaw-gpu.hpaMinReplicas" . }}
-  {{- else }}
+  {{- /* HPA owns .spec.replicas via the scale subresource (field manager k3s).
+       Setting replicas here makes helm upgrade conflict. First install
+       defaults to 1; HPA then scales. */}}
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ include "nemoclaw-gpu.replicas" . }}
   {{- end }}
   selector:

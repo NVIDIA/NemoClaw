@@ -65,13 +65,10 @@ fi
 export AGENT_NAME="${AGENT_NAME:-deepagents}"
 [[ "${AGENT_NAME}" == "deepagents" ]] \
   || fail "setup-deepagent-nim-e2e-sandboxes.sh is Deep Agents-only (got AGENT_NAME=${AGENT_NAME})"
-if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "nim" ]]; then
-  fail "this e2e is Deep Agents Code + NIM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
-fi
 agent_common_validate "${AGENT_NAME}"
-export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-nim}"
+export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
+INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
 export INFERENCE_MODEL
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"

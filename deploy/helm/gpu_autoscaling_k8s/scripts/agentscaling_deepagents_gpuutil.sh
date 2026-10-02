@@ -11,14 +11,17 @@
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
 # NIM needs NGC Secrets (apply-local-secrets.sh or create-nim-ngc-secrets.sh).
 # Run ./scripts/uninstall-e2e.sh first if OpenClaw or Hermes sandboxes or
-# clients are still running. GPU inference can stay; this script switches it to NIM.
+# clients are still running. GPU inference can stay; this script helm-upgrades
+# the same release to INFERENCE_RUNTIME (default nim).
 #
 # The client does not know this metric. Use ./scripts/client_deepagents.sh after
 # sandboxes are Ready. For LLM-latency HPA use
 # ./scripts/agentscaling_deepagents_latency.sh.
 #
 # Defaults in this script: AGENT_NAME=deepagents INFERENCE_RUNTIME=nim
-# INFERENCE_MODEL=nvidia/nemotron-3-nano. Other NIM catalog id:
+# INFERENCE_MODEL=nvidia/nemotron-3-nano. Override GPU backend:
+#   INFERENCE_RUNTIME=vllm ./scripts/agentscaling_deepagents_gpuutil.sh
+# Other NIM catalog id:
 #   INFERENCE_MODEL=nvidia/<nim-model-id> ./scripts/agentscaling_deepagents_gpuutil.sh
 # Other agent: agentscaling_gpuutil.sh or agentscaling_hermes_gpuutil.sh
 #

@@ -15,15 +15,12 @@ agentscaling_hermes_common_fail() {
 agentscaling_hermes_common_pin() {
   export PATH="${HOME}/.local/bin:${PATH}"
   if [[ -n "${AGENT_NAME:-}" && "${AGENT_NAME}" != "hermes" ]]; then
-    agentscaling_hermes_common_fail "Hermes + vLLM e2e (got AGENT_NAME=${AGENT_NAME})"
-  fi
-  if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "vllm" ]]; then
-    agentscaling_hermes_common_fail "Hermes + vLLM e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
+    agentscaling_hermes_common_fail "Hermes e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
   export AGENT_NAME="hermes"
-  export INFERENCE_RUNTIME="vllm"
+  export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime hermes)}"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
+  INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
   export INFERENCE_MODEL
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -68,9 +65,8 @@ agentscaling_hermes_common_hpa_mode() {
 }
 
 agentscaling_hermes_common_chart_runtime() {
-  helm get values "${RELEASE}" -n "${NAMESPACE}" -o json 2>/dev/null \
-    | python3 -c 'import json,sys; print((json.load(sys.stdin).get("inference") or {}).get("runtime") or "")' \
-    2>/dev/null || true
+  hpa_common_live_inference_runtime "${NAMESPACE}" \
+    "$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)"
 }
 
 agentscaling_hermes_common_wait_baseline() {
@@ -97,19 +93,22 @@ agentscaling_hermes_common_apply_hpa() {
   export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
   current_mode="$(agentscaling_hermes_common_hpa_mode)"
   current_runtime="$(agentscaling_hermes_common_chart_runtime)"
+  echo "Live GPU runtime=${current_runtime:-missing} HPA metric=${current_mode:-unknown} (want INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + ${wanted})"
   if [[ "${SKIP_INSTALL_HPA}" == "1" ]]; then
     echo "SKIP_INSTALL_HPA=1; leaving runtime=${current_runtime:-unknown} HPA metric=${current_mode:-unknown}"
-  elif [[ "${current_runtime}" == "vllm" && "${current_mode}" == "${wanted}" ]]; then
-    echo "HPA ${NAMESPACE}/${HPA_NAME} already uses vLLM and ${wanted}"
+  elif [[ "${current_runtime}" == "${INFERENCE_RUNTIME}" && "${current_mode}" == "${wanted}" ]]; then
+    echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${INFERENCE_RUNTIME} and ${wanted}"
   else
-    echo "Setting ${NAMESPACE}/${RELEASE} to vLLM + HPA ${wanted} (minReplicas=1 maxReplicas=8)"
+    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1 maxReplicas=8)"
     SKIP_MONITORING=1 USE_EXISTING_PROMETHEUS=1 \
-      INFERENCE_RUNTIME=vllm \
+      INFERENCE_RUNTIME="${INFERENCE_RUNTIME}" \
       INFERENCE_MODEL="${INFERENCE_MODEL}" \
       HPA_METRIC="${wanted}" \
       ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP}" \
       "${SCRIPT_DIR}/install-hpa.sh"
   fi
+  hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
+    || agentscaling_hermes_common_fail "Hermes will not start sandboxes until the GPU pods are ${INFERENCE_RUNTIME}"
   kubectl get gateway "${HPA_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1 \
     || agentscaling_hermes_common_fail "Gateway ${HPA_NAME} missing in ${NAMESPACE}; sandboxes cannot use Envoy"
   hpa_common_wait_for_envoy_dataplane_on_target_node "${NAMESPACE}" "${HPA_NAME}" 180

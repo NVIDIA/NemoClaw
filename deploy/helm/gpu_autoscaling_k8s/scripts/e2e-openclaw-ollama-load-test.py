@@ -229,7 +229,7 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
         return
     proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=20)
+        await asyncio.wait_for(proc.wait(), timeout=60)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -369,7 +369,7 @@ async def run_test(args: argparse.Namespace) -> int:
         "(1:1 user→sandbox :18789; default inflight 1 so CPU sandboxes do not OOM)"
     )
     print(
-        f"  max_tokens={os.environ.get('MAX_TOKENS', '2048')}  "
+        f"  max_tokens={os.environ.get('MAX_TOKENS', '1024')}  "
         f"HPA {args.hpa_namespace}/{args.hpa_name} (model already pinned in each sandbox)"
     )
     print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")

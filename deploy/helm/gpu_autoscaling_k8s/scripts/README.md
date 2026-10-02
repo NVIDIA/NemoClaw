@@ -23,7 +23,7 @@ what each script in this directory does — it has no instructions of its own.
 | `agentscaling-common.sh` | Shared HPA apply + sandbox steps. Do not run it directly. |
 | `setup-openclaw-ollama-e2e-sandboxes.sh` | Sandbox create/start/stop used by the agentscaling scripts |
 | `e2e-openclaw-ollama-load-test.py` | Implementation used by `client.sh` |
-| `uninstall-e2e.sh` | Stop e2e agents/sandboxes/providers before another pairing. Does not uninstall GPU inference or OpenShell. |
+| `uninstall-e2e.sh` | Remove e2e sandboxes/providers before another pairing. Does not uninstall GPU inference or OpenShell. Next `agentscaling_*` helm-upgrades `INFERENCE_RUNTIME`. |
 | `setup-hermes-vllm-e2e-sandboxes.sh` | Create / start / stop / cleanup `hermes-vllm-e2e-*` only |
 | `e2e-hermes-load-test.py` | Per-user driver used by `client_hermes.sh` |
 | `agentscaling_hermes_gpuutil.sh` | Hermes + vLLM sandbox provision + GPU-util HPA |

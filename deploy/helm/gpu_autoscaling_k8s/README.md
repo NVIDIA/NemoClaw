@@ -131,26 +131,45 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). The e2e scripts already set the agent, runtime, and model — you do not export `AGENT_NAME` / `INFERENCE_RUNTIME` / `INFERENCE_MODEL` for the default demo.
+Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`).
 
-| | Agent | Runtime | Default model (in the script) | Provision | Client |
-|--|-------|---------|-------------------------------|-----------|--------|
+| | Agent | Default `INFERENCE_RUNTIME` | Default model | Provision | Client |
+|--|-------|------------------------------|---------------|-----------|--------|
 | **6a** | OpenClaw | `ollama` | `llama3.2:3b` | `agentscaling_gpuutil.sh` | `client.sh` |
 | **6b** | Hermes | `vllm` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | `agentscaling_hermes_gpuutil.sh` | `client_hermes.sh` |
 | **6c** | Deep Agents | `nim` | `nvidia/nemotron-3-nano` | `agentscaling_deepagents_gpuutil.sh` | `client_deepagents.sh` |
 
-**Other model** (same agent and runtime — an Ollama tag, vLLM HF id, or NIM catalog id). Set `INFERENCE_MODEL` on **provision only**. The client talks to the sandbox; the agent already has the model.
+Each wrapper pins **`AGENT_NAME`**. Do not pass `AGENT_NAME=hermes` into `agentscaling_gpuutil.sh`.
+
+**`INFERENCE_RUNTIME`** selects which GPU backend this run connects to (`ollama` | `vllm` | `nim`). Omit it to use the table default. The live `nemoclaw-gpu` Deployment is helm-upgraded in place. Ollama/vLLM/NIM are **not** uninstalled; you can switch back later with the same flag.
+
+```bash
+# 6a default is Ollama — do not set INFERENCE_RUNTIME
+E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
+
+# same OpenClaw sandboxes, but helm-upgrade GPUs to vLLM
+INFERENCE_RUNTIME=vllm \
+  E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
+```
+
+**`INFERENCE_MODEL`** is set on **provision only** (Ollama tag, vLLM HF id, or NIM catalog id). The client talks to the sandbox; the agent already has the model.
 
 ```bash
 INFERENCE_MODEL=llama3.1:8b \
   E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 ```
 
-Same pattern on 6b / 6c (`INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct` with the Hermes provision script, or `INFERENCE_MODEL=nvidia/<nim-model-id>` with the Deep Agents provision script). Latency e2e: the same `INFERENCE_MODEL` on `agentscaling_latency.sh` / `agentscaling_hermes_latency.sh` / `agentscaling_deepagents_latency.sh`.
+Same pattern on 6b / 6c (`INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct` with the Hermes provision script, or `INFERENCE_MODEL=nvidia/<nim-model-id>` with the Deep Agents provision script). Latency e2e: the same flags on `agentscaling_latency.sh` / `agentscaling_hermes_latency.sh` / `agentscaling_deepagents_latency.sh`.
 
-**Other agent:** run that pairing’s scripts (6b or 6c below). `./scripts/uninstall-e2e.sh` first if another pairing’s sandboxes are still up. Do not pass `AGENT_NAME=hermes` into `agentscaling_gpuutil.sh` — each wrapper pins its own agent. 
+**Switch pairing** (OpenClaw ↔ Hermes ↔ Deep Agents). Stop the client, then:
 
-Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**.. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. 
+```bash
+./scripts/uninstall-e2e.sh
+```
+
+That removes CPU sandboxes and OpenShell providers only. GPU inference stays (NIM shows as `VLLM::EngineCore` in `nvidia-smi`). Then run the next pairing’s `agentscaling_*` so Helm points the same release at that wrapper’s `INFERENCE_RUNTIME` (or your override).
+
+Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node. 
 
 <img width="643" height="584" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/2c940d43-c304-4e0a-ac32-55f13da5f722" />
 
@@ -158,7 +177,7 @@ Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end 
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- Long completions (`MAX_TOKENS` default **2048**). `client.sh` re-pins `max_tokens` on each sandbox the same way `client_deepagents.sh` does, and keeps the provisioned model. Inflight stays **1** so 8Gi CPU sandboxes do not OOM.
+- Long completions (`MAX_TOKENS` default **1024**). `client.sh` re-pins `max_tokens` on each sandbox the same way `client_deepagents.sh` does, and keeps the provisioned model. 2048 kept `latency_avg` ~7s at 8 replicas (target 3000 ms). Inflight stays **1** so 8Gi CPU sandboxes do not OOM.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
 
@@ -188,9 +207,11 @@ export KUBECONFIG="${HOME}/.kube/config"
 ```
 
 ```bash
-# Terminal A 
+# Terminal A
 # Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
 # A TLS install can omit that variable.
+# Default INFERENCE_RUNTIME=ollama. Do not set vllm/nim unless you intend to override.
+# If Hermes or Deep Agents sandboxes are still up, run ./scripts/uninstall-e2e.sh first.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 ```
 
@@ -715,18 +736,29 @@ After scale-up you should see multiple series. If latency graphs stay empty, che
 
 There is **one** OpenShell gateway for every sandbox (OpenClaw, Hermes, and Deep Agents). Do not install a second gateway.
 
-### Optional: e2e sandboxes — only if you want to save CPU RAM
+### Switch pairing or drop e2e sandboxes
 
-Skip this if the node has enough DRAM. Agent sandboxes use this DGX H100's **CPU cores and DRAM**, not the H100 GPUs (OpenClaw e2e is 8Gi each; Hermes and Deep Agents e2e are 4Gi each). This 2 TB DGX has plenty, so other-agent sandboxes can stay. GPU inference can stay too.
+`uninstall-e2e.sh` removes CPU sandboxes and OpenShell providers (`onprem-ollama` / `onprem-hermes` / `onprem-deepagents`). It does **not** uninstall GPU inference (Ollama / vLLM / NIM), OpenShell, Envoy, or Prometheus. The next `agentscaling_*` helm-upgrades the same GPU release to `INFERENCE_RUNTIME`.
 
-This is **not** GPU-util vs latency. Both wrappers skip the Helm HPA apply on `cleanup` and delete the same sandboxes. Use the setup scripts (no metric in the name):
+```bash
+# Stop client.sh / client_hermes.sh / client_deepagents.sh first (Ctrl-C).
+./scripts/uninstall-e2e.sh
+```
+
+One pairing’s sandboxes only (GPU still stays):
 
 ```bash
 ./scripts/setup-openclaw-ollama-e2e-sandboxes.sh cleanup   # openclaw-ollama-e2e-*
 ./scripts/setup-hermes-vllm-e2e-sandboxes.sh cleanup       # hermes-vllm-e2e-*
 ./scripts/setup-deepagent-nim-e2e-sandboxes.sh cleanup     # deepagent-nim-e2e-*
-# or all agent sandboxes (pairing names too):
-./scripts/uninstall-e2e.sh
+```
+
+This is **not** GPU-util vs latency. Both wrappers skip the Helm HPA apply on `cleanup`.
+
+To scale leftover GPU replicas to 1 without changing the runtime:
+
+```bash
+RESET_GPU_REPLICAS=1 ./scripts/uninstall-e2e.sh
 ```
 
 ### Full recipe uninstall

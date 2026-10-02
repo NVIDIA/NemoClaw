@@ -554,6 +554,31 @@ hpa_common_metrics_proxy_service() {
   echo "$(hpa_common_release_fullname)-metrics-proxy"
 }
 
+# Live Deployment container, not `helm get values`. A failed upgrade can leave
+# values at ollama while pods are still nim/vllm (field-manager conflict).
+hpa_common_live_inference_runtime() {
+  local ns="${1:?namespace}"
+  local deploy="${2:?deployment}"
+  kubectl get deploy "${deploy}" -n "${ns}" \
+    -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null \
+    | grep -E '^(ollama|vllm|nim)$' | head -n 1
+}
+
+# Fail if the live Deployment is still the previous pairing (Helm values can lie).
+hpa_common_require_live_runtime() {
+  local ns="${1:?namespace}"
+  local deploy="${2:?deployment}"
+  local expected="${3:?runtime}"
+  local got
+  got="$(hpa_common_live_inference_runtime "${ns}" "${deploy}")"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "ERROR: GPU Deployment ${ns}/${deploy} is ${got:-missing}, not ${expected}." >&2
+    echo "Set INFERENCE_RUNTIME=${expected} and re-run the pairing agentscaling_* script so Helm points this same release at ${expected}. uninstall-e2e.sh removes sandboxes only." >&2
+    return 1
+  fi
+  echo "Live GPU runtime is ${expected}"
+}
+
 hpa_common_release_selector() {
   local release="${RELEASE:-nemoclaw-gpu}"
   local chart="${CHART_NAME:-nemoclaw-gpu}"

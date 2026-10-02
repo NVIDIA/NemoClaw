@@ -30,19 +30,25 @@ agent_common_validate_inference_runtime() {
   esac
 }
 
-# Refuse pairings official NemoClaw does not list. Deep Agents has no Local Ollama
-# row; empty runtime is treated as the chart default (ollama) and is also refused.
+# Wrapper defaults (6a/6b/6c). Override with INFERENCE_RUNTIME=ollama|vllm|nim.
+agent_common_default_inference_runtime() {
+  case "${1:-}" in
+    hermes) printf '%s' "vllm" ;;
+    deepagents) printf '%s' "nim" ;;
+    *) printf '%s' "ollama" ;;
+  esac
+}
+
+# Official docs prefer 6a/6b/6c. Any ollama|vllm|nim override is allowed.
 agent_common_validate_runtime_pairing() {
   local agent="${1:?agent}"
   local runtime="${2:-}"
   agent_common_validate "${agent}"
-  if [[ "${agent}" == "deepagents" && ( -z "${runtime}" || "${runtime}" == "ollama" ) ]]; then
-    echo "ERROR: AGENT_NAME=deepagents with INFERENCE_RUNTIME=${runtime:-ollama} is not an officially documented pairing." >&2
-    echo "Set INFERENCE_RUNTIME=vllm or nim. See README.md#6-e2e-test-with-multiple-end-users-and-sandboxes and docs/inference/choose-inference-provider.mdx." >&2
-    exit 1
-  fi
   if [[ -n "${runtime}" ]]; then
     agent_common_validate_inference_runtime "${runtime}"
+  fi
+  if [[ "${agent}" == "deepagents" && ( -z "${runtime}" || "${runtime}" == "ollama" ) ]]; then
+    echo "WARNING: documented Deep Agents default is nim (or vllm). Using ${runtime:-ollama} because INFERENCE_RUNTIME overrides." >&2
   fi
 }
 
@@ -376,11 +382,12 @@ print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
 }
 
 # Client path: keep the provisioned OpenClaw model; only raise max_tokens.
-# Same idea as agent_common_pin_deepagents_max_tokens. Default 2048 so one
-# chat.send per sandbox keeps Ollama busy enough for GPU-util HPA to 8.
+# Same idea as agent_common_pin_deepagents_max_tokens. Default 1024 so one
+# chat.send per sandbox still climbs GPU-util HPA, without holding
+# latency_avg ~7s at 8 replicas (3000 ms target).
 agent_common_pin_openclaw_max_tokens() {
   local sandbox_name="${1:?sandbox}"
-  local max_tokens="${2:-${MAX_TOKENS:-2048}}"
+  local max_tokens="${2:-${MAX_TOKENS:-1024}}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
     env PIN_MAX_TOKENS="${max_tokens}" python3 -c '
 import json, os, pathlib

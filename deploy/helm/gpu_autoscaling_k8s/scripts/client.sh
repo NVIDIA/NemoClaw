@@ -11,9 +11,10 @@
 #   ./scripts/agentscaling_gpuutil.sh   # GPU util HPA (this DGX success path)
 #   ./scripts/agentscaling_latency.sh   # LLM latency HPA (same client)
 #
-# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=2048
-# (same client pin as client_deepagents.sh). Inflight 2 OOMed a CPU node
-# (dgx-19). Do not raise inflight without extra sandbox RAM.
+# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=1024
+# (same client pin as client_deepagents.sh). 2048 kept latency ~7s even
+# at 8 replicas (target 3000 ms). Inflight 2 OOMed a CPU node (dgx-19).
+# Do not raise inflight without extra sandbox RAM.
 # Users never talk to the Envoy load balancer. OpenShell is only the exec
 # tunnel into each sandbox; it is not the user-facing listener.
 #
@@ -27,6 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=agent-common.sh
 source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=hpa-common.sh
+source "${SCRIPT_DIR}/hpa-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -36,12 +39,14 @@ fail() {
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-5}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
+export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime openclaw)}"
+agent_common_validate_inference_runtime "${INFERENCE_RUNTIME}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
-export MAX_TOKENS="${MAX_TOKENS:-2048}"
+export MAX_TOKENS="${MAX_TOKENS:-1024}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
@@ -56,6 +61,8 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
 openshell status >/dev/null \
   || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
+  || fail "client.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0

@@ -69,15 +69,12 @@ if [[ -z "${ACTION}" ]]; then
 fi
 export AGENT_NAME="${AGENT_NAME:-openclaw}"
 if [[ "${AGENT_NAME}" != "openclaw" ]]; then
-  fail "setup-openclaw-ollama-e2e-sandboxes.sh is OpenClaw + Ollama only (got AGENT_NAME=${AGENT_NAME})"
-fi
-if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "ollama" ]]; then
-  fail "this e2e is OpenClaw + Ollama (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Hermes + vLLM is later and is not started here."
+  fail "setup-openclaw-ollama-e2e-sandboxes.sh is OpenClaw only (got AGENT_NAME=${AGENT_NAME})"
 fi
 export AGENT_NAME="openclaw"
-export INFERENCE_RUNTIME="ollama"
+export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime openclaw)}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
 export INFERENCE_MODEL
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 PIN_OPENCLAW_MODEL_PY="${CHART_DIR}/files/pin-openclaw-ollama-model.py"
@@ -104,7 +101,7 @@ export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # workers remain (openclaw-devices ~150–220Mi each). 8Gi is the floor
 # that lets one OpenClaw listen for the client.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
-export MAX_TOKENS="${MAX_TOKENS:-2048}"
+export MAX_TOKENS="${MAX_TOKENS:-1024}"
 export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
