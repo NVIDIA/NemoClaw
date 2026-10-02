@@ -140,7 +140,7 @@ On Linux ARM64, run from the repository root:
 
 ```sh
 IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 dummy
-python3 image/qualify_contract.py nc-contract:dummy
+python3 image/qualify_contract.py nc-contract:dummy --lifecycle dummy --require-ready
 ```
 
 Use `linux/amd64` on a native AMD64 host.
@@ -153,7 +153,9 @@ To roll the same interface into all ten production adapter images on a native Li
 
 ```sh
 IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 agents
-python3 image/qualify_contract.py nc-contract:openclaw nc-contract:hermes nc-contract:pi
+python3 image/qualify_contract.py nc-contract:openclaw --lifecycle openclaw
+python3 image/qualify_contract.py nc-contract:hermes --lifecycle hermes
+python3 image/qualify_contract.py nc-contract:pi --lifecycle pi
 ```
 
 Pass each remaining built image to the same qualifier; CI runs it for every selected target.
@@ -161,11 +163,19 @@ On a native Linux AMD64 host, build and qualify its two production targets inste
 
 ```sh
 IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/amd64 agents
-python3 image/qualify_contract.py nc-contract:deepagents nc-contract:openclaw
+python3 image/qualify_contract.py nc-contract:deepagents
+python3 image/qualify_contract.py nc-contract:openclaw --lifecycle openclaw
 ```
 
 The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
 Production images additionally retain their Fabric discovery catalog.
+The `--lifecycle` profile selects adapter configuration and invocation input; the lifecycle assertions are shared with the dummy.
+OpenClaw, Hermes, and Pi run their installed native adapters against an owned loopback inference server inside the network-isolated container.
+The suite checks configuration, generation conflicts, unchanged configuration, two native replies, and explicit preparation without bypassing the image's command entrypoint.
+Other production images run command conformance only and report the unselected lifecycle scenario as skipped.
+The dummy selects its lifecycle profile automatically; an explicit profile makes the intended coverage visible in CI.
+Native readiness is a separate test: an image without ready-health support reports that test as skipped, while `--require-ready` makes missing support fail qualification.
+The dummy-only readiness-failure scenario remains separate because its failure controls are not native adapter settings.
 A passing command contract does not establish native readiness: production backends still report unsupported health at the pinned Fabric revision.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 

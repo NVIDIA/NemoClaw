@@ -27,8 +27,8 @@ MUTATIONS = ("prepare", "configure")
 
 MESSAGES = {
     "invalid_request": "The request is invalid.",
-    "invalid_file": "The input file must contain one bounded UTF-8 JSON object.",
-    "invalid_input": "Standard input must be a pipe or file with one bounded UTF-8 JSON object.",
+    "invalid_file": "The input file must contain one bounded UTF-8 JSON value of the expected type.",
+    "invalid_input": "Standard input must be a pipe or file with one bounded UTF-8 JSON value of the expected type.",
     "wrong_agent": "The request does not identify this agent.",
     "stale_generation": "The host generation has changed; observe state again.",
     "fabric_health_unsupported": "This Fabric revision does not support runtime health checks.",
@@ -107,7 +107,7 @@ def encode(value):
     )
 
 
-def decode_object(encoded):
+def decode_object(encoded, *, allow_text=False):
     def reject_constant(_):
         raise ValueError("invalid JSON constant")
 
@@ -122,12 +122,12 @@ def decode_object(encoded):
     value = json.loads(
         encoded.decode("utf-8"), parse_constant=reject_constant, object_pairs_hook=unique_object
     )
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) and not (allow_text and isinstance(value, str)):
         raise ValueError("expected JSON object")
     return value
 
 
-def read_object(path):
+def read_object(path, *, allow_text=False):
     try:
         # A pipe or device can block forever or consume stdin through /dev/stdin.
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
@@ -137,12 +137,12 @@ def read_object(path):
             encoded = stream.read(REQUEST_LIMIT + 1)
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("file exceeds limit")
-        return decode_object(encoded)
+        return decode_object(encoded, allow_text=allow_text)
     except (OSError, ValueError, RecursionError) as error:
         raise ProtocolError("invalid_file") from error
 
 
-def read_stdin():
+def read_stdin(*, allow_text=False):
     try:
         # Stdin is read only when a flag names it, never from a terminal that waits for a person.
         if sys.stdin is None or sys.stdin.isatty():
@@ -150,7 +150,7 @@ def read_stdin():
         encoded = sys.stdin.buffer.read(REQUEST_LIMIT + 1)
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("stdin exceeds limit")
-        return decode_object(encoded)
+        return decode_object(encoded, allow_text=allow_text)
     except (OSError, ValueError, RecursionError) as error:
         raise ProtocolError("invalid_input") from error
 
@@ -202,9 +202,11 @@ def validate_request(request, name=None):
     if operation == "check" and request["level"] not in LEVELS:
         raise ProtocolError()
     if operation == "invoke":
-        if not isinstance(request["input"], dict):
+        if not isinstance(request["input"], (dict, str)):
             raise ProtocolError()
-        if request["input"].get("stream") or request["input"].get("streaming"):
+        if isinstance(request["input"], dict) and (
+            request["input"].get("stream") or request["input"].get("streaming")
+        ):
             raise ProtocolError("streaming_unsupported", "invoke", unsupported=True)
     if len(encode(request)) > REQUEST_LIMIT:
         raise ProtocolError("request_too_large")
@@ -248,7 +250,11 @@ def parse_command(arguments):
     for flag, field in (("--config", "config"), ("--input", "input")):
         if flag in flags:
             # Only an exact dash selects stdin; every other value names a file.
-            request[field] = read_stdin() if flags[flag] == "-" else read_object(flags[flag])
+            request[field] = (
+                read_stdin(allow_text=field == "input")
+                if flags[flag] == "-"
+                else read_object(flags[flag], allow_text=field == "input")
+            )
     if "--expected-generation" in flags:
         request["expected_generation"] = flags["--expected-generation"]
     if operation == "check":
