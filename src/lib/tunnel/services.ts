@@ -634,8 +634,18 @@ export function showStatus(opts: ServiceOptions = {}): void {
 
   // Only show tunnel URL if cloudflared is actually running
   const logFile = join(pidDir, "cloudflared.log");
-  if (state.kind === "running" && existsSync(logFile)) {
-    const log = readFileSync(logFile, "utf-8");
+  if (state.kind === "running") {
+    const log = existsSync(logFile) ? readFileSync(logFile, "utf-8") : "";
+    const commandArgs = processControl
+      .commandLine(state.pid)
+      ?.split(/\0|\s+/)
+      .filter(Boolean);
+    const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
+    const runningNamedTunnel =
+      (tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run") ||
+      (commandArgs === undefined &&
+        readCloudflaredDashboardPort(pidDir) === null &&
+        hasNamedTunnelConfiguration(pidDir));
     const namedUrl = extractNamedCloudflareUrl(log, dashboardPort);
     const quickUrl = extractTryCloudflareUrl(log);
     const publicUrl =
@@ -648,6 +658,14 @@ export function showStatus(opts: ServiceOptions = {}): void {
     } else if (quickUrl) {
       info(
         `Public URL withheld: the quick tunnel target could not be confirmed for dashboard port ${String(dashboardPort)}; run \`${CLI_NAME} tunnel start\` to retarget it.`,
+      );
+    } else if (runningNamedTunnel && !hasNamedTunnelConfiguration(pidDir)) {
+      info(
+        `Named tunnel dashboard target is unconfirmed for port ${String(dashboardPort)} because its ingress route has not been logged yet. Wait for the route log or correct the Cloudflare route, then rerun \`${CLI_NAME} tunnel status\`.`,
+      );
+    } else if (runningNamedTunnel && !namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
+      info(
+        `Named tunnel ingress does not confirm dashboard port ${String(dashboardPort)}. Correct the Cloudflare route, then rerun \`${CLI_NAME} tunnel status\`.`,
       );
     }
   }
@@ -675,123 +693,126 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       : resolvePidDir({ ...opts, sandboxName: sandboxName ?? "default" }));
   if (pidDir) ensurePidDir(pidDir);
 
-  if (sandboxName) {
-    sandboxGatewayStop.stopSandboxChannels(sandboxName, {
-      ...(opts.channelStopTransport ? { channelStopTransport: opts.channelStopTransport } : {}),
-      info,
-      warn,
-    });
-  } else if (rawSandboxName) {
-    warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
-  } else {
-    warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
-    warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
-  }
-
-  let ollamaCleanupIncomplete = false;
-  let ollamaCleanup: OllamaUnloadResult | undefined;
-  let ollamaCleanupError: Error | undefined;
-  if (opts.cleanupOllamaModels !== false) {
-    try {
-      const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
-      const cleanup = unloadOllamaModels();
-      if (cleanup) ollamaCleanup = cleanup;
-      if (cleanup && !cleanup.ok) {
-        ollamaCleanupIncomplete = true;
-        warn(
-          `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
-            cleanup.outcome === "discovery-failed"
-              ? `restore access to ${cleanup.endpoint}`
-              : cleanup.outcome === "still-resident"
-                ? `stop the recorded model at ${cleanup.endpoint}`
-                : `allow the model unload request at ${cleanup.endpoint}`
-          }, then retry this command.`,
-        );
-      } else if (sandboxName) {
-        (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
-      }
-    } catch (error) {
-      ollamaCleanupIncomplete = true;
-      const detail = (error instanceof Error ? error.message : String(error))
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 300);
-      ollamaCleanupError = new Error(
-        `Ollama model cleanup failed unexpectedly: ${detail || "unknown error"}. ` +
-          "The saved local route was retained; restore access to the saved local Ollama " +
-          "endpoint, then retry this command.",
-        { cause: error },
+  const stopServices = (): OllamaUnloadResult | void => {
+    // A public tunnel must not outlive the services it forwards to. Confirm the
+    // host tunnel is stopped before tearing down sandbox channels, models, or the
+    // gateway; otherwise a failed tunnel stop leaves a partially stopped target.
+    // The lifecycle lock is held around this entire operation so a concurrent
+    // start cannot recreate the tunnel before its dependencies are fully stopped.
+    let hostServicesStopped = true;
+    if (pidDir) {
+      hostServicesStopped = stopService(
+        pidDir,
+        "cloudflared",
+        opts.processControl ?? REAL_PROCESS_CONTROL,
       );
-      warn(ollamaCleanupError.message);
+    } else {
+      warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
     }
-  }
-  let hostServicesStopped = true;
-  const finishOllamaCleanup = (): OllamaUnloadResult | void => {
-    if (ollamaCleanupError) throw ollamaCleanupError;
     if (!hostServicesStopped) {
+      info("Cloudflared remains running; service stop was not confirmed.");
       throw new Error(
         "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
       );
     }
-    return ollamaCleanup;
+
+    if (sandboxName) {
+      sandboxGatewayStop.stopSandboxChannels(sandboxName, {
+        ...(opts.channelStopTransport ? { channelStopTransport: opts.channelStopTransport } : {}),
+        info,
+        warn,
+      });
+    } else if (rawSandboxName) {
+      warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
+    } else {
+      warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
+      warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
+    }
+
+    let ollamaCleanupIncomplete = false;
+    let ollamaCleanup: OllamaUnloadResult | undefined;
+    let ollamaCleanupError: Error | undefined;
+    if (opts.cleanupOllamaModels !== false) {
+      try {
+        const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
+        const cleanup = unloadOllamaModels();
+        if (cleanup) ollamaCleanup = cleanup;
+        if (cleanup && !cleanup.ok) {
+          ollamaCleanupIncomplete = true;
+          warn(
+            `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
+              cleanup.outcome === "discovery-failed"
+                ? `restore access to ${cleanup.endpoint}`
+                : cleanup.outcome === "still-resident"
+                  ? `stop the recorded model at ${cleanup.endpoint}`
+                  : `allow the model unload request at ${cleanup.endpoint}`
+            }, then retry this command.`,
+          );
+        } else if (sandboxName) {
+          (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(
+            sandboxName,
+          );
+        }
+      } catch (error) {
+        ollamaCleanupIncomplete = true;
+        const detail = (error instanceof Error ? error.message : String(error))
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300);
+        ollamaCleanupError = new Error(
+          `Ollama model cleanup failed unexpectedly: ${detail || "unknown error"}. ` +
+            "The saved local route was retained; restore access to the saved local Ollama " +
+            "endpoint, then retry this command.",
+          { cause: error },
+        );
+        warn(ollamaCleanupError.message);
+      }
+    }
+    const finishOllamaCleanup = (): OllamaUnloadResult | void => {
+      if (ollamaCleanupError) throw ollamaCleanupError;
+      return ollamaCleanup;
+    };
+
+    let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
+    if (opts.releaseGatewayPort) {
+      if (sandboxName) {
+        gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+      } else if (!rawSandboxName) {
+        // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
+        // explicit. A requested-but-malformed name stays out: scope is unknown, not absent.
+        gatewayOutcome = gatewayStop.releaseGatewayPortForStop(undefined, { info, warn });
+      }
+    }
+
+    // When nothing scoped the gateway, or a scoped release was not confirmed, do
+    // not claim every service stopped.
+    if (gatewayOutcome === "not-scoped") {
+      warn(
+        "No sandbox name and no explicit NEMOCLAW_GATEWAY_PORT — the managed OpenShell gateway was not released.",
+      );
+      warn(
+        "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
+      );
+      info("Host services stopped; managed gateway not released.");
+      return finishOllamaCleanup();
+    }
+
+    if (gatewayOutcome === "unconfirmed") {
+      info("Host services stopped; managed gateway release was not confirmed.");
+      return finishOllamaCleanup();
+    }
+
+    if (ollamaCleanupIncomplete) {
+      info("Host services stopped; Ollama model cleanup remains incomplete.");
+    } else {
+      info("All services stopped.");
+    }
+    return finishOllamaCleanup();
   };
 
-  // Stop host-side services only when their state directory is explicit or
-  // derived from a trusted sandbox name. An invalid requested sandbox must not
-  // fall through to the default sandbox's PID directory.
-  if (pidDir) {
-    hostServicesStopped = withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
-      stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL),
-    );
-  } else {
-    warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
-  }
-
-  let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
-  if (opts.releaseGatewayPort) {
-    if (sandboxName) {
-      gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
-    } else if (!rawSandboxName) {
-      // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
-      // explicit. A requested-but-malformed name stays out: scope is unknown, not absent.
-      gatewayOutcome = gatewayStop.releaseGatewayPortForStop(undefined, { info, warn });
-    }
-  }
-
-  // When nothing scoped the gateway, or a scoped release was not confirmed, do
-  // not claim every service stopped.
-  if (gatewayOutcome === "not-scoped") {
-    warn(
-      "No sandbox name and no explicit NEMOCLAW_GATEWAY_PORT — the managed OpenShell gateway was not released.",
-    );
-    warn(
-      "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
-    );
-    info(
-      hostServicesStopped
-        ? "Host services stopped; managed gateway not released."
-        : "Cloudflared remains running; managed gateway not released.",
-    );
-    return finishOllamaCleanup();
-  }
-
-  if (gatewayOutcome === "unconfirmed") {
-    info(
-      hostServicesStopped
-        ? "Host services stopped; managed gateway release was not confirmed."
-        : "Cloudflared remains running; managed gateway release was not confirmed.",
-    );
-    return finishOllamaCleanup();
-  }
-
-  if (!hostServicesStopped) {
-    info("Cloudflared remains running; service stop was not confirmed.");
-  } else if (ollamaCleanupIncomplete) {
-    info("Host services stopped; Ollama model cleanup remains incomplete.");
-  } else {
-    info("All services stopped.");
-  }
-  return finishOllamaCleanup();
+  return pidDir
+    ? withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), stopServices)
+    : stopServices();
 }
 
 /**

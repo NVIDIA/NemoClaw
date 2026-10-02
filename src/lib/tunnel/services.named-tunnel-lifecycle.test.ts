@@ -2,14 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
-import { type ProcessControl, readCloudflaredState, startAll } from "./services";
+import { type ProcessControl, readCloudflaredState, showStatus, startAll } from "./services";
+
+describe("showStatus named tunnel diagnostics", () => {
+  let pidDir: string;
+
+  beforeEach(() => {
+    pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-named-tunnel-status-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(pidDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("explains how to diagnose a running named tunnel with no logged ingress route", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel run",
+      signal: vi.fn(),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    showStatus({ pidDir, dashboardPort: 18_791, processControl });
+
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("cloudflared  (PID");
+    expect(output).toContain("dashboard target is unconfirmed for port 18791");
+    expect(output).toContain("rerun `nemoclaw tunnel status`");
+  });
+});
 
 describe("startAll named tunnel validation", () => {
   let tmpDir: string;
@@ -104,7 +142,11 @@ describe("startAll named tunnel validation", () => {
         cloudflareTunnelToken: "named-secret",
         processControl,
       });
-      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      const pidFileDeadline = Date.now() + 5_000;
+      while (!existsSync(pidFile) && Date.now() < pidFileDeadline) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      }
+      expect(existsSync(pidFile)).toBe(true);
       const originalPid = Number(readFileSync(pidFile, "utf-8"));
       cleanup = () => {
         try {
