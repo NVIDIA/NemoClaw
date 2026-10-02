@@ -209,6 +209,11 @@ export type ExportSnapshotReadStage =
 export type RawExportSnapshot =
   | Readonly<{ kind: "read-failed"; stage: ExportSnapshotReadStage }>
   | Readonly<{
+      kind: "cleanup-failed";
+      directoryName: string;
+      readFailure?: ExportSnapshotReadStage;
+    }>
+  | Readonly<{
       kind: "not-found";
       sandboxName: string;
     }>

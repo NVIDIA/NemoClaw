@@ -273,20 +273,30 @@ It does not report a successful rebuild.
 
 If the sandbox is stopped, rebuild asks OpenShell to start that exact sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition.
 
-<AgentOnly variant="openclaw">
+<AgentOnly variant="openclaw,deepagents">
 On OpenShell 0.0.116, `start` cannot restart a sandbox in `Phase: Error`.
-For a managed Docker OpenClaw sandbox whose container is stopped, `rebuild` can capture its declared state without starting or executing in that container.
-User-managed `.env` and `.mcp.json` files are not captured or restored by this path.
-Keep secure host copies of any needed values or configuration before rebuilding, then re-add those files after recovery.
-It verifies the recorded sandbox and container identities, preserves MCP configuration and the live policy, sanitizes the backup, and then creates and verifies a replacement.
-OpenClaw's machine identity and gateway pairing state stay outside the backup.
+For a managed Docker OpenClaw or Deep Agents Code sandbox whose container is stopped, `rebuild` can capture declared state without starting or executing in that container.
+For Deep Agents Code, it carries only supported managed native MCP entries through a bounded recovery handoff.
 
+It verifies the recorded sandbox and container identities, preserves the live policy, sanitizes the backup, and then creates and verifies a replacement.
 This recovery requires the original container to remain present and unchanged.
 NemoClaw accepts its local managed state volume only when ownership metadata matches and no other container references it.
-It refuses other mounts within or above `/sandbox/.openclaw`, unsupported filesystem entries, or a source archive larger than 1 GiB.
+It refuses other mounts within or above the agent state directory, unsupported filesystem entries, or a source archive larger than 1 GiB.
 A capture or ownership failure preserves the original sandbox and stops replacement.
 The snapshot records the source as stopped even though the verified replacement runs.
 If temporary capture cleanup fails, the warning names the private directory to remove before retrying.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+`.deepagents/.env`, authentication state, and user-authored or unsupported `.deepagents/.mcp.json` content are not captured by this path.
+Keep secure host copies and restore them only through their owning supported workflow.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+User-managed `.env` and `.mcp.json` files are not captured or restored by this path.
+Keep secure host copies of any needed values or configuration, then re-add those files after recovery.
+OpenClaw's machine identity and gateway pairing state stay outside the backup.
 
 </AgentOnly>
 

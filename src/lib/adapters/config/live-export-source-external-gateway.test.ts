@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
@@ -47,6 +47,23 @@ beforeEach(() => {
 });
 
 describe("external gateway live source reader", () => {
+  it("keeps managed export on its existing connection without temporary CLI storage (#11861)", async () => {
+    mockSupportedLiveSource();
+    vi.mocked(observeExportGateway).mockResolvedValue({
+      name: "nemoclaw",
+      port: 8080,
+      management: "nemoclaw",
+      stateRootOwned: true,
+    });
+    const create = vi.spyOn(fs, "mkdtempSync");
+    const remove = vi.spyOn(fs, "rmSync");
+    const exported = await exportLiveSource();
+    expect(exported.result.ok).toBe(true);
+    expect(connectManagedOpenShellSdk).toHaveBeenCalled();
+    expect(connectExternalHttpOpenShellSdk).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
   it("uses one verified endpoint for SDK and inference reads without managed fallback (#11861)", async () => {
     mockExternalSource();
     vi.stubEnv("OPENSHELL_GATEWAY_TOKEN", "ambient-token-canary");
@@ -115,6 +132,53 @@ describe("external gateway live source reader", () => {
     expect(process.env.OPENSHELL_SYSTEM_GATEWAY_DIR).toBe("/source-system-credentials");
     expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
   });
+
+  it.each([
+    {
+      readFails: false,
+      prefix: "The external gateway CLI temporary directory could not be removed.",
+    },
+    { readFails: true, prefix: "The live gateway inference route could not be read or verified." },
+  ])(
+    "reports cleanup recovery without publishing when route failure is $readFails (#11861)",
+    async ({ readFails, prefix }) => {
+      mockExternalSource();
+      const originalCapture = vi.mocked(captureSanitizedResolvedOpenshell).getMockImplementation()!;
+      let temporaryHome = "";
+      vi.mocked(captureSanitizedResolvedOpenshell).mockImplementationOnce((args, options) => {
+        temporaryHome = options.env!.HOME!;
+        onTestFinished(() => fs.rmSync(temporaryHome, { recursive: true, force: true }));
+        return readFails
+          ? { status: 1, output: readFailureCanary }
+          : originalCapture(args, options);
+      });
+      const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+        throw new Error(`${readFailureCanary} /private/cleanup-path \u001b[2J`);
+      });
+      try {
+        const exported = await exportLiveSource();
+        expectExportRefusal(exported, { category: "live-verification-failed" });
+        expect(exported.result).toMatchObject({
+          failure: {
+            findings: [
+              {
+                field: "source.cleanup",
+                diagnostic: `${prefix}${readFails ? " The external gateway CLI temporary directory could not be removed." : ""} After the export process exits, inspect directory '${path.basename(temporaryHome)}' in its operating-system temporary directory. Remove it only if it is owned by your user. Export was refused.`,
+              },
+            ],
+          },
+        });
+        expect(fs.existsSync(temporaryHome)).toBe(true);
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(exported.result)).not.toContain(temporaryHome);
+        expect(JSON.stringify(exported.result)).not.toContain(readFailureCanary);
+        expect(JSON.stringify(exported.result)).not.toContain("/private/cleanup-path");
+        expect(JSON.stringify(exported.result)).not.toContain("\\u001b");
+      } finally {
+        remove.mockRestore();
+      }
+    },
+  );
 
   it("refuses a listener replaced during the source read before publication (#11861)", async () => {
     mockExternalSource();

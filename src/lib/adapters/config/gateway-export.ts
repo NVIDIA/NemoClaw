@@ -41,12 +41,27 @@ export function createExportGatewayConnection(gateway: ObservedExportGateway, si
   if (!endpoint) return undefined;
   const connect: ConnectOpenShellReader = async (target) =>
     (await connectExternalHttpOpenShellSdk(target, endpoint, { signal })) as OpenShellReadClient;
+  let temporaryHome: string | undefined;
   return {
     connect,
     captureInferenceRoute: (
       args: string[],
       options: Parameters<typeof captureSanitizedResolvedOpenshell>[1],
-    ) => captureExternalInferenceRoute(args, options, endpoint),
+    ) => {
+      temporaryHome ??= fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-gateway-"));
+      return captureExternalInferenceRoute(args, options, endpoint, temporaryHome);
+    },
+    removeTemporaryHome(): string | null {
+      const home = temporaryHome;
+      if (!home) return null;
+      try {
+        fs.rmSync(home, { recursive: true, force: true });
+        temporaryHome = undefined;
+        return null;
+      } catch {
+        return path.basename(home);
+      }
+    },
   };
 }
 
@@ -56,27 +71,23 @@ function captureExternalInferenceRoute(
   args: string[],
   options: Parameters<typeof captureSanitizedResolvedOpenshell>[1],
   endpoint: string,
+  temporaryHome: string,
 ) {
-  const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-gateway-"));
-  try {
-    return captureSanitizedResolvedOpenshell(args, {
-      ...options,
-      env: {
-        ...buildOpenShellSubprocessEnv(),
-        HOME: temporaryHome,
-        XDG_CONFIG_HOME: path.join(temporaryHome, "config"),
-        XDG_CACHE_HOME: path.join(temporaryHome, "cache"),
-        XDG_DATA_HOME: path.join(temporaryHome, "data"),
-        XDG_STATE_HOME: path.join(temporaryHome, "state"),
-        OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(temporaryHome, "system"),
-        OPENSHELL_GATEWAY_ENDPOINT: endpoint,
-        OPENSHELL_WORKSPACE: "default",
-      } as Record<string, string>,
-      replaceEnv: true,
-    });
-  } finally {
-    fs.rmSync(temporaryHome, { recursive: true, force: true });
-  }
+  return captureSanitizedResolvedOpenshell(args, {
+    ...options,
+    env: {
+      ...buildOpenShellSubprocessEnv(),
+      HOME: temporaryHome,
+      XDG_CONFIG_HOME: path.join(temporaryHome, "config"),
+      XDG_CACHE_HOME: path.join(temporaryHome, "cache"),
+      XDG_DATA_HOME: path.join(temporaryHome, "data"),
+      XDG_STATE_HOME: path.join(temporaryHome, "state"),
+      OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(temporaryHome, "system"),
+      OPENSHELL_GATEWAY_ENDPOINT: endpoint,
+      OPENSHELL_WORKSPACE: "default",
+    } as Record<string, string>,
+    replaceEnv: true,
+  });
 }
 
 function resolveExportGatewayBinding(entry: Readonly<SandboxEntry>) {

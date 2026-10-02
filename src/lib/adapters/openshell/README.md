@@ -23,8 +23,11 @@ External config export uses the separate HTTP connection function in `sdk.ts` af
 reader verifies declared and checkpointed ownership, plaintext registration, and the current
 supervised listener. It passes only an explicit `http://127.0.0.1:<port>` endpoint to the SDK.
 The inference CLI read uses that endpoint and empty temporary user and system configuration roots
-to prevent stored credential loading or refresh. Those roots are removed after the read, including
-failure. External read failures do not fall back to the managed connection. `gateway-reuse-cli.ts`
+to prevent stored credential loading or refresh. The snapshot reader removes those roots after
+success or failure. A removal failure refuses export and reports the generated directory name with
+recovery guidance; an earlier read failure keeps its stage-specific diagnostic. Raw errors and the
+absolute temporary path are not included in that diagnostic. External read failures do not fall
+back to the managed connection. `gateway-reuse-cli.ts`
 supplies registration metadata without selecting a gateway or requesting network status.
 
 `inference-route.ts` defines configured and unconfigured observations plus redacted error categories.

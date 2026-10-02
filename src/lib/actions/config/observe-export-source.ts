@@ -17,6 +17,7 @@ import type {
   ObservedExportSnapshot,
   QualifiedExportPolicy,
   QualifiedExportSnapshot,
+  RawExportSnapshot,
   VerifiedExportSource,
 } from "../../domain/config/export-evidence";
 import { verifyExportSource } from "../../domain/config/verify-export-source";
@@ -112,14 +113,43 @@ function failedLiveRead(stage: ExportSnapshotReadStage): ObservationAttempt {
   };
 }
 
+function failedCleanup(
+  failure: Extract<RawExportSnapshot, { kind: "cleanup-failed" }>,
+): ObservationAttempt {
+  const directoryName =
+    typeof failure.directoryName === "string" &&
+    failure.directoryName.length === "nemoclaw-export-gateway-".length + 6 &&
+    /^nemoclaw-export-gateway-[A-Za-z0-9]{6}$/u.test(failure.directoryName)
+      ? ` '${failure.directoryName}'`
+      : "";
+  const primary =
+    failure.readFailure && Object.hasOwn(LIVE_READ_DIAGNOSTICS, failure.readFailure)
+      ? `${LIVE_READ_DIAGNOSTICS[failure.readFailure]} `
+      : "";
+  return {
+    kind: "rejected",
+    findings: [
+      finding(
+        "source.cleanup",
+        "live-verification-failed",
+        `${primary}The external gateway CLI temporary directory could not be removed. ` +
+          `After the export process exits, inspect directory${directoryName} in its operating-system temporary directory. ` +
+          "Remove it only if it is owned by your user. Export was refused.",
+      ),
+    ],
+  };
+}
+
 async function observeAttempt(
   sandboxName: string,
   reader: ExportSnapshotReader,
 ): Promise<ObservationAttempt> {
   const observed = cloneAndDeepFreeze(await reader.read(sandboxName));
   if (observed.kind === "read-failed") return failedLiveRead(observed.stage);
+  if (observed.kind === "cleanup-failed") return failedCleanup(observed);
   const confirmed = cloneAndDeepFreeze(await reader.read(sandboxName));
   if (confirmed.kind === "read-failed") return failedLiveRead(confirmed.stage);
+  if (confirmed.kind === "cleanup-failed") return failedCleanup(confirmed);
   if (!isDeepStrictEqual(observed, confirmed)) return { kind: "changed" };
   if (observed.kind === "not-found") {
     if (observed.sandboxName !== sandboxName) {

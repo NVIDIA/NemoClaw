@@ -20,6 +20,7 @@ import type {
   ExportSnapshotReadStage,
   ExportSnapshotReader,
   ObservedExportGateway,
+  ObservedExportSnapshot,
   ObservedExportInference,
   ObservedExportWebSearchProvider,
   ObservedManagedVllmRuntime,
@@ -315,8 +316,63 @@ async function recheckExternalGateway(
   }
 }
 
+async function readGatewaySnapshot(
+  sandboxName: string,
+  entry: Readonly<SandboxEntry>,
+  gateway: ObservedExportGateway,
+  signal: AbortSignal,
+  connection: ExportGatewayConnection,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
+): Promise<ObservedExportSnapshot> {
+  const row = await createSandboxes(connection?.connect).get({
+    target: namedOpenShellGateway(gateway.name),
+    workspace: "default",
+    name: sandboxName,
+    signal,
+  });
+  if (!row) throw new Error("The live sandbox is missing.");
+  beforeRead("sandbox-identity");
+  const sandbox = sandboxIdentity(row);
+  beforeRead("managed-serving");
+  const managedServing =
+    entry.provider === "vllm-local"
+      ? observeManagedVllmForExport(entry.servingProfileProvenance)
+      : undefined;
+  beforeRead("inference-route");
+  const inference = await inferenceFor(
+    entry,
+    gateway,
+    beforeRead,
+    signal,
+    managedServing,
+    connection,
+  );
+  let webSearchProvider: ObservedExportWebSearchProvider | undefined;
+  if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
+    beforeRead("web-search-provider");
+    webSearchProvider = await readWebSearchProvider(entry, gateway.name, signal, connection);
+  }
+  beforeRead("effective-policy");
+  const { configuration, ...policy } = await effectivePolicy(gateway, row, signal, connection);
+  beforeRead("gateway-binding");
+  await recheckExternalGateway(entry, gateway, beforeRead);
+  return {
+    kind: "observed",
+    sandboxName,
+    registry: registryEvidence(entry),
+    gateway,
+    sandbox,
+    inference,
+    ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
+    policy,
+    configuration,
+  };
+}
+
 async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
   let stage: ExportSnapshotReadStage = "registry";
+  let connection: ExportGatewayConnection;
+  let result: RawExportSnapshot;
   const beforeRead = (nextStage: ExportSnapshotReadStage) => {
     stage = nextStage;
   };
@@ -327,53 +383,20 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     const gateway = await observeExportGateway(entry, beforeRead);
     stage = "sandbox-inventory";
     const signal = AbortSignal.timeout(CAPTURE_TIMEOUT_MS);
-    const connection = createExportGatewayConnection(gateway, signal);
-    const row = await createSandboxes(connection?.connect).get({
-      target: namedOpenShellGateway(gateway.name),
-      workspace: "default",
-      name: sandboxName,
-      signal,
-    });
-    if (!row) throw new Error("The live sandbox is missing.");
-    stage = "sandbox-identity";
-    const sandbox = sandboxIdentity(row);
-    stage = "managed-serving";
-    const managedServing =
-      entry.provider === "vllm-local"
-        ? observeManagedVllmForExport(entry.servingProfileProvenance)
-        : undefined;
-    stage = "inference-route";
-    const inference = await inferenceFor(
-      entry,
-      gateway,
-      beforeRead,
-      signal,
-      managedServing,
-      connection,
-    );
-    let webSearchProvider: ObservedExportWebSearchProvider | undefined;
-    if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
-      stage = "web-search-provider";
-      webSearchProvider = await readWebSearchProvider(entry, gateway.name, signal, connection);
-    }
-    stage = "effective-policy";
-    const { configuration, ...policy } = await effectivePolicy(gateway, row, signal, connection);
-    stage = "gateway-binding";
-    await recheckExternalGateway(entry, gateway, beforeRead);
-    return {
-      kind: "observed",
-      sandboxName,
-      registry: registryEvidence(entry),
-      gateway,
-      sandbox,
-      inference,
-      ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
-      policy,
-      configuration,
-    };
+    connection = createExportGatewayConnection(gateway, signal);
+    result = await readGatewaySnapshot(sandboxName, entry, gateway, signal, connection, beforeRead);
   } catch {
-    return { kind: "read-failed", stage };
+    result = { kind: "read-failed", stage };
   }
+  const directoryName = connection?.removeTemporaryHome();
+  if (directoryName) {
+    return {
+      kind: "cleanup-failed",
+      directoryName,
+      ...(result.kind === "read-failed" ? { readFailure: result.stage } : {}),
+    };
+  }
+  return result;
 }
 
 /** Concrete read-only bindings for one complete export snapshot. */

@@ -308,13 +308,19 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
-  it.each([0, 7])(
-    "runs external export compatibility with v1 enabled and preserves exit status %i (#11861)",
-    (exitStatus) => {
-      const step = requiredWorkflowStep(
-        prWorkflow.jobs["static-checks"],
-        "Verify exported configurations with the pinned v1 consumer",
+  it.each([
+    { name: "pull request", workflow: prWorkflow, exitStatus: 0 },
+    { name: "pull request", workflow: prWorkflow, exitStatus: 7 },
+    { name: "main", workflow: mainWorkflow, exitStatus: 0 },
+    { name: "main", workflow: mainWorkflow, exitStatus: 7 },
+  ])(
+    "runs $name external export compatibility with v1 enabled and preserves exit status $exitStatus (#11861)",
+    ({ workflow, exitStatus }) => {
+      const steps = workflow.jobs["static-checks"].steps?.filter(
+        (step) => step.env?.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1",
       );
+      expect(steps).toHaveLength(1);
+      const step = steps![0]!;
       const temp = mkdtempSync(join(tmpdir(), "nemoclaw-export-compatibility-workflow-"));
       try {
         const bin = join(temp, "node_modules", ".bin");

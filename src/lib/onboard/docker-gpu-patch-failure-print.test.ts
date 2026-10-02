@@ -2,10 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
+import { GATEWAY_PORT } from "../core/ports";
+import { nemoclawStateRoot } from "../state/state-root";
+const dockerAdapterMocks = vi.hoisted(() => ({
+  dockerCapture: vi.fn((args: readonly string[]) =>
+    args[0] === "ps" ? "default-container-id\n" : "",
+  ),
+  dockerLogs: vi.fn(() => ""),
+}));
+
+vi.mock("../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker")>()),
+  dockerCapture: dockerAdapterMocks.dockerCapture,
+  dockerLogs: dockerAdapterMocks.dockerLogs,
+}));
+
 import {
+  applyDockerGpuPatchOrExit,
   buildDockerGpuMode,
   type DockerGpuPatchFailureClassification,
   printDockerGpuPatchFailureAndExit,
@@ -49,6 +68,51 @@ function printAndCapture(deps: Parameters<typeof printDockerGpuPatchFailureAndEx
 }
 
 describe("Docker GPU patch failure reporting (#7996)", () => {
+  it("preserves typed OpenShell artifacts through the recreation-failure wrapper", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-wrapper-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpDir);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      await expect(
+        applyDockerGpuPatchOrExit(
+          { sandboxName: "alpha", timeoutSecs: 1 },
+          { openShellGpuDiagnostics: { collect } },
+        ),
+      ).rejects.toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        timeoutMs: 30_000,
+        redact: expect.any(Function),
+      });
+      const failuresDir = path.join(nemoclawStateRoot(tmpDir, GATEWAY_PORT), "onboard-failures");
+      const [failureDir] = fs.readdirSync(failuresDir);
+      expect(failureDir).toBeTruthy();
+      expect(
+        fs.readFileSync(path.join(failuresDir, failureDir!, "openshell-sandbox-get.txt"), "utf8"),
+      ).toBe("Phase: Error\n");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      homeSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("prefers the pre-rollback verdict when fresh inspection cannot find the replacement", () => {
     // Fresh inspection returns nothing after rollback, and the sandbox only
     // shows a generic Error phase.
