@@ -81,8 +81,8 @@ The following table compares custom OpenShell integration with `nemo-deepagents 
 | Managed MCP | You decide how MCP servers enter the sandbox and how they receive credentials. | NemoClaw validates and updates the agent-native Deep Agents MCP configuration plus live OpenShell policy, providers, attachments, and credential placeholders through host-side commands. |
 | Optional integrations | You decide how web search, tracing, and other integrations enter the sandbox. | NemoClaw supports an explicit Tavily policy and credential path plus opt-in bounded trace export to an operator-managed host collector. Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox. |
 | Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. |
-| Lifecycle state | Not included unless you build it. | NemoClaw preserves manifest-declared Deep Agents state and omits credential-bearing user files from snapshots and rebuilds. |
-| Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, snapshot, restore, and uninstall workflows. |
+| Lifecycle state | Not included unless you build it. | OpenShell preserves the complete native home. NemoClaw transfers that complete tree during replacement while OpenShell keeps its credential stores outside the agent home. |
+| Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, and uninstall workflows. |
 
 ## When to Use Which
 

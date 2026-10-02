@@ -1741,26 +1741,7 @@ function getSandboxChannelStatePaths(
   }
   const messagingAgentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
   const manifestStateDirs = messagingAgentId ? manifest?.state?.[messagingAgentId] : undefined;
-  if (manifestStateDirs !== undefined) {
-    return manifestStateDirs.map((stateDir) => `${configDir}/${stateDir}`);
-  }
-  const stateDirs = new Set(agent.stateDirs);
-  const paths: string[] = [];
-  const isHermesWhatsapp = agent.name === "hermes" && channelName === "whatsapp";
-  if (stateDirs.has("platforms")) {
-    paths.push(`${configDir}/platforms/${channelName}`);
-  }
-  // Compatibility session paths are part of the supported removal contract,
-  // not the active rebuild manifest. Keep clearing them after their retired
-  // state_dirs entries disappear so old credentials cannot survive removal.
-  if (isHermesWhatsapp) {
-    paths.push(`${configDir}/profiles/dashboard-home/platforms/whatsapp/session`);
-    paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
-  }
-  if (paths.length === 0 && stateDirs.has(channelName)) {
-    paths.push(`${configDir}/${channelName}`);
-  }
-  return paths;
+  return (manifestStateDirs ?? []).map((stateDir) => `${configDir}/${stateDir}`);
 }
 
 function isSafeChannelStatePath(p: string): boolean {
@@ -1986,8 +1967,8 @@ async function removeSandboxChannelUnlocked(
   }
 
   // Channels with durable account or session state store auth blobs inside
-  // the sandbox that survive a rebuild via the state_dirs backup. Tear those
-  // down FIRST so a cleanup failure leaves the registry/policy untouched.
+  // the sandbox that survive a rebuild via complete native-home persistence.
+  // Tear those down FIRST so a cleanup failure leaves registry/policy untouched.
   // OpenClaw WeChat can additionally recover through a provider-owned stopped-state
   // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
