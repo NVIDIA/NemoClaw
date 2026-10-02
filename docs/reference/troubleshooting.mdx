@@ -702,19 +702,23 @@ Managed OpenClaw images preinstall the reviewed Brave and Tavily plugins from pi
 The image build verifies archive integrity before installing each plugin offline.
 Both search plugins remain disabled in the neutral image; onboarding enables only the selected provider and supplies its OpenShell credential reference.
 
-If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
+An `integrity mismatch` or `has no committed npm integrity pin` error stops the build before the affected plugin is installed.
+If `openclaw plugins install` fails, the build stops before running `openclaw doctor` for that provider.
+Preserve the complete error, plugin name, and NemoClaw revision, then report the failed archive verification or native installation to a maintainer.
+Do not change the package pins or bypass verification to continue.
+Widening sandbox network policy or disabling web search does not repair these offline build failures.
 
-Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
+Archive downloads occur before the offline installation step.
+For a failed download, check the host network or proxy that fetches the archive; sandbox egress policy does not control that download.
 
-```bash
-NEMOCLAW_WEB_SEARCH_PROVIDER=none $$nemoclaw onboard --resume
-```
-
-If you want the feature, fix the network or policy path first, then resume onboarding:
+After the reviewed build inputs or native installation failure are corrected, rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
 
 ```bash
 $$nemoclaw onboard --resume
 ```
+
+Confirm that archive verification and plugin installation complete without errors.
 
 </AgentOnly>
 
