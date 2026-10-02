@@ -53,5 +53,8 @@ jobs:
       - name: Prepare managed inference catalog for source imports
         run: npm run catalog:compile
 
+      - name: Compile shared OpenShell boundaries for source imports
+        run: npm run build:policy-boundary
+
       - name: Verify Windows process identity and stop behavior
         run: npx vitest run --project cli src/lib/tunnel/services.identity-signal.test.ts
