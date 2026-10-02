@@ -207,6 +207,9 @@ mod docker_compute;
 
 pub mod discovery_session;
 
+/// One queryable sheet of observed facts, with real and recorded sources.
+pub mod facts;
+
 /// Read-only capability observations for authoring and planning.
 pub mod discovery;
 
