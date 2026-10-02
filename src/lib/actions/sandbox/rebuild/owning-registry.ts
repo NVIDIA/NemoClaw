@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 
+import { getAgentSandboxBaseImageEnvVar } from "../../../agent/base-image-env";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
@@ -79,6 +80,7 @@ type RebuildOwningRegistryDependencies = {
 };
 
 type RebuildWorkerOptions = Readonly<{
+  baseImageOverrideEnvName?: string;
   credentialEnvNames?: readonly string[];
   terminationGraceMs?: number;
   timeoutMs?: number;
@@ -98,7 +100,9 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
   "NEMOCLAW_REBUILD_VERBOSE",
+  "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
+  "NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD",
 ] as const;
 
 /** Recover the recorded gateway location before rebuild can start or replace it. */
@@ -126,12 +130,16 @@ export function restoreRecordedRebuildGatewayStateDir(
 function rebuildWorkerEnv(
   gatewayPort: number,
   credentialEnvNames: readonly string[],
+  baseImageOverrideEnvName: string | undefined,
 ): Record<string, string> {
   const extra: Record<string, string> = {
     ...snapshotCredentialEnv(credentialEnvNames),
     NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
   };
-  for (const name of REBUILD_ENV_NAMES) {
+  const names = baseImageOverrideEnvName
+    ? [...REBUILD_ENV_NAMES, baseImageOverrideEnvName]
+    : REBUILD_ENV_NAMES;
+  for (const name of names) {
     const value = process.env[name];
     if (value !== undefined) extra[name] = value;
   }
@@ -301,7 +309,11 @@ async function runWorker(
   try {
     const child = spawn(process.execPath, [WORKER_PATH], {
       detached: dedicatedProcessGroup,
-      env: rebuildWorkerEnv(gatewayPort, options.credentialEnvNames ?? []),
+      env: rebuildWorkerEnv(
+        gatewayPort,
+        options.credentialEnvNames ?? [],
+        options.baseImageOverrideEnvName,
+      ),
       stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
     });
     const inputStream = child.stdio[3];
@@ -503,7 +515,10 @@ export async function delegateRebuildToOwningRegistry(
   await rebuildOwningRegistryDependencies.runWorker(
     { operation: "rebuild", ...workerInput },
     hit.registryGatewayPort,
-    { credentialEnvNames: rebuildCredentialEnvNames(hit.entry) },
+    {
+      baseImageOverrideEnvName: getAgentSandboxBaseImageEnvVar(hit.entry.agent || "openclaw"),
+      credentialEnvNames: rebuildCredentialEnvNames(hit.entry),
+    },
   );
   return true;
 }

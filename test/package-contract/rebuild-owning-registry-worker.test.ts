@@ -279,6 +279,68 @@ describe("compiled rebuild owning-registry worker", () => {
     },
   );
 
+  it.runIf(process.platform === "linux")(
+    "forwards base-image override settings into the delegated rebuild consumer",
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-base-image-"));
+      const marker = path.join(home, "base-image-probe.json");
+      let started: ReturnType<typeof startWorkerWithControlledDeadline> | undefined;
+      try {
+        const recoveryManifest = writeRecoveryFixture(home);
+        writeSiblingRegistry(home);
+        vi.stubEnv("HOME", home);
+        vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeCredentialProbeOpenShell(home, marker));
+        vi.stubEnv("NEMOCLAW_SANDBOX_BASE_IMAGE_REF", "ghcr.io/example/openclaw-base:test");
+        vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "ghcr.io/example/hermes-base:test");
+        vi.stubEnv("NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD", "0");
+
+        started = startWorkerWithControlledDeadline(() =>
+          rebuildOwningRegistryDependencies.runWorker(
+            {
+              operation: "rebuild",
+              sandboxName: "alpha",
+              options: { yes: true },
+              executionOptions: {
+                recoveryManifest,
+                allowLegacyManagedImageRecovery: true,
+              },
+            },
+            9000,
+            {
+              baseImageOverrideEnvName: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+              timeoutMs: WORKER_FIXTURE_TIMEOUT_MS,
+              terminationGraceMs: 100,
+            },
+          ),
+        );
+        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+          timeout: WORKER_FIXTURE_TIMEOUT_MS,
+        });
+        const workerPid = Number(fs.readFileSync(marker, "utf8"));
+        const workerEnvironment = fs
+          .readFileSync(`/proc/${String(workerPid)}/environ`, "utf8")
+          .split("\0");
+
+        expect(workerEnvironment).toEqual(
+          expect.arrayContaining([
+            "NEMOCLAW_SANDBOX_BASE_IMAGE_REF=ghcr.io/example/openclaw-base:test",
+            "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF=ghcr.io/example/hermes-base:test",
+            "NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD=0",
+          ]),
+        );
+        started.expire();
+        await expect(started.worker).rejects.toThrow(
+          "The worker was terminated, but the operation outcome is unknown.",
+        );
+      } finally {
+        started?.expire();
+        await started?.worker.catch(() => undefined);
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("binds a valid rebuild descriptor to the selected sibling registry root", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-sibling-root-"));
     try {
