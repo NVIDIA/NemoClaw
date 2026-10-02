@@ -728,7 +728,7 @@ describe("runSandboxDoctor flow", () => {
       report?.checks.find(
         (check) => check.group === "Sandbox" && check.label === "Lifecycle registration",
       )?.detail,
-    ).toContain("snapshot");
+    ).toContain("affected: rebuild, recovery, upgrade");
   });
 
   it("reports an invalid stored gateway binding without running live probes", async () => {

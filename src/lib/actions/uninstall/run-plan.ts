@@ -358,9 +358,9 @@ function removeManagedGatewayState(paths: UninstallPaths, runtime: UninstallRunt
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
-// default. `rebuild-backups/` holds host-side snapshots from
-// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `backups/`
-// holds host-side workspace backups from `scripts/backup-workspace.sh`;
+// default. `rebuild-backups/` holds whole-native-state backups from
+// `nemoclaw backup-all`, rebuild, and recreation flows; `backups/` holds
+// host-side workspace backups from `scripts/backup-workspace.sh`;
 // `sandboxes.json` is the host-side sandbox registry. Full wipe still happens
 // when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers
 // `y` to the interactive prompt.

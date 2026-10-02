@@ -111,7 +111,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     }
   });
 
-  it("keeps live DCode config inspection and mutation-boundary coverage in the fresh re-onboard check", () => {
+  it("keeps complete native DCode config and mutation-boundary coverage in the fresh re-onboard check", () => {
     const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
 
     expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
@@ -121,6 +121,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
+    expect(script).toContain('NEMOCLAW_COMPAT_MODEL="$model_a"');
+    expect(script).toContain('NEMOCLAW_MODEL="$model_a"');
+    expect(script).toContain('config_sha_restored" = "$config_sha_before');
+    expect(script).toContain('config["agents"] == {"startup_command": "discard"}');
+    expect(script).toContain('config["hooks"] == {"post_start": "discard"}');
+    expect(script).not.toContain("select-authorized-chat-model.mts");
     expect(script).toContain("executePrivilegedSandboxCommand");
     expect(script).toContain("resolvePrivilegedSandboxTarget");
     expect(script).not.toMatch(/\bdocker (?:exec|ps)\b/u);
@@ -600,6 +606,9 @@ exit 37
           { mode: 0o755 },
         );
 
+        // The shell program is a fixed literal; repository and temporary-file paths are
+        // positional arguments and are expanded only inside double quotes.
+        // lgtm[js/shell-command-injection-from-environment]
         const result = spawnSync(
           "/bin/bash",
           [

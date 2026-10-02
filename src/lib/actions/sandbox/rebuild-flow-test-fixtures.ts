@@ -104,15 +104,15 @@ export function makePreparedRecoveryManifest() {
     agentType: "openclaw",
     agentVersion: "0.1.0",
     expectedVersion: "0.2.0",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
     dir: "/sandbox/.openclaw",
     backupPath,
     blueprintDigest: null,
     rebuildMcpHandoff: {
       entries: [],
-      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" as const },
+      runtimeSelection: {
+        gatewayName: "nemoclaw",
+        workspace: "default" as const,
+      },
     },
   };
 }
