@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: WSL runner capability check for issue 12285
+
+on:
+  push:
+    branches: [ci/issue-12285-wsl-runner-check]
+    paths: [.github/workflows/wsl-runner-check.yaml]
+
+permissions: {}
+
+jobs:
+  inspect:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-amd64-cpu16
+          - windows-amd64-gpu-rtxpro6000-latest-1
+          - windows-11-vs2026-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Read Windows, virtualization, WSL, and Docker Desktop capabilities
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version, OSArchitecture | Format-List
+          Get-CimInstance Win32_ComputerSystem |
+            Select-Object Manufacturer, Model, HypervisorPresent, TotalPhysicalMemory | Format-List
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, VirtualizationFirmwareEnabled, SecondLevelAddressTranslationExtensions, VMMonitorModeExtensions | Format-List
+          foreach ($feature in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
+            Get-WindowsOptionalFeature -Online -FeatureName $feature |
+              Select-Object FeatureName, State | Format-List
+          }
+          wsl.exe --status
+          wsl.exe --list --verbose
+          foreach ($root in @("$env:ProgramFiles\Docker\Docker", "$env:LOCALAPPDATA\Programs\DockerDesktop")) {
+            $desktop = Join-Path $root 'Docker Desktop.exe'
+            if (Test-Path -LiteralPath $desktop) {
+              Get-Item -LiteralPath $desktop |
+                Select-Object FullName, @{Name='Version'; Expression={$_.VersionInfo.ProductVersion}} | Format-List
+            }
+          }
+          $docker = Get-Command docker.exe -ErrorAction SilentlyContinue
+          if ($docker) {
+            & $docker.Source info --format '{{json .OperatingSystem}} {{json .OSType}} {{json .Architecture}}'
+          }
+          exit 0
