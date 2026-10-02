@@ -3008,14 +3008,6 @@ install_nodejs() {
 # nemotron model regardless of NEMOCLAW_MODEL. Removed in favour of letting
 # onboard own the policy.
 # ---------------------------------------------------------------------------
-detect_gpu() {
-  # Returns 0 if a GPU is detected. Used by the vLLM bootstrap below.
-  if command_exists nvidia-smi; then
-    nvidia-smi &>/dev/null && return 0
-  fi
-  return 1
-}
-
 # ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
 # If the npm global prefix points to a system directory (e.g. /usr or

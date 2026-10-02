@@ -4076,63 +4076,6 @@ setup_auth_profile_as_sandbox() {
     harden_auth_profiles
 }
 
-openclaw_gateway_pid_owns_listener() {
-  local pid="$1"
-  local port="$2"
-  if [ "$(id -u)" -ne 0 ]; then
-    gateway_control_pid_owns_tcp_listener "$pid" "$port"
-    return $?
-  fi
-  # shellcheck disable=SC2016  # positional args expand in the inner bash
-  "${STEP_DOWN_PREFIX_SANDBOX[@]}" env -u BASH_ENV \
-    bash --noprofile --norc -c \
-    'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
-    bash "$_SANDBOX_INIT" "$pid" "$port"
-}
-
-openclaw_gateway_healthy() {
-  local pid="$1"
-  local expected_identity="$2"
-  local code
-  openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${_DASHBOARD_PORT}/health" 2>/dev/null || true)"
-  case "$code" in
-    200 | 401)
-      openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
-        && openclaw_gateway_pid_owns_listener "$pid" "$_DASHBOARD_PORT" \
-        && openclaw_supervised_pid_is_live "$pid" "$expected_identity"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-openclaw_gateway_startup_complete() {
-  local pid="$1"
-  local expected_identity="$2"
-  local payload
-  openclaw_gateway_healthy "$pid" "$expected_identity" || return 1
-  payload="$(curl -fsS --max-time 3 "http://127.0.0.1:${_DASHBOARD_PORT}/startupz" 2>/dev/null)" \
-    || return 1
-  printf '%s' "$payload" | python3 -c \
-    'import json, sys; payload = json.load(sys.stdin); sys.exit(0 if isinstance(payload, dict) and payload.get("status") == "started" else 1)' \
-    || return 1
-  openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
-    && openclaw_gateway_pid_owns_listener "$pid" "$_DASHBOARD_PORT" \
-    && openclaw_supervised_pid_is_live "$pid" "$expected_identity"
-}
-
-wait_for_openclaw_gateway_internal() {
-  local pid="$1"
-  local expected_identity="$2"
-  local deadline=$((SECONDS + 90))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
-    openclaw_gateway_startup_complete "$pid" "$expected_identity" && return 0
-    sleep 1
-  done
-  return 1
-}
-
 arm_openclaw_gateway_supervisor_cleanup() {
   # Bash does not run an EXIT trap when an untrapped SIGTERM/SIGINT terminates
   # the shell, so both traps must be live before the marker is written.
@@ -4287,20 +4230,6 @@ openclaw_supervised_aux_pid_is_live() {
   openclaw_supervised_pid_is_live "$pid" "$expected_identity"
 }
 
-stop_openclaw_supervised_gateway() {
-  local pid="$1"
-  local expected_identity="$2"
-  openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
-  gateway_control_stop_tracked_pid "$pid" "$expected_identity" || return 1
-  if kill -0 "$pid" 2>/dev/null; then
-    # The shared helper returns success when a later identity read says the
-    # numeric PID changed. Before clearing the gateway identity or relaunching,
-    # require the stronger postcondition that no process occupies that PID.
-    echo "[SECURITY] OpenClaw gateway pid ${pid} remains live after tracked stop; refusing to treat it as stopped" >&2
-    return 1
-  fi
-}
-
 refresh_openclaw_supervised_child_pids() {
   SANDBOX_CHILD_PIDS=()
   openclaw_supervised_pid_is_live \
@@ -4316,24 +4245,6 @@ refresh_openclaw_supervised_child_pids() {
     "${GATEWAY_LOG_PERSIST_PID:-}" "${GATEWAY_LOG_PERSIST_PID_START_IDENTITY:-}" \
     && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
   return 0
-}
-
-mark_openclaw_gateway_stopped() {
-  GATEWAY_PID=0
-  GATEWAY_PID_START_IDENTITY=""
-  [ -n "${GATEWAY_PID_FILE:-}" ] && clear_gateway_pid_record
-  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
-  SANDBOX_WAIT_PID=""
-  refresh_openclaw_supervised_child_pids
-}
-
-stop_openclaw_gateway_fail_closed() {
-  if ! stop_openclaw_supervised_gateway \
-    "${GATEWAY_PID:-0}" "${GATEWAY_PID_START_IDENTITY:-}"; then
-    echo "[CRITICAL] OpenClaw gateway revocation could not prove and stop the tracked child; exiting PID 1 for whole-container cleanup without signaling the unproven PID" >&2
-    exit 1
-  fi
-  mark_openclaw_gateway_stopped
 }
 
 cleanup_openclaw_on_signal() {
