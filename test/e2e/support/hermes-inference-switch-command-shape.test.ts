@@ -33,6 +33,10 @@ import {
   runHermesPongWithRetry,
   SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+  readPublicNvidiaSwitchAttachmentEvidence,
+} from "../live/public-nvidia-switch-provider.ts";
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -49,6 +53,61 @@ describe("Hermes inference switch command shape", () => {
   it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
     expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
       "openai-completions",
+    );
+  });
+
+  it("requires the durable receipt and live sandbox attachment for native NVIDIA (#12558)", async () => {
+    const openshell = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: "nemoclaw-nvidia-prod-v1\n",
+    } as ShellProbeResult);
+    const evidence = await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "native-nvidia-provider-attachment",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      logicalProvider: PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      receipt: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-revision-1",
+      },
+      sandbox: { openshell } as unknown as SandboxClient,
+      sandboxName: "e2e-hm-inf-switch",
+    });
+    expect(evidence).toBe(
+      "inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1;provider-id=present",
+    );
+    expect(openshell).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["absent", undefined],
+    [
+      "mismatched",
+      {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "another-provider",
+        providerId: "provider-revision-1",
+      },
+    ],
+  ])("reports an %s native NVIDIA attachment receipt (#12558)", async (_label, receipt) => {
+    const openshell = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: "nemoclaw-nvidia-prod-v1\n",
+    } as ShellProbeResult);
+    const evidence = await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "native-nvidia-provider-attachment",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      logicalProvider: PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      receipt,
+      sandbox: { openshell } as unknown as SandboxClient,
+      sandboxName: "e2e-hm-inf-switch",
+    });
+    expect(evidence).toContain(
+      "schema=missing;profile=missing;provider=missing;provider-id=missing",
     );
   });
 

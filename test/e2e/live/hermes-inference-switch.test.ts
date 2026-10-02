@@ -52,6 +52,7 @@ import {
 } from "./hermes-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
+  readPublicNvidiaSwitchAttachmentEvidence,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
@@ -139,13 +140,13 @@ test(
       );
       await mockBaseline?.close();
     });
-    const apiKey = mockBaseline
-      ? MOCK_BASELINE_API_KEY
-      : secrets.required("NVIDIA_INFERENCE_API_KEY");
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
         : null;
+    const apiKey = mockBaseline
+      ? MOCK_BASELINE_API_KEY
+      : (publicApiKey ?? secrets.required("NVIDIA_INFERENCE_API_KEY"));
     const redactionValues = [apiKey, publicApiKey].filter(
       (value): value is string => typeof value === "string",
     );
@@ -304,9 +305,35 @@ test(
     );
 
     const state = registryState();
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.agent).toBe("hermes");
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.provider).toBe(SWITCH_PROVIDER);
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.model).toBe(SWITCH_MODEL);
+    const attachmentEvidence = await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "hermes-native-nvidia-provider-attachment",
+      env: env(),
+      logicalProvider: SWITCH_PROVIDER,
+      receipt: state.registry.sandboxes?.[SANDBOX_NAME]?.nativeNvidiaProviderAttachment,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(
+      [
+        state.registry.sandboxes?.[SANDBOX_NAME]?.agent,
+        attachmentEvidence,
+        state.registry.sandboxes?.[SANDBOX_NAME]?.model,
+        state.registry.sandboxes?.[SANDBOX_NAME]?.provider,
+      ]
+        .map(String)
+        .join("\n"),
+    ).toBe(
+      [
+        "hermes",
+        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+          ? "inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1;provider-id=present"
+          : null,
+        SWITCH_MODEL,
+        SWITCH_PROVIDER,
+      ]
+        .map(String)
+        .join("\n"),
+    );
     expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
