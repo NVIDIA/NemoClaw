@@ -390,13 +390,26 @@ function quickTunnelTargetsDashboard(
 
   const commandArgs = commandLine.split(/\0|\s+/).filter(Boolean);
   const urlFlagIndex = commandArgs.indexOf("--url");
-  const target =
-    urlFlagIndex >= 0
-      ? commandArgs[urlFlagIndex + 1]
-      : commandArgs.find((argument) => argument.startsWith("--url="))?.slice("--url=".length);
-  if (urlFlagIndex < 0 && !commandArgs.some((argument) => argument.startsWith("--url="))) {
+  const inlineUrl = commandArgs.find((argument) => argument.startsWith("--url="));
+  if (urlFlagIndex < 0 && inlineUrl === undefined) {
+    // Windows process inspection returns the verified executable path, not its
+    // arguments. For that exact output shape, the private target record is the
+    // only evidence that this confirmed cloudflared process serves the port.
+    try {
+      const executablePath: unknown = JSON.parse(commandLine);
+      if (
+        typeof executablePath === "string" &&
+        basename(executablePath.replaceAll("\\", "/")).toLowerCase() === "cloudflared.exe"
+      ) {
+        return readCloudflaredDashboardPort(pidDir) === dashboardPort;
+      }
+    } catch {
+      // Ordinary command lines are validated from their explicit --url below.
+    }
     return false;
   }
+  const target =
+    urlFlagIndex >= 0 ? commandArgs[urlFlagIndex + 1] : inlineUrl?.slice("--url=".length);
 
   try {
     const url = new URL(target ?? "");

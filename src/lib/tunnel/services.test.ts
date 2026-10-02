@@ -320,22 +320,33 @@ describe("showStatus", () => {
     logSpy.mockRestore();
   });
 
-  it("shows a legacy quick-tunnel URL when its live target confirms the selected dashboard", () => {
-    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
-    writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com");
-    const processControl: ProcessControl = {
-      isAlive: () => true,
-      commandLine: () => "cloudflared tunnel --url http://localhost:18791",
-      signal: vi.fn(),
-    };
+  it.each([
+    ["process arguments", "cloudflared tunnel --url http://localhost:18791", "12345"],
+    [
+      "Windows executable path",
+      JSON.stringify("C:\\Program Files\\cloudflared\\cloudflared.exe"),
+      "18791",
+    ],
+  ])(
+    "shows a legacy quick-tunnel URL for a confirmed target (%s)",
+    (_source, commandLine, recordedPort) => {
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+      writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com");
+      writeFileSync(join(pidDir, "cloudflared.dashboard-port"), recordedPort);
+      const processControl: ProcessControl = {
+        isAlive: () => true,
+        commandLine: () => commandLine,
+        signal: vi.fn(),
+      };
 
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    showStatus({ pidDir, dashboardPort: 18_791, processControl });
-    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(output).toContain("Public URL: https://legacy.trycloudflare.com");
-    expect(output).not.toContain("Public URL withheld");
-    logSpy.mockRestore();
-  });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      showStatus({ pidDir, dashboardPort: 18_791, processControl });
+      const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      expect(output).toContain("Public URL: https://legacy.trycloudflare.com");
+      expect(output).not.toContain("Public URL withheld");
+      logSpy.mockRestore();
+    },
+  );
 
   // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
   // asked for a "no cloudflared process; restart with ..." shape — a cause
