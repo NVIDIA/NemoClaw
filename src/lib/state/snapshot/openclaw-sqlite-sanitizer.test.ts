@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,16 +10,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { textContainsHighConfidenceCredential } from "../../security/credential-filter.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./openclaw-sqlite-sanitizer.js";
 
-const databases: string[] = [];
+const temporaryDirectories: string[] = [];
 
 function databasePath(): string {
-  const file = path.join(os.tmpdir(), `nemoclaw-openclaw-state-${randomUUID()}.sqlite`);
-  databases.push(file);
-  return file;
+  const directory = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-state-"));
+  temporaryDirectories.push(directory);
+  return path.join(directory, "openclaw.sqlite");
 }
 
 afterEach(() => {
-  for (const file of databases.splice(0)) rmSync(file, { force: true });
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe("OpenClaw SQLite archive sanitation", () => {
@@ -57,7 +58,7 @@ describe("OpenClaw SQLite archive sanitation", () => {
     expect(sanitized.byteLength).toBe(original.byteLength);
     expect(textContainsHighConfidenceCredential(sanitized.toString("utf8"))).toBe(false);
     const sanitizedPath = databasePath();
-    writeFileSync(sanitizedPath, sanitized);
+    writeFileSync(sanitizedPath, sanitized, { flag: "wx", mode: 0o600 });
     const inspection = new DatabaseSync(sanitizedPath, { readOnly: true });
     expect(inspection.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
       count: 0,
