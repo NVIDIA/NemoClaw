@@ -12,68 +12,74 @@ import { textContainsHighConfidenceCredential } from "../../security/credential-
 import { sanitizeMachineLocalArchiveConfig } from "../sandbox.js";
 
 describe("native OpenClaw SQLite archive sanitation", () => {
-  it("sanitizes the database member while leaving the live database unchanged", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sqlite-"));
-    try {
-      const nativeRoot = path.join(fixture, "native-home");
-      const databasePath = path.join(nativeRoot, ".openclaw", "state", "openclaw.sqlite");
-      const archivePath = path.join(fixture, "native-home.tar");
-      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-      const database = new DatabaseSync(databasePath);
-      database.exec(`
+  it.each([".openclaw", ".openclaw-data"])(
+    "sanitizes the %s database member while leaving the live database unchanged",
+    (stateDirectory) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sqlite-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const databasePath = path.join(nativeRoot, stateDirectory, "state", "openclaw.sqlite");
+        const archivePath = path.join(fixture, "native-home.tar");
+        fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+        const database = new DatabaseSync(databasePath);
+        database.exec(`
         PRAGMA journal_mode = WAL;
         PRAGMA secure_delete = ON;
         CREATE TABLE device_identities (identity_key TEXT PRIMARY KEY, private_key_pem TEXT);
         CREATE TABLE session_state (session_id TEXT PRIMARY KEY, summary TEXT);
         INSERT INTO session_state VALUES ('session-1', 'keep me');
       `);
-      const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
-      const end = ["-----END", "PRIVATE KEY-----"].join(" ");
-      database
-        .prepare("INSERT INTO device_identities VALUES (?, ?)")
-        .run("primary", `${begin}\nmachine-private-key\n${end}`);
-      database.close();
-      expect(spawnSync("tar", ["-cf", archivePath, "-C", nativeRoot, "."]).status).toBe(0);
+        const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+        const end = ["-----END", "PRIVATE KEY-----"].join(" ");
+        database
+          .prepare("INSERT INTO device_identities VALUES (?, ?)")
+          .run("primary", `${begin}\nmachine-private-key\n${end}`);
+        database.close();
+        expect(spawnSync("tar", ["-cf", archivePath, "-C", nativeRoot, "."]).status).toBe(0);
 
-      expect(sanitizeMachineLocalArchiveConfig(archivePath)).toBeNull();
+        expect(sanitizeMachineLocalArchiveConfig(archivePath)).toBeNull();
 
-      const extracted = path.join(fixture, "extracted");
-      fs.mkdirSync(extracted);
-      expect(spawnSync("tar", ["-xf", archivePath, "-C", extracted]).status).toBe(0);
-      const archived = new DatabaseSync(
-        path.join(extracted, ".openclaw", "state", "openclaw.sqlite"),
-        { readOnly: true },
-      );
-      expect(archived.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
-        count: 0,
-      });
-      expect(archived.prepare("SELECT * FROM session_state").get()).toEqual({
-        session_id: "session-1",
-        summary: "keep me",
-      });
-      archived.close();
-      expect(
-        textContainsHighConfidenceCredential(
-          fs.readFileSync(path.join(extracted, ".openclaw", "state", "openclaw.sqlite"), "utf8"),
-        ),
-      ).toBe(false);
-      const live = new DatabaseSync(databasePath, { readOnly: true });
-      expect(live.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
-        count: 1,
-      });
-      live.close();
-    } finally {
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+        const extracted = path.join(fixture, "extracted");
+        fs.mkdirSync(extracted);
+        expect(spawnSync("tar", ["-xf", archivePath, "-C", extracted]).status).toBe(0);
+        const archivedPath = path.join(extracted, stateDirectory, "state", "openclaw.sqlite");
+        const archived = new DatabaseSync(archivedPath, { readOnly: true });
+        expect(archived.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
+          count: 0,
+        });
+        expect(archived.prepare("SELECT * FROM session_state").get()).toEqual({
+          session_id: "session-1",
+          summary: "keep me",
+        });
+        archived.close();
+        expect(textContainsHighConfidenceCredential(fs.readFileSync(archivedPath, "utf8"))).toBe(
+          false,
+        );
+        const live = new DatabaseSync(databasePath, { readOnly: true });
+        expect(live.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
+          count: 1,
+        });
+        live.close();
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it.each(["-wal", "-shm", "-journal"])(
-    "rejects an archived database%s companion before it can replay authority",
-    (suffix) => {
+  it.each([
+    [".openclaw", "-wal"],
+    [".openclaw", "-shm"],
+    [".openclaw", "-journal"],
+    [".openclaw-data", "-wal"],
+    [".openclaw-data", "-shm"],
+    [".openclaw-data", "-journal"],
+  ])(
+    "rejects an archived %s database%s companion before it can replay authority",
+    (stateDirectory, suffix) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sqlite-sidecar-"));
       try {
         const nativeRoot = path.join(fixture, "native-home");
-        const stateRoot = path.join(nativeRoot, ".openclaw", "state");
+        const stateRoot = path.join(nativeRoot, stateDirectory, "state");
         const archivePath = path.join(fixture, "native-home.tar");
         fs.mkdirSync(stateRoot, { recursive: true });
         fs.writeFileSync(path.join(stateRoot, `openclaw.sqlite${suffix}`), "machine-authority");

@@ -97,6 +97,9 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
   "--exclude='./.openclaw/state/openclaw.sqlite-shm'",
   "--exclude='./.openclaw/state/openclaw.sqlite-wal'",
+  "--exclude='./.openclaw-data/state/openclaw.sqlite-journal'",
+  "--exclude='./.openclaw-data/state/openclaw.sqlite-shm'",
+  "--exclude='./.openclaw-data/state/openclaw.sqlite-wal'",
   "--exclude='./.hermes/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.lock'",
@@ -1331,12 +1334,17 @@ function sanitizedStructuredAuthority(
  */
 export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
   const hermesTarget = ".hermes/.env";
-  const openClawDatabaseTarget = ".openclaw/state/openclaw.sqlite";
-  const openClawDatabaseCompanions = new Set([
-    `${openClawDatabaseTarget}-journal`,
-    `${openClawDatabaseTarget}-shm`,
-    `${openClawDatabaseTarget}-wal`,
+  const openClawDatabaseTargets = new Set([
+    ".openclaw/state/openclaw.sqlite",
+    ".openclaw-data/state/openclaw.sqlite",
   ]);
+  const openClawDatabaseCompanions = new Set(
+    [...openClawDatabaseTargets].flatMap((target) => [
+      `${target}-journal`,
+      `${target}-shm`,
+      `${target}-wal`,
+    ]),
+  );
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
@@ -1383,7 +1391,7 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
         if (
           structuredKind ||
           normalized === hermesTarget ||
-          normalized === openClawDatabaseTarget
+          openClawDatabaseTargets.has(normalized)
         ) {
           if (found.has(normalized)) {
             return `the native archive contains duplicate machine-local configuration at '${normalized}'`;
@@ -1400,7 +1408,7 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
           let replacement: Buffer;
           if (normalized === hermesTarget) {
             replacement = withoutHermesMachineLocalApiKey(payload);
-          } else if (normalized === openClawDatabaseTarget) {
+          } else if (openClawDatabaseTargets.has(normalized)) {
             const sanitized = withoutOpenClawSqliteMachineAuthority(payload);
             if (typeof sanitized === "string") return sanitized;
             replacement = sanitized;
@@ -1962,6 +1970,9 @@ function capturePreparedNativeState(
         '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-journal"',
         '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-shm"',
         '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-wal"',
+        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-journal"',
+        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-shm"',
+        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-wal"',
         '  rm -f -- "$stage/.hermes/gateway.pid"',
         '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
         '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
