@@ -38,6 +38,28 @@ type GatewayRestartDeps = Pick<
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
+type PortableAgentLifecycleDeps = Pick<
+  typeof import("../experimental/portable-agent-lifecycle"),
+  | "assertHermesPortableAgentLifecycleAuthority"
+  | "HermesPortableLifecycleAuthorityError"
+  | "qualifyPortableAgentLifecycleAuthority"
+>;
+type PortableLifecycleLockDeps = Pick<
+  typeof import("../experimental/portable-lifecycle-lock"),
+  "portableLifecycleLockOptions"
+>;
+
+export type SandboxProcessReadinessFailureReason =
+  | "portable-hermes-registry-authority-unavailable"
+  | "portable-hermes-native-gateway-unavailable"
+  | "portable-hermes-lifecycle-lock-unavailable";
+
+export type SandboxProcessReadinessResult =
+  | boolean
+  | {
+      readonly ready: false;
+      readonly reason: SandboxProcessReadinessFailureReason;
+    };
 
 export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
@@ -102,8 +124,11 @@ export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
   loadGatewayRestart: () => require("../../actions/sandbox/process-recovery") as GatewayRestartDeps,
-  loadRegistryPersistence: () =>
-    require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
+  loadRegistryPersistence: (environment: NodeJS.ProcessEnv = process.env) => {
+    const persistence =
+      require("../../state/registry/persistence") as typeof import("../../state/registry/persistence");
+    return { load: () => persistence.loadFromEnvironment(environment) };
+  },
   loadLaunchReadiness: () =>
     require("../../actions/sandbox/launch-readiness") as typeof import("../../actions/sandbox/launch-readiness"),
   loadPairingQualification: () =>
@@ -114,6 +139,10 @@ export const finalizationHandlerRuntime = {
     require("../../state/mcp-lifecycle-lock") as typeof import("../../state/mcp-lifecycle-lock"),
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
+  loadPortableAgentLifecycle: () =>
+    require("../experimental/portable-agent-lifecycle") as PortableAgentLifecycleDeps,
+  loadPortableLifecycleLock: () =>
+    require("../experimental/portable-lifecycle-lock") as PortableLifecycleLockDeps,
 };
 
 export async function restartNativeGatewayForInitialSetup(
@@ -450,6 +479,71 @@ export const finalizationHandlerDeps = {
       );
     }
     return healthy;
+  },
+  async checkHermesPortableSandboxReadiness(
+    name: string,
+    environment: NodeJS.ProcessEnv,
+  ): Promise<SandboxProcessReadinessResult> {
+    let registry: ReturnType<typeof finalizationHandlerRuntime.loadRegistryPersistence>;
+    try {
+      registry = finalizationHandlerRuntime.loadRegistryPersistence(environment);
+    } catch {
+      return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
+    }
+    try {
+      const lockOptions = finalizationHandlerRuntime
+        .loadPortableLifecycleLock()
+        .portableLifecycleLockOptions(environment);
+      return await finalizationHandlerRuntime.loadSandboxLifecycleLock().withMcpLifecycleLock(
+        name,
+        async () => {
+          let registryReadFailed = false;
+          const portableLifecycle = finalizationHandlerRuntime.loadPortableAgentLifecycle();
+          const readRegistry = (sandboxName: string) => {
+            try {
+              return registry.load().sandboxes[sandboxName] ?? null;
+            } catch (error) {
+              registryReadFailed = true;
+              throw error;
+            }
+          };
+          try {
+            const entry = readRegistry(name);
+            if (!entry || typeof entry.gatewayName !== "string") {
+              return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
+            }
+            portableLifecycle.qualifyPortableAgentLifecycleAuthority(name, {
+              env: environment,
+              readRegistry,
+            });
+            await portableLifecycle.assertHermesPortableAgentLifecycleAuthority(
+              name,
+              {
+                agent: entry.agent,
+                gatewayName: entry.gatewayName,
+                lifecycleGeneration: entry.lifecycleGeneration,
+                openshellDriver: entry.openshellDriver,
+                provider: entry.provider,
+              },
+              { env: environment, readRegistry },
+            );
+            return true;
+          } catch (error) {
+            return {
+              ready: false,
+              reason:
+                registryReadFailed ||
+                error instanceof portableLifecycle.HermesPortableLifecycleAuthorityError
+                  ? ("portable-hermes-registry-authority-unavailable" as const)
+                  : ("portable-hermes-native-gateway-unavailable" as const),
+            };
+          }
+        },
+        lockOptions,
+      );
+    } catch {
+      return { ready: false, reason: "portable-hermes-lifecycle-lock-unavailable" };
+    }
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

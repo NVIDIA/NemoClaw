@@ -16,6 +16,8 @@ on:
       - "src/lib/actions/sandbox/exec.ts"
       - "src/lib/actions/sandbox/launch*.ts"
       - "src/lib/actions/sandbox/launch-readiness/**"
+      - "src/lib/actions/sandbox/doctor-system-checks.ts"
+      - "src/lib/actions/sandbox/doctor.ts"
       - "src/lib/actions/sandbox/gateway-state.ts"
       - "src/lib/onboard/portable-retirement-authority.ts"
       - "src/lib/onboard/session-bootstrap.ts"
@@ -37,6 +39,9 @@ on:
       - "src/lib/onboard/experimental/hermes-portable-policy-state.ts"
       - "src/lib/onboard/experimental/portable-agent-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-lifecycle-lock.ts"
+      - "src/lib/onboard/machine/final-flow-composition.ts"
+      - "src/lib/onboard/machine/finalization-deps.ts"
+      - "src/lib/onboard/machine/handlers/finalization.ts"
       - "src/lib/state/portable-*.ts"
       - "src/lib/state/mcp-lifecycle-lock*.ts"
       - "src/lib/state/mcp-lifecycle-lock/**"
@@ -84,6 +89,7 @@ on:
       - "src/lib/adapters/openshell/timeouts.ts"
       - "src/lib/agent/defs.ts"
       - "src/lib/core/retry.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
@@ -131,6 +137,7 @@ on:
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
+      - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
       - "tools/e2e/full-e2e-timeout-contract.mts"
@@ -178,6 +185,9 @@ jobs:
 
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
+
+      - name: Build exact CLI
+        run: npm run build:cli
 
       - name: Install pinned OpenShell
         run: |

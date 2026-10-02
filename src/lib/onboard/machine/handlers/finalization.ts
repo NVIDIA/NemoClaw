@@ -11,7 +11,10 @@ import type {
 } from "../../external-component/activation";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
-import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
+import type {
+  OrdinaryOpenClawPairingSettlementResult,
+  SandboxProcessReadinessResult,
+} from "../finalization-deps";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -65,7 +68,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     checkAndRecoverSandboxProcesses(
       sandboxName: string,
       options: { quiet: boolean },
-    ): Promise<boolean>;
+    ): Promise<SandboxProcessReadinessResult>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -196,7 +199,20 @@ function logTerminalReadyBlock(
   }
 }
 
-function recoveryIncompleteMessage(sandboxName: string): string {
+function recoveryIncompleteMessage(
+  sandboxName: string,
+  readiness: Exclude<SandboxProcessReadinessResult, true> = false,
+): string {
+  if (typeof readiness === "object") {
+    switch (readiness.reason) {
+      case "portable-hermes-registry-authority-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle receipt and registered gateway authority could not be matched. Run ${CLI_NAME} ${sandboxName} doctor. Preserve the registry and lifecycle receipt files unchanged. Stop; do not resume onboarding or edit either file.`;
+      case "portable-hermes-native-gateway-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its receipt-owned native gateway is not qualified and healthy. Run ${CLI_NAME} ${sandboxName} recover, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+      case "portable-hermes-lifecycle-lock-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle lock is unavailable. Wait for the active sandbox operation to finish, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+    }
+  }
   return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
 }
 
@@ -292,8 +308,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   }
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
+    const readiness = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (readiness !== true) {
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName, readiness)}`);
       deps.reportDeploymentReadiness(false);
       return {
         stateResult: pauseOnboardMachine(
@@ -406,8 +423,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   }
   if (manageDashboard) {
     // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      const message = recoveryIncompleteMessage(sandboxName);
+    const readiness = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (readiness !== true) {
+      const message = recoveryIncompleteMessage(sandboxName, readiness);
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
       return {

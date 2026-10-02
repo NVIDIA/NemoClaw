@@ -16,9 +16,12 @@ import type {
 
 import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { CLI_NAME } from "../../cli/branding";
-import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "./gateway-state";
+import {
+  assertHermesPortableCommandUnavailable,
+  ensureLiveSandboxOrExit,
+  getKnownSandboxTargetGatewayName,
+} from "./gateway-state";
 import { resolveHostPathFromCwd } from "./host-path";
 import {
   assertDownloadArtifactExists,
