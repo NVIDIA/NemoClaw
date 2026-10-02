@@ -1070,6 +1070,12 @@ async function qualifyExternalImage(
       artifactNamePrefix: `external-image-${agent}-ready-after-rebuild`,
       env,
     });
+    if (agent === "openclaw") {
+      // Rebuild rotates the machine-local pairing authority instead of
+      // restoring it. Explicitly approve the replacement's fresh admin scope
+      // before exercising the same privileged CLI boundary again.
+      await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
+    }
     await runAgentTurn(sandbox, agent, sandboxName, "after", env);
     rebuilt = true;
   }
