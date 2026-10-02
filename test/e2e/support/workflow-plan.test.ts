@@ -279,7 +279,6 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
-
   it.each([
     "src/commands/config/export.ts",
     "src/lib/config/canonical.ts",
@@ -1045,7 +1044,7 @@ describe("E2E workflow plan", () => {
     "src/lib/actions/sandbox/auto-pair-approval.ts",
     "src/lib/actions/sandbox/restore-gateway-pairing.ts",
     "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-  ])("replaces the retired snapshot command proof for %s", (changedFile) => {
+  ])("selects the canonical pairing transition for %s", (changedFile) => {
     const changedFiles = [changedFile];
     const riskPlan = buildRiskPlan({ headSha: "0".repeat(40), changedFiles });
     const plan = buildE2eWorkflowPlan({}, { changedFiles });
@@ -1053,10 +1052,11 @@ describe("E2E workflow plan", () => {
       .flat()
       .map((row) => row.id);
     expect(riskPlan.requiredJobs.map((job) => job.id)).not.toContain("snapshot-commands");
-    expect(riskPlan.requiredJobs.map((job) => job.id)).toContain("rebuild-openclaw");
-    expect(selectedCatalogueIds).toContain("rebuild-openclaw");
+    expect(riskPlan.requiredJobs.map((job) => job.id)).toContain(
+      "issue-4462-scope-upgrade-approval",
+    );
+    expect(selectedCatalogueIds).toContain("issue-4462-scope-upgrade-approval");
   });
-
   it("selects the full messaging proof set for messaging runtime changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},

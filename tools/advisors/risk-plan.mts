@@ -172,10 +172,10 @@ const HERMES_STARTUP_RUNTIME_FILES = new Set([
   "agents/hermes/start.sh",
 ]);
 const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
-// The selective snapshot command was retired with complete native-state
-// persistence. Its surviving runtime owner must continue through the real
-// OpenClaw rebuild proof instead of resolving to the removed snapshot target.
-const RETIRED_SNAPSHOT_COMMAND_RUNTIME_FILES = new Set([
+// These owners create, approve, or restore OpenClaw pairing authority. Keep
+// their focused proof on the canonical transition that exercises pairing and
+// scope approval instead of a rebuild-only state transfer.
+const OPENCLAW_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/auto-pair-approval.ts",
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
@@ -444,8 +444,8 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
-  const retiredSnapshotCommandRuntimeFiles = stableUnique(
-    changedFiles.filter((file) => RETIRED_SNAPSHOT_COMMAND_RUNTIME_FILES.has(file)),
+  const openClawPairingRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => OPENCLAW_PAIRING_RUNTIME_FILES.has(file)),
   );
   return [
     { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
@@ -490,8 +490,8 @@ export function focusedPrE2eJobsForChangedFiles(
       matchedFiles: openClawMessagingRuntimeFiles,
     })),
     {
-      id: "rebuild-openclaw",
-      matchedFiles: retiredSnapshotCommandRuntimeFiles,
+      id: "issue-4462-scope-upgrade-approval",
+      matchedFiles: openClawPairingRuntimeFiles,
     },
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
