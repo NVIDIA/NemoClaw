@@ -3,40 +3,9 @@
 
 use crate::Diagnostics;
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway},
-    discovery::{DiscoveryRequest, GatewayObservation},
-    facts::FactQuery,
-    hardware_discovery::HardwareObservation,
-    inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
+    config::Document, discovery::DiscoveryRequest, facts::FactQuery,
+    inference_discovery::EndpointRequest,
 };
-
-#[derive(Clone, Debug)]
-pub struct EndpointEvidence {
-    pub request: EndpointRequest,
-    pub observation: EndpointObservation,
-}
-#[derive(Clone, Debug)]
-pub struct HardwareEvidence {
-    pub engine: String,
-    pub observation: HardwareObservation,
-}
-
-#[derive(Clone, Debug)]
-pub struct GatewayEvidence {
-    pub gateway: Gateway,
-    pub compute_driver: ComputeDriver,
-    pub observation: GatewayObservation,
-}
-
-/// Additional evidence is advisory for offline authoring and never replaces
-/// accepted intent. Credentials contain availability and references, not values.
-#[derive(Clone, Debug, Default)]
-pub struct AuthoringFacts {
-    pub endpoint: Option<EndpointEvidence>,
-    pub hardware: Option<HardwareEvidence>,
-    pub gateway: Option<GatewayEvidence>,
-    pub credentials: Vec<CredentialObservation>,
-}
 
 /// Read the currently selected route's endpoint request from SDK-valid state.
 /// A route backed by a managed service has no external catalog to read, and

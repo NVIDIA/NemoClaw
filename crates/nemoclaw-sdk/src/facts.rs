@@ -102,6 +102,11 @@ impl FactSheet {
         }
     }
 
+    /// Whether nothing has been attempted yet.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn attempted(&self, query: &FactQuery) -> bool {
         self.entries.iter().any(|entry| &entry.query == query)
     }

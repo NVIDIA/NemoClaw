@@ -1264,9 +1264,10 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
 
 #[test]
 fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
-    use nemoclaw_authoring::{AuthoringFacts, EndpointEvidence, inference_request_for_document};
+    use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
         discovery::ObservationStatus,
+        facts::{Fact, FactQuery, FactSheet},
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1284,27 +1285,26 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         .document()
         .unwrap()
         .clone();
-    let facts = AuthoringFacts {
-        endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route())
-                .unwrap()
-                .unwrap(),
-            observation: EndpointObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                reachable: Some(true),
-                authentication: AuthenticationStatus::Accepted,
-                models: vec!["vendor/discovered-model".into()],
-                api_verified: false,
-            },
-        }),
-        ..Default::default()
-    };
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
-    let discovered = state
-        .resolve_with_evidence(&capabilities, &facts, None)
+    let request = inference_request_for_document(&document, state.current_route())
+        .unwrap()
         .unwrap();
+    let catalog = |status| {
+        Fact::Endpoint(EndpointObservation {
+            status,
+            reason: None,
+            source: "fixture".into(),
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec!["vendor/discovered-model".into()],
+            api_verified: false,
+        })
+    };
+    let facts = FactSheet::new().with(
+        FactQuery::Endpoint(request.clone()),
+        Some(catalog(ObservationStatus::Available)),
+    );
+    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let discovered = state.resolve_with_facts(&capabilities, &facts).unwrap();
     let question = discovered.question(model).unwrap();
     assert!(
         question
@@ -1329,22 +1329,29 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
             .unwrap()
             .allows_custom_answer()
     );
-    let mut stale = facts.clone();
-    stale.endpoint.as_mut().unwrap().request.endpoint = "https://other.example/v1".into();
+    // A catalog read for another endpoint does not describe this route.
+    let mut other = request.clone();
+    other.endpoint = "https://other.example/v1".into();
+    let stale = FactSheet::new().with(
+        FactQuery::Endpoint(other),
+        Some(catalog(ObservationStatus::Available)),
+    );
     assert!(
         !state
-            .resolve_with_evidence(&capabilities, &stale, None)
+            .resolve_with_facts(&capabilities, &stale)
             .unwrap()
             .question(model)
             .unwrap()
             .choices()
             .contains(&json!("vendor/discovered-model"))
     );
-    stale.endpoint.as_mut().unwrap().request = facts.endpoint.as_ref().unwrap().request.clone();
-    stale.endpoint.as_mut().unwrap().observation.status = ObservationStatus::Unknown;
+    let unknown = FactSheet::new().with(
+        FactQuery::Endpoint(request),
+        Some(catalog(ObservationStatus::Unknown)),
+    );
     assert!(
         !state
-            .resolve_with_evidence(&capabilities, &stale, None)
+            .resolve_with_facts(&capabilities, &unknown)
             .unwrap()
             .question(model)
             .unwrap()
@@ -1430,7 +1437,7 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
         .unwrap();
     assert!(
         state
-            .delegate_remaining(&capabilities, None, &Default::default())
+            .delegate_remaining(&capabilities, &nemoclaw_sdk::facts::FactSheet::new())
             .is_err()
     );
     assert!(
@@ -1444,13 +1451,11 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
 
 #[test]
 fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
-    use nemoclaw_authoring::{
-        AuthoringFacts, DiscoveryEvidence, EndpointEvidence, discovery_key_for_document,
-        inference_request_for_document,
-    };
+    use nemoclaw_authoring::{discovery_key_for_document, inference_request_for_document};
     use nemoclaw_sdk::{
-        discovery::{EngineObservation, FabricObservation, ObservationStatus},
+        discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
         fabric_capabilities::ImageMetadata,
+        facts::{Fact, FactQuery, FactSheet},
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1485,39 +1490,50 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
         .unwrap()
         .clone();
     let key = discovery_key_for_document(&document).unwrap();
-    let evidence = DiscoveryEvidence {
-        key: key.clone(),
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            server_version: Some("1".into()),
-            architecture: Some("aarch64".into()),
-            operating_system: Some("linux".into()),
-            memory_bytes: None,
-            cpus: None,
-        }),
-        fabric: Some(FabricObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            image_id: Some("sha256:observed".into()),
-            catalog: Some(installed_catalog()),
-            image: ImageMetadata {
-                architecture: Some("arm64".into()),
+    let mut facts = FactSheet::new()
+        .with(
+            FactQuery::Engine(DiscoveryRequest {
+                engine: key.engine.clone(),
+                compute_driver: key.compute_driver,
+            }),
+            Some(Fact::Engine(EngineObservation {
+                status: ObservationStatus::Available,
+                reason: None,
+                source: "fixture".into(),
+                server_version: Some("1".into()),
+                architecture: Some("aarch64".into()),
                 operating_system: Some("linux".into()),
-                repo_digests: vec![key.image],
-                ..Default::default()
+                memory_bytes: None,
+                cpus: None,
+            })),
+        )
+        .with(
+            FactQuery::Fabric {
+                engine: key.engine.clone(),
+                image: key.image.clone(),
             },
-            compatibility: None,
-        }),
-    };
-    let facts = AuthoringFacts {
-        endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route())
-                .unwrap()
-                .unwrap(),
-            observation: EndpointObservation {
+            Some(Fact::Fabric(FabricObservation {
+                status: ObservationStatus::Available,
+                reason: None,
+                source: "fixture".into(),
+                image_id: Some("sha256:observed".into()),
+                catalog: Some(installed_catalog()),
+                image: ImageMetadata {
+                    architecture: Some("arm64".into()),
+                    operating_system: Some("linux".into()),
+                    repo_digests: vec![key.image],
+                    ..Default::default()
+                },
+                compatibility: None,
+            })),
+        )
+        .with(
+            FactQuery::Endpoint(
+                inference_request_for_document(&document, state.current_route())
+                    .unwrap()
+                    .unwrap(),
+            ),
+            Some(Fact::Endpoint(EndpointObservation {
                 status: ObservationStatus::Available,
                 reason: None,
                 source: "fixture".into(),
@@ -1535,22 +1551,21 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
                         .clone(),
                 ],
                 api_verified: false,
+            })),
+        );
+    for reference in document.credential_names() {
+        facts.record(
+            FactQuery::Credential {
+                reference: reference.into(),
             },
-        }),
-        credentials: document
-            .credential_names()
-            .into_iter()
-            .map(|reference| CredentialObservation {
+            Some(Fact::Credential(CredentialObservation {
                 reference: reference.into(),
                 status: ObservationStatus::Available,
                 reason: None,
-            })
-            .collect(),
-        ..Default::default()
-    };
-    let delegated = state
-        .delegate_remaining(&capabilities, Some(&evidence), &facts)
-        .unwrap();
+            })),
+        );
+    }
+    let delegated = state.delegate_remaining(&capabilities, &facts).unwrap();
     assert!(
         delegated
             .resolve(&capabilities)

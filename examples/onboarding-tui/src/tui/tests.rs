@@ -5,14 +5,19 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::observe_models,
+    terminal::observe_facts,
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
-    Capabilities, DiscoveryEvidence, EndpointEvidence, JourneyDefinition, PartialDocument,
-    TargetPrerequisite, discovery_key_for_document, inference_request_for_document,
+    Capabilities, JourneyDefinition, PartialDocument, TargetPrerequisite,
+    discovery_key_for_document, inference_request_for_document,
 };
-use nemoclaw_sdk::{CancellationToken, config::Document};
+use nemoclaw_sdk::{
+    CancellationToken,
+    config::Document,
+    discovery::DiscoveryRequest,
+    facts::{Fact, FactQuery},
+};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
 
@@ -493,11 +498,13 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         .document()
         .unwrap()
         .clone();
-    wizard.facts.endpoint = Some(EndpointEvidence {
-        request: inference_request_for_document(&document, wizard.state.current_route())
-            .unwrap()
-            .unwrap(),
-        observation: EndpointObservation {
+    wizard.facts.record(
+        FactQuery::Endpoint(
+            inference_request_for_document(&document, wizard.state.current_route())
+                .unwrap()
+                .unwrap(),
+        ),
+        Some(Fact::Endpoint(EndpointObservation {
             status: ObservationStatus::Available,
             reason: None,
             source: "fixture".into(),
@@ -505,8 +512,8 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             authentication: AuthenticationStatus::Accepted,
             models: vec!["vendor/discovered".into()],
             api_verified: false,
-        },
-    });
+        })),
+    );
     let question = wizard.question().unwrap().unwrap();
     assert!(
         question
@@ -577,9 +584,13 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
         .unwrap()
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
-    wizard.discovery = Some(DiscoveryEvidence {
-        key: discovery_key_for_document(&document).unwrap(),
-        engine: Some(nemoclaw_sdk::discovery::EngineObservation {
+    let key = discovery_key_for_document(&document).unwrap();
+    wizard.facts.record(
+        FactQuery::Engine(DiscoveryRequest {
+            engine: key.engine,
+            compute_driver: key.compute_driver,
+        }),
+        Some(Fact::Engine(nemoclaw_sdk::discovery::EngineObservation {
             status: nemoclaw_sdk::discovery::ObservationStatus::Unavailable,
             reason: Some("target rejected engine".into()),
             source: "fixture".into(),
@@ -588,9 +599,8 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
             operating_system: None,
             memory_bytes: None,
             cpus: None,
-        }),
-        fabric: None,
-    });
+        })),
+    );
     wizard.started = true;
     wizard.advance();
 
@@ -618,8 +628,12 @@ async fn unavailable_optional_bundle_keeps_model_discovery_unverified() {
         .unwrap()
         .unwrap();
     let missing = std::path::Path::new("/definitely/missing/nemoclaw-bundle");
-    let observed = observe_models(missing, request, &CancellationToken::new())
-        .await
-        .unwrap();
+    let observed = observe_facts(
+        missing,
+        vec![FactQuery::Endpoint(request)],
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert!(observed.is_none());
 }

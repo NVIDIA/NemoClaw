@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::labels::display_value;
-use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, Diagnostics, DiscoveryEvidence, JourneyQuestion, JourneyState,
-};
-use nemoclaw_sdk::config::Document;
+use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
+use nemoclaw_sdk::{config::Document, facts::FactSheet};
 use serde_json::Value;
 
 pub(crate) struct JourneyWizard {
@@ -15,8 +13,7 @@ pub(crate) struct JourneyWizard {
     pub(super) selected: usize,
     pub(super) selection_changed: bool,
     pub(super) custom_answer: bool,
-    pub(super) facts: AuthoringFacts,
-    pub(super) discovery: Option<DiscoveryEvidence>,
+    pub(super) facts: FactSheet,
     pub(super) input: String,
     pub(super) error: Option<String>,
     pub(super) started: bool,
@@ -33,8 +30,7 @@ impl JourneyWizard {
             selected: 0,
             selection_changed: false,
             custom_answer: false,
-            facts: AuthoringFacts::default(),
-            discovery: None,
+            facts: FactSheet::new(),
             input: String::new(),
             error: None,
             started: false,
@@ -51,7 +47,7 @@ impl JourneyWizard {
     pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
         Ok(self
             .state
-            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
+            .resolve_with_facts(&self.capabilities, &self.facts)?
             .next_question()
             .cloned())
     }
@@ -186,11 +182,10 @@ impl JourneyWizard {
             self.started = true;
             return;
         }
-        let resolution = match self.state.resolve_with_evidence(
-            &self.capabilities,
-            &self.facts,
-            self.discovery.as_ref(),
-        ) {
+        let resolution = match self
+            .state
+            .resolve_with_facts(&self.capabilities, &self.facts)
+        {
             Ok(resolution) => resolution,
             Err(error) => {
                 self.error = Some(error.to_string());
@@ -238,7 +233,7 @@ impl JourneyWizard {
 
     pub(super) fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
         self.state
-            .resolve_with_evidence(&self.capabilities, &self.facts, self.discovery.as_ref())?
+            .resolve_with_facts(&self.capabilities, &self.facts)?
             .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())

@@ -48,6 +48,15 @@ fn facts_are_found_by_the_inputs_that_produced_them() {
 }
 
 #[test]
+fn a_sheet_is_empty_until_something_is_attempted() {
+    let query = FactQuery::Credential {
+        reference: "KEY".into(),
+    };
+    assert!(FactSheet::new().is_empty());
+    assert!(!FactSheet::new().with(query, None).is_empty());
+}
+
+#[test]
 fn an_attempt_without_a_fact_is_not_asked_again() {
     let unobserved = FactQuery::Hardware {
         engine: "ssh://gpu-box".into(),

@@ -4,16 +4,13 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, DiscoveryEvidence, DiscoveryKey, EndpointEvidence,
-    GatewayEvidence, HardwareEvidence, JourneyQuestionKind, JourneyState,
-    discovery_key_for_document, inference_request_for_document,
+    Capabilities, JourneyQuestionKind, JourneyState, fact_needs, inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
     config::Document,
-    discovery::DiscoveryRequest,
-    discovery_session::{DiscoveryObservation, DiscoveryQuery, DiscoverySession},
-    inference_discovery::EndpointRequest,
+    discovery_session::DiscoverySession,
+    facts::{FactQuery, FactSheet, FactSource},
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{collections::VecDeque, io, time::Duration};
@@ -70,7 +67,6 @@ pub(crate) async fn run(
     )?;
     let mut wizard = JourneyWizard::new(capabilities, state);
     let mut needs_render = true;
-    let mut attempted_requests = Vec::new();
     let mut queued_events = VecDeque::new();
     loop {
         if cancel.is_cancelled() {
@@ -87,12 +83,14 @@ pub(crate) async fn run(
             && let Some(document) = resolution.assessment().document()
             && let Ok(Some(request)) =
                 inference_request_for_document(document, wizard.state.current_route())
-            && !attempted_requests.contains(&request)
+            && !wizard
+                .facts
+                .attempted(&FactQuery::Endpoint(request.clone()))
         {
-            attempted_requests.push(request.clone());
+            let query = FactQuery::Endpoint(request);
             let discovery_cancel = cancel.child_token();
             let Some(observed) = wait_for_discovery(
-                observe_models(bundle, request, &discovery_cancel),
+                observe_facts(bundle, vec![query.clone()], &discovery_cancel),
                 cancel,
                 &discovery_cancel,
                 &mut queued_events,
@@ -102,10 +100,12 @@ pub(crate) async fn run(
             else {
                 return Ok(None);
             };
-            if let Some(evidence) = observed {
-                wizard.facts.endpoint = Some(evidence);
-                needs_render = true;
+            match observed {
+                Some(facts) => wizard.facts.merge(facts),
+                // Record the attempt so an unavailable session is not retried on every pass.
+                None => wizard.facts.record(query, None),
             }
+            needs_render = true;
         }
         if needs_render {
             terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
@@ -170,14 +170,12 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some((evidence, facts)))) => {
-                            wizard.discovery = Some(evidence);
-                            wizard.facts = facts;
-                            match wizard.state.delegate_remaining(
-                                &wizard.capabilities,
-                                wizard.discovery.as_ref(),
-                                &wizard.facts,
-                            ) {
+                        Ok(Some(Some(facts))) => {
+                            wizard.facts.merge(facts);
+                            match wizard
+                                .state
+                                .delegate_remaining(&wizard.capabilities, &wizard.facts)
+                            {
                                 Ok(delegated) => {
                                     wizard.history.push(wizard.state.clone());
                                     wizard.state = delegated;
@@ -234,10 +232,7 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some((evidence, facts)))) => {
-                            wizard.facts = facts;
-                            wizard.discovery = Some(evidence);
-                        }
+                        Ok(Some(Some(facts))) => wizard.facts.merge(facts),
                         Ok(Some(None)) => {}
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
@@ -322,189 +317,39 @@ async fn wait_for_discovery<T>(
     }
 }
 
-pub(super) async fn observe_models(
+/// Read the given facts from the target in one provider round. `None` means
+/// there is no provider session or the round failed as a whole, so the caller
+/// continues without target facts rather than treating the target as absent.
+pub(super) async fn observe_facts(
     bundle: &std::path::Path,
-    request: EndpointRequest,
+    queries: Vec<FactQuery>,
     cancel: &CancellationToken,
-) -> Result<Option<EndpointEvidence>, Error> {
+) -> Result<Option<FactSheet>, Error> {
     let Ok(mut session) = DiscoverySession::new(bundle) else {
         return Ok(None);
     };
-    let observations = match session
-        .batch(&[DiscoveryQuery::Inference(request.clone())], cancel)
-        .await
-    {
-        Ok(observations) => observations,
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => return Ok(None),
-    };
-    Ok(observations
-        .into_iter()
-        .find_map(|observation| match observation {
-            DiscoveryObservation::Inference(observation) => Some(EndpointEvidence {
-                request: request.clone(),
-                observation,
-            }),
-            _ => None,
-        }))
+    match session.observe(&queries, cancel).await {
+        Ok(facts) => Ok(Some(facts)),
+        Err(Error::Cancelled) => Err(Error::Cancelled),
+        Err(_) => Ok(None),
+    }
 }
 
+/// Read again everything the journey needs about the target for `document`.
 async fn observe_target(
     bundle: &std::path::Path,
     document: &Document,
     route: Option<&str>,
     cancel: &CancellationToken,
-) -> Result<Option<(DiscoveryEvidence, AuthoringFacts)>, Error> {
-    let Ok(mut session) = DiscoverySession::new(bundle) else {
-        return Ok(None);
-    };
-    let key = discovery_key_for_document(document)
-        .map_err(|_| Error::State("invalid discovery selection"))?;
-    let request = inference_request_for_document(document, route)
-        .map_err(|_| Error::State("invalid inference selection"))?;
-    let mut evidence = DiscoveryEvidence {
-        key: key.clone(),
-        engine: None,
-        fabric: None,
-    };
-    let mut facts = AuthoringFacts {
-        credentials: nemoclaw_sdk::inference_discovery::observe_credentials(
-            document,
-            &nemoclaw_sdk::EnvironmentSecrets,
-        )?,
-        ..Default::default()
-    };
-    let queries = discovery_queries(&key, request);
-    match session.batch(&queries, cancel).await {
-        Ok(observations) => {
-            for (query, observation) in queries.into_iter().zip(observations) {
-                match (query, observation) {
-                    (DiscoveryQuery::Engine(_), DiscoveryObservation::Engine(observed)) => {
-                        evidence.engine = Some(observed)
-                    }
-                    (DiscoveryQuery::Fabric { .. }, DiscoveryObservation::Fabric(observed)) => {
-                        evidence.fabric = Some(observed)
-                    }
-                    (
-                        DiscoveryQuery::Hardware { engine },
-                        DiscoveryObservation::Hardware(observation),
-                    ) => {
-                        facts.hardware = Some(HardwareEvidence {
-                            engine,
-                            observation,
-                        })
-                    }
-                    (
-                        DiscoveryQuery::Inference(request),
-                        DiscoveryObservation::Inference(observation),
-                    ) => {
-                        facts.endpoint = Some(EndpointEvidence {
-                            request,
-                            observation,
-                        })
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => {}
-    }
-    match session
-        .gateway(&document.spec.gateway, &[key.compute_driver], cancel)
-        .await
-    {
-        Ok(observation) => {
-            facts.gateway = Some(GatewayEvidence {
-                gateway: document.spec.gateway.clone(),
-                compute_driver: key.compute_driver,
-                observation,
-            })
-        }
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => {}
-    }
-    Ok(Some((evidence, facts)))
-}
-
-fn discovery_queries(
-    key: &DiscoveryKey,
-    request: Option<nemoclaw_sdk::inference_discovery::EndpointRequest>,
-) -> Vec<DiscoveryQuery> {
-    let mut queries = Vec::new();
-    // An external gateway's engine only stores images: read their metadata,
-    // but do not probe it as the gateway's engine or hardware.
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine.clone(),
-            compute_driver: key.compute_driver,
-        }));
-    }
-    if !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Fabric {
-            engine: key.engine.clone(),
-            image: key.image.clone(),
-        });
-    }
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Hardware {
-            engine: key.engine.clone(),
-        });
-    }
-    if let Some(request) = request.filter(|request| request.validate().is_ok()) {
-        queries.push(DiscoveryQuery::Inference(request));
-    }
-    queries
+) -> Result<Option<FactSheet>, Error> {
+    let queries =
+        fact_needs(document, route).map_err(|_| Error::State("invalid discovery selection"))?;
+    observe_facts(bundle, queries, cancel).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn external_gateway_does_not_guess_a_local_engine_for_discovery() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/remote-vllm.yaml");
-        let document = Document::parse(std::fs::File::open(path).unwrap()).unwrap();
-        let key = discovery_key_for_document(&document).unwrap();
-        assert!(key.engine.is_empty());
-        let queries = discovery_queries(
-            &key,
-            inference_request_for_document(&document, None).unwrap(),
-        );
-        // The service-backed route has no external catalog to read either.
-        assert!(
-            queries.is_empty(),
-            "unresolved engine must not target the local daemon: {queries:?}"
-        );
-    }
-
-    #[test]
-    fn external_gateway_queries_its_image_store_without_gateway_or_hardware_probes() {
-        let mut document =
-            Document::parse(&include_bytes!("../../../onboarding/openclaw.yaml")[..]).unwrap();
-        document.spec.gateway = serde_json::from_value(serde_json::json!({
-            "management": "external",
-            "endpoint": "https://gateway.example:8080",
-            "engine": "ssh://images@example.com",
-        }))
-        .unwrap();
-        document.spec.sandboxes[0].runtime.provider = nemoclaw_sdk::config::ComputeDriver::Podman;
-        let key = discovery_key_for_document(&document).unwrap();
-        let request = inference_request_for_document(&document, None)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            discovery_queries(&key, Some(request.clone())),
-            vec![
-                DiscoveryQuery::Fabric {
-                    engine: "ssh://images@example.com".into(),
-                    image: key.image.clone(),
-                },
-                DiscoveryQuery::Inference(request),
-            ]
-        );
-    }
 
     #[tokio::test]
     async fn escape_cancels_discovery_and_restores_the_questionnaire() {

@@ -25,7 +25,7 @@ flowchart TD
     Rules[SDK schema and Fabric Capabilities] --> Resolver
     Resolver --> Policy[QuestionPolicy: dependencies and order]
     Policy --> Result[JourneyResolution: questions and assessments]
-    Evidence[DiscoveryEvidence and AuthoringFacts] -->|resolve_with_evidence| Result
+    Facts[FactSheet from a FactSource] -->|resolve_with_facts| Result
     Result --> Question[JourneyQuestion: one applicable decision]
     Question --> UI[TUI or other consumer]
     UI -->|answer or omit| State
@@ -141,15 +141,20 @@ Successful materialization covers the resolver's supported surface; Fabric's pla
 Without a configured target prerequisite, unknown target compatibility permits ordinary authoring; an observed conflict blocks `ready_document()`.
 An SDK document or a ready authoring result does not establish successful deployment or working inference.
 
-## Evidence and consumer responsibilities
+## Facts and consumer responsibilities
 
-[DiscoveryEvidence](../../crates/nemoclaw-authoring/src/evidence.rs) holds engine and image observations keyed to the selected discovery inputs.
-[AuthoringFacts](../../crates/nemoclaw-authoring/src/facts.rs) holds endpoint, hardware, gateway, and credential-availability observations.
-Hardware and gateway observations do not affect questions or readiness yet.
-Both types need an SDK-valid document, because discovery reads its inputs from a `Document`.
-`resolve_with_evidence` supplements current model suggestions with matching endpoint observations and assesses target compatibility.
+The SDK's [FactSheet](../../crates/nemoclaw-sdk/src/facts.rs) holds everything learned about the target: engine, hardware, image, endpoint, gateway, and credential-availability observations.
+Each fact is keyed by the query that produced it, so a fact about one engine, image, or endpoint is never read as a fact about another.
+A query that was attempted without an observation stays distinct from one never asked, so a failed read is not repeated on every pass.
+A `FactSource` answers queries: `DiscoverySession` reads the real target through the provider, and `FixtureFacts` replays a recorded sheet, so decisions can be tested for any hardware without owning it.
+`fact_needs` returns the queries a journey needs for an SDK-valid document.
+It derives them the way planning does and differs in two named ways, which tests compare against the compiled plan: onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
+`gather` repeats observe and merge until nothing needed is missing, so a read can depend on an earlier fact.
+Hardware and gateway facts do not affect questions or readiness yet.
+`resolve_with_facts` supplements current model suggestions with the matching endpoint observation and assesses target compatibility with `assess_target`.
+An empty sheet leaves the resolution unchanged.
 Observations do not silently replace authored values.
-`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target evidence, advertised model, and available credential references.
+`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target facts, an advertised model, and available credential references.
 
 The [TUI](../../examples/onboarding-tui/README.md) owns keys, rendering, state snapshots for Back, discovery calls, cancellation, and saving the returned document.
 Authoring owns question resolution and answer transitions; the SDK owns discovery operations and subsequent plan/apply behavior.

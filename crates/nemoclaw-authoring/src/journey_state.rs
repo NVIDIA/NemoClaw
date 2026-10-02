@@ -9,12 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
 use nemoclaw_sdk::discovery::ObservationStatus;
 use nemoclaw_sdk::fabric_capabilities::schema_accepts;
+use nemoclaw_sdk::facts::FactSheet;
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use serde_json::{Map, Value};
 
 use crate::{
-    AuthoringFacts, Capabilities, CompatibilityStatus, Diagnostics, DiscoveryAssessment,
-    DiscoveryEvidence, PartialAssessment, PartialDocument, PartialIssueKind, ProviderPreset,
+    Capabilities, CompatibilityStatus, Diagnostics, DiscoveryAssessment, PartialAssessment,
+    PartialDocument, PartialIssueKind, ProviderPreset,
     diagnostics::diagnostic,
     identity::new_deployment_uid,
     journey_definition::{
