@@ -34,7 +34,7 @@ describe("DCode WAL snapshot persistence", () => {
       database.exec("CREATE TABLE sessions (content TEXT)");
       database
         .prepare("INSERT INTO sessions VALUES (?)")
-        .run('Example configuration: {"API_KEY":"not-a-secret-marker"}');
+        .run('Example configuration: {"model":"not-a-secret-marker"}');
       expect(fs.statSync(`${databasePath}-wal`).size).toBeGreaterThan(0);
 
       fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
