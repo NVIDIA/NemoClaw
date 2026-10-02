@@ -19,6 +19,8 @@ import type { ExportObservationResult } from "./observe-export-source";
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
 export const CONFIG_EXPORT_RESULT_VERSION = 1 as const;
+export const GEMINI_V1_SUPPORT_NOTICE =
+  "Gemini export is complete for V0. V1 Gemini deployment support is pending.";
 
 export type ConfigExportTarget =
   | { readonly kind: "stdout" }
@@ -39,6 +41,7 @@ export const ConfigExportResultSchema = Type.Object(
     outputPath: Type.String({ pattern: "^/" }),
     documentDigest: DigestSchema,
     specDigest: DigestSchema,
+    v1Support: Type.Optional(Type.Literal("pending")),
   },
   { additionalProperties: false },
 );
@@ -54,7 +57,7 @@ export interface ConfigExportDependencies {
 }
 
 export type ConfigExportCompletion =
-  | { readonly kind: "stdout" }
+  | { readonly kind: "stdout"; readonly v1Support?: "pending" }
   | { readonly kind: "file"; readonly result: ConfigExportResult };
 
 export type ConfigExportFailure =
@@ -89,12 +92,13 @@ export async function runConfigExport(
     documentName: request.documentName,
     documentUid: dependencies.createDocumentUid(),
   });
+  const v1Support = observation.source.inference.provider === "gemini-api" ? "pending" : undefined;
   const rendered = renderCanonicalNemoClawConfig(config);
 
   if (request.target.kind === "stdout") {
     try {
       await dependencies.writeStdout(rendered.yaml);
-      return { ok: true, completion: { kind: "stdout" } };
+      return { ok: true, completion: { kind: "stdout", ...(v1Support ? { v1Support } : {}) } };
     } catch {
       return {
         ok: false,
@@ -119,6 +123,7 @@ export async function runConfigExport(
         outputPath: published.outputPath,
         documentDigest: rendered.documentDigest,
         specDigest: rendered.specDigest,
+        ...(v1Support ? { v1Support } : {}),
       },
     },
   };

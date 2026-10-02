@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "./v1alpha1-runtime-defaults";
 import {
   dcodeSnapshot,
   hermesImageRef,
@@ -54,6 +56,24 @@ function explicitOpenClawDefaultsSnapshot() {
 }
 
 describe("effective v1alpha1 export defaults (#12132)", () => {
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "records pending Gemini V1 validation at the pinned revision (#12035)",
+    testTimeoutOptions(12 * 60_000),
+    () => {
+      const fixture = readFileSync(
+        new URL(
+          "../../../../test/fixtures/v1-config-consumer/pending-gemini.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      expect(V1ALPHA1_RUNTIME_DEFAULTS_REVISION).toBe("88c6600c06b0937907290362eef86912052c4ad0");
+      expect(() => validateConfigExportWithPinnedV1(fixture)).toThrow(
+        /provider requires a lowercase name and openai or anthropic implementation/u,
+      );
+    },
+  );
+
   it("preserves source values whether their startup inputs were explicit or omitted", async () => {
     const baseline = await exportSnapshots([snapshot()]);
     const explicit = await exportSnapshots([explicitOpenClawDefaultsSnapshot()]);

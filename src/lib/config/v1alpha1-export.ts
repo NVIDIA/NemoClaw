@@ -13,7 +13,7 @@ export function isV1Alpha1ExportName(value: unknown): value is string {
 
 interface V1Alpha1HostedInferenceProvider {
   readonly name: string;
-  readonly provider: "anthropic" | "openai";
+  readonly provider: "anthropic" | "openai" | "google";
   readonly api: "anthropic-messages" | "openai-completions" | "openai-responses";
   readonly endpoint: string;
   readonly credential?: Readonly<{ env: string }>;
