@@ -501,6 +501,7 @@ describe("Podman container engine command adapter", () => {
       executablePath: authority.executablePath,
       assertMetadataAuthority: vi.fn(),
       assertContentAuthority: vi.fn(),
+      assertCheckpointCurrent: vi.fn(),
       guardCommand: vi.fn(),
     };
 
@@ -537,6 +538,28 @@ describe("Podman container engine command adapter", () => {
     Array.from({ length: 31 }, () => second.capture(["info"]));
     expect(readFile).not.toHaveBeenCalled();
     second.capture(["info"]);
+    expect(readFile).toHaveBeenCalledOnce();
+  });
+
+  it("shares the periodic rehash interval across checkpoints and commands", () => {
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const engine = createPodmanContainerEngine({
+      operation: "sandbox-lifecycle",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      executableAuthorityDeps: deps,
+      assertAuthority: vi.fn(),
+      capture: vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
+    });
+    readFile.mockClear();
+
+    Array.from({ length: 32 }, () => proof.assertCheckpointCurrent());
+    Array.from({ length: 31 }, () => engine.capture(["info"]));
+    expect(readFile).not.toHaveBeenCalled();
+    proof.assertCheckpointCurrent();
     expect(readFile).toHaveBeenCalledOnce();
   });
 

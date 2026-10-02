@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { createHermesPortableOperatingFileProof } from "./hermes-portable-operating-file-proof";
+import {
+  currentHermesPortableStartupOperation,
+  type HermesPortableStartupOperation,
+} from "./hermes-portable-startup-operation";
+
+export {
+  currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
+} from "./hermes-portable-startup-operation";
 
 import {
   assertHermesPortableOpenShellExecutableFileAuthority,
@@ -77,6 +87,15 @@ export interface QualifiedHermesPortableOperatingAuthority {
   readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
+
+const startupAuthorities = new WeakMap<
+  HermesPortableStartupOperation,
+  {
+    snapshot: HermesPortableReceiptSnapshot;
+    env: NodeJS.ProcessEnv;
+    authority: QualifiedHermesPortableOperatingAuthority;
+  }[]
+>();
 
 function fail(message: string): never {
   throw new Error(`Hermes portable schema-8 authority ${message}`);
@@ -181,6 +200,28 @@ export function qualifyHermesPortableOperatingAuthority(
     };
   }
   const env = deps.env ?? process.env;
+  const startupOperation = snapshot.successor
+    ? currentHermesPortableStartupOperation(snapshot.receipt.sandboxName)
+    : undefined;
+  // An injected qualifier can have a different contract; never reuse its result for another one.
+  const reuseQualification =
+    startupOperation &&
+    Object.entries(deps).every(
+      ([key, value]) => value === undefined || key === "env" || key === "timing",
+    );
+  if (reuseQualification) {
+    const identity = structuredClone(snapshot);
+    const retained = startupAuthorities
+      .get(startupOperation)
+      ?.find(
+        (entry) =>
+          isDeepStrictEqual(entry.snapshot, identity) && isDeepStrictEqual(entry.env, { ...env }),
+      );
+    if (retained) {
+      retained.authority.assertCurrent();
+      return retained.authority;
+    }
+  }
   const measure = deps.timing?.measure ?? ((_stage, operation) => operation());
   const expected = snapshot.successor?.receipt ?? createHermesPortableSuccessorReceipt(snapshot);
   const captureSocket =
@@ -201,12 +242,19 @@ export function qualifyHermesPortableOperatingAuthority(
   const capturePodman =
     deps.capturePodmanExecutableAuthority ??
     ((socketAuthority, receipt, sourceEnv) =>
-      captureHermesPortablePodmanExecutableAuthority(
-        socketAuthority,
-        receipt.runtimeAuthority,
-        sourceEnv,
-        podmanAuthorityDeps,
-      ));
+      snapshot.successor
+        ? captureHermesPortablePodmanExecutableFileAuthority(
+            socketAuthority,
+            receipt,
+            sourceEnv,
+            podmanAuthorityDeps,
+          )
+        : captureHermesPortablePodmanExecutableAuthority(
+            socketAuthority,
+            receipt.runtimeAuthority,
+            sourceEnv,
+            podmanAuthorityDeps,
+          ));
   const capture = () => {
     const socket = measure("socketAuthority", () =>
       captureSocket(
@@ -255,6 +303,19 @@ export function qualifyHermesPortableOperatingAuthority(
         podmanAuthorityDeps,
       ));
   const initial = capture();
+  // A custom entry capture still gets its own qualification. Its default file
+  // verifiers can retain this instance's proof; injected file verifiers must run.
+  const reuseFiles =
+    startupOperation &&
+    deps.assertOpenShellExecutableFileAuthority === undefined &&
+    deps.capturePodmanExecutableFileAuthority === undefined &&
+    deps.podmanAuthorityDeps === undefined;
+  const assertFiles = reuseFiles
+    ? createHermesPortableOperatingFileProof(initial.receipt, env)
+    : undefined;
+  const canReuseFiles = () =>
+    assertFiles &&
+    currentHermesPortableStartupOperation(snapshot.receipt.sandboxName) === startupOperation;
   const assertTransactionCurrent = (): void => {
     const socket = measure("socketAuthority", () =>
       captureSocket(
@@ -263,6 +324,22 @@ export function qualifyHermesPortableOperatingAuthority(
       ),
     );
     buildOpenShellSubprocessEnv(env, snapshot.receipt.runtimeAuthority);
+    if (canReuseFiles()) {
+      measure("openshellExecutable", () => assertFiles!());
+      measure("transactionCompare", () =>
+        requireStableAuthority(
+          expected,
+          snapshot.receipt,
+          socket,
+          initial.openshell,
+          initial.podman,
+        ),
+      );
+      if (!isDeepStrictEqual(socket, initial.socket)) {
+        fail("operation-local filesystem or runtime identity changed");
+      }
+      return;
+    }
     measure("openshellExecutable", () => assertOpenShellFile(initial.openshell, env));
     const receiptWithCurrentSocket = { ...snapshot.receipt, socketAuthority: socket };
     const podman = measure("podmanExecutable", () =>
@@ -278,10 +355,14 @@ export function qualifyHermesPortableOperatingAuthority(
       }
     });
   };
-  return {
+  const authority = {
     receipt: initial.receipt,
     assertTransactionCurrent,
     assertCurrent: () => {
+      if (canReuseFiles()) {
+        assertTransactionCurrent();
+        return;
+      }
       const current = capture();
       if (
         !isDeepStrictEqual(current.socket, initial.socket) ||
@@ -292,4 +373,10 @@ export function qualifyHermesPortableOperatingAuthority(
       }
     },
   };
+  if (reuseQualification) {
+    const entries = startupAuthorities.get(startupOperation) ?? [];
+    entries.push({ snapshot: structuredClone(snapshot), env: { ...env }, authority });
+    startupAuthorities.set(startupOperation, entries);
+  }
+  return authority;
 }
