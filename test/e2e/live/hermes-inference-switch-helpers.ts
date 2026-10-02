@@ -71,7 +71,7 @@ export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-export const PROXY_RESOLUTION_PROVIDER = "nvidia-prod";
+export const PROXY_RESOLUTION_PROVIDER = "hermes-proxy-resolution-e2e";
 export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
 export const PROXY_FORBIDDEN_MARKERS = [
   "openshell:resolve:env:",
@@ -233,12 +233,6 @@ export async function prepareProxyResolutionRoute({
     mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
-
-  // Hosted mode already registered and attached the exact nvidia-prod
-  // provider. The mock path needs an OpenAI provider for its local fixture.
-  if (!mockBaseline) {
-    return { model, requestOffset };
-  }
 
   const registered = await host.command(
     "openshell",

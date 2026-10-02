@@ -373,7 +373,7 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices.standard).toContainEqual(
       expect.objectContaining({
         id: "openclaw-inference-switch",
-        display_name: "Inference: OpenClaw switches providers and remains responsive",
+        display_name: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
       }),
     );
     expect(selectedWorkflowJobs(plan)).toEqual([

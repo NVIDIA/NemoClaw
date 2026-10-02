@@ -271,4 +271,52 @@ describe("native NVIDIA onboarding", () => {
       }),
     );
   });
+
+  it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
+    const providerAdapter = {
+      importProviderProfile: vi.fn(),
+      getProvider: vi.fn(),
+      updateProvider: vi.fn(),
+    } as unknown as OpenShellProviderAdapter;
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => ({ name: "alpha", provider: "nvidia-prod" }) as never,
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).rejects.toThrow(/Recreate this beta sandbox.*does not migrate existing beta sandboxes/u);
+
+    expect(providerAdapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
 });

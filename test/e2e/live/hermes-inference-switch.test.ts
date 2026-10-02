@@ -168,14 +168,20 @@ test(
     const install = await installHermes(host, apiKey, installEnv);
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineInventoryRequest(mockBaseline);
-    const baselineRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: "openshell-inference-route-before-switch",
-      env: env(),
-      timeoutMs: 30_000,
-    });
+    const baselineRoute = mockBaseline
+      ? await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+          artifactName: "openshell-inference-route-before-switch",
+          env: env(),
+          timeoutMs: 30_000,
+        })
+      : await host.command("node", [CLI, "inference", "get"], {
+          artifactName: "nemoclaw-native-inference-route-before-switch",
+          env: env(),
+          timeoutMs: 30_000,
+        });
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
-      provider: "compatible-endpoint",
+      provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
       model: hostedInstallModel(installEnv),
     });
     const baselineSession = structuredClone(registryState().session);
