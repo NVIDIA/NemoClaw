@@ -269,7 +269,7 @@ class CommandArguments(unittest.TestCase):
                 fabric.parse_command(arguments)
             self.assertNotIn("SECRET", str(error.exception))
 
-    def test_input_files_require_bounded_utf8_json_objects(self):
+    def test_input_files_reject_invalid_or_oversized_json(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
             for content in (
@@ -303,7 +303,7 @@ class CommandArguments(unittest.TestCase):
             self.assertEqual(request[field], value)
             self.assertEqual(stdin.buffer.read(), b"")
 
-    def test_stdin_requires_one_bounded_object_and_never_reads_a_terminal(self):
+    def test_stdin_rejects_invalid_or_oversized_json_and_never_reads_a_terminal(self):
         for content in (
             b"",
             b"[]",

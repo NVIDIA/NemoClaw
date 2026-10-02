@@ -28,7 +28,9 @@ It does not promise conversation continuity across a native runtime restart.
 
 Images provide `fabric-agent` on `PATH`.
 The provider uses the image’s advertised command through authenticated OpenShell execution, with each flag and value passed as a separate argument.
-`--config` and `--input` take a file path, or `-` to read one JSON object from stdin.
+`--config` and `--input` take a file path, or `-` to read one JSON value from stdin.
+Configuration must be an object; invocation input may be an object or a JSON string and is passed unchanged to Fabric.
+For a text-only adapter such as Hermes service mode, supply a JSON string, including its quotes, rather than an object containing a message.
 Only an exact `-` selects stdin; commands leave stdin unread otherwise and reject a terminal or an empty or oversized stream.
 The provider sends configuration and invocation input on stdin in the same execution as the command, so it writes no files into the sandbox.
 

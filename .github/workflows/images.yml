@@ -46,7 +46,7 @@ jobs:
       - name: Build and qualify the reference contract image
         run: |
           python3 image/build_fabric.py --platform "$AGENT_PLATFORM" dummy
-          python3 image/qualify_contract.py nc-fabric:dummy
+          python3 image/qualify_contract.py nc-fabric:dummy --lifecycle dummy --require-ready
       - name: Check packaging and generic Fabric lifecycle
         run: docker buildx bake check
       - name: Build local images with installed Fabric metadata
@@ -58,14 +58,19 @@ jobs:
           docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
           test -s .build-image-list
           while read -r harness image; do
-            python3 image/qualify_contract.py "$image"
+            case "$harness" in
+              openclaw|hermes|pi)
+                python3 image/qualify_contract.py "$image" --lifecycle "$harness"
+                ;;
+              *) python3 image/qualify_contract.py "$image" ;;
+            esac
             catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
             docker run --rm --runtime=runc --network none \
               -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \
               -v "$PWD/image/test_image.py:/test.py:ro" \
               --entrypoint /opt/fabric/bin/python "$image" -B /test.py
           done < .build-image-list
-      - name: Qualify native adapters in the built images
+      - name: Check native reconfiguration and security
         run: |
           native() {
             image=$1 script=$2
@@ -73,9 +78,6 @@ jobs:
             docker run --rm --runtime=runc --network none               -v "$PWD/image/$script:/$script:ro"               --entrypoint /opt/fabric/bin/python "$image" -B "/$script" "$@"
           }
           native nc-fabric:openclaw test_openclaw_reconfiguration.py
-          native nc-fabric:openclaw qualify_native.py nvidia.fabric.openclaw --settings '{"cli":"/app/openclaw.mjs"}'
           if [ "$AGENT_PLATFORM" = linux/arm64 ]; then
-            native nc-fabric:hermes qualify_native.py nvidia.fabric.hermes --settings '{"mode":"service"}'
             native nc-fabric:hermes hermes_security.py
-            native nc-fabric:pi qualify_native.py nvidia.fabric.pi
           fi

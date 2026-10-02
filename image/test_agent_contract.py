@@ -9,17 +9,58 @@ import time
 import unittest
 from pathlib import Path
 
+from qualify_native import local_inference
+
 COMMAND = ["/usr/local/bin/fabric-agent"]
 ROOT = Path("/sandbox")
 NAME = "contract"
 REFERENCE = os.environ.get("NEMOCLAW_TEST_REFERENCE") == "dummy"
 CONFIG = {"metadata": {"name": NAME}, "harness": {"adapter_id": "org.nemoclaw.dummy"}}
+PROFILE = os.environ.get("NEMOCLAW_TEST_LIFECYCLE") or ("dummy" if REFERENCE else "")
 
 
 class AgentContract(unittest.TestCase):
     def setUp(self):
         self.host = None
         self.addCleanup(self.stop_host)
+
+    def lifecycle_fixture(self):
+        if not PROFILE:
+            self.skipTest("no native lifecycle profile selected; command conformance only")
+        if PROFILE == "dummy":
+            self.assertTrue(REFERENCE, "dummy profile requires the reference image")
+            return CONFIG, {"message": "hello"}, "hello", None
+        self.assertFalse(REFERENCE, "native profile requires a production image")
+        settings = {
+            "openclaw": {"cli": "/app/openclaw.mjs"},
+            "hermes": {"mode": "service"},
+            "pi": {},
+        }[PROFILE]
+        inference = self.enterContext(local_inference())
+        # Stop the runtime before shutting down its inference dependency.
+        self.addCleanup(self.stop_host)
+        config = {
+            "metadata": {"name": NAME},
+            "harness": {"adapter_id": "nvidia.fabric." + PROFILE, "settings": settings},
+            "models": {
+                "default": {
+                    "provider": "openai",
+                    "api": "openai-completions",
+                    "model": "gpt-4.1-mini",
+                    "api_key_env": "FABRIC_NATIVE_TEST_KEY",
+                    "base_url": f"http://127.0.0.1:{inference.server_port}/v1",
+                }
+            },
+        }
+        prompt = "Say hello."
+        invocation = (
+            {"agent": "main", "message": prompt}
+            if PROFILE == "openclaw"
+            else {"prompt": prompt, "model": "default"}
+            if PROFILE == "pi"
+            else prompt
+        )
+        return config, invocation, "fabric-native-ok", inference
 
     def stop_host(self):
         if self.host is not None:
@@ -62,7 +103,7 @@ class AgentContract(unittest.TestCase):
             **source,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90 if operation in ("configure", "invoke") else 20,
         )
         self.assertEqual(len(output.stdout.splitlines()), 1, output.stdout)
         self.assertTrue(output.stdout.endswith("\n"))
@@ -151,36 +192,85 @@ class AgentContract(unittest.TestCase):
         self.assertNotEqual(after["generation"], before["generation"])
         self.assertEqual(after["runtime_state"], "stopped")
 
-    @unittest.skipUnless(REFERENCE, "successful native lifecycle belongs to adapter qualification")
-    def test_reference_validate_configure_check_invoke_prepare_and_generation(self):
-        config = self.file("config.json", CONFIG)
+    def test_validate_configure_invoke_prepare_and_generation(self):
+        configuration, invocation, expected_reply, inference = self.lifecycle_fixture()
+        config = self.file("config.json", configuration)
         self.assertEqual(self.call("validate", "--config", config)["status"], "succeeded")
         before = self.start_host()
         flags = ["--config", config, "--expected-generation", before["generation"]]
         started = self.call("configure", *flags)
+        self.assertEqual(started["status"], "succeeded", started)
         self.assertTrue(started["changed"])
         state = started["result"]
-        self.assertEqual(state["applied_config"], CONFIG)
+        self.assertEqual(state["applied_config"], configuration)
         self.assertEqual(state["runtime_state"], "running")
         self.assertNotEqual(state["generation"], before["generation"])
         stale = self.call("configure", *flags)
         self.assertEqual(stale["error"]["code"], "stale_generation")
         flags[-1] = state["generation"]
-        same = self.call("configure", "--config", "-", *flags[2:], stdin=json.dumps(CONFIG))
+        same = self.call("configure", "--config", "-", *flags[2:], stdin=json.dumps(configuration))
         self.assertFalse(same["changed"])
         self.assertEqual(same["result"], state)
         checked = self.call("check", "--ready")
-        self.assertEqual(checked["status"], "succeeded")
-        self.assertEqual(checked["result"]["runtime_id"], state["runtime_id"])
-        self.assertEqual(len(checked["result"]["health"]["checks"]), 3)
-        invoked = self.call("invoke", "--input", "-", stdin=json.dumps({"message": "hello"}))
-        self.assertIsNone(invoked["changed"])
-        self.assertEqual(invoked["result"]["fabric_result"]["output"], {"message": "hello"})
+        supported = json.loads(Path("/opt/nemoclaw/bridge.json").read_text())["health_checks"]
+        self.assertEqual(checked["status"], "succeeded" if "ready" in supported else "unsupported")
+        for key, value in state.items():
+            self.assertEqual(checked["result"][key], value)
+        if "ready" not in supported:
+            self.assertIsNone(checked["result"]["health"])
+            self.assertEqual(checked["error"]["code"], "fabric_health_unsupported")
+        if inference is not None:
+            self.assertEqual(inference.requests, [], "configure must not request inference")
+        for use_stdin in (False, True):
+            before = len(inference.requests) if inference is not None else 0
+            invoked = (
+                self.call("invoke", "--input", "-", stdin=json.dumps(invocation))
+                if use_stdin
+                else self.call("invoke", "--input", self.file("invocation.json", invocation))
+            )
+            self.assertEqual(invoked["status"], "succeeded", invoked)
+            self.assertIsNone(invoked["changed"])
+            self.assertEqual(invoked["result"]["runtime_id"], state["runtime_id"])
+            native = invoked["result"]["fabric_result"]
+            self.assertEqual(native["status"], "succeeded")
+            self.assertIn(expected_reply, json.dumps(native["output"]))
+            if REFERENCE:
+                self.assertEqual(native["output"], {"message": expected_reply})
+            if inference is not None:
+                self.assertGreater(len(inference.requests), before, "native inference was bypassed")
         prepared = self.call("prepare", *flags)
+        self.assertEqual(prepared["status"], "succeeded", prepared)
         self.assertTrue(prepared["result"]["prepared"])
         self.assertIsNone(prepared["result"]["applied_config"])
         flags[-1] = prepared["result"]["generation"]
         self.assertFalse(self.call("prepare", *flags)["changed"])
+        self.assertEqual(
+            self.call("invoke", "--input", "-", stdin=json.dumps(invocation))["status"], "failed"
+        )
+
+    def test_configured_runtime_is_ready(self):
+        supported = json.loads(Path("/opt/nemoclaw/bridge.json").read_text())["health_checks"]
+        if os.environ.get("NEMOCLAW_TEST_REQUIRE_READY") == "1":
+            self.assertIn("ready", supported, "selected image cannot qualify native readiness")
+        elif "ready" not in supported:
+            self.skipTest("native readiness is unsupported; lifecycle success does not qualify it")
+        configuration, _, _, _ = self.lifecycle_fixture()
+        before = self.start_host()
+        started = self.call(
+            "configure",
+            "--config",
+            "-",
+            "--expected-generation",
+            before["generation"],
+            stdin=json.dumps(configuration),
+        )
+        self.assertEqual(started["status"], "succeeded", started)
+        checked = self.call("check", "--ready")
+        self.assertEqual(checked["status"], "succeeded", checked)
+        self.assertEqual(checked["result"]["runtime_id"], started["result"]["runtime_id"])
+        self.assertIsInstance(checked["result"]["health"], dict)
+        if REFERENCE:
+            self.assertEqual(len(checked["result"]["health"]["checks"]), 3)
 
     @unittest.skipUnless(REFERENCE, "reference failure controls are not real adapter settings")
     def test_reference_failed_readiness_preserves_the_configured_runtime(self):
