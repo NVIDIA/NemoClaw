@@ -15,6 +15,10 @@ import {
 } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
 import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia";
+import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
@@ -90,6 +94,7 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
+  const providerName = key === NVIDIA_HOSTED_LOGICAL_PROVIDER ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
     return fail([
       "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
@@ -120,7 +125,7 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(key, target, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter);
 
   if (
     !recovery.ok &&

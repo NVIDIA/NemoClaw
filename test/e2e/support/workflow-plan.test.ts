@@ -370,15 +370,15 @@ describe("E2E workflow plan", () => {
         }),
       ]),
     );
-    expect(plan.catalogueMatrices.standard).toContainEqual(
+    expect(plan.catalogueMatrices["nvidia-api"]).toContainEqual(
       expect.objectContaining({
         id: "openclaw-inference-switch",
-        display_name: "Inference: OpenClaw switches providers and remains responsive",
+        display_name: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
       }),
     );
     expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
-      "catalogue-standard",
     ]);
     expect(catalogueTarget("network-policy").selector).toBe("^network-policy:");
     const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
@@ -509,12 +509,12 @@ describe("E2E workflow plan", () => {
     [
       "hermes-inference-switch",
       {
-        profile: "standard",
+        profile: "nvidia-api",
         installNonInteractive: true,
         runnerKey: "hermes-inference-switch",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
-        shard: "anthropic",
+        shard: "native-nvidia",
       },
     ],
     [

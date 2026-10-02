@@ -389,6 +389,13 @@ async function providerExistsInGateway(name, runOpenshell) {
   throw new Error(result.error.message);
 }
 
+function setupInferenceProviderDeps(runOpenshell) {
+  return {
+    providerExistsInGateway,
+    providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+  };
+}
+
 /**
  * Recheck current OpenShell sandbox identity before each provider command.
  * Commands in one provider operation can be separated by
@@ -594,6 +601,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   upsertProvider,
+  setupInferenceProviderDeps,
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,

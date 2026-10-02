@@ -469,4 +469,56 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       }),
     ).toMatchObject({ ok: true, probed: true });
   });
+
+  it("probes the recorded native NVIDIA attachment when a different shared route exists", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      preferredInferenceApi: "openai-completions",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    const probeSharedRoute = vi.fn(async () => ({
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      detail: "reachable",
+      httpStatus: 200,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: probeSharedRoute,
+        probeSandboxInferenceInvocationImpl: invoke,
+      },
+    } as never);
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(probeSharedRoute).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        preferredInferenceApi: "openai-completions",
+        nativeProvider: true,
+      },
+      {},
+      95_000,
+    );
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
 });

@@ -3,8 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
-import { createProviderReviewDeps } from "./setup-inference";
+import {
+  createProviderReviewDeps,
+  createSetupInference,
+  type SetupInferenceDeps,
+} from "./setup-inference";
 
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
@@ -174,5 +179,144 @@ describe("createProviderReviewDeps", () => {
     expect(getOllamaProxyToken).toHaveBeenCalledOnce();
     expect(persistAndProbeOllamaProxy).toHaveBeenCalledOnce();
     expect(ensureOllamaAuthProxy).not.toHaveBeenCalled();
+  });
+});
+
+describe("native NVIDIA onboarding", () => {
+  it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
+      ok: true,
+    }));
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true })),
+      getProvider: vi.fn(async () => ({
+        ok: true,
+        value: {
+          name: "nemoclaw-nvidia-prod-v1",
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: "provider-id", resourceVersion: 4 },
+        },
+      })),
+      updateProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const updateSandbox = vi.fn(() => true);
+    const verifyInferenceRoute = vi.fn();
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell,
+      updateSandbox,
+      getSandbox: () => null,
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute,
+      verifyOnboardInferenceSmoke,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        { revalidateSandboxIdentity: () => undefined },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(updateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerName: "nemoclaw-nvidia-prod-v1",
+        credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-credential" }],
+        config: [],
+      }),
+    );
+    expect(
+      runOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toEqual([]);
+    expect(verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-id",
+        },
+      }),
+    );
+  });
+
+  it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
+    const providerAdapter = {
+      importProviderProfile: vi.fn(),
+      getProvider: vi.fn(),
+      updateProvider: vi.fn(),
+    } as unknown as OpenShellProviderAdapter;
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => ({ name: "alpha", provider: "nvidia-prod" }) as never,
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).rejects.toThrow(/Recreate this beta sandbox.*does not migrate existing beta sandboxes/u);
+
+    expect(providerAdapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,12 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
 import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+  nativeNvidiaProviderProfilePath,
+} from "../inference/native-nvidia";
+import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_AGENTS,
   TAVILY_PROVIDER_PROFILE_ID,
@@ -127,6 +133,9 @@ async function providerConfigEndpointFailure(
 
 function bundledProviderProfile(type: string): { profileType: string; profilePath: string } | null {
   const profileType = type.toLowerCase();
+  if (profileType === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
+    return { profileType, profilePath: nativeNvidiaProviderProfilePath() };
+  }
   const profilePath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -254,6 +263,8 @@ export async function runCredentialsAddAction(
   }
 
   const normalizedType = type.toLowerCase();
+  const nativeNvidiaCredentialAlias =
+    provider === NVIDIA_HOSTED_LOGICAL_PROVIDER && normalizedType === "nvidia";
   const isTavily =
     normalizedType === TAVILY_PROVIDER_PROFILE_ID ||
     normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID;
@@ -273,7 +284,12 @@ export async function runCredentialsAddAction(
       ]);
     }
   }
-  const effectiveType = isTavily ? webSearchProviderProfileId(normalizedType, agentName) : type;
+  const effectiveType = nativeNvidiaCredentialAlias
+    ? NVIDIA_HOSTED_NATIVE_PROFILE_ID
+    : isTavily
+      ? webSearchProviderProfileId(normalizedType, agentName)
+      : type;
+  const effectiveProvider = nativeNvidiaCredentialAlias ? NVIDIA_HOSTED_NATIVE_PROVIDER : provider;
   const compatibilityWarnings =
     normalizedType === TAVILY_PROVIDER_PROFILE_ID && !agentName
       ? [
@@ -399,12 +415,14 @@ export async function runCredentialsAddAction(
     // Registration records this provider as an explicit extra-provider intent.
     // Rebuild validates that intent against current source-backed MCP entries;
     // orphaned providers retained by conservative MCP removal are not intent.
-    const recordedReservation = recordExtraProvider(provider);
+    const recordedReservation = nativeNvidiaCredentialAlias
+      ? false
+      : recordExtraProvider(effectiveProvider);
     let keepReservation = false;
     try {
       const result = await providerAdapter.createProvider({
         target,
-        name: provider,
+        name: effectiveProvider,
         type: providerType,
         credentials: credentials.map((credential) => ({
           name: credential,
@@ -427,7 +445,11 @@ export async function runCredentialsAddAction(
 
       const lines = [`  Could not register provider '${provider}'.`];
       if (isUncertainProviderCreateError(result.error)) {
-        const recovery = await reconcileUncertainProviderCreate(provider, target, providerAdapter);
+        const recovery = await reconcileUncertainProviderCreate(
+          effectiveProvider,
+          target,
+          providerAdapter,
+        );
         keepReservation = recovery.keepReservation;
         lines.push(`  ${result.error.message}`, ...recovery.lines);
         return fail(lines);
@@ -443,7 +465,7 @@ export async function runCredentialsAddAction(
       }
       return fail(lines);
     } finally {
-      if (recordedReservation && !keepReservation) forgetExtraProvider(provider);
+      if (recordedReservation && !keepReservation) forgetExtraProvider(effectiveProvider);
     }
   });
 }

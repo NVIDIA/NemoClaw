@@ -644,9 +644,13 @@
     },
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
-      "liveSources": ["test/e2e/live/hermes-inference-switch-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-inference-switch-helpers.ts",
+        "test/e2e/live/public-nvidia-switch-provider.ts"
+      ],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -826,6 +830,7 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/inference-switch-workflow-boundary.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/security/admin-approval-helper.test.ts",
