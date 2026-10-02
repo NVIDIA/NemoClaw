@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -142,12 +143,17 @@ describe("startAll named tunnel validation", () => {
         cloudflareTunnelToken: "named-secret",
         processControl,
       });
+      let originalPidContents: string | undefined;
       const pidFileDeadline = Date.now() + 5_000;
-      while (!existsSync(pidFile) && Date.now() < pidFileDeadline) {
+      while (originalPidContents === undefined && Date.now() < pidFileDeadline) {
+        originalPidContents = await readFile(pidFile, "utf-8").catch(
+          (error: NodeJS.ErrnoException) =>
+            error.code === "ENOENT" ? undefined : Promise.reject(error),
+        );
         await new Promise((resolveWait) => setTimeout(resolveWait, 25));
       }
-      expect(existsSync(pidFile)).toBe(true);
-      const originalPid = Number(readFileSync(pidFile, "utf-8"));
+      expect(originalPidContents).toBeDefined();
+      const originalPid = Number(originalPidContents);
       cleanup = () => {
         try {
           process.kill(originalPid, "SIGTERM");
@@ -174,7 +180,9 @@ describe("startAll named tunnel validation", () => {
       });
       await lockIsAcquired;
       await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
-      writeFileSync(pidFile, String(replacementPid));
+      const replacementPidFile = join(pidDir, "cloudflared.pid.replacement");
+      writeFileSync(replacementPidFile, String(replacementPid), { flag: "wx", mode: 0o600 });
+      renameSync(replacementPidFile, pidFile);
       releaseLock();
       await lockPromise;
       await startPromise;

@@ -26,6 +26,7 @@ test(
         "register the non-default dashboard port",
         "wait for the local dashboard origin",
         "start the quick tunnel and discover its URL",
+        "verify cloudflared targets the registered dashboard port",
         "probe public tunnel reachability",
         "stop the tunnel and confirm status removal",
       ],

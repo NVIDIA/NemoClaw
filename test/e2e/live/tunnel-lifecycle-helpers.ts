@@ -238,6 +238,7 @@ export async function runTunnelLifecycleContract({
     preservedBoundaries: [
       "real Docker/OpenShell OpenClaw sandbox onboarding",
       "host cloudflared binary and quick-tunnel registration",
+      "recorded cloudflared process targets the registered dashboard port",
       "nemoclaw tunnel start/status/stop CLI commands",
       "local dashboard origin readiness before tunnel attribution",
       "public trycloudflare HTTP probe with dashboard marker assertion",
@@ -349,6 +350,29 @@ export async function runTunnelLifecycleContract({
     );
   }
 
+  progress.phase("verify cloudflared targets the registered dashboard port");
+  const cloudflaredPidFile = path.join(
+    "/tmp",
+    `nemoclaw-services-${SANDBOX_NAME}`,
+    "cloudflared.pid",
+  );
+  const cloudflaredPid = Number(fs.readFileSync(cloudflaredPidFile, "utf8").trim());
+  const cloudflaredCommand = await host.command(
+    "ps",
+    ["-ww", "-p", String(cloudflaredPid), "-o", "args="],
+    {
+      artifactName: "cloudflared-command-line-for-registered-port",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  const expectedCloudflaredTarget = `cloudflared tunnel --url http://localhost:${LOCAL_DASHBOARD_PORT}`;
+  const cloudflaredTargetsRegisteredPort =
+    Number.isSafeInteger(cloudflaredPid) &&
+    cloudflaredPid > 0 &&
+    cloudflaredCommand.exitCode === 0 &&
+    cloudflaredCommand.stdout.includes(expectedCloudflaredTarget);
+
   let tunnelUrl: string | undefined;
   let lastStatusText = "";
   for (let attempt = 1; attempt <= 15; attempt += 1) {
@@ -450,9 +474,10 @@ export async function runTunnelLifecycleContract({
       `[NemoClaw fault] Tunnel returned unexpected HTTP ${lastPublicProbe!.httpCode} while local stayed healthy; body prefix: ${lastPublicProbe!.body.slice(0, 200)}`,
     );
   }
-  expect(lastPublicProbe!.body, "public tunnel must serve OpenClaw dashboard markers").toMatch(
-    DASHBOARD_MARKER_PATTERN,
-  );
+  expect(
+    DASHBOARD_MARKER_PATTERN.test(lastPublicProbe!.body) && cloudflaredTargetsRegisteredPort,
+    `Public tunnel must serve OpenClaw and recorded cloudflared PID ${cloudflaredPid} must target the registered dashboard port ${LOCAL_DASHBOARD_PORT}; ps exit ${cloudflaredCommand.exitCode}: ${cloudflaredCommand.stdout.trim()} ${resultText(cloudflaredCommand)}`,
+  ).toBe(true);
 
   progress.phase("stop the tunnel and confirm status removal");
   const stop = await host.nemoclaw(["tunnel", "stop"], {
