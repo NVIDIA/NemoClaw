@@ -313,6 +313,35 @@ describe("textContainsCredential", () => {
   it("does not exempt values that merely extend the Microsoft Teams QA marker", () => {
     expect(textContainsCredential("Authorization: Bearer private-qa-live")).toBe(true);
   });
+
+  it("allows only @pinojs/redact's complete public wildcard fixture", () => {
+    const publishedFixture = [
+      "// Tests for Issue #2319: @pinojs/redact fails to redact patterns with 3+ consecutive wildcards",
+      "password: 'secret-2-levels'",
+      "password: 'secret-3-levels'",
+      "password: 'secret-4-levels'",
+      "password: 'secret-5-levels'",
+      "password: 'secret-6-levels'",
+      "password: 'secret-value'",
+      "token: 'token1'",
+      "token: 'token2'",
+      "token: 'token3'",
+      "password: 'secret'",
+      "username: 'admin'",
+      "password: 'secret1'",
+      "password: 'secret2'",
+      "authorization: 'Bearer secret-token'",
+      "authorization: 'Bearer another-token'",
+    ].join("\n");
+
+    expect(textContainsCredential(publishedFixture)).toBe(false);
+    expect(
+      textContainsCredential(publishedFixture.replace("another-token", "another-token-x")),
+    ).toBe(true);
+    expect(textContainsCredential(publishedFixture.replace("Issue #2319", "Issue #2320"))).toBe(
+      true,
+    );
+  });
 });
 
 describe("npmConfigContainsCredentialDirective", () => {

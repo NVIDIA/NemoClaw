@@ -28,6 +28,28 @@ const BOTOCORE_DSA_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${DSA_PRIVATE_KEY_BEGIN}<a
 // whatsapp-rust-bridge publishes this byte sequence inside its generated WASM
 // bundle. It only happens to have the shape of an AWS access-key identifier.
 const WHATSAPP_RUST_BRIDGE_WASM_AWS_SHAPED_BYTES = ["AKIA", "1JDQYCQC", "ANIA9GDQ"].join("");
+// @pinojs/redact ships one wildcard test containing these synthetic values.
+// Require its complete published signature so any altered or partial fixture
+// continues through the ordinary credential checks.
+const PINO_REDACT_WILDCARD_TEST_MARKER =
+  "Tests for Issue #2319: @pinojs/redact fails to redact patterns with 3+ consecutive wildcards";
+const PINO_REDACT_PUBLIC_CREDENTIAL_FIXTURES = [
+  "password: 'secret-2-levels'",
+  "password: 'secret-3-levels'",
+  "password: 'secret-4-levels'",
+  "password: 'secret-5-levels'",
+  "password: 'secret-6-levels'",
+  "password: 'secret-value'",
+  "token: 'token1'",
+  "token: 'token2'",
+  "token: 'token3'",
+  "password: 'secret'",
+  "username: 'admin'",
+  "password: 'secret1'",
+  "password: 'secret2'",
+  "authorization: 'Bearer secret-token'",
+  "authorization: 'Bearer another-token'",
+] as const;
 
 export {
   CREDENTIAL_PLACEHOLDER,
@@ -68,8 +90,16 @@ export function textContainsHighConfidenceCredential(
 }
 
 function textWithoutSafeCredentialFixtures(value: string): string {
+  const normalizedPinoRedactFixture =
+    value.includes(PINO_REDACT_WILDCARD_TEST_MARKER) &&
+    PINO_REDACT_PUBLIC_CREDENTIAL_FIXTURES.every((fixture) => value.includes(fixture))
+      ? PINO_REDACT_PUBLIC_CREDENTIAL_FIXTURES.reduce(
+          (normalized, fixture) => normalized.replaceAll(fixture, "value: 'unused'"),
+          value,
+        )
+      : value;
   return (
-    value
+    normalizedPinoRedactFixture
       .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
         isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
