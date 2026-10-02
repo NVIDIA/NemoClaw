@@ -160,13 +160,29 @@ The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main
 It is not installed by the standard installer. Host installs can use `nemoclaw backup-all` for the installer safety backup, or `nemoclaw <name> download` for an independent file copy.
 </Note>
 
-Run the contributor setup from the NemoClaw source repository root before you create a backup:
+The helper requires the `openshell` command on your `PATH` and a built NemoClaw CLI in this checkout.
+Contributor setup builds the CLI and requires Node.js 22.19 or newer, npm 10 or newer, Git, and Python 3.11 or newer.
+Run contributor setup from the NemoClaw source repository root:
 
 ```bash
 npm run dev:setup
 ```
 
-The helper checks that the built NemoClaw CLI can start before it creates a backup.
+Setup installs dependencies and builds the CLI before it type-checks the CLI and plugin and runs the contributor readiness checks.
+Verify that the built CLI prints its version.
+The helper runs this check before it creates a backup:
+
+```bash
+./bin/nemoclaw.js --version
+```
+
+If the command prints a version, you can create a backup even when setup fails at a later step.
+For example, the readiness checks require `hadolint`, GitHub CLI authentication, and commit signing, which the helper does not use.
+To finish setup for other contributor tasks after the CLI type check exhausts the Node.js heap, rerun setup with a larger heap:
+
+```bash
+NODE_OPTIONS=--max-old-space-size=8192 npm run dev:setup
+```
 
 Back up a workspace:
 
