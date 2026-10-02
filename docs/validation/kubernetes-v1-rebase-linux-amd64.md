@@ -8,6 +8,11 @@ The [accepted Kubernetes branch scope](../design/scope.md#kubernetes-development
 The rebase preserves the Kubernetes and OpenShift implementation while adopting upstream's stdin configuration and invocation contract.
 Both agent images and the native bundle were rebuilt from this revision; older images do not establish compatibility with that contract.
 
+The published integration uses normal merge `0c510713c84e92e2fa19030919476b9e2dc2ca3c`, preserving the existing PR history.
+Its complete file tree matches the tested rebase plus this validation record at local revision `5527b28a62c719344d74dbf827d27659a74804e9`.
+Both trees have Git object ID `10625f24c438c53fac501111fd47da798210e221`; the publication note is a subsequent documentation-only change.
+No runtime source or dependency changed when selecting the normal merge.
+
 ## Offline Checks
 
 | Check | Result |
