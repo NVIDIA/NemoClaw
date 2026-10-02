@@ -102,3 +102,9 @@ Accept a single Linux manifest or an index with one Linux platform and attestati
 Verify the authored image digest and every selected index, manifest, and configuration blob before using the image's catalog; never substitute a bundled default runtime or executable list.
 The local image-build tools may export the metadata from an existing immutable image without publishing or pulling it.
 The optional local test fixture supplies this artifact automatically; deployment inputs and credential values remain outside Git.
+
+On 2026-10-02, the user requested running development tests while native Fabric health remains unsupported.
+The optional cluster E2E test may explicitly continue after an apply whose only failures are fresh, matching `fabric_health_unsupported` readiness observations for fully configured, retained sandboxes.
+It must reject failed or unknown health, incomplete provisioning, malformed or stale observations, and unrelated errors; invocation, state identity, export/reapply, and destroy assertions remain required.
+This exception belongs only to the opt-in test and must report Fabric health as unverified.
+It does not change the normal CLI/SDK apply contract, the manifest schema, or the meaning of a successful native health check.

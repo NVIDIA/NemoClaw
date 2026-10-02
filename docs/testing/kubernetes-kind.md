@@ -23,6 +23,10 @@ On success, it destroys the deployment and deletes its owned cluster, including 
 On failure or interruption, it retains the cluster and private state for diagnosis.
 Previous clusters are preserved.
 
+The default test requires successful native Fabric readiness.
+At the current pin, [unsupported Fabric health fails apply](../usage.md#fabric-health-during-apply).
+Use the explicit [development mode](#test-with-unsupported-fabric-health) below to exercise the remaining lifecycle without qualifying health.
+
 From the repository root, read the key without placing its value in shell history and run:
 
 ```sh
@@ -73,6 +77,29 @@ The failed cluster remains until its printed ownership-checked cleanup command i
 
 The [Linux AMD64 Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful run at its recorded Fabric revision; it does not qualify later source changes.
 Rebuild the bundle and agent image together when testing another revision.
+
+## Test with Unsupported Fabric Health
+
+Use this temporary development mode with the same prerequisites and exported `NVIDIA_INFERENCE_API_KEY` described above.
+It creates a fresh disposable cluster, sends real requests through all three agents, and deletes its owned cluster after the development checks pass.
+From the repository root:
+
+```sh
+python3 tools/kubernetes/e2e.py --allow-unsupported-fabric-health
+```
+
+The option selects a separate test; it changes no deployment YAML or normal CLI/SDK behavior.
+SDK apply still performs its checks and returns an error for unsupported Fabric health.
+The test continues only when completed provisioning and fresh retained observations prove that the only failures are exactly `fabric_health_unsupported`.
+Failed or unknown health, authentication or transport failures, incomplete provisioning, and malformed or stale observations still stop the test and retain resources.
+
+The test checks three real agent responses, an unchanged plan, CLI export, reapply with stable resource identities, and CLI destroy.
+The same narrow exception is required again if reapply reports unsupported health; reapply is not reported as a successful normal SDK apply.
+Success prints `PASS (development)` and explicitly reports that Fabric health remains unverified.
+This result does not qualify native readiness or the default full lifecycle test.
+The private run record identifies which test was selected, and a missing completion marker prevents success and cluster cleanup.
+Use `--keep-cluster` with this option to retain the cluster after the test; SDK destroy still removes the agents and gateway.
+Once supported native health is available, rerun the default command without this option.
 
 ## Test the Managed YAML Path
 

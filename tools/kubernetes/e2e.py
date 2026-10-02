@@ -33,12 +33,19 @@ PYTHON = sys.executable
 KEY = "NVIDIA_INFERENCE_API_KEY"
 STATE_PARENT = Path.home() / ".local/state/nemoclaw"
 FULL_TEST = "owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys"
+DEVELOPMENT_TEST = "owned_kubernetes_gateway_lifecycle_with_unsupported_fabric_health"
+DEVELOPMENT_COMPLETED = "Verified development lifecycle (unsupported Fabric health permitted)."
 RETRY_TEST = "owned_kubernetes_agent_response_from_retained_state"
 PLACEHOLDER_IMAGE = "registry.example.com/nemoclaw/openclaw-kubernetes@sha256:" + "0" * 64
 
 
 class Error(Exception):
     pass
+
+
+def verify_development_lifecycle(output):
+    if DEVELOPMENT_COMPLETED not in output.splitlines():
+        raise Error("development lifecycle did not confirm every assertion; resources retained")
 
 
 def platforms(system, machine):
@@ -289,7 +296,13 @@ class Runner:
         if self.available([str(binary), "--version"]) != expected:
             raise Error("downloaded protoc did not report the pinned version")
 
-    def execute(self, *, keep_cluster=False):
+    def execute(self, *, keep_cluster=False, allow_unsupported_fabric_health=False):
+        lifecycle_test = DEVELOPMENT_TEST if allow_unsupported_fabric_health else FULL_TEST
+        if allow_unsupported_fabric_health:
+            self.emit(
+                "Development mode: continue only for confirmed fabric_health_unsupported.\n"
+                "Fabric health remains unverified; normal CLI/SDK apply is unchanged.\n"
+            )
         cargo, docker, native, agent = self.preflight()
         self.run(
             "Build verified native bundle",
@@ -416,6 +429,7 @@ class Runner:
                     "platform": native,
                     "image": image,
                     "cluster": self.cluster,
+                    "lifecycle_test": lifecycle_test,
                     "environment": test_env,
                 },
                 indent=2,
@@ -438,19 +452,31 @@ class Runner:
             "#!/bin/sh\nset -eu\ncd " + shlex.quote(str(REPO)) + "\n" + shlex.join(retry) + "\n",
         )
         self.emit(f"\nManifest: {config}\nPrivate kubeconfig: {cluster_state / 'kubeconfig'}\n")
-        self.run(
-            "Run full Kubernetes lifecycle",
-            [str(test_binary), FULL_TEST, "--ignored", "--exact", "--nocapture"],
+        lifecycle_output = self.run(
+            "Run Kubernetes lifecycle with unsupported Fabric health allowed"
+            if allow_unsupported_fabric_health
+            else "Run full Kubernetes lifecycle",
+            [str(test_binary), lifecycle_test, "--ignored", "--exact", "--nocapture"],
             env=test_env,
             inference=True,
         )
+        if allow_unsupported_fabric_health:
+            verify_development_lifecycle(lifecycle_output)
         if not keep_cluster:
             self.run(
                 "Delete completed test cluster",
                 helper
                 + ["cleanup", "--state-dir", str(cluster_state), "--confirm-cluster", self.cluster],
             )
-        self.emit("\nPASS: three agent responses, unchanged plan, export/reapply, and destroy.\n")
+        if allow_unsupported_fabric_health:
+            self.emit(
+                "\nPASS (development): three agent responses, unchanged plan, export/reapply, and destroy.\n"
+                "Fabric health remains unverified; normal apply is not qualified.\n"
+            )
+        else:
+            self.emit(
+                "\nPASS: three agent responses, unchanged plan, export/reapply, and destroy.\n"
+            )
         self.emit(
             "Cluster retained by --keep-cluster.\n"
             if keep_cluster
@@ -527,7 +553,14 @@ def main():
         action="store_true",
         help="check the exported key and sample model directly; do not build or create a cluster",
     )
+    parser.add_argument(
+        "--allow-unsupported-fabric-health",
+        action="store_true",
+        help="development test only: continue for confirmed unsupported Fabric health; other failures still stop",
+    )
     args = parser.parse_args()
+    if args.check_inference and args.allow_unsupported_fabric_health:
+        parser.error("--allow-unsupported-fabric-health requires a lifecycle test")
     runner = None
     try:
         key, env = environ(os.environ)
@@ -544,7 +577,10 @@ def main():
         signal.signal(signal.SIGTERM, interrupted)
         runner = Runner(new_state(), key, env)
         runner.emit(f"Private test directory: {runner.state}\n")
-        runner.execute(keep_cluster=args.keep_cluster)
+        runner.execute(
+            keep_cluster=args.keep_cluster,
+            allow_unsupported_fabric_health=args.allow_unsupported_fabric_health,
+        )
         return 0
     except (Error, InferenceCheckError, OSError, ValueError, KeyboardInterrupt) as error:
         message = (

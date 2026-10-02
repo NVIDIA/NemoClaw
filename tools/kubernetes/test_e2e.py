@@ -106,13 +106,38 @@ class LocalTestTests(unittest.TestCase):
                 e2e.new_state()
 
     def test_no_cluster_cleanup_on_failure_and_only_owned_cleanup_on_success(self):
-        for fail, keep in [(False, False), (True, False), (False, True)]:
-            with self.subTest(fail=fail, keep=keep), tempfile.TemporaryDirectory() as directory:
+        for fail, keep, allow in [
+            (False, False, False),
+            (True, False, False),
+            (False, True, False),
+            (False, False, True),
+            (True, False, True),
+            (False, True, True),
+        ]:
+            with (
+                self.subTest(fail=fail, keep=keep, allow=allow),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 state = Path(directory)
                 runner = e2e.Runner(state, "private-test-key", {})
                 calls = []
+                output = io.StringIO()
+                lifecycle_stage = (
+                    "Run Kubernetes lifecycle with unsupported Fabric health allowed"
+                    if allow
+                    else "Run full Kubernetes lifecycle"
+                )
 
-                def run(stage, args, *, calls=calls, state=state, fail=fail, **kwargs):
+                def run(
+                    stage,
+                    args,
+                    *,
+                    calls=calls,
+                    state=state,
+                    fail=fail,
+                    lifecycle_stage=lifecycle_stage,
+                    **kwargs,
+                ):
                     calls.append((stage, args, kwargs))
                     if stage == "Create isolated kind cluster":
                         (state / "kind").mkdir()
@@ -140,11 +165,14 @@ class LocalTestTests(unittest.TestCase):
                                 }
                             ]
                         )
-                    if stage == "Run full Kubernetes lifecycle" and fail:
-                        raise e2e.Error("inference failed")
+                    if stage == lifecycle_stage:
+                        if fail:
+                            raise e2e.Error("inference failed")
+                        return "Verified development lifecycle (unsupported Fabric health permitted).\n"
                     return ""
 
                 with (
+                    patch("sys.stdout", output),
                     patch.object(runner, "run", side_effect=run),
                     patch.object(
                         runner,
@@ -159,18 +187,37 @@ class LocalTestTests(unittest.TestCase):
                 ):
                     if fail:
                         with self.assertRaises(e2e.Error):
-                            runner.execute(keep_cluster=keep)
+                            runner.execute(keep_cluster=keep, allow_unsupported_fabric_health=allow)
                     else:
-                        runner.execute(keep_cluster=keep)
+                        runner.execute(keep_cluster=keep, allow_unsupported_fabric_health=allow)
                 cleanups = [c for c in calls if c[0] == "Delete completed test cluster"]
                 self.assertEqual(len(cleanups), int(not fail and not keep))
                 if cleanups:
                     self.assertEqual(
                         cleanups[0][1][-2:], ["--confirm-cluster", "nemoclaw-v1-1234abcd"]
                     )
-                lifecycle = next(c for c in calls if c[0] == "Run full Kubernetes lifecycle")
+                lifecycle = next(c for c in calls if c[0] == lifecycle_stage)
                 self.assertTrue(lifecycle[2]["inference"])
                 self.assertEqual(lifecycle[1][0], str(state / "kubernetes-live-test"))
+                expected_test = (
+                    "owned_kubernetes_gateway_lifecycle_with_unsupported_fabric_health"
+                    if allow
+                    else e2e.FULL_TEST
+                )
+                self.assertEqual(
+                    lifecycle[1][1:], [expected_test, "--ignored", "--exact", "--nocapture"]
+                )
+                self.assertEqual(
+                    json.loads((state / "run.json").read_text())["lifecycle_test"], expected_test
+                )
+                if fail:
+                    self.assertNotIn("PASS", output.getvalue())
+                elif allow:
+                    self.assertIn("PASS (development)", output.getvalue())
+                    self.assertIn("Fabric health remains unverified", output.getvalue())
+                    self.assertNotIn("PASS: three agent", output.getvalue())
+                else:
+                    self.assertIn("PASS: three agent", output.getvalue())
                 build = next(c for c in calls if c[0] == "Build Kubernetes agent image")
                 self.assertIn(str(e2e.REPO / "image/build_fabric.py"), build[1])
                 self.assertEqual(
@@ -204,8 +251,43 @@ class LocalTestTests(unittest.TestCase):
                 self.assertFalse((state / "sdk-state").exists())
                 self.assertNotIn("private-test-key", (state / "deployment.yaml").read_text())
                 for stage, _, kwargs in calls:
-                    if stage != "Run full Kubernetes lifecycle":
+                    if stage != lifecycle_stage:
                         self.assertFalse(kwargs.get("inference", False))
+
+    def test_development_mode_requires_completed_lifecycle_evidence(self):
+        for output in ["", "running 0 tests\n", "test result: ok. 0 passed; 0 failed\n"]:
+            with self.subTest(output=output), self.assertRaises(e2e.Error):
+                e2e.verify_development_lifecycle(output)
+        e2e.verify_development_lifecycle(
+            "Verified development lifecycle (unsupported Fabric health permitted).\n"
+        )
+
+    def test_health_allowance_cannot_be_combined_with_authentication_only_check(self):
+        with (
+            patch("sys.argv", ["e2e.py", "--check-inference", "--allow-unsupported-fabric-health"]),
+            patch("sys.stderr", io.StringIO()),
+            patch.object(e2e, "check_inference") as inference,
+            self.assertRaises(SystemExit),
+        ):
+            e2e.main()
+        inference.assert_not_called()
+
+    def test_cli_requires_explicit_development_option(self):
+        for arguments, allow in [([], False), (["--allow-unsupported-fabric-health"], True)]:
+            with (
+                self.subTest(arguments=arguments),
+                patch("sys.argv", ["e2e.py", *arguments]),
+                patch.dict(os.environ, {e2e.KEY: "private-test-key"}),
+                patch("sys.stdout", io.StringIO()),
+                patch.object(e2e, "check_inference"),
+                patch.object(e2e, "new_state", return_value=Path("/private-test-state")),
+                patch.object(e2e, "Runner") as runner,
+                patch("signal.signal"),
+            ):
+                self.assertEqual(e2e.main(), 0)
+                runner.return_value.execute.assert_called_once_with(
+                    keep_cluster=False, allow_unsupported_fabric_health=allow
+                )
 
     def test_mac_uses_installed_rustup_pin_even_when_standalone_cargo_precedes_it(self):
         with tempfile.TemporaryDirectory() as directory:

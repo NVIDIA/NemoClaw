@@ -9,6 +9,9 @@ use std::{
     process::Command,
 };
 
+#[path = "support/fabric_health.rs"]
+mod fabric_health;
+
 fn cluster_document(reader: impl std::io::Read) -> Document {
     let document = Document::parse(reader).unwrap();
     assert!(!document.spec.sandboxes.is_empty());
@@ -86,6 +89,56 @@ async fn owned_kubernetes_agent_response_from_retained_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "mutates an explicitly configured owned cluster gateway and invokes its model"]
 async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys() {
+    cluster_lifecycle(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "development-only lifecycle with explicitly permitted unsupported Fabric health"]
+async fn owned_kubernetes_gateway_lifecycle_with_unsupported_fabric_health() {
+    cluster_lifecycle(true).await;
+    println!("Verified development lifecycle (unsupported Fabric health permitted).");
+}
+
+fn read_json(path: &Path) -> serde_json::Value {
+    let bytes = fs::read(path).unwrap_or_else(|_| panic!("cannot read retained test state"));
+    serde_json::from_slice(&bytes).unwrap_or_else(|_| panic!("invalid retained test state JSON"))
+}
+
+async fn apply_for_test(
+    deployment: &Deployment,
+    document: &Document,
+    state: &Path,
+    cancel: &CancellationToken,
+    allow_unsupported_health: bool,
+) -> Option<nemoclaw_sdk::OperationResult> {
+    let state_path = state.join("terraform.tfstate");
+    let prior = if allow_unsupported_health && state_path.exists() {
+        fabric_health::tokens(&read_json(&state_path))
+            .expect("invalid previous Fabric observations")
+    } else {
+        BTreeMap::new()
+    };
+    match deployment.apply(document, cancel).await {
+        Ok(result) => Some(result),
+        Err(error) if allow_unsupported_health => {
+            fabric_health::verify(
+                &error,
+                document,
+                &prior,
+                &read_json(&state.join("intent.json")),
+                &read_json(&state_path),
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+            println!(
+                "Fabric health unverified: exact unsupported observation permitted for this development test only."
+            );
+            None
+        }
+        Err(error) => panic!("SDK apply failed: {error}"),
+    }
+}
+
+async fn cluster_lifecycle(allow_unsupported_health: bool) {
     let config = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_KUBERNETES_CONFIG").expect("explicit config required"),
     );
@@ -119,7 +172,14 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     let deployment = Deployment::new(&state, &bundle);
     let cancel = CancellationToken::new();
     deployment.plan(&document, &cancel).await.unwrap();
-    deployment.apply(&document, &cancel).await.unwrap();
+    apply_for_test(
+        &deployment,
+        &document,
+        &state,
+        &cancel,
+        allow_unsupported_health,
+    )
+    .await;
     let original_ids = resource_ids(&state);
     // This explicit E2E invocation goes through the existing Fabric runtime.
     // Its adapter-specific test oracle accepts FOUR, never an echoed prompt;
@@ -157,12 +217,29 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     let exported = Document::parse(fs::File::open(&exported_path).unwrap()).unwrap();
     assert_eq!(exported.digest(), document.digest());
     assert_eq!(resource_ids(&state), original_ids);
-    let unchanged = deployment.apply(&exported, &cancel).await.unwrap();
-    assert!(
-        unchanged.changes.is_empty(),
-        "unchanged Kubernetes apply must preserve resource identities"
-    );
+    if let Some(unchanged) = apply_for_test(
+        &deployment,
+        &exported,
+        &state,
+        &cancel,
+        allow_unsupported_health,
+    )
+    .await
+    {
+        assert!(
+            unchanged.changes.is_empty(),
+            "unchanged Kubernetes apply must preserve resource identities"
+        );
+    }
     assert_eq!(resource_ids(&state), original_ids);
+    if allow_unsupported_health {
+        let unchanged = deployment.plan(&exported, &cancel).await.unwrap();
+        assert!(
+            unchanged.changes.is_empty(),
+            "development reapply must plan no changes"
+        );
+        assert_eq!(resource_ids(&state), original_ids);
+    }
 
     let result = Command::new(
         bundle
