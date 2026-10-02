@@ -84,7 +84,11 @@ function provider(
         providerId,
         supported: true,
         contractVersion: 1,
-        capabilities: { backup: true, restore: true, managedProfileRestore: true },
+        capabilities: {
+          backup: true,
+          restore: true,
+          managedProfileRestore: true,
+        },
         preflight,
         capture,
         validateRestore,
@@ -140,7 +144,7 @@ describe("snapshot provider lifecycle", () => {
       ...captureSandboxRuntimeSnapshot(bundle, target),
       lifecycleState: "stopped" as const,
     };
-    const projection = { directories: ["workspace"], prefixes: [], files: ["openclaw.json"] };
+    const projection = { nativeRoot: "/sandbox" };
     expect(prepareSandboxStoppedStateCapture(bundle, target, source, projection)).toBeNull();
     const capture = vi.fn(async (_fd: number) => undefined);
     const assertCurrent = vi.fn();
@@ -150,14 +154,17 @@ describe("snapshot provider lifecycle", () => {
       expect(layout).not.toBe(projection);
       expect(Object.isFrozen(entry)).toBe(true);
       expect(Object.isFrozen(snapshot.runtime.runtime)).toBe(true);
-      expect(Object.isFrozen(layout.directories)).toBe(true);
+      expect(layout.nativeRoot).toBe("/sandbox");
       return { capture, assertCurrent };
     });
-    const owner = { ...bundle, snapshot: { ...surface, prepareStoppedStateCapture: prepare } };
+    const owner = {
+      ...bundle,
+      snapshot: { ...surface, prepareStoppedStateCapture: prepare },
+    };
     const prepared = prepareSandboxStoppedStateCapture(owner, target, source, projection)!;
-    await prepared.capture(123);
+    await prepared.capture(123, 456);
     prepared.assertCurrent();
-    expect(capture).toHaveBeenCalledWith(123);
+    expect(capture).toHaveBeenCalledWith(123, 456);
     expect(assertCurrent).toHaveBeenCalledOnce();
     expect(() =>
       prepareSandboxStoppedStateCapture(
@@ -233,7 +240,10 @@ describe("snapshot provider lifecycle", () => {
       lifecycleGeneration: "generation-1",
       runtime: {
         ...runtime(),
-        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+        runtime: {
+          kind: "replacement-session",
+          handle: "opaque-provider-owned-runtime",
+        },
       },
       managedProfile,
     });
@@ -241,7 +251,10 @@ describe("snapshot provider lifecycle", () => {
     expect(confirmSandboxRuntimeRestore(bundle, target, prepared).restoreReceipt).toMatchObject({
       providerHandle: "opaque-provider-owned-restore",
       runtime: {
-        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+        runtime: {
+          kind: "replacement-session",
+          handle: "opaque-provider-owned-runtime",
+        },
       },
     });
   });
@@ -289,8 +302,10 @@ describe("snapshot provider lifecycle", () => {
     expect(() =>
       prepareSandboxRuntimeRestore(bundle, sandbox("target"), source, managedProfile),
     ).toThrow("cannot represent the snapshot lifecycle state");
-
-    const approvedSurface = { ...surface, canRestoreLifecycle: vi.fn(() => true) };
+    const approvedSurface = {
+      ...surface,
+      canRestoreLifecycle: vi.fn(() => true),
+    };
     const prepared = prepareSandboxRuntimeRestore(
       { ...bundle, snapshot: approvedSurface },
       sandbox("target"),
@@ -402,8 +417,16 @@ describe("snapshot provider lifecycle", () => {
   });
 
   it.each([
-    { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
-    { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
+    {
+      field: "lifecycle state",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "generation-1",
+    },
+    {
+      field: "lifecycle generation",
+      lifecycleState: "running",
+      lifecycleGeneration: "changed",
+    },
   ] as const)(
     "rejects restore proof with changed $field",
     ({ lifecycleState, lifecycleGeneration }) => {

@@ -867,7 +867,10 @@ export async function inspectPolicyOnlyMcpEntry(
 export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+): Promise<{
+  bridges: Record<string, McpSourceEntry>;
+  sources: AgentMcpSourceSnapshot;
+}> {
   const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
   return { bridges, sources };
@@ -879,7 +882,10 @@ export async function inspectSourceBridgeState(
 export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+): Promise<{
+  bridges: Record<string, McpSourceEntry>;
+  sources: AgentMcpSourceSnapshot;
+}> {
   const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(
     sandbox,
