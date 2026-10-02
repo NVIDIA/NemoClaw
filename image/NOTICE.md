@@ -37,6 +37,11 @@ The SDK checks explicit filesystem grants against those image-owned paths withou
 It does not publish images.
 Direct Docker Bake builds do not attach discovery metadata.
 
+The `openclaw-kubernetes` recipe uses UID and GID `10001` and a private workspace seed.
+The `openclaw-openshift` recipe adds an empty, read-only seed that the pinned OpenShell non-root initializer copies into private directories owned by the namespace-selected identity.
+Both recipes preserve the upstream adapter and native-runtime notices.
+These source recipes and local image checks do not establish OpenShift cluster compatibility or runtime qualification.
+
 [`fabric/runtime.json`](fabric/runtime.json) declares the image-owned bridge command, environment, required read paths, and default filesystem and process policy.
 Installed catalog generation requires this manifest and records it under `runtime` with `schema_version: 1`.
 [`fabric/runtime_metadata.py`](fabric/runtime_metadata.py) resolves each descriptor's `requirements.binaries` through the declared `PATH` and records canonical executable paths beside the unchanged descriptor.

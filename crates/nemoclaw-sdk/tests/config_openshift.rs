@@ -1,0 +1,216 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use nemoclaw_sdk::{
+    compile::{compile, compile_runtime, runtime_targets},
+    config::{ComputeDriver, Document, KubernetesDistribution, schema},
+};
+use serde_json::{Value, json};
+
+fn input(managed: bool) -> Value {
+    let original =
+        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let mut input = serde_json::to_value(original).unwrap();
+    input["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("openshift");
+    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    if managed {
+        input["spec"]["gateway"] = json!({
+            "management": "managed", "endpoint": "https://127.0.0.1:17671",
+            "kubernetes": {
+                "distribution":"openshift",
+                "kubeconfig":{"env":"TEST_OPENSHIFT_CONFIG"},
+                "context":"explicit-openshift", "namespace":"owned-agents",
+                "prerequisites":{"agentSandbox":{"management":"existing"}},
+                "authentication":{"profile":"development"}
+            }
+        });
+    }
+    input
+}
+
+#[test]
+fn openshift_preserves_authored_profile_and_uses_the_upstream_kubernetes_driver() {
+    assert_eq!(
+        ComputeDriver::OpenShift.openshell_driver(),
+        ComputeDriver::Kubernetes
+    );
+    assert!(ComputeDriver::OpenShift.is_kubernetes());
+    assert!(!ComputeDriver::Docker.is_kubernetes());
+    for managed in [false, true] {
+        let input = input(managed);
+        assert!(jsonschema::is_valid(&schema::input_schema(), &input));
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            document.spec.sandboxes[0].runtime.provider,
+            ComputeDriver::OpenShift
+        );
+        let exported = document.yaml().unwrap();
+        let imported = Document::parse(exported.as_bytes()).unwrap();
+        assert_eq!(imported, document);
+        assert_eq!(imported.digest(), document.digest());
+        assert_eq!(serde_json::to_value(imported).unwrap(), input);
+        if managed {
+            assert_eq!(
+                document.spec.gateway.as_kubernetes().unwrap().distribution,
+                KubernetesDistribution::OpenShift
+            );
+            assert!(document.spec.gateway.as_local_managed().is_none());
+        }
+    }
+}
+
+#[test]
+fn managed_openshift_rejects_mismatched_or_omitted_distribution_and_mixed_drivers() {
+    let schema = schema::input_schema();
+    for distribution in [None, Some(json!("kubernetes")), Some(json!("unknown"))] {
+        let mut value = input(true);
+        match distribution {
+            Some(distribution) => {
+                value["spec"]["gateway"]["kubernetes"]["distribution"] = distribution;
+            }
+            None => {
+                value["spec"]["gateway"]["kubernetes"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("distribution");
+            }
+        }
+        assert!(!jsonschema::is_valid(&schema, &value));
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        if let Ok(document) = serde_json::from_value::<Document>(value) {
+            assert!(document.validate().is_err());
+        }
+    }
+    for managed in [false, true] {
+        for other_driver in ["docker", "podman", "kubernetes"] {
+            let mut value = input(managed);
+            let mut sandbox = value["spec"]["sandboxes"][0].clone();
+            sandbox["name"] = json!("other");
+            sandbox["runtime"]["provider"] = json!(other_driver);
+            value["spec"]["sandboxes"]
+                .as_array_mut()
+                .unwrap()
+                .push(sandbox);
+            assert!(!jsonschema::is_valid(&schema, &value));
+            assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        }
+    }
+    let mut wrong_driver = input(true);
+    wrong_driver["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    assert!(!jsonschema::is_valid(&schema, &wrong_driver));
+    assert!(Document::parse(wrong_driver.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn openshift_never_defaults_an_image_or_uses_a_local_managed_gateway() {
+    for managed in [false, true] {
+        let mut value = input(managed);
+        value["spec"]["sandboxes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("image");
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        let mut document = Document::parse(input(managed).to_string().as_bytes()).unwrap();
+        document.spec.sandboxes[0].image = Default::default();
+        document.defaults();
+        assert!(document.spec.sandboxes[0].image.ref_.is_empty());
+        assert!(document.validate().is_err());
+    }
+    let mut value = input(false);
+    value["spec"]["gateway"] = json!({"management":"managed"});
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    for managed in [false, true] {
+        let document = Document::parse(input(managed).to_string().as_bytes()).unwrap();
+        let graph = compile(&document, &generations, "0.1.0").unwrap();
+        assert!(graph["provider"].get("docker").is_none());
+        for phase in ["current", "apply"] {
+            assert_eq!(
+                graph["data"]["nemoclaw_gateway_capabilities"][phase]["required_compute_drivers"],
+                json!(["kubernetes"])
+            );
+        }
+        assert!(graph["data"].get("nemoclaw_engine_capabilities").is_none());
+        assert!(graph["data"].get("nemoclaw_target_hardware").is_none());
+        let targets = runtime_targets(&document, &generations).unwrap();
+        if managed {
+            assert_eq!(targets.len(), 2);
+            for target in targets {
+                let spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
+                assert_eq!(spec["settings"]["kubernetes"]["distribution"], "openshift");
+            }
+            let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
+            assert_eq!(platform["provider"]["nemoclaw"]["platform_only"], true);
+            assert!(platform.get("data").is_none());
+            assert_eq!(
+                platform["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+                true
+            );
+        } else {
+            assert!(targets.is_empty());
+        }
+    }
+}
+
+#[test]
+fn maintained_openshift_examples_declare_three_agents_and_pass_parser_and_schema() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for (managed, source) in [
+        (
+            true,
+            include_str!("../../../examples/openshift/managed-development.yaml"),
+        ),
+        (
+            false,
+            include_str!("../../../examples/openshift/external-gateway.yaml"),
+        ),
+    ] {
+        let value: Value = serde_saphyr::from_str(source).unwrap();
+        assert!(validator.is_valid(&value));
+        let document = Document::parse(source.as_bytes()).unwrap();
+        assert_eq!(document.spec.sandboxes.len(), 3);
+        assert_eq!(
+            document
+                .spec
+                .sandboxes
+                .iter()
+                .map(|sandbox| sandbox.name.as_str())
+                .collect::<Vec<_>>(),
+            ["assistant", "researcher", "reviewer"],
+        );
+        for sandbox in &document.spec.sandboxes {
+            assert_eq!(sandbox.runtime.provider, ComputeDriver::OpenShift);
+            assert_eq!(
+                sandbox.image.metadata.as_ref().unwrap().env,
+                "NEMOCLAW_AGENT_IMAGE_METADATA"
+            );
+        }
+        assert_eq!(document.has_runtime(), managed);
+        if managed {
+            let target = document.spec.gateway.as_kubernetes().unwrap();
+            assert_eq!(target.distribution, KubernetesDistribution::OpenShift);
+            assert_eq!(
+                target.prerequisites.agent_sandbox.management,
+                nemoclaw_sdk::config::KubernetesPrerequisiteManagement::Existing
+            );
+        } else {
+            assert!(document.spec.gateway.as_managed().is_none());
+        }
+        assert_eq!(
+            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+            document
+        );
+    }
+}

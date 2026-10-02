@@ -47,6 +47,8 @@ jobs:
         run: |
           python3 image/build_fabric.py --platform "$AGENT_PLATFORM" dummy
           python3 image/qualify_contract.py nc-fabric:dummy
+      - name: Check Fabric source changes with a warm build cache
+        run: NEMOCLAW_TEST_IMAGE_CACHE=1 python3 -B image/test_build_cache.py
       - name: Check packaging and generic Fabric lifecycle
         run: docker buildx bake check
       - name: Build local images with installed Fabric metadata

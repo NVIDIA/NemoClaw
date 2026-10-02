@@ -9,6 +9,55 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Kubernetes
+
+For the complete local kind test, use the [single-command runner](kubernetes-kind.md#run-the-complete-test) with `NVIDIA_INFERENCE_API_KEY`.
+The following procedure supplies deployment inputs manually for an existing test cluster.
+
+The [Kubernetes lifecycle test](../../crates/nemoclaw-e2e/tests/kubernetes_live.rs) accepts Kubernetes and OpenShift profiles with an external gateway or the explicit managed development gateway on a cluster owned by the test operator.
+It does not create a cluster.
+The external path requires no local Kubernetes tools; the managed path requires the explicit kubeconfig and client tools in the [managed gateway procedure](../kubernetes.md#provision-a-managed-development-gateway).
+Use the [existing-cluster prerequisites](../kubernetes.md#cluster-prerequisites) or the optional [local kind fixture](kubernetes-kind.md) to prepare the platform.
+
+Provide one or more OpenClaw sandboxes with `harness.kind: nvidia.fabric.openclaw`, `runtime.provider: kubernetes` or `openshift`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
+The three-agent [managed development example](../../examples/kubernetes/managed-development.yaml) can be used after replacing its deployment and cluster inputs.
+For OpenShift, use its [managed development example](../../examples/openshift/managed-development.yaml) and satisfy the [OpenShift prerequisites](../openshift.md#prepare-the-cluster-and-image).
+The test names and `NEMOCLAW_TEST_KUBERNETES_*` inputs remain the same for both profiles; the manifest selects the distribution.
+Supply the YAML's credential environment references to the test process using the [shared credential mechanism](../kubernetes.md#supply-credentials-as-on-docker).
+The test creates every declared sandbox and the provider registrations, verifies a real model response from each agent, requires a no-op plan, exports through the CLI with an unchanged configuration digest, and reapplies without changes.
+It verifies that sandbox and managed platform resource IDs remain unchanged across export and reapply, then destroys every owned sandbox and provider registration on success.
+Each agent request may incur provider charges.
+The cluster, OpenShell workspace, and SDK state remain; failures retain resources and state for explicit recovery.
+An external gateway remains under its existing owner.
+For a managed gateway, the test installs the platform during apply and uninstalls its owned OpenShell release after agent teardown while retaining credentials, storage, and prerequisites.
+
+From the repository root, using a verified bundle built from the same source:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+NEMOCLAW_TEST_KUBERNETES_CONFIG=/absolute/path/to/owned-deployment.yaml \
+NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/new-state \
+  cargo test --locked -p nemoclaw-e2e --test kubernetes_live \
+    owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys -- --ignored --exact
+```
+
+Do not reuse a deployment UID that was applied manually or by another test with a new state directory.
+To verify a model response from every agent in an already applied, idle deployment, retain its original state and run only the response test:
+
+```sh
+NEMOCLAW_TEST_KUBERNETES_CONFIG=/absolute/path/to/owned-deployment.yaml \
+NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/retained-state \
+  cargo test --locked -p nemoclaw-e2e --test kubernetes_live \
+    owned_kubernetes_agent_response_from_retained_state -- --ignored --exact
+```
+
+Both tests require the exact declared sandbox bindings in retained state before invoking any agent.
+The response test uses OpenShell exec to invoke every agent through its installed Fabric runtime, may run its tools, and does not delete resources.
+It checks the retained Fabric configuration before invocation and validates an OpenClaw response of `FOUR`; this response check belongs to the explicit test, not ordinary SDK apply or readiness.
+For a managed gateway, the SDK holds one authenticated tunnel across the sequential agent requests and closes it afterward.
+Do not run another command using the same managed loopback port concurrently.
+The [Kubernetes Fabric lifecycle result](../validation/kubernetes-fabric-live-linux-amd64.md) records a successful three-agent managed run on Linux AMD64 kind after integration with the current Fabric runtime.
+
 ## Dependency Upgrade Test
 
 Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.

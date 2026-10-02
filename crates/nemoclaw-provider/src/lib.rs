@@ -24,7 +24,13 @@ impl Definition {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            observed_running: matches!(kind, "managed_gateway" | "agent_configuration"),
+            observed_running: matches!(
+                kind,
+                "managed_gateway"
+                    | "agent_configuration"
+                    | nemoclaw_sdk::kubernetes::GATEWAY_KIND
+                    | nemoclaw_sdk::kubernetes::STORAGE_KIND
+            ),
         }
     }
 }
@@ -108,6 +114,7 @@ pub mod openshell;
 pub mod docker;
 pub mod engine_observation;
 pub mod hardware_observation;
+pub mod kubernetes;
 pub mod managed;
 pub mod services;
 pub(crate) use nemoclaw_sdk::{

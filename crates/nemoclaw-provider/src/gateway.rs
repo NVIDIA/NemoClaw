@@ -52,7 +52,7 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
     if !valid {
         diags.error(
             "Invalid gateway requirements",
-            "Select at least one compute driver: docker or podman.",
+            "Select at least one compute driver: docker, podman, kubernetes, or openshift.",
             AttributePath::new("required_compute_drivers"),
         );
         return None;
@@ -283,7 +283,11 @@ impl DataSource for GatewayDataSource {
                     .into(),
                 );
                 config.observation_json = Value::Value(serde_json::to_string(&observation).ok()?);
-                let incompatibility = observed.incompatibility(drivers.iter().copied());
+                let incompatibility = observed.incompatibility(
+                    required
+                        .iter()
+                        .map(|driver| driver.openshell_driver().as_str()),
+                );
                 config.compatible = Value::Value(incompatibility.is_none());
                 // OpenTofu formats condition messages even when the condition holds.
                 config.incompatibility = Value::Value(incompatibility.unwrap_or_default());
@@ -317,6 +321,8 @@ mod tests {
             (Value::Unknown, true),
             (Value::Value(vec![Value::Unknown]), true),
             (Value::Value(vec![Value::Value("docker".into())]), true),
+            (Value::Value(vec![Value::Value("podman".into())]), true),
+            (Value::Value(vec![Value::Value("kubernetes".into())]), true),
             (Value::Null, false),
             (Value::Value(vec![]), false),
             (Value::Value(vec![Value::Null]), false),

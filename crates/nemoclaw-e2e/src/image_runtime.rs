@@ -120,3 +120,54 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
     gateway.engine = fixture.endpoint.clone();
     fixture
 }
+
+/// A local OCI proof used by cluster protocol tests without any engine fixture.
+pub fn metadata(
+    document: &mut Document,
+    path: &std::path::Path,
+) -> std::sync::Arc<dyn nemoclaw_sdk::Secrets> {
+    use nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL;
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    fn blob(value: serde_json::Value) -> (String, String) {
+        let raw = value.to_string();
+        let hex: String = Sha256::digest(raw.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        (format!("sha256:{hex}"), raw)
+    }
+    let (config_digest, configuration) = blob(json!({
+        "architecture":"amd64", "os":"linux",
+        "config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog()).unwrap()}}
+    }));
+    let (manifest_digest, manifest) = blob(json!({
+        "schemaVersion":2, "mediaType":"application/vnd.oci.image.manifest.v1+json",
+        "config":{"mediaType":"application/vnd.oci.image.config.v1+json",
+            "digest":config_digest, "size":configuration.len()}, "layers":[]
+    }));
+    std::fs::write(
+        path,
+        json!({"schema_version":1,"manifest_digest":manifest_digest,
+        "blobs":{&manifest_digest:manifest,&config_digest:configuration}})
+        .to_string(),
+    )
+    .unwrap();
+    for sandbox in &mut document.spec.sandboxes {
+        sandbox.image.ref_ = format!("registry.example/fixture@{manifest_digest}");
+        sandbox.image.metadata = Some(nemoclaw_sdk::config::Credential {
+            env: "FIXTURE_IMAGE_METADATA".into(),
+        });
+    }
+    struct Location(std::path::PathBuf);
+    impl nemoclaw_sdk::Secrets for Location {
+        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            if reference == "FIXTURE_IMAGE_METADATA" {
+                Ok(self.0.to_str().unwrap().into())
+            } else {
+                Err(nemoclaw_sdk::ObservationError::Authentication)
+            }
+        }
+    }
+    std::sync::Arc::new(Location(path.to_path_buf()))
+}

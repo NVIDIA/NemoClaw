@@ -4,6 +4,84 @@ use crate::config::Gateway;
 
 use super::*;
 
+pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
+    let original =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(original).unwrap();
+    value["spec"]["gateway"] = json!({
+        "management":"managed", "endpoint":"https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
+            "prerequisites":{"agentSandbox":{"management":"existing"}},
+            "authentication":{"profile":"development"}
+        }
+    });
+    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("kubernetes");
+    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    (document, generations)
+}
+
+#[test]
+fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directories() {
+    struct ProvisioningOnly;
+    impl Secrets for ProvisioningOnly {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            if name == "TEST_KUBECONFIG" {
+                Ok("/private/kubeconfig".into())
+            } else {
+                Err(crate::ObservationError::Authentication)
+            }
+        }
+    }
+    let (mut document, _) = kubernetes_context();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "UNREAD_INFERENCE_KEY".into(),
+    });
+    let temporary = tempfile::tempdir().unwrap();
+    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(ProvisioningOnly));
+    let expected = temporary
+        .path()
+        .join("kubernetes")
+        .to_string_lossy()
+        .into_owned();
+    for directory in [
+        temporary.path().join("runtime"),
+        temporary.path().join(".export-copy"),
+    ] {
+        let environment = deployment
+            .provider_environment(&document, &directory, true)
+            .unwrap();
+        assert_eq!(environment[crate::kubernetes::STATE_ENV], expected);
+        assert_eq!(environment["TEST_KUBECONFIG"], "/private/kubeconfig");
+        assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
+        assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
+    }
+    deployment.operation_environment.insert(
+        crate::kubernetes::TOKEN_ENV.into(),
+        "synthetic-token".into(),
+    );
+    let environment = deployment
+        .provider_environment(&document, temporary.path(), true)
+        .unwrap();
+    assert_eq!(environment[crate::kubernetes::TOKEN_ENV], "synthetic-token");
+    for name in [
+        crate::kubernetes::STATE_ENV,
+        crate::kubernetes::TOKEN_ENV,
+        crate::kubernetes::CA_ENV,
+        crate::kubernetes::CERT_ENV,
+        crate::kubernetes::KEY_ENV,
+    ] {
+        assert!(matches!(
+            credential_environment([name], &ProvisioningOnly, temporary.path()),
+            Err(Error::Conflict(_))
+        ));
+    }
+}
+
 #[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
     for address in [

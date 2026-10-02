@@ -25,6 +25,16 @@ The [DGX Station Qwen3-4B and OpenClaw test](dgx-station-qwen3-openclaw-linux-ar
 The [DGX Station shared-model test](dgx-station-shared-model-linux-arm64.md) records separate OpenClaw and Pi responses through one managed Qwen3-4B service on the same Station class.
 The [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the managed Podman blocker at that revision.
 The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md) records the upstream TLS fix, real Deep Agents inference, lifecycle checks, and Docker upgrade results.
+The [Kubernetes kind development validation](kubernetes-kind-linux-amd64.md) records the local Linux AMD64 external-gateway stack, lifecycle checks, immutable artifacts, and upstream reliability limit.
+The [managed Kubernetes validation](kubernetes-managed-kind-linux-amd64.md) records SDK platform provisioning, three-agent lifecycle checks, hosted inference, and retained-storage teardown.
+The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-linux-amd64.md) records a full managed lifecycle with a real hosted response from every agent.
+The [single-command Kubernetes validation](kubernetes-script-linux-amd64.md) records automatic builds, fresh kind setup, the three-agent lifecycle, and ownership-checked cluster cleanup.
+The [inference authentication preflight](kubernetes-inference-preflight-linux-amd64.md) records the direct host check that now runs before local setup.
+The [v1 integration checks](kubernetes-v1-integration-linux-amd64.md) record regression and real OpenTofu fixture results after adopting upstream Fabric ownership.
+The [OpenShift offline validation](openshift-offline.md) records profile checks and the remaining live qualification requirements.
+The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-amd64.md) records a fresh Linux AMD64 run with three hosted agent responses, export/reapply, destroy, and owned-cluster cleanup.
+The [v1 rebase validation](kubernetes-v1-rebase-linux-amd64.md) records rebuilt Kubernetes/OpenShift images, passing integration and inference checks, and the live apply failure caused by unsupported native Fabric health.
+The [development health exception validation](kubernetes-development-health-linux-amd64.md) records a complete opt-in Kubernetes test with real agent replies and explicitly unverified Fabric health; ordinary SDK apply remains strict.
 
 | Behavior | Tests and Results |
 |---|---|

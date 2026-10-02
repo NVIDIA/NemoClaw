@@ -73,6 +73,8 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
+        "kubernetes_storage",
+        "kubernetes_gateway",
     ] {
         assert!(resources.contains_key(name));
     }
@@ -109,6 +111,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "tls_certificate_env",
         "tls_key_env",
         "destroy",
+        "platform_only",
     ] {
         assert!(schema.block.attributes.contains_key(name));
     }
@@ -144,7 +147,13 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
         let running = schema.block.attributes.get("running");
         assert_eq!(
             running.is_some(),
-            matches!(kind.as_str(), "managed_gateway" | "agent_configuration"),
+            matches!(
+                kind.as_str(),
+                "managed_gateway"
+                    | "agent_configuration"
+                    | "kubernetes_storage"
+                    | "kubernetes_gateway"
+            ),
             "{kind}"
         );
         if let Some(running) = running {

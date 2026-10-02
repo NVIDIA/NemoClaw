@@ -27,6 +27,8 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
             fs::create_dir_all(root.path().join(name).parent().unwrap()).unwrap();
             fs::write(root.path().join(name), "fixture").unwrap();
         }
+        fs::create_dir_all(root.path().join("tools/kubernetes")).unwrap();
+        fs::write(root.path().join("tools/kubernetes/sources.json"), "{}").unwrap();
         fs::write(
             root.path().join("versions.json"),
             r#"{"rust":"1.98.1","protobuf":"36.1","opentofu":"1.12.6","dockerProvider":"4.6.0","platforms":{}}"#,

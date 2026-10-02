@@ -12,6 +12,8 @@ on:
       - rust-toolchain.toml
       - deny.toml
       - tools/ci/**
+      - tools/kubernetes/**
+      - crates/nemoclaw-sdk/src/kubernetes/**
       - runtimes/qwen38/**
       - .github/workflows/dependencies.yml
   workflow_dispatch:
@@ -53,3 +55,7 @@ jobs:
         run: python3 -B -m unittest discover -s tools/ci -p 'test_*.py'
       - name: Check recipe attribution and preparation adapters
         run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'
+      - name: Test managed Kubernetes lifecycle helpers
+        run: |
+          python3 -B -m unittest discover -s crates/nemoclaw-sdk/src/kubernetes -p 'test_*.py'
+          python3 -B -m unittest discover -s tools/kubernetes -p 'test_*.py'

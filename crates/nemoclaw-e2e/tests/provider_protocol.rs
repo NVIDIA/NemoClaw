@@ -13,6 +13,31 @@ struct Experiment {
     dir: TofuWorkspace,
 }
 impl Experiment {
+    fn kubernetes_config(&self) {
+        use nemoclaw_sdk::{compile, config::Document};
+        let document = Document::parse(
+            include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+        )
+        .unwrap();
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "kubernetes_storage",
+            "kubernetes_gateway",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let mut graph = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        // Only transport configuration is replaced. The fixture exercises the
+        // exact compiled resource dependencies and lifecycle postconditions.
+        graph["provider"]["nemoclaw"] = json!({});
+        graph["terraform"]["required_providers"]["nemoclaw"]
+            .as_object_mut()
+            .unwrap()
+            .remove("version");
+        fs::write(self.dir.path().join("main.tf.json"), graph.to_string()).unwrap();
+    }
     fn hardware_config(&self, invalid: bool) {
         use nemoclaw_sdk::{compile, config::Document};
         let document =
@@ -89,6 +114,66 @@ impl Experiment {
     fn plan(&self) -> Value {
         self.success(&["plan", "-input=false", "-out=plan"]);
         serde_json::from_slice(&self.success(&["show", "-json", "plan"]).stdout).unwrap()
+    }
+}
+
+#[test]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
+fn real_tofu_resumes_incomplete_kubernetes_creation_without_taint_or_replacement() {
+    for kind in ["kubernetes_storage", "kubernetes_gateway"] {
+        let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
+        e.kubernetes_config();
+        e.mode(&format!("create-error-{kind}"));
+        let failed = e.run(&["apply", "-auto-approve", "-input=false"]);
+        assert!(!failed.status.success());
+        assert!(
+            e.dir.path().join("terraform.tfstate").exists(),
+            "{}\n{}",
+            String::from_utf8_lossy(&failed.stdout),
+            String::from_utf8_lossy(&failed.stderr)
+        );
+        let state = e.state();
+        let bound = state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["type"] == format!("nemoclaw_{kind}"))
+            .unwrap();
+        let instance = &bound["instances"][0];
+        assert_eq!(instance["attributes"]["id"], "fixture-id");
+        assert_ne!(
+            instance["status"], "tainted",
+            "{kind} lost retryability: {instance}"
+        );
+        assert_eq!(instance["attributes"]["running"], "false");
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("Resource postcondition failed"));
+        if kind == "kubernetes_storage" {
+            assert!(
+                !e.dir.path().join("kubernetes_gateway.json").exists(),
+                "gateway ran before storage was ready"
+            );
+        }
+        e.mode("normal");
+        let plan = e.plan();
+        let change = plan["resource_changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["type"] == format!("nemoclaw_{kind}"))
+            .unwrap();
+        assert_eq!(change["change"]["actions"], json!(["update"]));
+        e.success(&["apply", "-auto-approve", "-input=false"]);
+        for resource in e.state()["resources"].as_array().unwrap() {
+            assert_eq!(resource["instances"][0]["attributes"]["id"], "fixture-id");
+            assert_eq!(resource["instances"][0]["attributes"]["running"], "true");
+        }
+        assert!(
+            !e.dir.path().join("removed").exists(),
+            "recovery deleted an established resource"
+        );
+        for resource in e.plan()["resource_changes"].as_array().unwrap() {
+            assert_eq!(resource["change"]["actions"], json!(["no-op"]));
+        }
     }
 }
 

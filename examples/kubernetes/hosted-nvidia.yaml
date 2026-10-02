@@ -1,0 +1,142 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# The shared inference profile matches the Docker hosted-NVIDIA fixture at
+# crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml.
+# Replace the deployment UID and every image digest before applying.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-hosted-nvidia
+  uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
+spec:
+  # Supply the existing Kubernetes cluster's OpenShell gateway.
+  gateway:
+    management: external
+    endpoint: https://openshell.example.com
+    credential: {env: GATEWAY_TOKEN}
+    tls:
+      ca: {env: GATEWAY_CA}
+      certificate: {env: GATEWAY_CERT}
+      key: {env: GATEWAY_KEY}
+  inferenceProviders:
+    - name: hosted-nvidia-prod
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  # Each sandbox runs one independent agent using the shared inference profile.
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: primary
+        inferenceRef: chat
+    - name: researcher
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: reviewer
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: reviewer
+        inferenceRef: chat
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: hosted-nvidia-prod
+          overrides:
+            model: nvidia/nemotron-3-super-120b-a12b

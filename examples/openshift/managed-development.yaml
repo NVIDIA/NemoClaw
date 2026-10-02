@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Offline-tested profile; live OpenShift validation remains outstanding.
+# One apply provisions a development gateway and three agents on an existing cluster.
+# Requires explicit access to an existing OpenShift cluster.
+# Replace the deployment UID and every image digest before applying.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openshift-managed-development
+  uid: 6a1966b7-cd8d-4a0c-aa57-349749b91c65
+spec:
+  gateway:
+    management: managed
+    # The SDK opens this loopback tunnel only for the duration of each command.
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      distribution: openshift
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-openshift-context
+      namespace: nemoclaw-openshift-development
+      prerequisites:
+        agentSandbox:
+          management: existing
+      authentication:
+        profile: development
+  inferenceProviders:
+    - name: hosted-nvidia
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  # Each sandbox runs one independent agent using the shared inference profile.
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: openshift
+      network:
+        policy:
+          explicit:
+            version: 1
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: primary
+        inferenceRef: chat
+    - name: researcher
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: openshift
+      network:
+        policy:
+          explicit:
+            version: 1
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: reviewer
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw-openshift@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: openshift
+      network:
+        policy:
+          explicit:
+            version: 1
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: reviewer
+        inferenceRef: chat
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: hosted-nvidia
+          overrides:
+            model: nvidia/nemotron-3-ultra-550b-a55b

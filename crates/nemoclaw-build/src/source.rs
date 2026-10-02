@@ -6,6 +6,7 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "Cargo.lock",
     "rust-toolchain.toml",
     "versions.json",
+    "tools/kubernetes/sources.json",
     "LICENSE",
     "crates",
     "examples/onboarding-tui",
@@ -50,7 +51,7 @@ pub fn selected_inputs(
                 let entry = entry.map_err(|_| "source entry unavailable")?;
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if name.starts_with('.') || name == "target" {
+                if name.starts_with('.') || matches!(name.as_ref(), "target" | "__pycache__") {
                     continue;
                 }
                 collect(root, &entry.path(), files)?;

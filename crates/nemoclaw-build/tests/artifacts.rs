@@ -96,6 +96,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "Cargo.lock",
         "rust-toolchain.toml",
         "versions.json",
+        "tools/kubernetes/sources.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
         "examples/onboarding-tui/src/lib.rs",
@@ -111,17 +112,27 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 13);
+    assert_eq!(first.len(), 14);
     for name in [
         "target/output",
         ".local/secret",
         "crates/sdk/target/generated.rs",
+        "crates/sdk/src/kubernetes/__pycache__/platform.cpython-312.pyc",
     ] {
         let file = root.path().join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, b"ignored").unwrap();
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+    std::fs::write(
+        root.path().join("tools/kubernetes/sources.json"),
+        b"new pin",
+    )
+    .unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&nemoclaw_build::source_inputs(root.path()).unwrap())
+    );
     std::fs::write(
         root.path().join("examples/onboarding/openclaw.yaml"),
         "changed onboarding defaults",
@@ -218,6 +229,7 @@ fn supervisor_archive_contains_only_runtime_owned_sources_and_notices() {
         "Cargo.toml",
         "Cargo.lock",
         "versions.json",
+        "tools/kubernetes/sources.json",
         "crates/nemoclaw-sdk/NOTICE.md",
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",

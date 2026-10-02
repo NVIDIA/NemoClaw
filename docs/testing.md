@@ -79,11 +79,14 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 python3 -B -m unittest discover -s image -p test_builds.py
+NEMOCLAW_TEST_IMAGE_CACHE=1 python3 -B image/test_build_cache.py
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+The cache regression uses a native Docker builder and the pinned Rust image to build two source revisions with matching package versions and archived timestamps.
+It checks that an updated caller receives the updated library through the agent Dockerfile's cache policy, using an isolated build context and no deployment resources.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
@@ -106,6 +109,27 @@ The suite tests real entrypoints, file and stdin inputs, exit codes, capability 
 The workflow separately qualifies the installed OpenClaw, Hermes, and Pi adapters against isolated local inference, on platforms with those image targets.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
+
+## Managed Kubernetes Tests
+
+With Python 3.12 or newer and OpenSSL available, run these deterministic tests from the repository root:
+
+```sh
+python3 -B -m unittest discover -s crates/nemoclaw-sdk/src/kubernetes -p 'test_*.py'
+python3 -B -m unittest discover -s tools/kubernetes -p 'test_*.py'
+python3 -B -m unittest discover -s image -p 'test_export_metadata.py'
+```
+
+The platform suite also includes an opt-in offline Helm render check for both managed OpenShift and the standalone Kubernetes fixture.
+It requires Helm and PyYAML plus `NEMOCLAW_TEST_OPENSHELL_CHART` set to an absolute `deploy/helm/openshell` path in a Git checkout at `versions.json`'s exact `openshellRevision`.
+With that variable set, the same unittest command checks rendered image digests, TLS, and OpenShift security contexts without fetching artifacts or contacting a cluster.
+The [OpenShift validation record](validation/openshift-offline.md) separates these checks from live compatibility.
+
+
+These tests use temporary files and isolated local subprocesses; they do not contact Kubernetes or Docker.
+They check cluster identity, retained credentials, interrupted provisioning and removal, API defaulting, development authentication, and child-process cancellation.
+The "Python scripts" job in `CI / Dependencies` runs the first two suites on Linux; `cargo ci` does not run them.
+Use the separate [kind procedure](testing/kubernetes-kind.md#run-the-complete-test) for a live managed deployment.
 
 ## CLI Tests
 

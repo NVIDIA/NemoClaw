@@ -41,10 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
     && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
+# Archived sources can predate cached Cargo fingerprints from another revision.
+# Share downloads; keep compiled artifacts local to this source-specific layer.
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
-    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
+    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
+    && rm -rf /src/fabric/target
 
 FROM common-wheels AS harness-wheels
 ARG HARNESS
@@ -103,6 +106,31 @@ COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
 COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
 COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
+
+FROM openclaw AS openclaw-kubernetes
+# The pinned Kubernetes driver selects 10001:10001 before seeding the PVC.
+# Keep the image workspace private while making it readable by that identity.
+USER root
+RUN groupmod --gid 10001 node && usermod --uid 10001 --gid 10001 node \
+    && chown -R 10001:10001 /sandbox /home/node && chmod 0700 /sandbox \
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox/tmp /sandbox/.cache \
+    && chmod -R a+rX /opt/nemoclaw \
+    && chmod -R a+rX /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && chmod a+r /app/node_modules/.pnpm-workspace-state-v1.json \
+    && python3 -c 'import json; from pathlib import Path; p = Path("/opt/nemoclaw/runtime.json"); v = json.loads(p.read_text()); v["policy"]["process"] = {"run_as_user": "10001", "run_as_group": "10001"}; p.write_text(json.dumps(v, indent=2) + "\n")' \
+    && python3 -c 'import json; from pathlib import Path; p = Path("/opt/nemoclaw/provenance.json"); v = json.loads(p.read_text()); v["runtime_profile"] = "kubernetes"; p.write_text(json.dumps(v, indent=2) + "\n")'
+USER node
+
+FROM openclaw-kubernetes AS openclaw-openshift
+# This image seed contains only empty directories, never workload data. The
+# pinned OpenShell seed-workspace helper copies them as private 0700 directories
+# owned by the namespace-selected UID onto its writable workspace volume.
+# Keep the source read-only and readable without a shared privileged group.
+USER root
+RUN rm -rf /sandbox \
+    && install -d -m 0555 -o 0 -g 0 /sandbox /sandbox/tmp /sandbox/.cache \
+    && python3 -c 'import json; from pathlib import Path; p = Path("/opt/nemoclaw/provenance.json"); v = json.loads(p.read_text()); v["runtime_profile"] = "openshift"; p.write_text(json.dumps(v, indent=2) + "\n")'
+USER node
 
 FROM base AS hermes-assets
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77

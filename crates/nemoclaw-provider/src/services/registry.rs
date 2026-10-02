@@ -22,6 +22,9 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
+        if crate::kubernetes::KubernetesBackend::supports(kind) {
+            return Ok(Some(Box::new(crate::kubernetes::KubernetesBackend::new())));
+        }
         if matches!(
             kind,
             installers::vllm::SERVICE_KIND
@@ -73,6 +76,19 @@ impl<'a> BackendRegistry<'a> {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn kubernetes_resources_resolve_without_an_engine() {
+        let connections = crate::docker::Connections::default();
+        let registry = BackendRegistry::new(&connections);
+        for kind in [
+            nemoclaw_sdk::kubernetes::STORAGE_KIND,
+            nemoclaw_sdk::kubernetes::GATEWAY_KIND,
+        ] {
+            assert!(resource_schemas().iter().any(|schema| schema.kind == kind));
+            assert!(registry.resolve(kind, &Row::new()).unwrap().is_some());
+        }
+    }
 
     #[test]
     fn migrated_compute_is_not_a_custom_provider_resource_or_backend() {

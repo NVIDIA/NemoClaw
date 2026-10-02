@@ -188,8 +188,12 @@ class AgentImage(unittest.TestCase):
         )
         for path in root.glob("*.py"):
             self.assertEqual(path.read_bytes(), (sources / "local" / path.name).read_bytes())
-        self.assertEqual(os.getuid(), 1000)
-        self.assertEqual(Path("/sandbox").stat().st_uid, 1000)
+        uid = 10001 if manifest.get("runtime_profile") in {"kubernetes", "openshift"} else 1000
+        self.assertEqual(os.getuid(), uid)
+        self.assertEqual(
+            Path("/sandbox").stat().st_uid,
+            0 if manifest.get("runtime_profile") == "openshift" else uid,
+        )
         for tool in ("rustc", "cargo", "uv", "gcc"):
             self.assertIsNone(shutil.which(tool), tool)
 

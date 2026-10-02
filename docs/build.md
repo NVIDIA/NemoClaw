@@ -99,9 +99,10 @@ If catalog generation reports a missing runtime manifest, required path, or exec
 See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
-For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
+For a Docker or Podman external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
+Kubernetes and OpenShift use a digest-verified metadata file instead of an engine connection; follow [cluster image metadata](kubernetes.md#prepare-image-metadata).
 Keep the original bundle and state to operate or destroy deployments created before runtime metadata was retained; this change does not migrate their sandbox bindings.
 
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
@@ -125,6 +126,9 @@ Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local reposito
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
 Hermes retains a separate native dependency supplement, described in the [source notice](../image/NOTICE.md).
 The exact Python base-image pins remain image-build inputs; uv validates installed adapter `Requires-Python` constraints.
+Fabric builds cache dependency downloads and completed Docker layers, while compiled Cargo artifacts stay within each build.
+Sharing compiled artifacts across source archives can reuse an older core library when package versions match and archived files predate the cached build.
+After updating the checkout, rerun the builder normally to use the corrected cache behavior; no shared-cache cleanup is required.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
 The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
