@@ -25,6 +25,13 @@ Preserve image authority and full residual profile comparison when admitting a s
 Export translates Landlock `strict` to the pinned v1 consumer's `hard_requirement` value.
 Keep fail-closed enforcement and preserve `best_effort` unchanged.
 
+Web-search export preserves Brave for OpenClaw and admits Tavily for OpenClaw and Hermes.
+The verifier checks the registered provider, its actual profile binding, credential names, and sandbox attachments.
+Hermes source deployments use the `tavily-hermes-v1` profile; exported intent selects `provider: tavily`.
+Only the primary agent receives the named integration grant. Disabled search creates no grant, and
+Deep Agents keeps its explicitly disabled export baseline. Missing or mismatched provider evidence
+must prevent publication. Export does not read provider credential values.
+
 V1alpha1 configuration export omits corporate CA material and its digest. An otherwise supported
 managed sandbox with an imported CA remains exportable after its retained bundle and startup-profile
 digest pass workload authority validation. CA state still participates in stable observation.
