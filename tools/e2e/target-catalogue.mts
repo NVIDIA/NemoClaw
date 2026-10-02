@@ -1302,6 +1302,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  managedRuntimeTarget("snapshot-commands", {
+    displayName: "Snapshot compatibility: exposes complete-state replacements",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
+    profile: "standard",
+    timeoutMinutes: 40,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    owningPaths: ["src/lib/cli/public-display-defaults.ts"],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_SANDBOX_NAME: "e2e-snapshot",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   managedRuntimeTarget("sandbox-operations", {
     displayName: "Sandbox: preserves lifecycle and final gateway cleanup",
     agentRuntime: "openclaw",
@@ -1423,27 +1439,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
 
-  managedRuntimeTarget("snapshot-commands", {
-    displayName: "Snapshot: restores selected sandbox state without credential leaks",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 40,
-    installMode: "none",
-    restoreCli: false,
-    exposeCliBin: false,
-    owningPaths: [
-      "test/e2e/live/snapshot-credential-scanner.ts",
-      "src/lib/actions/sandbox/auto-pair-approval.ts",
-      "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-      "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-    ],
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-snapshot",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   runtimeAgnosticTarget("spark-install", {
     displayName: "Install: leaves NemoClaw and OpenShell usable after standard installation",
     agentRuntime: "unresolved",
@@ -1480,7 +1475,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: hostedInference,
   }),
   managedRuntimeTarget("state-backup-restore", {
-    displayName: "Backup: restores workspace files and memory",
+    displayName: "Backup: rebuild restores the complete native home",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
@@ -1762,7 +1757,10 @@ export function catalogueTargetsForChangedFiles(
     return [...E2E_TARGET_CATALOGUE];
   }
   return E2E_TARGET_CATALOGUE.filter((entry) =>
-    files.some((file) => entry.owningPaths.some((owner) => pathMatches(file, owner))),
+    files.some(
+      (file) =>
+        file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
+    ),
   );
 }
 

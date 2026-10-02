@@ -535,12 +535,8 @@ export async function upgradeSandboxes(
       console.log(
         `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (pre-upgrade backup)`,
       );
-      // #7073: the validated manifest records the agent-specific managed state
-      // root restored for this sandbox. Warn before the destructive recreate so
-      // users can back up paths outside that exact root rather than silently
-      // losing them.
       console.log(
-        `    ${YW}⚠ Recovery restores ${JSON.stringify(recovery.manifest.dir)} state only for this sandbox. Files outside this recorded managed state path (e.g. /sandbox/user-data) are NOT preserved by the recreate — back them up before upgrading.${R}`,
+        `    ${YW}⚠ Recovery restores the complete native home/workspace archive rooted at ${JSON.stringify(recovery.manifest.nativeState!.root)}. OpenShell-owned credential stores and host-only secrets outside that root are not part of this backup.${R}`,
       );
     }
   }
