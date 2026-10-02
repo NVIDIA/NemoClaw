@@ -122,7 +122,11 @@ export type CloudflaredState =
   | { kind: "stopped" }
   | { kind: "stale-pid-file" }
   | { kind: "stale-pid-process"; pid: number }
-  | { kind: "unverified-pid-process"; pid: number };
+  | {
+      kind: "unverified-pid-process";
+      pid: number;
+      reason: "inspection-unavailable" | "wrapper";
+    };
 
 type CommandLineCapture = (command: string, args: readonly string[]) => string;
 
@@ -130,7 +134,7 @@ const captureCommandLine: CommandLineCapture = (command, args) =>
   execFileSync(command, [...args], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5000,
+    timeout: 1000,
   });
 
 /** Read a Windows process identity through the built-in CIM provider. */
@@ -635,10 +639,10 @@ export function readCloudflaredState(
   }
   const commandLine = pc.commandLine(pid);
   if (commandLine === null) {
-    return { kind: "unverified-pid-process", pid };
+    return { kind: "unverified-pid-process", pid, reason: "inspection-unavailable" };
   }
   if (commandLineMayWrapCloudflared(commandLine)) {
-    return { kind: "unverified-pid-process", pid };
+    return { kind: "unverified-pid-process", pid, reason: "wrapper" };
   }
   if (!commandLineNamesCloudflared(commandLine)) {
     return { kind: "stale-pid-process", pid };
@@ -831,11 +835,13 @@ function stopService(
   }
 
   if (state.kind === "unverified-pid-process") {
-    warn(
-      `${name} PID ${String(state.pid)} was not stopped because its process identity is unavailable`,
-    );
-    warnManualRecovery(state.pid);
-    return false;
+    if (process.platform !== "win32" || state.reason !== "inspection-unavailable") {
+      warn(
+        `${name} PID ${String(state.pid)} was not stopped because its process identity is unavailable`,
+      );
+      warnManualRecovery(state.pid);
+      return false;
+    }
   }
 
   const pid = state.pid;

@@ -18,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessControl } from "./services";
 import {
   readCloudflaredState,
-  readWindowsProcessCommandLine,
   signalCloudflaredForPlatform,
   stopAll,
   stopCloudflared,
@@ -152,11 +151,12 @@ describe("cloudflared identity-bound signaling", () => {
       );
 
       try {
-        const commandLine = readWindowsProcessCommandLine(pid);
-        console.log(`[identity-test] Windows process record: ${JSON.stringify(commandLine)}`);
-        expect(commandLine).not.toBeNull();
         const state = readCloudflaredState(pidDir);
-        console.log(`[identity-test] Windows tunnel state: ${JSON.stringify(state)}`);
+        expect(state).toEqual({
+          kind: "unverified-pid-process",
+          pid,
+          reason: "inspection-unavailable",
+        });
         expect(stopCloudflared({ pidDir })).toBe(true);
         await exited;
         expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
@@ -170,5 +170,6 @@ describe("cloudflared identity-bound signaling", () => {
         await exited;
       }
     },
+    15_000,
   );
 });

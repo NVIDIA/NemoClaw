@@ -610,7 +610,7 @@ describe("readCloudflaredState", () => {
       signalCloudflared: () => "signaled",
     });
 
-    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242, reason: "wrapper" });
   });
 
   it("returns unverified-pid-process when a live PID cannot be inspected", () => {
@@ -620,7 +620,11 @@ describe("readCloudflaredState", () => {
       commandLine: () => null,
       signalCloudflared: () => "signaled",
     });
-    expect(state).toEqual({ kind: "unverified-pid-process", pid: 4242 });
+    expect(state).toEqual({
+      kind: "unverified-pid-process",
+      pid: 4242,
+      reason: "inspection-unavailable",
+    });
   });
 
   it("recognizes cloudflared through the Windows CIM identity probe", () => {
