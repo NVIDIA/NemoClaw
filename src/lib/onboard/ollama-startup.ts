@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn } from "node:child_process";
+
 const runner: typeof import("../runner") = require("../runner");
 const wait: typeof import("../core/wait") = require("../core/wait");
 const localInference: typeof import("../inference/local") = require("../inference/local");
@@ -10,6 +12,40 @@ let NO_OLLAMA_AUTOSTART = false;
 
 export function setOllamaAutostartDisabled(value: boolean | undefined): void {
   NO_OLLAMA_AUTOSTART = !!value;
+}
+
+export interface StartOllamaServeOptions {
+  port: number;
+  /** Minimum daemon context length to request for the selected agent. */
+  contextWindowFloor?: number;
+  binPath?: string;
+  spawnImpl?: typeof spawn;
+}
+
+/**
+ * Launch `ollama serve` on loopback in its own session so it outlives onboarding.
+ *
+ * A shell `&` job stays in the onboarding process group and session, so a closing
+ * terminal or a process-group signal stops the backend while the detached auth
+ * proxy keeps running (#11984). Callers still prove readiness with an HTTP probe.
+ */
+export function startDetachedOllamaServe(opts: StartOllamaServeOptions): void {
+  const spawnImpl = opts.spawnImpl ?? spawn;
+  const floor = runtimeContext.resolveOllamaContextWindowFloor(opts.contextWindowFloor);
+  const env = runner.buildSubprocessEnv({
+    OLLAMA_HOST: `127.0.0.1:${opts.port}`,
+    ...(floor > runtimeContext.MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+      ? { OLLAMA_CONTEXT_LENGTH: String(floor) }
+      : {}),
+  });
+  const child = spawnImpl(opts.binPath ?? "ollama", ["serve"], {
+    detached: true,
+    stdio: "ignore",
+    env,
+  });
+  // A missing or unrunnable binary surfaces through the caller's readiness probe.
+  child.on("error", () => {});
+  child.unref();
 }
 
 export function isOllamaAutostartDisabled(): boolean {
@@ -95,16 +131,7 @@ export function runOllamaStartupOrGate(args: {
     };
   }
   console.log("  Starting Ollama...");
-  const contextLengthPrefix =
-    resolvedContextFloor > runtimeContext.MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
-      ? `OLLAMA_CONTEXT_LENGTH=${resolvedContextFloor} `
-      : "";
-  runner.runShell(
-    `${contextLengthPrefix}OLLAMA_HOST=127.0.0.1:${ollamaPort} ollama serve > /dev/null 2>&1 &`,
-    {
-      ignoreError: true,
-    },
-  );
+  startDetachedOllamaServe({ port: ollamaPort, contextWindowFloor });
   if (!wait.waitForHttp(`http://127.0.0.1:${ollamaPort}/`, 10)) {
     console.error(`  Ollama did not become ready on :${ollamaPort} within timeout.`);
     const providerPinned = isOllamaProviderPinned();
