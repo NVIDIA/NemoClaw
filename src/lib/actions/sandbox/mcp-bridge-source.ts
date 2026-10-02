@@ -677,22 +677,14 @@ async function enrichFromPolicy(
         .map((rule) => rule.params.name)
     : [];
 
-  const denyToolInspection = inspectMcpDeniedToolSelectors(
-    denyRulesFromEndpoint.length > 0
-      ? denyRulesFromEndpoint
-      : legacyDenyTools.length > 0
-        ? legacyDenyTools
-        : [],
-  );
+  const denyToolInspection = inspectMcpDeniedToolSelectors([
+    ...denyRulesFromEndpoint,
+    ...legacyDenyTools,
+  ]);
 
-  const denyTools = denyToolInspection.ok
-    ? denyToolInspection.selectors
-    : legacyDenyTools.length > 0
-      ? legacyDenyTools
-      : [];
+  const denyTools = denyToolInspection.ok ? denyToolInspection.selectors : [];
 
   const policyConflict =
-    !deniedToolInspection.ok ||
     !denyToolInspection.ok ||
     (allowRules.length > 0 ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool)) : false)
       ? "Live policy contains invalid tool selectors."
