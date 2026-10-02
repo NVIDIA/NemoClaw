@@ -7,6 +7,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/tunnel-windows-process-identity.yaml"
+      - ".github/actions/setup-reviewed-npm/**"
+      - "ci/reviewed-npm-audit.json"
+      - "scripts/lib/reviewed-npm-audit.mts"
       - "package.json"
       - "package-lock.json"
       - "vitest.config.ts"
@@ -17,6 +20,9 @@ on:
       - main
     paths:
       - ".github/workflows/tunnel-windows-process-identity.yaml"
+      - ".github/actions/setup-reviewed-npm/**"
+      - "ci/reviewed-npm-audit.json"
+      - "scripts/lib/reviewed-npm-audit.mts"
       - "package.json"
       - "package-lock.json"
       - "vitest.config.ts"

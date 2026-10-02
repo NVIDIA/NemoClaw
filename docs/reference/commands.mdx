@@ -3338,6 +3338,8 @@ $$nemoclaw tunnel start
 
 By default, NemoClaw starts a Cloudflare quick tunnel and prints the generated `*.trycloudflare.com` URL when `cloudflared` reports it. Set `CLOUDFLARE_TUNNEL_TOKEN` to start a Cloudflare named tunnel instead. The named tunnel hostname and `localhost:<dashboard-port>` route must already be configured in the Cloudflare dashboard. NemoClaw passes the token to `cloudflared` through the `TUNNEL_TOKEN` environment variable, so the token does not appear in the `cloudflared` command-line arguments.
 
+For a named tunnel, NemoClaw verifies that the reported ingress route targets the selected dashboard port before treating startup as successful. If it cannot confirm that route, it stops the newly started tunnel and returns an error. If shutdown cannot be confirmed, it retains the process and dashboard-port records so cleanup can be retried safely.
+
 On Windows, a quick tunnel started by an older NemoClaw release may not have a recorded dashboard port. When its verified `cloudflared.exe` process and quick-tunnel URL are still available, `tunnel start` safely stops that legacy process and starts a replacement for the selected dashboard port. If NemoClaw cannot confirm the process identity or stop it, the command fails closed; verify the command line identifies `cloudflared.exe`, stop it manually, and run `tunnel start` again.
 
 ```bash

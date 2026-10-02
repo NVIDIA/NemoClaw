@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -70,6 +70,26 @@ describe("stopAll tunnel stop ordering", () => {
     expect(stopMocks.stopSandboxChannels).not.toHaveBeenCalled();
     expect(unloadOllamaModels).not.toHaveBeenCalled();
     expect(stopMocks.releaseGatewayPortForStop).not.toHaveBeenCalled();
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("18791");
+  });
+
+  it("clears the dashboard-port record only after cloudflared stop is confirmed", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "18791");
+    let alive = true;
+    const processControl: ProcessControl = {
+      isAlive: () => alive,
+      commandLine: () => "cloudflared tunnel run",
+      signalCloudflared: () => {
+        alive = false;
+        return "signaled";
+      },
+    };
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(stopCloudflared({ pidDir, processControl })).toBe(true);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
   });
 
   it("holds the tunnel lifecycle lock through dependent service teardown", () => {

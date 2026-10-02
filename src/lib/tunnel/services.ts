@@ -822,15 +822,19 @@ function stopService(
     );
   };
   const state = readCloudflaredState(pidDir, pc);
+  const removeStoppedState = (): void => {
+    removePid(pidDir, name);
+    if (name === "cloudflared") removeCloudflaredDashboardPort(pidDir);
+  };
   if (state.kind === "stopped" || state.kind === "stale-pid-file") {
     info(`${name} was not running`);
-    removePid(pidDir, name);
+    removeStoppedState();
     return true;
   }
 
   if (state.kind === "stale-pid-process") {
     info(`${name} was not running`);
-    removePid(pidDir, name);
+    removeStoppedState();
     return true;
   }
 
@@ -855,7 +859,7 @@ function stopService(
     return false;
   }
   if (termOutcome === "not-running" || termOutcome === "not-cloudflared") {
-    removePid(pidDir, name);
+    removeStoppedState();
     info(`${name} was not running`);
     return true;
   }
@@ -880,7 +884,7 @@ function stopService(
       return false;
     }
     if (killOutcome === "not-running" || killOutcome === "not-cloudflared") {
-      removePid(pidDir, name);
+      removeStoppedState();
       info(`${name} was not running`);
       return true;
     }
@@ -901,7 +905,7 @@ function stopService(
     }
   }
 
-  removePid(pidDir, name);
+  removeStoppedState();
   info(`${name} stopped (PID ${String(pid)})`);
   return true;
 }
