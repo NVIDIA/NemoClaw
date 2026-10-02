@@ -15,7 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, win32 } from "node:path";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
@@ -194,15 +194,203 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
 export interface ProcessControl {
   isAlive(pid: number): boolean;
   commandLine(pid: number): string | null;
-  signal(pid: number, sig: NodeJS.Signals): void;
+  signal(pid: number, sig: "SIGTERM" | "SIGKILL"): IdentityBoundSignalOutcome | void;
+}
+
+type IdentityBoundSignalOutcome = "signaled" | "not-running" | "not-cloudflared" | "unavailable";
+
+const PIDFD_SIGNAL_SCRIPT = String.raw`
+import os
+import signal
+import sys
+
+if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    print("unavailable")
+    raise SystemExit(0)
+
+pid = int(sys.argv[1])
+signal_name = sys.argv[2]
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    print("not-running")
+    raise SystemExit(0)
+except (OSError, PermissionError):
+    print("unavailable")
+    raise SystemExit(0)
+
+try:
+    try:
+        executable = os.readlink(f"/proc/{pid}/exe")
+    except FileNotFoundError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+
+    if executable.endswith(" (deleted)"):
+        print("unavailable")
+        raise SystemExit(0)
+    if os.path.basename(executable) != "cloudflared":
+        print("not-cloudflared")
+        raise SystemExit(0)
+
+    try:
+        signal.pidfd_send_signal(pidfd, getattr(signal, signal_name))
+    except ProcessLookupError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+    print("signaled")
+finally:
+    os.close(pidfd)
+`;
+
+const MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT = String.raw`
+ObjC.bindFunction("malloc", ["void*", ["int"]]);
+ObjC.bindFunction("free", ["void", ["void*"]]);
+ObjC.bindFunction("proc_pidinfo", ["int", ["int", "int", "Int64", "void*", "int"]]);
+ObjC.bindFunction("proc_pidpath_audittoken", ["int", ["void*", "void*", "uint32_t"]]);
+ObjC.bindFunction("proc_signal_with_audittoken", ["int", ["void*", "int"]]);
+
+function writeUint32LittleEndian(buffer, offset, value) {
+  for (let index = 0; index < 4; index += 1) {
+    buffer[offset + index] = value % 256;
+    value = Math.floor(value / 256);
+  }
+}
+
+function readUint32LittleEndian(buffer, offset) {
+  let value = 0;
+  for (let index = 3; index >= 0; index -= 1) {
+    value = value * 256 + buffer[offset + index];
+  }
+  return value;
+}
+
+function run(argv) {
+  const uniqueInfoSelector = 17;
+  const uniqueInfoSize = 56;
+  const uniqueInfoIdVersionOffset = 32;
+  const auditTokenPidOffset = 20;
+  const auditTokenIdVersionOffset = 28;
+  const pid = Number(argv[0]);
+  const signalNumber = argv[1] === "SIGKILL" ? 9 : 15;
+  const uniqueInfo = $.malloc(uniqueInfoSize);
+  const auditToken = $.malloc(32);
+  const processPath = $.malloc(4096);
+
+  try {
+    if ($.proc_pidinfo(pid, uniqueInfoSelector, 0, uniqueInfo, uniqueInfoSize) !== uniqueInfoSize) {
+      return "unavailable";
+    }
+
+    for (let index = 0; index < 32; index += 1) auditToken[index] = 0;
+    writeUint32LittleEndian(auditToken, auditTokenPidOffset, pid);
+    writeUint32LittleEndian(
+      auditToken,
+      auditTokenIdVersionOffset,
+      readUint32LittleEndian(uniqueInfo, uniqueInfoIdVersionOffset),
+    );
+
+    const pathLength = $.proc_pidpath_audittoken(auditToken, processPath, 4096);
+    if (pathLength <= 0) return "unavailable";
+
+    let executablePath = "";
+    for (let index = 0; index < pathLength; index += 1) {
+      executablePath += String.fromCharCode(processPath[index]);
+    }
+    const pathParts = executablePath.split("/");
+    if (pathParts[pathParts.length - 1] !== "cloudflared") return "not-cloudflared";
+
+    const result = $.proc_signal_with_audittoken(auditToken, signalNumber);
+    if (result === 0) return "signaled";
+    if (result === 3) return "not-running";
+    return "unavailable";
+  } finally {
+    $.free(uniqueInfo);
+    $.free(auditToken);
+    $.free(processPath);
+  }
+}
+`;
+
+function signalCloudflaredWithPidfd(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "linux") return "unavailable";
+  try {
+    const result = execFileSync("python3", ["-I", "-c", PIDFD_SIGNAL_SCRIPT, String(pid), sig], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
+function signalCloudflaredWithAuditToken(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "darwin") return "unavailable";
+  try {
+    const result = execFileSync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT, String(pid), sig],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 2000,
+      },
+    ).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
+/** Signal cloudflared only through an OS primitive bound to process identity. */
+export function signalCloudflaredForPlatform(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+  platform: NodeJS.Platform = process.platform,
+  macSignal: (
+    pid: number,
+    sig: "SIGTERM" | "SIGKILL",
+  ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
+): IdentityBoundSignalOutcome {
+  if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
+  if (platform === "darwin") return macSignal(pid, sig);
+  return "unavailable";
 }
 
 const REAL_PROCESS_CONTROL: ProcessControl = {
   isAlive,
   commandLine: readProcessCommandLine,
-  signal: (pid, sig) => {
-    process.kill(pid, sig);
-  },
+  signal: signalCloudflaredForPlatform,
 };
 
 function extractTryCloudflareUrl(log: string): string | null {
@@ -365,6 +553,34 @@ function removePid(pidDir: string, name: string): void {
 
 const CLOUDFLARED_DASHBOARD_PORT_FILE = "cloudflared.dashboard-port";
 
+function windowsExecutableOnlyCommandLine(commandLine: string): boolean {
+  try {
+    const executablePath: unknown = JSON.parse(commandLine);
+    return (
+      typeof executablePath === "string" &&
+      win32.isAbsolute(executablePath) &&
+      basename(executablePath.replaceAll("\\", "/")).toLowerCase() === "cloudflared.exe"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function parseCloudflaredCommandArgs(commandLine: string | null): string[] | undefined {
+  if (commandLine === null || windowsExecutableOnlyCommandLine(commandLine)) return undefined;
+  return commandLine.split(/\0|\s+/).filter(Boolean);
+}
+
+function isQuickTunnelCommand(commandArgs: string[] | undefined): boolean {
+  const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
+  return (
+    tunnelIndex >= 0 &&
+    commandArgs
+      ?.slice(tunnelIndex + 1)
+      .some((argument) => argument === "--url" || argument.startsWith("--url=")) === true
+  );
+}
+
 function cloudflaredLifecycleLockName(pidDir: string): string {
   return `cloudflared-${createHash("sha256").update(resolve(pidDir)).digest("hex")}`;
 }
@@ -381,31 +597,20 @@ function readCloudflaredDashboardPort(pidDir: string): number | null {
 
 function quickTunnelTargetsDashboard(
   pidDir: string,
-  pid: number,
+  commandLine: string | null,
   dashboardPort: number,
-  processControl: ProcessControl,
 ): boolean {
-  const commandLine = processControl.commandLine(pid);
   if (commandLine === null) return readCloudflaredDashboardPort(pidDir) === dashboardPort;
+
+  if (windowsExecutableOnlyCommandLine(commandLine)) {
+    // Windows process inspection exposes the verified executable path, not argv.
+    return readCloudflaredDashboardPort(pidDir) === dashboardPort;
+  }
 
   const commandArgs = commandLine.split(/\0|\s+/).filter(Boolean);
   const urlFlagIndex = commandArgs.indexOf("--url");
   const inlineUrl = commandArgs.find((argument) => argument.startsWith("--url="));
   if (urlFlagIndex < 0 && inlineUrl === undefined) {
-    // Windows process inspection returns the verified executable path, not its
-    // arguments. For that exact output shape, the private target record is the
-    // only evidence that this confirmed cloudflared process serves the port.
-    try {
-      const executablePath: unknown = JSON.parse(commandLine);
-      if (
-        typeof executablePath === "string" &&
-        basename(executablePath.replaceAll("\\", "/")).toLowerCase() === "cloudflared.exe"
-      ) {
-        return readCloudflaredDashboardPort(pidDir) === dashboardPort;
-      }
-    } catch {
-      // Ordinary command lines are validated from their explicit --url below.
-    }
     return false;
   }
   const target =
@@ -538,7 +743,19 @@ function stopService(
 
   // Send SIGTERM
   try {
-    pc.signal(pid, "SIGTERM");
+    const outcome = pc.signal(pid, "SIGTERM");
+    if (outcome === "unavailable") {
+      warn(
+        `${name} identity-bound signaling is unavailable for PID ${String(pid)}; refusing to send SIGTERM and retaining its state. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain.`,
+      );
+      return false;
+    }
+    if (outcome === "not-running" || outcome === "not-cloudflared") {
+      removePid(pidDir, name);
+      removeCloudflaredDashboardPort(pidDir);
+      info(`${name} was not running`);
+      return true;
+    }
   } catch {
     if (pc.isAlive(pid)) {
       warn(`${name} could not be stopped (PID ${String(pid)})`);
@@ -577,7 +794,13 @@ function stopService(
       return false;
     }
     try {
-      pc.signal(pid, "SIGKILL");
+      const outcome = pc.signal(pid, "SIGKILL");
+      if (outcome === "unavailable") {
+        warn(
+          `${name} identity-bound signaling is unavailable for PID ${String(pid)}; refusing to send SIGKILL and retaining its state. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain.`,
+        );
+        return false;
+      }
     } catch {
       /* already dead */
     }
@@ -676,10 +899,8 @@ export function showStatus(opts: ServiceOptions = {}): void {
   const logFile = join(pidDir, "cloudflared.log");
   if (state.kind === "running") {
     const log = existsSync(logFile) ? readFileSync(logFile, "utf-8") : "";
-    const commandArgs = processControl
-      .commandLine(state.pid)
-      ?.split(/\0|\s+/)
-      .filter(Boolean);
+    const commandLine = processControl.commandLine(state.pid);
+    const commandArgs = parseCloudflaredCommandArgs(commandLine);
     const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
     const runningNamedTunnel =
       (tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run") ||
@@ -690,9 +911,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
     const quickUrl = extractTryCloudflareUrl(log);
     const publicUrl =
       namedUrl ??
-      (quickUrl && quickTunnelTargetsDashboard(pidDir, state.pid, dashboardPort, processControl)
-        ? quickUrl
-        : "");
+      (quickUrl && quickTunnelTargetsDashboard(pidDir, commandLine, dashboardPort) ? quickUrl : "");
     if (publicUrl) {
       info(`Public URL: ${publicUrl}`);
     } else if (quickUrl) {
@@ -953,10 +1172,9 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         let runningNamedTunnel = false;
         if (runningState.kind === "running") {
           const commandLine = processControl.commandLine(runningState.pid);
-          const commandArgs = commandLine?.split(/\0|\s+/).filter(Boolean);
+          const commandArgs = parseCloudflaredCommandArgs(commandLine);
           const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
-          const runningQuickTunnel =
-            tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
+          const runningQuickTunnel = isQuickTunnelCommand(commandArgs);
           runningNamedTunnel =
             (tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run") ||
             (commandArgs === undefined && namedTunnelTargetsDashboard(pidDir, dashboardPort));
@@ -995,19 +1213,16 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
           removeCloudflaredDashboardPort(pidDir);
         }
       } else {
-        const commandArgs =
+        const commandLine =
           runningState.kind === "running"
-            ? (opts.processControl ?? REAL_PROCESS_CONTROL)
-                .commandLine(runningState.pid)
-                ?.split(/\0|\s+/)
-                .filter(Boolean)
-            : undefined;
+            ? (opts.processControl ?? REAL_PROCESS_CONTROL).commandLine(runningState.pid)
+            : null;
+        const commandArgs = parseCloudflaredCommandArgs(commandLine);
         const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
         const runningNamedTunnel =
           (tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run") ||
           (commandArgs === undefined && namedTunnelTargetsDashboard(pidDir, dashboardPort));
-        const runningQuickTunnel =
-          tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
+        const runningQuickTunnel = isQuickTunnelCommand(commandArgs);
         if (runningNamedTunnel && !namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
           targetReady = false;
           targetFailure =
@@ -1022,7 +1237,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
           const recordedQuickTunnel = commandArgs === undefined && runningPort !== null;
           if (!runningQuickTunnel && !recordedQuickTunnel) {
             targetReady = false;
-          } else if (runningPort !== dashboardPort) {
+          } else if (
+            runningQuickTunnel
+              ? !quickTunnelTargetsDashboard(pidDir, commandLine, dashboardPort)
+              : runningPort !== dashboardPort
+          ) {
             targetReady = stopService(
               pidDir,
               "cloudflared",

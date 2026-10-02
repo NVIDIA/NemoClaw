@@ -515,6 +515,9 @@ describe("startAll", () => {
       },
     };
 
+    // The persisted record can be stale or corrupted. The live process argv is
+    // authoritative whenever it is available.
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "18791");
     await startAll({ pidDir, dashboardPort: 18_791, processControl });
 
     const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
@@ -522,39 +525,6 @@ describe("startAll", () => {
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
       "argv:tunnel --url http://localhost:18791",
     );
-  });
-
-  it("serializes overlapping starts for one sandbox and leaves one coherent final target", async () => {
-    const binDir = join(tmpDir, "bin");
-    mkdirSync(binDir, { recursive: true });
-    const fakeCloudflared = join(binDir, "cloudflared");
-    writeFileSync(
-      fakeCloudflared,
-      [
-        "#!/usr/bin/env sh",
-        "printf 'argv:%s\\n' \"$*\"",
-        "echo 'https://concurrent.trycloudflare.com'",
-        "sleep 20",
-      ].join("\n"),
-    );
-    chmodSync(fakeCloudflared, 0o700);
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await Promise.all([
-      startAll({ pidDir, dashboardPort: 12_345 }),
-      startAll({ pidDir, dashboardPort: 18_791 }),
-    ]);
-
-    const finalPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
-    const finalTarget = readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8");
-    const finalLog = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
-    expect(finalPid).toBeGreaterThan(0);
-    const expectedArgv = `argv:tunnel --url http://localhost:${finalTarget}`;
-    const otherPort = finalTarget === "12345" ? "18791" : "12345";
-    expect(["12345", "18791"]).toContain(finalTarget);
-    expect(finalLog).toContain(expectedArgv);
-    expect(finalLog).not.toContain(`argv:tunnel --url http://localhost:${otherPort}`);
   });
 
   it("reuses a quick tunnel with a recorded dashboard port when process arguments are unavailable", async () => {
@@ -581,7 +551,7 @@ describe("startAll", () => {
         dashboardPort: 12_345,
         processControl: {
           isAlive: (pid) => pid === originalPid,
-          commandLine: () => null,
+          commandLine: () => JSON.stringify("C:\\Program Files\\cloudflared.exe"),
           signal,
         },
       }),

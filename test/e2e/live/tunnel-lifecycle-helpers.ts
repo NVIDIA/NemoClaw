@@ -41,6 +41,20 @@ type CurlProbe = {
   result: ShellProbeResult;
 };
 
+export function cloudflaredTargetsRegisteredPort(
+  pid: number,
+  command: ShellProbeResult,
+  dashboardPort: string,
+): boolean {
+  const expectedTarget = `cloudflared tunnel --url http://localhost:${dashboardPort}`;
+  const targetMatches =
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
+    command.exitCode === 0 &&
+    command.stdout.includes(expectedTarget);
+  return targetMatches;
+}
+
 function assertTestOwnedSandboxName(): void {
   if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
     throw new Error(
@@ -366,16 +380,15 @@ export async function runTunnelLifecycleContract({
       timeoutMs: COMMAND_TIMEOUT_MS,
     },
   );
-  const expectedCloudflaredTarget = `cloudflared tunnel --url http://localhost:${LOCAL_DASHBOARD_PORT}`;
-  const cloudflaredTargetsRegisteredPort =
-    Number.isSafeInteger(cloudflaredPid) &&
-    cloudflaredPid > 0 &&
-    cloudflaredCommand.exitCode === 0 &&
-    cloudflaredCommand.stdout.includes(expectedCloudflaredTarget);
+  const cloudflaredTargetMatches = cloudflaredTargetsRegisteredPort(
+    cloudflaredPid,
+    cloudflaredCommand,
+    LOCAL_DASHBOARD_PORT,
+  );
 
   let tunnelUrl: string | undefined;
   let lastStatusText = "";
-  for (let attempt = 1; attempt <= 15; attempt += 1) {
+  for (let attempt = 1; cloudflaredTargetMatches && attempt <= 15; attempt += 1) {
     const status = await host.nemoclaw(["status"], {
       artifactName: `status-with-tunnel-url-${attempt}`,
       env: tunnelLifecycleCommandEnv(),
@@ -397,11 +410,14 @@ export async function runTunnelLifecycleContract({
         timeoutMs: COMMAND_TIMEOUT_MS,
       }),
     );
-    if (cfClass === "cloudflare") {
+    if (cloudflaredTargetMatches && cfClass === "cloudflare") {
       skip("[Cloudflare fault] cloudflared failed to register a quick tunnel URL.");
     }
     let reason: string;
-    switch (cfClass) {
+    switch (cloudflaredTargetMatches ? cfClass : "wrong_dashboard_port") {
+      case "wrong_dashboard_port":
+        reason = `cloudflared PID ${String(cloudflaredPid)} does not target the registered dashboard port ${LOCAL_DASHBOARD_PORT}`;
+        break;
       case "nemoclaw_no_spawn":
         reason = "cloudflared.log missing — NemoClaw failed to spawn the cloudflared process";
         break;
@@ -475,8 +491,8 @@ export async function runTunnelLifecycleContract({
     );
   }
   expect(
-    DASHBOARD_MARKER_PATTERN.test(lastPublicProbe!.body) && cloudflaredTargetsRegisteredPort,
-    `Public tunnel must serve OpenClaw and recorded cloudflared PID ${cloudflaredPid} must target the registered dashboard port ${LOCAL_DASHBOARD_PORT}; ps exit ${cloudflaredCommand.exitCode}: ${cloudflaredCommand.stdout.trim()} ${resultText(cloudflaredCommand)}`,
+    DASHBOARD_MARKER_PATTERN.test(lastPublicProbe!.body),
+    `Public tunnel must serve OpenClaw; ps exit ${cloudflaredCommand.exitCode}: ${cloudflaredCommand.stdout.trim()} ${resultText(cloudflaredCommand)}`,
   ).toBe(true);
 
   progress.phase("stop the tunnel and confirm status removal");
