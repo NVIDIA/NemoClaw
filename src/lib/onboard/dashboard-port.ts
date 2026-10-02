@@ -91,7 +91,7 @@ const DASHBOARD_PORT_RESERVATION_LOCK = "dashboard-port-reservation:host";
  *
  * OpenShell forward listings are gateway-scoped while dashboard ports and the
  * NemoClaw registry are host-scoped. Holding one cross-process lease across
- * allocation and registration prevents onboard or snapshot restores on
+ * allocation and registration prevents onboard or rebuild restores on
  * different gateways from selecting the same currently-free port.
  * Callers that also need lifecycle locks must use the shared order:
  * sandbox mutation → this host reservation → gateway route mutation.

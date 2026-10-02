@@ -2225,6 +2225,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const recreateProtection = createSandboxRecreateProtection({
       sandboxName,
       sandboxEntry: existingEntry,
+      getSandbox: registry.getSandbox,
       note,
     });
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
@@ -2688,7 +2689,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 preferredInferenceApi,
                 webSearchConfig,
                 toolDisclosure: effectiveToolDisclosure,
-                rebuildPreservedEnv: createIntent?.rebuildPreservedEnv,
                 ...(isManagedDcodeAgent
                   ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode }
                   : {}),
