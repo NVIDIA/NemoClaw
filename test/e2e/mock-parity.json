@@ -4,7 +4,10 @@
   "entries": [
     {
       "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
+      "liveSources": [
+        "test/e2e/live/brave-search-helpers.ts",
+        "test/e2e/fixtures/brave-backend.ts"
+      ],
       "fast": [
         "test/onboarding/brave-search-integration.test.ts",
         "test/e2e/support/brave-search-isolation.test.ts",
@@ -1130,7 +1133,8 @@
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "test/e2e/support/tunnel-lifecycle-helpers.test.ts"
       ]
     },
     {
