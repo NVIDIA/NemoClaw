@@ -15,10 +15,11 @@ Use SPDX Apache-2.0 headers for original NemoClaw code.
 Preserve upstream copyright and license notices in copied, adapted, translated, and generated code.
 Do not replace an upstream license with the repository default.
 Record the upstream source revision and dated modifications beside derived code; see [Qwen3.8 notices](runtimes/qwen38/NOTICE.md).
-Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` for the implemented workspace.
+Run `cargo ci` before pushing; it runs this platform's `CI / Native` steps, including the bundle lifecycle tests that `cargo test` skips.
+Push through a pull request and merge only after CI passes.
 
 Preserve other worktrees and live resources.
-Push to `origin/v1`; never force-push.
+Target `v1` from a branch on `origin`; never force-push.
 Do not publish packages or images.
 
 Live tests require explicit configuration and must touch only their owned resources.

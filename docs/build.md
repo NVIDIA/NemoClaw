@@ -6,7 +6,8 @@
 Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
-Set `PROTOC` to the compiler’s path if it is outside `PATH`.
+Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.1`; the bundle builder and `cargo ci` find it there.
+Otherwise, set `PROTOC` to the compiler’s path if it is outside `PATH`.
 [versions.json](../versions.json) records tool versions, download checksums, and the SDK's default agent, gateway, sandbox runtime, and supervisor image pins.
 The SDK generates its artifact constants from that manifest at build time.
 
