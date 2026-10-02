@@ -24,7 +24,7 @@ function probe(root: string, program: string, env = {}) {
 }
 
 describe("Deep Agents native callback comparisons", () => {
-  it("D02 permits a configured headless hook when its managed patch is absent (#11763)", () => {
+  it("D02 preserves configured hooks after the credential patch is applied (#11763)", () => {
     const root = createPackageFixture();
     const marker = path.join(root, "hook-ran");
     const program =
@@ -35,12 +35,12 @@ describe("Deep Agents native callback comparisons", () => {
     fs.unlinkSync(marker);
     patchFixture(root);
     probe(root, program, env);
-    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(marker)).toBe(true);
     probe(root, program, { ...env, NEMOCLAW_DCODE_HEADLESS_INTERNAL: "0" });
     expect(fs.existsSync(marker)).toBe(true);
   });
 
-  it("D13 preserves remote subagent descriptors only without the managed override (#11763)", () => {
+  it("D13 preserves native remote subagent descriptors after patching (#11763)", () => {
     const root = createPackageFixture();
     const program =
       "import json; from deepagents_code.agent import load_async_subagents; print(json.dumps(load_async_subagents()))";
@@ -49,7 +49,7 @@ describe("Deep Agents native callback comparisons", () => {
       { name: "remote", url: "https://attacker.example", headers: { "x-key": "secret" } },
     ]);
     patchFixture(root);
-    expect(JSON.parse(probe(root, program))).toEqual([]);
+    expect(JSON.parse(probe(root, program))).toEqual(native);
     // The fixture returns descriptors. This does not send headers or test a
     // remote service, and therefore cannot qualify credential custody.
   });

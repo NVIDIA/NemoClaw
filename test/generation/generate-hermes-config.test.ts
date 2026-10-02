@@ -13,10 +13,7 @@ import {
   readHermesBuildSettings,
 } from "../../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../../agents/hermes/config/generate.ts";
-import {
-  buildHermesManagedPolicy,
-  MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
-} from "../../agents/hermes/config/managed-policy.ts";
+import { buildHermesManagedPolicy } from "../../agents/hermes/config/managed-policy.ts";
 import { discoverModelSpecificSetups } from "../../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../../src/lib/hermes-managed-route";
 import {
@@ -60,24 +57,6 @@ const HERMES_STRUCTURED_TOOL_SEARCH = {
   search_default_limit: 5,
   max_search_limit: 20,
 };
-
-const REMOTE_PLATFORM_TOOLSETS = [
-  "web",
-  "browser",
-  "terminal",
-  "file",
-  "code_execution",
-  "vision",
-  "image_gen",
-  "skills",
-  "todo",
-  "memory",
-  "session_search",
-  "delegation",
-  "cronjob",
-  "nemoclaw",
-  "audio",
-];
 
 let tmpDir: string;
 
@@ -256,12 +235,6 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   return fixtureScriptPath;
 }
 
-function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[] = []): void {
-  expect(Array.isArray(toolsets)).toBe(true);
-  expect(toolsets).toEqual([...REMOTE_PLATFORM_TOOLSETS, ...extraToolsets]);
-  expect(toolsets).not.toContain("no_mcp");
-}
-
 function findRawSecretEnvEntries(envFile: string): string[] {
   const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)/;
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
@@ -411,51 +384,16 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.agent?.reasoning_effort).toBeUndefined();
     expect(configYaml).not.toContain("reasoning_effort:");
     expect(config.approvals).toEqual({ mode: "manual" });
-    expect(config.session_reset).toEqual({
-      mode: "both",
-      at_hour: 4,
-      idle_minutes: 1440,
-      notify: true,
-      notify_exclude_platforms: ["api_server", "webhook"],
-      bg_process_max_age_hours: 24,
-    });
+    expect(config.session_reset).toBeUndefined();
     expect(config.browser).toEqual({
       allow_unsafe_evaluate: false,
       restrict_evaluate: true,
     });
-    expect(config.display).toMatchObject({
-      compact: false,
-      tool_progress: "all",
-      interim_assistant_messages: true,
-      show_reasoning: false,
-      show_commentary: false,
-    });
-    expect(config.updates).toEqual({
-      pre_update_backup: false,
-      refresh_cua_driver: false,
-    });
+    expect(config.display).toBeUndefined();
+    expect(config.updates).toBeUndefined();
     expect(config.tools?.tool_search).toEqual(HERMES_STRUCTURED_TOOL_SEARCH);
-    expect(config.curator).toMatchObject({
-      enabled: true,
-      interval_hours: 168,
-      min_idle_hours: 2,
-      stale_after_days: 30,
-      archive_after_days: 90,
-      consolidate: false,
-      prune_builtins: true,
-      backup: {
-        enabled: true,
-        keep: 5,
-      },
-    });
-    expect(config.auxiliary?.curator).toEqual({
-      provider: "auto",
-      model: "",
-      base_url: "",
-      api_key: "",
-      timeout: 600,
-      extra_body: {},
-    });
+    expect(config.curator).toBeUndefined();
+    expect(config.auxiliary?.curator).toBeUndefined();
     expect(config.model).toMatchObject({
       default: "test-model",
       provider: "custom",
@@ -757,8 +695,8 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it.each(["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"])(
-    "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
-    async (platform) => {
+    "leaves native tool discovery unpinned for each platform [%s]",
+    async (_platform) => {
       const { config } = await runConfigScriptWithMessaging({
         NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
           "discord",
@@ -774,10 +712,10 @@ describe("agents/hermes/generate-config.ts", () => {
         }),
       });
 
-      expectRemotePlatformToolsets(config.platform_toolsets[platform]);
+      expect(config.platform_toolsets).toBeUndefined();
 
       // The local Hermes CLI keeps upstream defaults.
-      expect(config.platform_toolsets.cli).toBeUndefined();
+      expect(config.platform_toolsets?.cli).toBeUndefined();
     },
   );
 
@@ -804,7 +742,7 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(config.image_gen).toEqual({ use_gateway: true });
     expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
-    expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
+    expect(config.platform_toolsets).toBeUndefined();
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
     expect(envFile).not.toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=");
@@ -903,7 +841,7 @@ describe("agents/hermes/generate-config.ts", () => {
       channel_prompts: {},
     });
     expect(config.platforms.discord).toEqual({ enabled: true });
-    expectRemotePlatformToolsets(config.platform_toolsets.discord);
+    expect(config.platform_toolsets).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain("DISCORD_BOT_TOKEN");
     expect(envFile).not.toContain("DISCORD_BOT_TOKEN=");
     expect(envFile).not.toContain("DISCORD_PROXY=");
@@ -1005,8 +943,8 @@ describe("agents/hermes/generate-config.ts", () => {
       enabled: true,
       extra: { rich_blocks: true },
     });
-    expectRemotePlatformToolsets(config.platform_toolsets.telegram);
-    expectRemotePlatformToolsets(config.platform_toolsets.slack);
+    expect(config.platform_toolsets).toBeUndefined();
+    expect(config.platform_toolsets).toBeUndefined();
     expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=");
@@ -1032,16 +970,14 @@ describe("agents/hermes/generate-config.ts", () => {
     "WHATSAPP_ENABLED",
     "TEAMS_CLIENT_SECRET",
   ])(
-    "keeps every managed-image messaging platform explicitly disabled before first start [%s] (#7744)",
+    "leaves native platform activation unset without injecting credentials [%s] (#7744)",
     (credential) => {
       const { config, envFile } = generateBaseConfig({
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
       });
 
-      MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS.forEach((platform) => {
-        expect(config.platforms[platform], platform).toEqual({ enabled: false });
-        expect(config.platform_toolsets[platform], platform).toBeUndefined();
-      });
+      expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+      expect(config.platform_toolsets).toBeUndefined();
 
       expect(envFile, credential).not.toContain(`${credential}=`);
     },
@@ -1084,7 +1020,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.wechat).toBeUndefined();
     expect(config.platforms.wechat).toBeUndefined();
     expect(config.platforms.weixin).toEqual({ enabled: true });
-    expectRemotePlatformToolsets(config.platform_toolsets.weixin);
+    expect(config.platform_toolsets).toBeUndefined();
 
     // Startup copies OpenShell's revision-scoped WECHAT_BOT_TOKEN placeholder
     // to Hermes' WEIXIN_TOKEN name. Persisting the canonical placeholder here
@@ -1105,7 +1041,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.whatsapp).toBeUndefined();
     expect(config.platforms.whatsapp).toEqual({ enabled: true });
-    expectRemotePlatformToolsets(config.platform_toolsets.whatsapp);
+    expect(config.platform_toolsets).toBeUndefined();
     expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
     // Hermes' own adapter default. self-chat reads no allowlist, so a paired
     // sandbox answers the owner's own chat with nothing else configured (#8312).
@@ -1180,7 +1116,7 @@ describe("agents/hermes/generate-config.ts", () => {
       }),
     });
 
-    expect(config.platform_toolsets.weixin).toBeUndefined();
+    expect(config.platform_toolsets?.weixin).toBeUndefined();
     expect(envFile).not.toContain("WEIXIN_TOKEN=");
     expect(envFile).not.toContain("WEIXIN_ACCOUNT_ID=");
   });
@@ -1193,7 +1129,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
-    expectRemotePlatformToolsets(config.platform_toolsets.telegram);
+    expect(config.platform_toolsets).toBeUndefined();
     expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
   });
 

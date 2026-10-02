@@ -419,7 +419,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).not.toContain("dcode.upstream");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-    expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(expectedVersion).not.toBeNull();
     expect(wrapper).toContain(`deepagents-code==${expectedVersion}`);
     expect(wrapper).toContain("Schema pin");
@@ -440,10 +439,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system",
         'reject_managed_override "dependency update posture"',
         'reject_managed_override "credential posture"',
-        'reject_managed_override "managed tool set posture"',
         'reject_managed_override "sandbox isolation"',
-        'reject_managed_override "MCP posture"',
-        'reject_managed_override "headless shell posture"',
       ].every((s) => wrapper.includes(s)),
     ).toBe(true);
     expect(
@@ -573,11 +569,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
-    expect(patcher).toContain("_nemoclaw_skip_launch_model");
     expect(managedRuntime).toContain("if not servers:\n        return None");
     expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
-    expect(patcher).toContain("def discover_mcp_configs(");
-    expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).not.toContain("managed_mcp_config_path");

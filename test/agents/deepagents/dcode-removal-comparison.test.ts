@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { makeWrapperFixture, omitRejection } from "./dcode-wrapper-fixture.ts";
+import { makeWrapperFixture } from "./dcode-wrapper-fixture.ts";
 import {
   cleanupPackageFixtures,
   createPackageFixture,
@@ -18,13 +18,11 @@ afterEach(cleanupPackageFixtures);
 // These comparisons stop at the wrapper's downstream process boundary. The fixture
 // records dispatch; it does not run native tools, inference, updates, or an ACP server.
 const cases = [
-  { id: "D01", arm: "    --interpreter)", args: ["-n", "hello", "--interpreter"] },
-  { id: "D03", arm: "  tools)", args: ["tools", "configure"] },
-  { id: "D04", arm: "  update | install)", args: ["update"] },
-  { id: "D05", arm: "    --model-p |", args: ["--model-params", '{"temperature":0.2}'] },
-  { id: "D07", arm: "    -y |", args: ["-n", "hello", "--auto-approve"] },
-  { id: "D08", arm: "    --acp)", args: ["--acp"] },
-  { id: "D11", arm: "  mcp)", args: ["mcp", "list"] },
+  { id: "D01", args: ["-n", "hello", "--interpreter"] },
+  { id: "D03", args: ["tools", "configure"] },
+  { id: "D05", args: ["--rubric-model", "openai:fixture"] },
+  { id: "D08", args: ["--acp"] },
+  { id: "D11", args: ["mcp", "list"] },
 ] as const;
 
 function runWrapper(wrapperPath: string, args: readonly string[], env = {}) {
@@ -35,9 +33,9 @@ function runWrapper(wrapperPath: string, args: readonly string[], env = {}) {
   });
 }
 
-describe("Deep Agents proposed shell removal effects", () => {
+describe("Deep Agents native command forwarding", () => {
   it.each(cases)(
-    "$id retains a Python rejection if only the shell rejection is removed (#11763)",
+    "$id preserves native parser options with credential handling installed (#11763)",
     ({ args }) => {
       const directory = createPackageFixture();
       const probe = () =>
@@ -54,22 +52,16 @@ describe("Deep Agents proposed shell removal effects", () => {
       expect(native.status, native.stderr).toBe(0);
       patchFixture(directory);
       const managed = probe();
-      expect(managed.status).not.toBe(0);
-      expect(managed.stderr).toContain("disabled");
+      expect(managed.status, managed.stderr).toBe(0);
     },
   );
 
   it.each(cases)(
-    "$id forwards the command only after its extra rejection is omitted (#11763)",
-    ({ arm, args }) => {
+    "$id forwards native commands while retaining credential and prompt checks (#11763)",
+    ({ args }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-removal-"));
       try {
         const { wrapperPath, ranMarker } = makeWrapperFixture(directory);
-        const current = runWrapper(wrapperPath, args);
-        expect(current.status, current.stderr).toBe(2);
-        expect(fs.existsSync(ranMarker)).toBe(false);
-
-        fs.writeFileSync(wrapperPath, omitRejection(fs.readFileSync(wrapperPath, "utf8"), arm));
         const candidate = runWrapper(wrapperPath, args);
         expect(candidate.status, candidate.stderr).toBe(0);
         expect(fs.existsSync(ranMarker)).toBe(true);

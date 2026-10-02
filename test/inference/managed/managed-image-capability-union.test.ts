@@ -7,10 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
-  MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS,
-} from "../../../agents/hermes/config/managed-policy.ts";
+import { MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS } from "../../../agents/hermes/config/managed-policy.ts";
 import { MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES } from "../../../scripts/generate-openclaw-config.mts";
 import {
   applyMessagingBuildPhase,
@@ -58,7 +55,7 @@ describe("managed-image capability union", () => {
     ]);
   });
 
-  it("keeps the neutral config contract aligned with every supported manifest (#7744)", () => {
+  it("keeps the installed capability contract aligned with every supported manifest (#7744)", () => {
     const openClawCapabilities = BUILT_IN_CHANNEL_MANIFESTS.filter((manifest) =>
       manifest.supportedAgents.some((agent) => agent === "openclaw"),
     ).flatMap((manifest) =>
@@ -77,40 +74,6 @@ describe("managed-image capability union", () => {
       pluginId: "googlechat",
     });
     expect(MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS).toEqual(hermesPlatforms);
-    expect(MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS).toEqual([
-      "a2a",
-      "bluebubbles",
-      "buzz",
-      "dingtalk",
-      "discord",
-      "email",
-      "feishu",
-      "google_chat",
-      "homeassistant",
-      "irc",
-      "line",
-      "matrix",
-      "mattermost",
-      "msgraph_webhook",
-      "ntfy",
-      "photon",
-      "qqbot",
-      "raft",
-      "relay",
-      "signal",
-      "simplex",
-      "slack",
-      "sms",
-      "teams",
-      "telegram",
-      "wecom",
-      "wecom_callback",
-      "weixin",
-      "whatsapp",
-      "whatsapp_cloud",
-      "webhook",
-      "yuanbao",
-    ]);
   });
 
   it("emits no runtime activation artifact for a neutral capability union (#7744)", () => {

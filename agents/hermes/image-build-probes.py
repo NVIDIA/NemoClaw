@@ -87,60 +87,22 @@ def _verify_profile_config_policy(config: dict, expected: dict[str, object]) -> 
     from managed_policy import policy_value
 
     for path, value in expected.items():
-        if path.startswith("session_reset."):
-            continue
         actual = policy_value(config, path)
         assert actual == value, (path, actual, value)
 
 
-def _verify_session_reset_policy(reset_policy: object, expected: dict[str, object]) -> None:
-    for field in ("mode", "at_hour", "idle_minutes"):
-        path = f"session_reset.{field}"
-        actual = getattr(reset_policy, field)
-        assert actual == expected[path], (path, actual, expected[path])
-
-
 def verify_profile_policy() -> None:
-    from types import SimpleNamespace
-
-    from cli import CLI_CONFIG
-    from gateway.config import SessionResetPolicy
-    from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
-    from hermes_cli.update_cmd_maint import _resolve_pre_update_backup_mode
     from managed_policy import load_managed_policy, profile_default_values
     from tools.browser_tool_eval_policy import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
     )
-    from tui_gateway.server import _load_show_reasoning
 
-    policy = load_managed_policy()
-    expected = profile_default_values(policy)
-    config = load_config_readonly()
-    _verify_profile_config_policy(config, expected)
-    assert CLI_CONFIG["display"]["show_reasoning"] == expected["display.show_reasoning"]
+    expected = profile_default_values(load_managed_policy())
+    _verify_profile_config_policy(load_config_readonly(), expected)
     assert _allow_unsafe_browser_evaluate() == expected["browser.allow_unsafe_evaluate"]
     assert _restrict_browser_evaluate() == expected["browser.restrict_evaluate"]
-    assert _load_show_reasoning() == expected["display.show_reasoning"]
-    _verify_session_reset_policy(SessionResetPolicy(), expected)
-    _verify_session_reset_policy(SessionResetPolicy.from_dict({}), expected)
-    original_load_config = hermes_config.load_config
-    try:
-
-        def fail_config_load():
-            raise RuntimeError("nemoclaw build probe")
-
-        hermes_config.load_config = fail_config_load
-        args = SimpleNamespace(no_backup=False, backup=False)
-        expected_backup_mode = (
-            "off"
-            if expected["updates.pre_update_backup"] is False
-            else str(expected["updates.pre_update_backup"])
-        )
-        assert _resolve_pre_update_backup_mode(args) == expected_backup_mode
-    finally:
-        hermes_config.load_config = original_load_config
 
 
 def verify_gateway_runtime_metadata() -> None:

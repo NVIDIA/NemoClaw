@@ -6,32 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { guardSource, omitBetween } from "./openclaw-shell-removal-fixture.ts";
+import { guardSource } from "./openclaw-shell-removal-fixture.ts";
 
-const cases = [
-  {
-    id: "O02",
-    args: ["agent", "--local", "-m", "fixture"],
-    remove: (source: string) =>
-      omitBetween(source, "    agent)\n", '\n  esac\n  case "$_nemoclaw_guard_request_handled"'),
-  },
-  {
-    id: "O03",
-    args: ["channels", "add", "--channel", "telegram"],
-    remove: (source: string) =>
-      omitBetween(
-        source,
-        '          _nemoclaw_channel_operation_hint="<operation>"',
-        "\n          ;;",
-        "          :",
-      ),
-  },
-];
+const cases = [{ id: "O02", args: ["agent", "--local", "-m", "fixture"] }];
 
 describe("OpenClaw proposed shell removals", () => {
   it.each(cases.flatMap((entry) => [0, 23].map((exit) => ({ ...entry, exit }))))(
-    "$id forwards arguments and exit $exit after its rejection is omitted (#11763)",
-    ({ args, remove, exit }) => {
+    "$id forwards local mode arguments and exit $exit (#11763)",
+    ({ args, exit }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-removal-"));
       try {
         fs.writeFileSync(
@@ -50,11 +32,7 @@ describe("OpenClaw proposed shell removals", () => {
               ...(remote ? { OPENCLAW_GATEWAY_URL: "wss://other.example.test" } : {}),
             },
           });
-        const current = guardSource();
-        const rejected = run(current, 0);
-        expect(rejected.status).toBe(1);
-        expect(rejected.stdout).not.toContain("arg=");
-        const candidate = remove(current);
+        const candidate = guardSource();
         const forwarded = run(candidate, exit);
         expect(forwarded.status, forwarded.stderr).toBe(exit);
         expect(forwarded.stdout.split("\n").filter((line) => line.startsWith("arg="))).toEqual(

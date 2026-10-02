@@ -68,21 +68,3 @@ export function makeWrapperFixture(
   fs.writeFileSync(wrapperPath, fixture, { mode: 0o755 });
   return { wrapperPath, ranMarker, autoApprovalPath };
 }
-
-export function omitRejection(source: string, arm: string): string {
-  const start = source.indexOf(`\n${arm}`);
-  if (start < 0) throw new Error(`Missing wrapper arm: ${arm}`);
-  const terminator = arm === "  tools)" ? "\n    esac\n    ;;" : /\n\s+;;/u;
-  const remaining = source.slice(start);
-  const match =
-    typeof terminator === "string"
-      ? { index: remaining.indexOf(terminator), length: terminator.length }
-      : (() => {
-          const result = terminator.exec(remaining);
-          if (!result) throw new Error(`Missing case terminator: ${arm}`);
-          return { index: result.index, length: result[0].length };
-        })();
-  if (match.index < 0) throw new Error(`Missing case terminator: ${arm}`);
-  const length = match.index + match.length;
-  return source.slice(0, start) + source.slice(start + length);
-}

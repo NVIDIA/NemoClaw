@@ -33,7 +33,6 @@ const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 // host lifecycle remains independently receipt-bound, so its staged context
 // must carry that hold and its identity-bound completion/release protocol.
 const LOCAL_COPY_SOURCES = [
-  "agents/hermes/a2a-neutral.patch",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/dashboard-external-host.patch",

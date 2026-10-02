@@ -90,7 +90,6 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     const command = readAgentFile("nemoclaw_read_only_mcp.py");
     const validator = readAgentFile("validate-read-only-mcp-call.py");
 
-    expect(wrapper).toContain("list | call-read-only | help");
     expect(wrapper).toContain("dcode tools call-read-only TOOL --json");
     expect(wrapper).toContain(
       'exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null',
@@ -251,11 +250,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   it.each([
     { args: ["--model-params", '{"api_key":"secret"}'], posture: "model parameter" },
     { args: ['--model-p={"api_key":"secret"}'], posture: "model parameter" },
-    { args: ["--rubric-model", "anthropic:test"], posture: "rubric model" },
-    { args: ["--rubric-m=anthropic:test"], posture: "rubric model" },
     { args: ["-y"], posture: "tool approval" },
     { args: ["--auto-approve"], posture: "tool approval" },
-    { args: ["--acp"], posture: "ACP approval" },
   ])("rejects managed runtime override $args", async ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-override-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -270,6 +266,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   });
 
   it.each([
+    ["--rubric-model", "openai:fixture"],
+    ["--acp"],
     ["--shell-allow-list", "recommended"],
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
@@ -313,7 +311,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
       encoding: "utf8",
     });
     expect(headless.status, headless.stderr).toBe(0);
-    expect(headless.stdout).toContain("shell-allow-list=__unset__");
+    expect(headless.stdout).toContain("shell-allow-list=recommended");
   });
 
   it.each([
@@ -378,7 +376,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
     ["--startup-cmd", "printf unsafe"],
-  ])("keeps native local execution disabled for managed headless runs: %s", async (...args) => {
+  ])("preserves native local execution for managed headless runs: %s", async (...args) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-local-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
     const result = await runCommand("bash", [wrapperPath, "-n", "hi", ...args], {
@@ -386,13 +384,12 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
       encoding: "utf8",
     });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("headless");
-    expect(fs.existsSync(ranMarker)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
   it.each([["--non", "hi"], ["--non-", "hi"], ["--non-int", "hi"], ["--non-interactive=hi"]])(
-    "applies headless restrictions for unambiguous non-interactive prefix %s",
+    "preserves native interpreter execution for unambiguous non-interactive prefix %s",
     async (...args) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-prefix-"));
       const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -401,9 +398,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
         encoding: "utf8",
       });
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("headless interpreter");
-      expect(fs.existsSync(ranMarker)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(ranMarker)).toBe(true);
     },
   );
 

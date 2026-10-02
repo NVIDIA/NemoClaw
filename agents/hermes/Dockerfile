@@ -49,7 +49,7 @@ COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemocl
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
-COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
+COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-mcp-http-proxy.py /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py
 COPY agents/hermes/patch-external-supervisor-restart.py /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py
@@ -360,7 +360,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc66164257d69eeb0bba3c283afcc6e50b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=3ae895cb7cc5d70b3afe53e2c8042cad079a78eee92c9d71991e825cb9eeb74a
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -386,7 +386,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc66164257d69eeb0bba3c283afcc6e50b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=3ae895cb7cc5d70b3afe53e2c8042cad079a78eee92c9d71991e825cb9eeb74a
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -956,7 +956,7 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=954e982162b8c79ca2e08897907f561b307235eefc33fa882b5c22faa22f152a
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=232540eafe1581e804764bfb1457e77c5504ba65ef73f5ee32bbd1c62f8508c4
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
@@ -966,26 +966,6 @@ RUN printf '%s  %s\n' \
     && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && rm /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
         /opt/nemoclaw-hermes-config/managed_policy.py
-# A2A has no accepted NVIDIA/NemoClaw product scope. Keep the inbound adapter
-# disabled and remove its outbound tools from every Hermes process.
-ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=64c450d682a25ba388c816bcc00a601f298ec2daec235b996c1e3a9d5fc2966c
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256" /opt/nemoclaw-hermes-config/a2a-neutral.patch \
-    | sha256sum -c - \
-    && git -C /opt/hermes apply --check \
-        --include=plugins/platforms/a2a/plugin.yaml \
-        --include=plugins/platforms/a2a/__init__.py \
-        /opt/nemoclaw-hermes-config/a2a-neutral.patch \
-    && git -C /opt/hermes apply \
-        --include=plugins/platforms/a2a/plugin.yaml \
-        --include=plugins/platforms/a2a/__init__.py \
-        /opt/nemoclaw-hermes-config/a2a-neutral.patch \
-    && ! grep -Fq 'provides_tools:' /opt/hermes/plugins/platforms/a2a/plugin.yaml \
-    && ! grep -Fq 'from .tools import register_tools' /opt/hermes/plugins/platforms/a2a/__init__.py \
-    && HERMES_HOME=/sandbox/.hermes /opt/hermes/.venv/bin/python -I -c \
-        'from hermes_cli.plugins import discover_plugins; from tools.registry import registry; discover_plugins(); assert registry.get_tool_names_for_toolset("a2a") == []; assert not any(name.startswith("a2a_") for name in registry.get_all_tool_names())' \
-    && rm /opt/nemoclaw-hermes-config/a2a-neutral.patch
 
 RUN set -eu; \
     profile_probe_root="$(mktemp -d)"; \

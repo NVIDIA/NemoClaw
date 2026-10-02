@@ -14,10 +14,3 @@ export function guardSource() {
   if (start < 0 || end < start) throw new Error("Missing emitted OpenClaw guard");
   return source.slice(start, end);
 }
-
-export function omitBetween(source: string, start: string, end: string, replacement = "") {
-  const begin = source.indexOf(start);
-  const finish = source.indexOf(end, begin);
-  if (begin < 0 || finish < begin) throw new Error("Missing proposed shell removal boundary");
-  return source.slice(0, begin) + replacement + source.slice(finish);
-}
