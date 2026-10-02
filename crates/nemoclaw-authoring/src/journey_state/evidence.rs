@@ -13,6 +13,16 @@ impl JourneyState {
         facts: &FactSheet,
     ) -> Result<JourneyResolution, Diagnostics> {
         let mut resolution = self.resolve(capabilities)?;
+        // A host that can run only one local runtime makes it the suggestion,
+        // even over a supplied value; the user still decides.
+        if let [only] = crate::facts::reachable_runtimes(facts).as_slice()
+            && let Some(question) = resolution
+                .questions
+                .iter_mut()
+                .find(|question| question.id == RUNTIME_PROVIDER)
+        {
+            question.suggestion = Some(Value::String((*only).into()));
+        }
         if !facts.is_empty()
             && let Some(document) = resolution.assessment.document()
         {

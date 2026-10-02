@@ -149,7 +149,9 @@ A query that was attempted without an observation stays distinct from one never 
 A `FactSource` answers queries: `DiscoverySession` reads the real target through the provider, and `FixtureFacts` replays a recorded sheet, so decisions can be tested for any hardware without owning it.
 `fact_needs` returns the queries a journey needs for an SDK-valid document.
 It derives them the way planning does and differs in two named ways, which tests compare against the compiled plan: onboarding reads no hardware for a managed service's engine, and it makes no image read for an external gateway without an engine.
+`environment_needs` returns the reads that need no answers, which are the local engines, so the first question can use them.
 `gather` repeats observe and merge until nothing needed is missing, so a read can depend on an earlier fact.
+Recorded sheets in `tests/fixtures/facts` replay a host, such as one with only Podman, through `FixtureFacts`.
 Hardware and gateway facts do not affect questions or readiness yet.
 `resolve_with_facts` supplements current model suggestions with the matching endpoint observation and assesses target compatibility with `assess_target`.
 An empty sheet leaves the resolution unchanged.

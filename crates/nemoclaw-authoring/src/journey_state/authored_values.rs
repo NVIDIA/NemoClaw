@@ -259,14 +259,13 @@ impl AuthoredValues {
         if self.values.pointer("/spec/gateway/engine").is_some() && !self.generated_gateway_engine {
             return Ok(());
         }
-        let engine = match self
+        let Some(engine) = self
             .values
             .pointer(RUNTIME_PROVIDER)
             .and_then(Value::as_str)
-        {
-            Some("podman") => "unix:///run/user/1000/podman/podman.sock",
-            Some("docker") => "unix:///var/run/docker.sock",
-            _ => return Ok(()),
+            .and_then(crate::facts::local_engine)
+        else {
+            return Ok(());
         };
         self.put_sdk_field("/spec/gateway/engine", Some(Value::String(engine.into())))?;
         self.generated_gateway_engine = true;

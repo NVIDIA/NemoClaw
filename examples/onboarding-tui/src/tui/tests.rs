@@ -563,6 +563,37 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
 }
 
 #[test]
+fn enter_accepts_the_runtime_this_machine_can_run() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    // Only Podman answered when this machine was read, but the template says Docker.
+    wizard.facts = serde_json::from_str(include_str!(
+        "../../../../crates/nemoclaw-authoring/tests/fixtures/facts/podman-only.json"
+    ))
+    .unwrap();
+    for _ in 0..5 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == "/spec/sandboxes/0/runtime/provider")
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    wizard.advance();
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(
+        wizard
+            .state
+            .values()
+            .pointer("/spec/sandboxes/0/runtime/provider"),
+        Some(&serde_json::json!("podman"))
+    );
+}
+
+#[test]
 fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     let capabilities = Capabilities::available();
     let base =

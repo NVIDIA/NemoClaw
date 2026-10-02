@@ -28,7 +28,7 @@ pub use evidence::{
     CompatibilityStatus, DiscoveryAssessment, DiscoveryKey, DiscoveryQuery, assess_target,
     discovery_key_for_document,
 };
-pub use facts::{fact_needs, inference_request_for_document};
+pub use facts::{environment_needs, fact_needs, inference_request_for_document};
 pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,

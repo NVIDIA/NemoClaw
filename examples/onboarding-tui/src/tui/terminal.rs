@@ -4,7 +4,8 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    Capabilities, JourneyQuestionKind, JourneyState, fact_needs, inference_request_for_document,
+    Capabilities, JourneyQuestionKind, JourneyState, environment_needs, fact_needs,
+    inference_request_for_document,
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
@@ -71,6 +72,33 @@ pub(crate) async fn run(
     loop {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
+        }
+        // Learn what this machine can run before the first question, so early
+        // choices can use it. Each read is attempted once, even when it fails.
+        if let Some(bundle) = bundle {
+            let needs = wizard.facts.missing(&environment_needs());
+            if !needs.is_empty() {
+                terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
+                let discovery_cancel = cancel.child_token();
+                let Some(observed) = wait_for_discovery(
+                    observe_facts(bundle, needs.clone(), &discovery_cancel),
+                    cancel,
+                    &discovery_cancel,
+                    &mut queued_events,
+                    poll_pending_event,
+                )
+                .await?
+                else {
+                    return Ok(None);
+                };
+                match observed {
+                    Some(facts) => wizard.facts.merge(facts),
+                    None => needs
+                        .into_iter()
+                        .for_each(|query| wizard.facts.record(query, None)),
+                }
+                needs_render = true;
+            }
         }
         // Resolver failures are rendered by the view; keep the loop alive so
         // the user can go back instead of exiting the TUI.
