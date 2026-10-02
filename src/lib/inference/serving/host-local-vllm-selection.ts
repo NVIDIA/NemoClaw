@@ -28,6 +28,7 @@ import type {
 } from "./types.js";
 
 export interface MaterializedHostLocalVllmSelection {
+  readonly displayName?: string;
   readonly profile: VllmProfile;
   readonly model: VllmModelDef;
   readonly presetId: string;
@@ -140,6 +141,7 @@ export function materializeHostLocalVllmSelection(
   const model = materializeHostLocalVllmModel(recipe, directInstall, baseProfile.platform);
   const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   return {
+    displayName: preset.metadata.displayName,
     presetId: preset.metadata.id,
     recipeId: recipe.metadata.id,
     model,
