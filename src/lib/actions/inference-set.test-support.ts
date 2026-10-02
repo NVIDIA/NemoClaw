@@ -63,10 +63,25 @@ function defaultCaptureOpenshell(
   return { status, output, stdout: output, stderr: "" };
 }
 
-function nativeAwareProviderAdapter(base: OpenShellProviderAdapter): OpenShellProviderAdapter {
-  const providerId = "11111111-2222-4333-8444-555555555555";
-  let providerPresent = false;
-  const attachments = new Set<string>();
+function nativeAwareProviderAdapter(
+  base: OpenShellProviderAdapter,
+  entries: SandboxEntry[],
+): OpenShellProviderAdapter {
+  const recordedEntry = entries.find(
+    (entry) => entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
+  );
+  const providerId =
+    recordedEntry?.nativeNvidiaProviderAttachment?.providerId ??
+    "11111111-2222-4333-8444-555555555555";
+  let providerPresent = recordedEntry !== undefined;
+  const attachments = new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
+      )
+      .map((entry) => entry.name),
+  );
   const isNative = (providerName: string): boolean =>
     providerName === NVIDIA_HOSTED_NATIVE_PROVIDER;
   return {
@@ -365,6 +380,7 @@ export function createDeps(options: {
           };
         },
       }),
+      entries,
     );
   return {
     getDefaultSandbox: () => defaultSandbox,
