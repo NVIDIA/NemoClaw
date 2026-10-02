@@ -52,7 +52,9 @@ describe("Google Chat webhook tunnel lifecycle", () => {
           },
           webhookProxy: { stopGooglechatWebhookProxy },
         }),
-      ).toThrow("Stop it manually, then retry");
+      ).toThrow(
+        "verify its command line identifies cloudflared; do not stop it if its identity is uncertain",
+      );
       expect(signal).toHaveBeenCalledWith(999999999, "SIGTERM");
       expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
       expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("999999999");
