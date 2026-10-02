@@ -136,7 +136,10 @@ export type OnboardOptions = {
     "prompt" | "sandboxName"
   >;
   authoritativeResumeConfig?: boolean;
-  /** Internal permission granted only by a validated prepared-backup rebuild. */
+  /**
+   * Internal permission from a rebuild that admitted the removed Shields state
+   * record under its lifecycle lock.
+   */
   allowRemovedImmutabilityStateRecord?: true;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;

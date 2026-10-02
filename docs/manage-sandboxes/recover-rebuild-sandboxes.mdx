@@ -18,7 +18,34 @@ Use the lightest recovery operation that repairs the sandbox while preserving it
 
 Shields has been retired from NemoClaw. The current CLI has no Shields commands, status, timers, or supported locked posture. After an upgrade, NemoClaw prints a retirement notice while it still finds legacy Shields state and identifies the affected sandbox records when possible.
 
-If the sandbox has only an inert legacy state record, create a trusted snapshot or backup. Then rebuild the affected sandbox before running further mutations.
+Onboarding cannot recreate a sandbox that has a legacy state record.
+If the sandbox has only an inert legacy state record, rebuild it before you run other commands:
+
+```bash
+$$nemoclaw <sandbox-name> rebuild
+```
+
+The rebuild backs up the sandbox state, replaces the sandbox, and restores the state.
+After the rebuild verifies that the restored configuration is mutable, it removes the legacy state record.
+The retirement notice then no longer lists the sandbox.
+If that check fails, the rebuild exits with an error and keeps the legacy state record.
+
+If the rebuild reports that it cannot read state that Shields locked, it stops before it deletes the sandbox and prints replacement steps.
+
+<Warning>
+Destroying the sandbox deletes every file that you do not copy first, including locked state that only root can read.
+</Warning>
+
+To replace the sandbox, complete these steps:
+
+1. Copy each file or directory that you want to keep to the host with `$$nemoclaw <sandbox-name> download`.
+   The [manual transfer workflow](../state-and-backups/transfer-state-manually) lists the paths for each agent.
+2. Destroy the sandbox with `$$nemoclaw <sandbox-name> destroy --yes`.
+   The command also removes the legacy state record.
+   After the command succeeds, the retirement notice no longer lists the sandbox.
+3. Onboard a replacement sandbox with the same name by running `$$nemoclaw onboard --name <sandbox-name>`.
+4. Copy the saved files into the replacement with `$$nemoclaw <sandbox-name> upload`.
+5. Reconfigure any setting whose files you could not copy.
 
 If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe.
 

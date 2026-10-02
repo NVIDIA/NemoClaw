@@ -35,6 +35,7 @@ export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
 const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:destroy",
+  "sandbox:download",
   "sandbox:logs",
   "sandbox:rebuild",
   "sandbox:snapshot",
