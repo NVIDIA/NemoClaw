@@ -75,6 +75,22 @@ function messagingPlanner(): MessagingWorkflowPlanner {
 }
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
+  it("O09 leaves packaged channel activation unset without neutral image defaults (#11763)", () => {
+    const managed = buildConfig({ ...BASE_ENV, NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1" });
+    const nativeSelection = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0",
+    });
+    expect(managed.channels.telegram).toEqual({ enabled: false });
+    expect(managed.plugins.entries.telegram).toEqual({ enabled: false });
+    expect(nativeSelection.channels.telegram).toBeUndefined();
+    expect(nativeSelection.plugins.entries.telegram).toBeUndefined();
+    expect(nativeSelection.models).toEqual(managed.models);
+    expect(nativeSelection.gateway.auth).toEqual(managed.gateway.auth);
+    // Bonjour is an independent default; this comparison does not remove it.
+    expect(nativeSelection.plugins.entries.bonjour).toEqual({ enabled: false });
+  });
+
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.nemoclaw).toEqual({ enabled: true });

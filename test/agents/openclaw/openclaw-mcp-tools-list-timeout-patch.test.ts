@@ -82,13 +82,17 @@ function loadOverride(env: Record<string, string>): { stderr: string[]; value: u
 }
 
 function executePatchedTimeoutResolver(options: {
+  native?: boolean;
   env?: Record<string, string>;
   rawServer?: Record<string, unknown>;
   requestTimeoutMs: number;
   testOnlyTimeoutMs?: number;
 }): unknown {
   const patched = patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js");
-  const executable = patched.text.replace(/^(?:import[^\n]*\n)+/u, "");
+  const executable = (options.native ? bundleMcpRuntimeFixture() : patched.text).replace(
+    /^(?:import[^\n]*\n)+/u,
+    "",
+  );
   const context = vm.createContext({
     Error,
     Number,
@@ -110,6 +114,22 @@ function executePatchedTimeoutResolver(options: {
 }
 
 describe("patchMcpToolsListTimeoutText", () => {
+  it("O11 ignores the NemoClaw timeout override when its patch is omitted (#11763)", () => {
+    const options = {
+      env: { OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: "5000" },
+      requestTimeoutMs: 3000,
+    };
+    expect(executePatchedTimeoutResolver(options)).toBe(5000);
+    expect(executePatchedTimeoutResolver({ ...options, native: true })).toBe(1500);
+    expect(
+      executePatchedTimeoutResolver({
+        ...options,
+        native: true,
+        rawServer: { requestTimeoutMs: 3000 },
+      }),
+    ).toBe(3000);
+  });
+
   it("adds a bounded override ahead of OpenClaw's configured and default budgets", () => {
     const result = patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js");
 

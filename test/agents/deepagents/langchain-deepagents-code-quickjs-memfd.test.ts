@@ -56,6 +56,45 @@ function runPatcher(root: string) {
 }
 
 describe("managed QuickJS Wasmtime compatibility patch", () => {
+  it("D16 restores the engine default when the memory initialization patch is omitted (#11763)", () => {
+    const fixture = makeQuickjsFixture();
+    try {
+      fs.writeFileSync(
+        path.join(fixture.root, "wasmtime.py"),
+        [
+          "class Config:",
+          "    memory_init_cow = True",
+          "class Engine:",
+          "    def __init__(self, config=None): self.config = config or Config()",
+        ].join("\n"),
+      );
+      const probe = () =>
+        spawnSync(
+          "python3",
+          [
+            "-c",
+            "from quickjs_rs._wasmtime import shared_wasmtime_engine; print(shared_wasmtime_engine().config.memory_init_cow)",
+          ],
+          {
+            encoding: "utf8",
+            env: { PATH: process.env.PATH, PYTHONPATH: fixture.root },
+            timeout: 5000,
+          },
+        );
+      const native = probe();
+      expect(native.status, native.stderr).toBe(0);
+      expect(native.stdout.trim()).toBe("True");
+      expect(runPatcher(fixture.root).status).toBe(0);
+      const managed = probe();
+      expect(managed.status, managed.stderr).toBe(0);
+      expect(managed.stdout.trim()).toBe("False");
+      // The fake engine observes construction. A Linux OpenShell interpreter
+      // run is still required to test the denied-syscall compatibility claim.
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("disables copy-on-write memory initialization for quickjs-rs 0.2.5 (#11847)", () => {
     const fixture = makeQuickjsFixture();
     try {

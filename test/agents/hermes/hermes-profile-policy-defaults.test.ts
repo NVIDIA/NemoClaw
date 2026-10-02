@@ -203,6 +203,87 @@ ${body}
 }
 
 describe("Hermes profile policy defaults", () => {
+  it.each([
+    { managed: true, saved: "missing", expected: "False" },
+    { managed: false, saved: "missing", expected: "True" },
+    { managed: true, saved: "True", expected: "True" },
+    { managed: false, saved: "True", expected: "True" },
+    { managed: true, saved: "False", expected: "False" },
+    { managed: false, saved: "False", expected: "False" },
+  ])(
+    "H01 resolves reasoning display with managed=$managed and saved=$saved (#11763)",
+    ({ managed, saved, expected }) => {
+      const patched = patchSource("tui", tuiFixture);
+      expect(patched.status, patched.stderr).toBe(0);
+      const config = saved === "missing" ? "{}" : `{"show_reasoning": ${saved}}`;
+      const probe = runPatchedPython(
+        managed ? patched.stdout : tuiFixture,
+        `namespace["_display_cfg"] = lambda: ${config}; print(namespace["_load_show_reasoning"]())`,
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout.trim()).toBe(expected);
+    },
+  );
+
+  it.each([
+    { managed: true, expected: "both idle" },
+    { managed: false, expected: "none idle" },
+  ])("H02 resolves the reset mode with managed=$managed (#11763)", ({ managed, expected }) => {
+    const patched = patchSource("gateway", gatewayFixture);
+    expect(patched.status, patched.stderr).toBe(0);
+    const probe = runPatchedPython(
+      managed ? patched.stdout : gatewayFixture,
+      'policy = namespace["SessionResetPolicy"]; print(policy.from_dict({}).mode, policy.from_dict({"mode": "idle"}).mode)',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe(expected);
+  });
+
+  it.each([
+    { managed: true, expected: "False False" },
+    { managed: false, expected: "quick True" },
+  ])("H09 resolves update defaults with managed=$managed (#11763)", ({ managed, expected }) => {
+    const patched = patchSource("main", mainFixture);
+    expect(patched.status, patched.stderr).toBe(0);
+    const source = managed ? patched.stdout : mainFixture;
+    const probe = runPatchedPython(
+      source,
+      'print(namespace["_resolve_pre_update_backup_mode"](), namespace["_refresh"]())',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe(expected);
+    const saved = runPatchedPython(
+      source,
+      'namespace["_load_updates_cfg"] = lambda: {"pre_update_backup": False, "refresh_cua_driver": False}; print(namespace["_resolve_pre_update_backup_mode"](), namespace["_refresh"]())',
+    );
+    expect(saved.status, saved.stderr).toBe(0);
+    expect(saved.stdout.trim()).toBe("False False");
+  });
+
+  it.each([
+    { managed: true, expected: "2" },
+    { managed: false, expected: "0" },
+  ])(
+    "H10 resolves SQLite temporary storage with managed=$managed (#11763)",
+    ({ managed, expected }) => {
+      const patched = patchSource("config", configFixture);
+      expect(patched.status, patched.stderr).toBe(0);
+      const probe = runPatchedPython(
+        managed ? patched.stdout : configFixture,
+        [
+          "import sqlite3",
+          "connection = sqlite3.connect(':memory:')",
+          'value = namespace["DEFAULT_CONFIG"]["database"].get("temp_store", 0)',
+          'connection.execute(f"PRAGMA temp_store={value}")',
+          'print(connection.execute("PRAGMA temp_store").fetchone()[0])',
+          "connection.close()",
+        ].join("\n"),
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout.trim()).toBe(expected);
+    },
+  );
+
   it("pins every config default that fresh profile homes otherwise inherit", () => {
     const result = patchSource("config", configFixture);
 
