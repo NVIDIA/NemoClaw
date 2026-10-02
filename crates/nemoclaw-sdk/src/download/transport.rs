@@ -88,7 +88,14 @@ async fn read(stream: Stream, callback: Callback) {
             .take((LIMIT + 1) as u64)
             .read_until(b'\n', &mut line)
             .await;
-        if result.is_err() || line.is_empty() || line.len() > LIMIT || !line.ends_with(b"\n") {
+        // A blank line ends the stream; closing it tells the writer that every
+        // earlier event was delivered.
+        if result.is_err()
+            || line.is_empty()
+            || line == b"\n"
+            || line.len() > LIMIT
+            || !line.ends_with(b"\n")
+        {
             break;
         }
         if let Ok(event) = serde_json::from_slice::<DownloadProgress>(&line)
