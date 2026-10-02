@@ -21,24 +21,6 @@ set -euo pipefail
 # SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# A supervised Hermes recovery can fail after the provider has fenced this
-# exact startup shell. Keep that authenticated process available for the
-# existing USR2 retry protocol instead of letting `set -e` replace its
-# PID/start identity. Outside an active mutation, preserve ordinary failure.
-nemoclaw_runtime_state_mutation_hold_supervisor_failure() {
-  local status
-  if nemoclaw_runtime_state_mutation_gate admit; then
-    return 1
-  else
-    status=$?
-  fi
-  [ "$status" -eq 75 ] || return 1
-  printf '%s\n' '[SECURITY] Hermes supervisor recovery failed during an active runtime state mutation; holding for authenticated retry.' >&2
-  while :; do
-    kill -STOP "$$"
-  done
-}
-
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -2744,20 +2726,6 @@ validate_hermes_runtime_env_secret_boundary() {
     "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
-hermes_gateway_healthy() {
-  local pid="$1"
-  local code
-  local service_user=current
-  [ "$(id -u)" -eq 0 ] && service_user=gateway
-  hermes_tracked_role_is_current gateway "$pid" "$service_user" "$INTERNAL_PORT" || return 1
-  code="$(curl -so /dev/null -w '%{http_code}' --max-time 2 \
-    "http://127.0.0.1:${INTERNAL_PORT}/health" 2>/dev/null || echo 000)"
-  case "$code" in
-    200 | 401) hermes_tracked_service_owns_listener "$pid" "$INTERNAL_PORT" gateway ;;
-    *) return 1 ;;
-  esac
-}
-
 hermes_socat_bridge_healthy() {
   local role="$1"
   local pid="$2"
@@ -2796,13 +2764,6 @@ hermes_dashboard_healthy() {
     200 | 301 | 302 | 307 | 308) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-hermes_auxiliaries_need_recovery() {
-  hermes_api_socat_bridge_healthy "${SOCAT_PID:-}" "$PUBLIC_PORT" || return 0
-  hermes_dashboard_healthy "${DASHBOARD_PID:-}" || return 0
-  hermes_socat_bridge_healthy dashboard-socat "${DASHBOARD_SOCAT_PID:-}" "$DASHBOARD_PUBLIC_PORT" || return 0
-  return 1
 }
 
 launch_hermes_gateway() {
