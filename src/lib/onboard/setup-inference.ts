@@ -317,6 +317,7 @@ function resolveLocalInferenceRouteApplier(
   inferenceRouteMutator: OpenShellInferenceRouteMutator,
   gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
+  exitAmbiguousRouteResult?: (code: number) => never,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
@@ -336,6 +337,7 @@ function resolveLocalInferenceRouteApplier(
       localInferenceTimeoutSecs: deps.localInferenceTimeoutSecs,
       error: deps.error,
       exitProcess: deps.exitProcess,
+      exitAmbiguousRouteResult,
     })
   );
 }
@@ -344,7 +346,10 @@ const HOST_LOCAL_INFERENCE_DIAGNOSTIC_LIMIT = 240;
 const RUNTIME_PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 
 class HostLocalInferenceBranchExit extends Error {
-  constructor(readonly code: number) {
+  constructor(
+    readonly code: number,
+    readonly routeMutationAmbiguous = false,
+  ) {
     super(`Host-local inference provider branch requested exit ${String(code)}.`);
   }
 }
@@ -801,6 +806,11 @@ export function createSetupInference(
               throw new HostLocalInferenceBranchExit(code);
             }
           : deps.exitProcess;
+        const ambiguousRouteExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
+          ? (code: number): never => {
+              throw new HostLocalInferenceBranchExit(code, true);
+            }
+          : deps.exitProcess;
         const providerError: CommonDeps["error"] = hostLocalSelection
           ? (message: string) => {
               hostLocalProviderErrors.push(message);
@@ -1003,6 +1013,7 @@ export function createSetupInference(
                   revalidatingInferenceRouteMutator,
                   gatewayName,
                   revalidateSandboxIdentity,
+                  ambiguousRouteExitProcess,
                 ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
@@ -1060,6 +1071,7 @@ export function createSetupInference(
                     revalidatingInferenceRouteMutator,
                     gatewayName,
                     revalidateSandboxIdentity,
+                    ambiguousRouteExitProcess,
                   ),
                   run: deps.run,
                   shouldFrontOllamaWithProxy: hostLocalRoute
@@ -1219,7 +1231,8 @@ export function createSetupInference(
           if (
             publicationState === "unpublished" &&
             !hostLocalRegistryPublicationEntered &&
-            !hostLocalRollbackAttempted
+            !hostLocalRollbackAttempted &&
+            !(error instanceof HostLocalInferenceBranchExit && error.routeMutationAmbiguous)
           ) {
             try {
               await rollbackHostLocalInferenceStartup(

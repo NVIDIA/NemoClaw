@@ -18,6 +18,7 @@ export interface LocalInferenceRouteDeps {
   localInferenceTimeoutSecs: number;
   error(message: string): void;
   exitProcess(code: number): never;
+  exitAmbiguousRouteResult?(code: number): never;
 }
 
 const LOCAL_PROVIDER_LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ export function createLocalInferenceRouteApplier(deps: LocalInferenceRouteDeps) 
         deps.error(
           `  The route update result is unknown. Inspect gateway '${deps.gatewayName}' before retrying onboarding.`,
         );
-        return deps.exitProcess(1);
+        return (deps.exitAmbiguousRouteResult ?? deps.exitProcess)(1);
       }
       if (deps.isNonInteractive()) {
         // Only surface the resume guidance when we are actually about to exit —
