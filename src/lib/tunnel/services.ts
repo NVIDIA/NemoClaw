@@ -355,7 +355,7 @@ public static class NemoClawCloudflaredProcess {
 }
 '@
 Add-Type -TypeDefinition $source
-$processId = [uint32]$args[0]
+$processId = [uint32]$env:NEMOCLAW_CLOUDFLARED_PROCESS_ID
 $handle = [NemoClawCloudflaredProcess]::OpenProcess(0x1001, $false, $processId)
 if ($handle -eq [IntPtr]::Zero) {
   $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -452,9 +452,13 @@ function signalCloudflaredWithWindowsHandle(
         "-NonInteractive",
         "-Command",
         WINDOWS_PROCESS_HANDLE_SIGNAL_SCRIPT,
-        String(pid),
       ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 7000 },
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 7000,
+        env: { ...process.env, NEMOCLAW_CLOUDFLARED_PROCESS_ID: String(pid) },
+      },
     ).trim();
     if (
       result === "signaled" ||
