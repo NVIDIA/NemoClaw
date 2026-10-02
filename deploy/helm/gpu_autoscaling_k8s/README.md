@@ -186,16 +186,23 @@ E2E test: OpenClaw + Ollama
 cd deploy/helm/gpu_autoscaling_k8s
 export PATH="${HOME}/.local/bin:${PATH}"
 export KUBECONFIG="${HOME}/.kube/config"
+```
 
-# Terminal A — sandbox provision + GPU-util HPA
+```bash
+# Terminal A 
 # Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
 # A TLS install can omit that variable.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
+```
 
-# Terminal B — watch 67.5%/40%, not 67500m/40
+
+```bash
+# Terminal B 
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
 
-# Terminal C — same client for any HPA metric (inflight 1 is the script default)
+```bash
+# Terminal C 
 E2E_USERS=5 \
 MAX_TOKENS=608 \
 ./scripts/client.sh
@@ -205,13 +212,16 @@ MAX_TOKENS=608 \
 **LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
 
 ```bash
-# Terminal A — sandbox provision + latency HPA
+# Terminal A 
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
-
+```
+```bash
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
 
-# Terminal C — same client; stops at 8 GPUs, not at 5 users
+```bash
+# Terminal C 
 E2E_USERS=5 \
 MAX_TOKENS=608 \
 ./scripts/client.sh
@@ -281,39 +291,46 @@ E2E test: Hermes + vLLM
 cd deploy/helm/gpu_autoscaling_k8s
 export PATH="${HOME}/.local/bin:${PATH}"
 export KUBECONFIG="${HOME}/.kube/config"
+```
 
-# Terminal A — sandbox provision + GPU-util HPA
+
+**GPU Utilization.** (target 40%):
+```bash
+# Terminal A 
 # Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
+```
+<img width="869" height="929" alt="Screenshot 2026-10-01 at 1 54 32 PM" src="https://github.com/user-attachments/assets/60b7f887-3a80-46b3-84a0-1caebf6ea807" />
 
-# Terminal B — watch 99%/40%, not millicores
+```bash
+# Terminal B 
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
+<img width="821" height="383" alt="Screenshot 2026-10-01 at 6 24 21 PM" src="https://github.com/user-attachments/assets/99f9ae4a-8427-4651-a5d8-69118d00f6f3" />
 
-# Terminal C — same client for either HPA metric (inflight 1 is the script default)
+```bash
+# Terminal C — 5 end users sending queries
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
 **LLM latency.** Same sandboxes and the same `client_hermes.sh`. Provision switches HPA to `latency_avg` (target 3000 ms).
 
 ```bash
-# Terminal A — sandbox provision + latency HPA
+# Terminal A
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
+```
+<img width="847" height="827" alt="Screenshot 2026-10-01 at 10 52 48 PM" src="https://github.com/user-attachments/assets/f81b1fea-7421-4d99-8e6d-c493472650e9" />
 
+```bash
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
-
-# Terminal C
-E2E_USERS=5 ./scripts/client_hermes.sh
 ```
-
-Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
-<img width="821" height="383" alt="Screenshot 2026-10-01 at 6 24 21 PM" src="https://github.com/user-attachments/assets/99f9ae4a-8427-4651-a5d8-69118d00f6f3" />
-
-
-
-Validated on DGX 8xH100, HPA metric for autoscaling: LLM latency (target 3000 ms):
 <img width="849" height="521" alt="Screenshot 2026-10-01 at 1 53 17 PM" src="https://github.com/user-attachments/assets/2c0c3b90-761a-4b9b-9a34-0551219d4441" />
 
+```bash
+# Terminal C - 5 end users sending queries
+E2E_USERS=5 ./scripts/client_hermes.sh
+```
 
 
 
@@ -363,15 +380,25 @@ E2E test: Deep Agents Code + NIM
 cd deploy/helm/gpu_autoscaling_k8s
 export PATH="${HOME}/.local/bin:${PATH}"
 export KUBECONFIG="${HOME}/.kube/config"
+```
 
-# Terminal A — sandbox provision + GPU-util HPA
+**GPU Utilization.** (target 40%):
+```bash
+# Terminal A 
 # Isolated eval (no TLS overlay): keep ALLOW_INSECURE_HTTP=1 from step 4.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_gpuutil.sh
+```
+<img width="820" height="827" alt="Screenshot 2026-10-01 at 10 49 59 PM" src="https://github.com/user-attachments/assets/cd71a258-3ff3-4f62-b1ca-baf440e8c220" />
 
-# Terminal B — watch 99%/40%, not millicores
+```bash
+# Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
 
-# Terminal C — same client for either HPA metric (inflight 1 is the script default)
+<img width="830" height="443" alt="Screenshot 2026-10-01 at 10 48 31 PM" src="https://github.com/user-attachments/assets/23be5f75-0822-4b39-b6db-31b27f8a2f48" />
+
+```bash
+# Terminal C 
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 
@@ -380,12 +407,19 @@ E2E_USERS=5 ./scripts/client_deepagents.sh
 **LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms).
 
 ```bash
-# Terminal A — sandbox provision + latency HPA
+# Terminal A 
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
+```
+<img width="849" height="797" alt="Screenshot 2026-10-01 at 11 13 50 PM" src="https://github.com/user-attachments/assets/83f6963e-63a4-46bc-92c4-e29f43b30256" />
 
+```bash
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
+<img width="853" height="320" alt="Screenshot 2026-10-01 at 11 10 09 PM" src="https://github.com/user-attachments/assets/3179e6de-1002-4fc1-be71-03a6ef4875d2" />
 
+
+```bash
 # Terminal C
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
