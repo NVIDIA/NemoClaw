@@ -359,7 +359,7 @@ $processId = [uint32]$env:NEMOCLAW_CLOUDFLARED_PROCESS_ID
 $handle = [NemoClawCloudflaredProcess]::OpenProcess(0x1001, $false, $processId)
 if ($handle -eq [IntPtr]::Zero) {
   $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-  if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+  if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { "unavailable-open-$errorCode" }
   exit 0
 }
 try {
@@ -367,16 +367,17 @@ try {
   [uint32]$capacity = $image.Capacity
   if (-not [NemoClawCloudflaredProcess]::QueryFullProcessImageName($handle, 0, $image, [ref]$capacity)) {
     $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { "unavailable-image-$errorCode" }
     exit 0
   }
   if ([IO.Path]::GetFileName($image.ToString()) -ine 'cloudflared.exe') { 'not-cloudflared'; exit 0 }
   if (-not [NemoClawCloudflaredProcess]::TerminateProcess($handle, 1)) {
     $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { "unavailable-terminate-$errorCode" }
     exit 0
   }
-  if ([NemoClawCloudflaredProcess]::WaitForSingleObject($handle, 5000) -eq 0) { 'signaled' } else { 'unavailable' }
+  $waitResult = [NemoClawCloudflaredProcess]::WaitForSingleObject($handle, 5000)
+  if ($waitResult -eq 0) { 'signaled' } else { "unavailable-wait-$waitResult" }
 } finally {
   [void][NemoClawCloudflaredProcess]::CloseHandle($handle)
 }
@@ -467,6 +468,9 @@ function signalCloudflaredWithWindowsHandle(
       result === "unavailable"
     )
       return result;
+    if (result.startsWith("unavailable-")) {
+      console.log(`[services] Windows cloudflared identity helper returned ${result}`);
+    }
   } catch {
     // Never fall back to a raw PID signal when the identity-bound helper fails.
   }
