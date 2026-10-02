@@ -42,11 +42,11 @@ describe("stopAll tunnel stop ordering", () => {
   it("does not tear down dependent services when cloudflared cannot be stopped", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
     writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "18791");
-    const signal = vi.fn();
+    const signalCloudflared = vi.fn(() => "signaled" as const);
     const processControl: ProcessControl = {
       isAlive: () => true,
       commandLine: () => "cloudflared tunnel run",
-      signal,
+      signalCloudflared,
     };
     const unloadOllamaModels = vi.fn(() => undefined);
     let now = 3000;
@@ -65,8 +65,8 @@ describe("stopAll tunnel stop ordering", () => {
       }),
     ).toThrow("cloudflared could not be stopped");
 
-    expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
-    expect(signal).toHaveBeenCalledWith(4242, "SIGKILL");
+    expect(signalCloudflared).toHaveBeenCalledWith(4242, "SIGTERM");
+    expect(signalCloudflared).toHaveBeenCalledWith(4242, "SIGKILL");
     expect(stopMocks.stopSandboxChannels).not.toHaveBeenCalled();
     expect(unloadOllamaModels).not.toHaveBeenCalled();
     expect(stopMocks.releaseGatewayPortForStop).not.toHaveBeenCalled();

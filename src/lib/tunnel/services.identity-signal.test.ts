@@ -36,7 +36,7 @@ describe("cloudflared identity-bound signaling", () => {
     const processControl: ProcessControl = {
       isAlive: () => true,
       commandLine: () => "cloudflared tunnel run",
-      signal: () => "unavailable",
+      signalCloudflared: () => "unavailable",
     };
     writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -49,14 +49,9 @@ describe("cloudflared identity-bound signaling", () => {
 
   it("uses identity-bound platform signaling and refuses unsupported platforms", () => {
     const signal = vi.fn(() => "signaled" as const);
-    const windowsSignal = vi.fn(() => "signaled" as const);
-
     expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("signaled");
     expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
-    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32", undefined, windowsSignal)).toBe(
-      "signaled",
-    );
-    expect(windowsSignal).toHaveBeenCalledWith(4242, "SIGTERM");
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32")).toBe("unavailable");
   });
 
   it.skipIf(process.platform !== "darwin")(

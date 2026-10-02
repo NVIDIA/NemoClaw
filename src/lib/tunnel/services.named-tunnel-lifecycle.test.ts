@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import {
   chmodSync,
   mkdirSync,
@@ -37,13 +36,14 @@ describe("showStatus named tunnel diagnostics", () => {
     const processControl: ProcessControl = {
       isAlive: () => true,
       commandLine: () => "cloudflared tunnel run",
-      signal: vi.fn(),
+      signalCloudflared: vi.fn(() => "signaled" as const),
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     showStatus({ pidDir, dashboardPort: 18_791, processControl });
 
-    const output = logSpy.mock.calls.flat().join("\n");
+    const output = [...logSpy.mock.calls, ...warnSpy.mock.calls].flat().join("\n");
     expect(output).toContain("cloudflared  (PID");
     expect(output).toContain("dashboard target is unconfirmed for port 18791");
     expect(output).toContain("rerun `nemoclaw tunnel status`");
@@ -53,19 +53,13 @@ describe("showStatus named tunnel diagnostics", () => {
 describe("startAll named tunnel validation", () => {
   let tmpDir: string;
   let pidDir: string;
-  let originalPath: string | undefined;
-  let cleanup: () => void;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-named-tunnel-test-"));
     pidDir = join(tmpDir, "pids");
-    originalPath = process.env.PATH;
-    cleanup = () => {};
   });
 
   afterEach(() => {
-    cleanup();
-    process.env.PATH = originalPath;
     rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -74,117 +68,94 @@ describe("startAll named tunnel validation", () => {
     "stops a new named tunnel when its ingress configuration is not confirmed",
     testTimeoutOptions(25_000),
     async () => {
+      const originalPath = process.env.PATH;
       const binDir = join(tmpDir, "bin");
       mkdirSync(binDir, { recursive: true });
       const fakeCloudflared = join(binDir, "cloudflared");
-      writeFileSync(fakeCloudflared, "#!/usr/bin/env sh\nsleep 20\n");
+      writeFileSync(fakeCloudflared, "#!/usr/bin/env sh\nexec sleep 20\n");
       chmodSync(fakeCloudflared, 0o700);
-      process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+      process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       let alive = true;
-      const signal = vi.fn(() => {
+      const signalCloudflared = vi.fn((pid: number, signal: NodeJS.Signals) => {
         alive = false;
+        process.kill(pid, signal);
+        return "signaled" as const;
       });
       const processControl: ProcessControl = {
         isAlive: () => alive,
         commandLine: () => "cloudflared tunnel run",
-        signal,
+        signalCloudflared,
       };
-
-      await expect(
-        startAll({
-          pidDir,
-          dashboardPort: 18_791,
-          cloudflareTunnelToken: "named-secret",
-          processControl,
-        }),
-      ).rejects.toThrow("did not log its ingress route");
-
-      const tunnelState = readCloudflaredState(pidDir, processControl);
-      expect(tunnelState.kind).toBe("stopped");
-      expect(signal).toHaveBeenCalledWith(expect.any(Number), "SIGTERM");
-      expect(logSpy.mock.calls.flat().join("\n")).not.toContain("dashboard target is unconfirmed");
-      expect(() => readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toThrow();
-    },
-  );
-
-  it(
-    "does not stop a replacement tunnel while waiting for the lifecycle lock",
-    testTimeoutOptions(15_000),
-    async () => {
-      const binDir = join(tmpDir, "bin");
-      mkdirSync(binDir, { recursive: true });
-      const fakeCloudflared = join(binDir, "cloudflared");
-      writeFileSync(
-        fakeCloudflared,
-        [
-          "#!/usr/bin/env sh",
-          "sleep 1",
-          `echo 'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:9999\\"}]}"'`,
-          "sleep 20",
-        ].join("\n"),
-      );
-      chmodSync(fakeCloudflared, 0o700);
-      process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-      vi.spyOn(console, "log").mockImplementation(() => {});
-      const pidFile = join(pidDir, "cloudflared.pid");
-      const processControl: ProcessControl = {
-        isAlive: () => true,
-        commandLine: () => "cloudflared tunnel run",
-        signal: vi.fn(),
-      };
-      const startPromise = startAll({
-        pidDir,
-        dashboardPort: 18_791,
-        cloudflareTunnelToken: "named-secret",
-        processControl,
-      });
-      let originalPidContents: string | undefined;
-      const pidFileDeadline = Date.now() + 5_000;
-      while (originalPidContents === undefined && Date.now() < pidFileDeadline) {
-        originalPidContents = await readFile(pidFile, "utf-8").catch(
-          (error: NodeJS.ErrnoException) =>
-            error.code === "ENOENT" ? undefined : Promise.reject(error),
+      try {
+        await expect(
+          startAll({
+            pidDir,
+            dashboardPort: 18_791,
+            cloudflareTunnelToken: "named-secret",
+            processControl,
+          }),
+        ).rejects.toThrow("did not log its ingress route");
+        expect(readCloudflaredState(pidDir, processControl).kind).toBe("stopped");
+        expect(signalCloudflared).toHaveBeenCalledWith(expect.any(Number), "SIGTERM");
+        expect(logSpy.mock.calls.flat().join("\n")).not.toContain(
+          "dashboard target is unconfirmed",
         );
-        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        expect(() => readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toThrow();
+      } finally {
+        process.env.PATH = originalPath;
       }
-      expect(originalPidContents).toBeDefined();
-      const originalPid = Number(originalPidContents);
-      cleanup = () => {
-        try {
-          process.kill(originalPid, "SIGTERM");
-        } catch {
-          // The fake tunnel may have exited already.
-        }
-      };
-
-      const replacementPid = process.pid + 1000;
-      const lifecycleLockName = `cloudflared-${createHash("sha256")
-        .update(resolve(pidDir))
-        .digest("hex")}`;
-      let releaseLock!: () => void;
-      let lockAcquired!: () => void;
-      const lockReleased = new Promise<void>((resolveLock) => {
-        releaseLock = resolveLock;
-      });
-      const lockIsAcquired = new Promise<void>((resolveLock) => {
-        lockAcquired = resolveLock;
-      });
-      const lockPromise = withMcpLifecycleLock(lifecycleLockName, async () => {
-        lockAcquired();
-        await lockReleased;
-      });
-      await lockIsAcquired;
-      await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
-      const replacementPidFile = join(pidDir, "cloudflared.pid.replacement");
-      writeFileSync(replacementPidFile, String(replacementPid), { flag: "wx", mode: 0o600 });
-      renameSync(replacementPidFile, pidFile);
-      releaseLock();
-      await lockPromise;
-      await startPromise;
-
-      expect(readFileSync(pidFile, "utf-8")).toBe(String(replacementPid));
-      expect(processControl.signal).not.toHaveBeenCalled();
     },
   );
+
+  it("does not stop a replacement tunnel while waiting for the lifecycle lock", async () => {
+    mkdirSync(pidDir, { recursive: true });
+    const originalPid = process.pid + 1000;
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(originalPid));
+    writeFileSync(
+      join(pidDir, "cloudflared.log"),
+      'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:18791\\"}]}"',
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const signalCloudflared = vi.fn(() => "signaled" as const);
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel run",
+      signalCloudflared,
+    };
+    const replacementPid = process.pid + 2000;
+    const lifecycleLockName = `cloudflared-${createHash("sha256")
+      .update(resolve(pidDir))
+      .digest("hex")}`;
+    let releaseLock!: () => void;
+    let lockAcquired!: () => void;
+    const lockReleased = new Promise<void>((resolveLock) => {
+      releaseLock = resolveLock;
+    });
+    const lockIsAcquired = new Promise<void>((resolveLock) => {
+      lockAcquired = resolveLock;
+    });
+    const lockPromise = withMcpLifecycleLock(lifecycleLockName, async () => {
+      lockAcquired();
+      await lockReleased;
+    });
+    await lockIsAcquired;
+    const startPromise = startAll({
+      pidDir,
+      dashboardPort: 18_791,
+      cloudflareTunnelToken: "named-secret",
+      processControl,
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    const pidFile = join(pidDir, "cloudflared.pid");
+    const replacementPidFile = join(pidDir, "cloudflared.pid.replacement");
+    writeFileSync(replacementPidFile, String(replacementPid), { flag: "wx", mode: 0o600 });
+    renameSync(replacementPidFile, pidFile);
+    releaseLock();
+    await lockPromise;
+    await startPromise;
+
+    expect(readFileSync(pidFile, "utf-8")).toBe(String(replacementPid));
+    expect(signalCloudflared).not.toHaveBeenCalled();
+  });
 });

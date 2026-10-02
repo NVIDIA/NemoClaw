@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
@@ -11,6 +13,7 @@ import {
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
 import {
+  inspectNativeSandboxState,
   readRebuildMcpHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
@@ -68,8 +71,6 @@ import {
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
-export { finalizePreparedRebuildImageMessagingPlan } from "./rebuild-custom-image-preflight";
-
 export interface RebuildPreflightPhaseResult {
   stoppedSource?: NonNullable<Awaited<ReturnType<typeof prepareRebuildStoppedAgentState>>>;
   sandboxEntry: RebuildSandboxEntry;
@@ -92,24 +93,29 @@ export interface RebuildPreflightPhaseResult {
 
 interface HermesCronRestoreBackupPreflightInput {
   rebuildAgent: string | null;
-  backupPath: string | null;
-  backedUpDirs: readonly string[];
+  backupManifest: RebuildManifest | null;
   log: RebuildLog;
   bail: RebuildBail;
 }
 
 export function runHermesCronRestoreBackupPreflight({
   rebuildAgent,
-  backupPath,
-  backedUpDirs,
+  backupManifest,
   log,
   bail,
-}: HermesCronRestoreBackupPreflightInput): { plan: HermesCronRestorePlan | null } | null {
-  if (rebuildAgent !== "hermes" || backupPath === null || !backedUpDirs.includes("cron")) {
+}: HermesCronRestoreBackupPreflightInput): {
+  plan: HermesCronRestorePlan | null;
+} | null {
+  if (rebuildAgent !== "hermes" || !backupManifest?.nativeState) {
     return { plan: null };
   }
+  const backupPath = backupManifest.backupPath;
   try {
-    const plan = validateHermesCronRestoreBackup(backupPath);
+    const plan = inspectNativeSandboxState(
+      backupPath,
+      (nativeRoot) => validateHermesCronRestoreBackup(path.join(nativeRoot, ".hermes")),
+      ".hermes",
+    );
     log(
       `Hermes cron restore preflight: activeJobs=${String(plan.activeJobs)}, scriptJobs=${String(plan.scriptJobs)}, gate=${String(plan.requiresDispatchGate)}`,
     );
@@ -298,14 +304,14 @@ export async function runRebuildPreflightPhase(
         },
       );
       if (!liveState) return null;
+      stoppedSource = await prepareRebuildStoppedAgentState(
+        expectedSandboxEntry,
+        liveState,
+        recoveryManifest !== null,
+        (name) => (name === sandboxName ? getRebuildSandboxEntryOrBail(name, bail) : null),
+      );
+      stoppedSource?.assertCurrent();
       if (isDcodeRebuildAgent(rebuildAgent)) {
-        stoppedSource = await prepareRebuildStoppedAgentState(
-          expectedSandboxEntry,
-          liveState,
-          recoveryManifest !== null,
-          (name) => (name === sandboxName ? getRebuildSandboxEntryOrBail(name, bail) : null),
-        );
-        stoppedSource?.assertCurrent();
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import childProcess from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,22 +61,16 @@ describe("concurrent quick-tunnel starts", () => {
           return false;
         }
       },
-      commandLine: (pid) => {
-        try {
-          return childProcess
-            .execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-              encoding: "utf-8",
-            })
-            .trim();
-        } catch {
-          return null;
-        }
-      },
-      signal: (pid, signal) => {
+      commandLine: (pid) =>
+        pid === process.pid
+          ? process.argv.join(" ")
+          : `/usr/local/bin/cloudflared tunnel --url http://localhost:${readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")}`,
+      signalCloudflared: (pid, signal) => {
         process.kill(pid, signal);
         // The lifecycle poll is synchronous, so Node cannot reap this child
         // until startAll returns to the event loop.
         signaledPids.add(pid);
+        return "signaled";
       },
     };
 
