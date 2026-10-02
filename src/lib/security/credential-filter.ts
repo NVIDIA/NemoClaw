@@ -19,11 +19,9 @@ const PUBLIC_JWT_DOCUMENTATION_VECTOR = [
   "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ",
   "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
 ].join(".");
-
-// Canonical public AWS documentation access-key fixture, also shipped in
-// boto3's examples. Keep the pieces separate so repository secret scanners do
-// not mistake the reviewed fixture itself for a credential.
-const PUBLIC_AWS_DOCUMENTATION_ACCESS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+const PRIVATE_KEY_BEGIN = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+const PRIVATE_KEY_END = ["-----END", "PRIVATE KEY-----"].join(" ");
+const MSAL_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${PRIVATE_KEY_BEGIN} ... ${PRIVATE_KEY_END}`;
 
 export {
   CREDENTIAL_PLACEHOLDER,
@@ -83,10 +81,13 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // Preserve those examples without accepting placeholder-shaped values
       // that contain any other token material.
       .replace(/(?<![A-Za-z0-9_-])(?:gh[pousr]_|sk-)[xX]{10,}(?![A-Za-z0-9_-])/gu, "unused")
-      .replace(/(?<![A-Z0-9])A(?:K|S)IA[A-Z0-9]{16}(?![A-Z0-9])/gu, (candidate) =>
-        candidate === PUBLIC_AWS_DOCUMENTATION_ACCESS_KEY ? "unused" : candidate,
-      )
+      // AWS and botocore publish synthetic access-key examples whose final
+      // marker is literally EXAMPLE. Preserve only that visibly public shape.
+      .replace(/(?<![A-Z0-9])A(?:K|S)IA[A-Z0-9]{9}EXAMPLE(?![A-Z0-9])/gu, "unused")
       .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
+      // MSAL's shipped TypeScript source documents the PEM shape with a
+      // literal ellipsis between its delimiters; it is not key material.
+      .replaceAll(MSAL_PRIVATE_KEY_DOCUMENTATION_SHAPE, "unused")
       // OpenClaw's public Microsoft Teams QA bundle uses this fixed marker for
       // its private test transport. Exempt only the exact bearer value.
       .replace(/\bBearer[ \t]+private-qa(?![A-Za-z0-9_-])/giu, "unused")

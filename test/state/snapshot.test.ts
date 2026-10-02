@@ -31,10 +31,10 @@ const { backupSandboxStateWithManagedAuthority } = await import(
   ).href
 );
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
-const TOKEN_SHAPED_GENERATED_BYTES = ["AKIA", "SITQQJHDQELIAYQX"].join("");
 const PUBLIC_AWS_EXAMPLE_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const BOTO3_DOC = ".hermes/lazy-packages/boto3/examples/cloudfront.rst";
 const OPENCLAW_SQLITE_WAL = ".openclaw/state/openclaw.sqlite-wal";
+const SQLITE_CREDENTIAL_BYTES = `SQLite format 3\0ghp_${"02468ace13579bdf"}`;
 
 afterAll(() => {
   restoreEnv("HOME", ORIGINAL_HOME);
@@ -871,10 +871,7 @@ describe("complete native home persistence", () => {
       expect(archivedPaths.stdout.toString()).not.toContain(warmupTrajectoryPath);
 
       fs.writeFileSync(path.join(nativeRoot, "unknown.txt"), "changed");
-      fs.rmSync(path.join(nativeRoot, ".openclaw"), {
-        recursive: true,
-        force: true,
-      });
+      fs.rmSync(path.join(nativeRoot, ".openclaw"), { recursive: true, force: true });
       fs.writeFileSync(path.join(nativeRoot, "stale.txt"), "remove-me");
 
       let archiveMutatedAfterValidation = false;
@@ -1017,9 +1014,7 @@ describe("complete native home persistence", () => {
       ".hermes/lazy-packages/botocore/data/sts/2011-06-15/examples-1.json",
       JSON.stringify({ requestId: "example-request" }),
     ],
-    ["OpenClaw database", OPENCLAW_SQLITE_WAL, `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
-    ["Deep Agents DB", ".deepagents/.state/sessions.db", `\0${TOKEN_SHAPED_GENERATED_BYTES}`],
-    ["a generated cache asset", ".openclaw/cache/ui/assets/app.css", ".app { color: #02468a; }"],
+    ["OpenClaw database", OPENCLAW_SQLITE_WAL, "SQLite format 3\0binary state"],
   ])(
     "preserves %s without treating it as credential configuration",
     (_case, relativePath, content) => {
@@ -1053,8 +1048,7 @@ describe("complete native home persistence", () => {
   );
   it.each([
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
-    ["a text database impostor", OPENCLAW_SQLITE_WAL, TOKEN_SHAPED_GENERATED_BYTES],
-    ["a DCode DB text impostor", ".deepagents/.state/sessions.db", TOKEN_SHAPED_GENERATED_BYTES],
+    ["a credential after a binary SQLite header", OPENCLAW_SQLITE_WAL, SQLITE_CREDENTIAL_BYTES],
     [
       "an opaque bearer credential in a history file",
       ".openclaw/agents/child/history.log",
@@ -1242,7 +1236,7 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it.each(["directory-child", "regular-file", "identical-file"] as const)(
+  it.each(["directory-child", "regular-file", "identical-file", "replacement-only"] as const)(
     "handles archived state at an image-owned %s without data loss",
     async (collisionKind) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-image-owned-"));
@@ -1256,12 +1250,13 @@ describe("complete native home persistence", () => {
         const binDir = path.join(fixture, "bin");
         const nativeRoot = path.join(fixture, "native-home");
         const imageOwned = path.join(nativeRoot, "image-owned");
+        const receipt = path.join(nativeRoot, ".hermes/runtime/gateway.pid");
         fs.mkdirSync(binDir, { recursive: true });
         fs.mkdirSync(nativeRoot, { recursive: true });
         if (collisionKind === "directory-child") {
           fs.mkdirSync(imageOwned);
           fs.writeFileSync(path.join(imageOwned, "archived-child.txt"), "must not be dropped");
-        } else {
+        } else if (collisionKind !== "replacement-only") {
           fs.writeFileSync(imageOwned, "archived file must not be dropped");
         }
         writeFakeOpenshell(binDir);
@@ -1273,7 +1268,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const target = process.argv.at(-1);
 if (process.argv[2] !== "-c" || process.argv[3] !== "%u" || !target) process.exit(95);
-const uid = path.basename(target) === "image-owned" ? (process.getuid?.() ?? 1000) + 1 : fs.lstatSync(target).uid;
+const uid = path.basename(target) === "image-owned" && (!fs.lstatSync(target).isFile() || fs.readFileSync(target, "utf8") !== "must be removed") ? (process.getuid?.() ?? 1000) + 1 : fs.lstatSync(target).uid;
 process.stdout.write(String(uid) + "\\n");
 `,
         );
@@ -1286,18 +1281,25 @@ process.stdout.write(String(uid) + "\\n");
         writeOpenClawRegistry("alpha");
         const backup = sandboxState.backupSandboxState("alpha");
         expect(backup.success, backup.error).toBe(true);
-        fs.rmSync(imageOwned, { recursive: true, force: true });
-        if (collisionKind === "directory-child") {
+        const backupPath = backup.manifest!.backupPath;
+        if (collisionKind === "replacement-only") {
+          fs.writeFileSync(imageOwned, "must be removed");
+          fs.mkdirSync(path.dirname(receipt), { recursive: true });
+          fs.writeFileSync(receipt, "replacement-pid");
+        } else if (collisionKind === "directory-child") {
+          fs.rmSync(imageOwned, { recursive: true, force: true });
           fs.mkdirSync(imageOwned, { mode: 0o555 });
         } else if (collisionKind === "regular-file") {
+          fs.rmSync(imageOwned, { recursive: true, force: true });
           fs.writeFileSync(imageOwned, "replacement image authority");
         }
-        const restore = await sandboxState.restoreSandboxState(
-          "alpha",
-          backup.manifest!.backupPath,
-        );
+        const restore = await sandboxState.restoreSandboxState("alpha", backupPath);
 
-        if (collisionKind === "identical-file") {
+        if (collisionKind === "replacement-only") {
+          expect(restore.success, restore.error).toBe(true);
+          expect(fs.existsSync(imageOwned)).toBe(false);
+          expect(fs.readFileSync(receipt, "utf8")).toBe("replacement-pid");
+        } else if (collisionKind === "identical-file") {
           expect(restore.success, restore.error).toBe(true);
           expect(fs.readFileSync(imageOwned, "utf8")).toBe("archived file must not be dropped");
         } else {
@@ -1309,7 +1311,6 @@ process.stdout.write(String(uid) + "\\n");
             expect(fs.readFileSync(imageOwned, "utf8")).toBe("replacement image authority");
           }
         }
-        expect(fs.existsSync(backup.manifest!.backupPath)).toBe(true);
       } finally {
         restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
         restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);

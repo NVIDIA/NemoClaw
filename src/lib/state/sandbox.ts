@@ -1432,16 +1432,6 @@ function isNativeDependencyTreeEntry(entry: string): boolean {
   );
 }
 
-function isNativeNonAuthorityBinaryStateEntry(entry: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  // These SQLite databases are durable agent state rather than credential
-  // authorities. Treat only an actually binary payload as opaque; a text file
-  // at either path still passes through the credential scanner below.
-  return /^(?:\.openclaw\/state\/openclaw\.sqlite|\.deepagents\/\.state\/sessions\.db)(?:-(?:shm|wal))?$/u.test(
-    normalized,
-  );
-}
-
 function shouldScanNativeOpaqueAssignments(
   entry: string,
   fileName: string,
@@ -1465,7 +1455,7 @@ function scanNativeTarFilePayload(
   npmConfig: boolean,
   providerProfileSchema: boolean,
   privateKeyHeader: boolean,
-  nonAuthorityBinary: boolean,
+  dependencyBinary: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1475,7 +1465,7 @@ function scanNativeTarFilePayload(
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
-    if (nonAuthorityBinary && offset === position && chunk.subarray(0, count).includes(0)) {
+    if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
       return false;
     }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
@@ -1562,7 +1552,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               fileName === ".npmrc",
               providerProfileSchema,
               !dependencyTree,
-              dependencyTree || isNativeNonAuthorityBinaryStateEntry(entry),
+              dependencyTree,
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
@@ -2562,15 +2552,29 @@ async function restoreNativeSandboxState(
         "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
+        'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
         'uid="$(id -u)"',
+        "preserve_replacement_path() {",
+        '  case "$1" in',
+        "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
+        "  esac",
+        "  return 1",
+        "}",
         "restore_dir() {",
-        '  local source_dir="$1" target_dir="$2" target_item source_item name owner',
+        '  local source_dir="$1" target_dir="$2" target_item source_item name owner relative',
         '  for target_item in "$target_dir"/* "$target_dir"/.[!.]* "$target_dir"/..?*; do',
         '    { [ -e "$target_item" ] || [ -L "$target_item" ]; } || continue',
         '    [ "$target_item" = "$stage" ] && continue',
         '    name="${target_item##*/}"',
         '    source_item="$source_dir/$name"',
-        '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
+        '    relative="${target_item#"$root"/}"',
+        '    if { [ ! -e "$source_item" ] && [ ! -L "$source_item" ]; }; then',
+        '      preserve_replacement_path "$relative" && continue',
+        '      owner="$(stat -c %u -- "$target_item")"',
+        '      if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then rm -rf -- "$target_item"; continue; fi',
+        '      echo "native restore could not remove replacement-only state at: $target_item" >&2',
+        "      exit 22",
+        "    fi",
         '    owner="$(stat -c %u -- "$target_item")"',
         '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
         '      restore_dir "$source_item" "$target_item"',
@@ -2598,12 +2602,10 @@ async function restoreNativeSandboxState(
         "}",
         'restore_dir "$stage" "$root"',
       ].join("\n");
-      // The target image's non-agent-owned entries remain authoritative. The
-      // recursive ownership merge replaces every archived agent-owned path
-      // without removing native mount roots, while retaining image-owned trust
-      // scaffolding. If an
-      // archived child is absent below a non-writable scaffold, restoration
-      // fails instead of silently dropping that archived state.
+      // Restore the archive as the single agent-state source of truth. Keep
+      // only the control-plane and generation-local paths excluded at capture;
+      // replacement-only agent state is removed, while unsafe ownership or
+      // writability conflicts fail instead of producing a mixed state tree.
       const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),

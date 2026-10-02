@@ -230,12 +230,25 @@ describe("textContainsHighConfidenceCredential", () => {
     expect(textContainsHighConfidenceCredential(makeJwtFixture())).toBe(true);
   });
 
-  it("allows only the canonical public AWS documentation access key", () => {
-    const publicAwsAccessKey = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+  it.each([["AKIA", "IOSFODNN7EXAMPLE"].join(""), ["AKIA", "I44QH8DHBEXAMPLE"].join("")])(
+    "allows only the public AWS documentation access key %s",
+    (publicAwsAccessKey) => {
+      expect(textContainsHighConfidenceCredential(publicAwsAccessKey)).toBe(false);
+      expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey.slice(0, -1)}1`)).toBe(
+        true,
+      );
+      expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey}1`)).toBe(true);
+    },
+  );
 
-    expect(textContainsHighConfidenceCredential(publicAwsAccessKey)).toBe(false);
-    expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey.slice(0, -1)}1`)).toBe(true);
-    expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey}1`)).toBe(true);
+  it("allows only MSAL's synthetic private-key documentation block", () => {
+    const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const end = ["-----END", "PRIVATE KEY-----"].join(" ");
+    const documentedShape = `${begin} ... ${end}`;
+    const actualBlock = `${begin}\nnot-public-key-material\n${end}`;
+
+    expect(textContainsHighConfidenceCredential(documentedShape)).toBe(false);
+    expect(textContainsHighConfidenceCredential(actualBlock)).toBe(true);
   });
 
   it("continues to flag real Slack credentials", () => {
