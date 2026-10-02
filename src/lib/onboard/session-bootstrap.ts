@@ -636,7 +636,7 @@ async function prepareResumeSession(
     fromDockerfile: input.requestedFromDockerfile,
     fromImage: input.requestedFromImage,
     sandboxName: input.requestedSandboxName,
-    agent: input.agentFlag || null,
+    agent: input.agentFlag || input.envAgent || session.agent || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
     hostMounts: input.requestedHostMounts,
