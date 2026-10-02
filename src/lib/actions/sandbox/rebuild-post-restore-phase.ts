@@ -556,10 +556,12 @@ export async function runRebuildPostRestorePhase(
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
   const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
-  if (preparedBackupRecovery && postRestoreComplete && targetAgentName === "openclaw") {
-    // Legacy recovery can recreate a pairing-only device after onboarding's
-    // finalization was deferred. Settle its normal write scope before the
-    // prepared recovery transaction retires its backup handoff.
+  if (postRestoreComplete && targetAgentName === "openclaw") {
+    // Complete-home restoration rotates the replacement sandbox's machine-local
+    // device identity. Settle its normal write scope before reporting rebuild
+    // success so the first user command cannot race the background approver.
+    // Prepared legacy recovery needs the same gate before retiring its backup
+    // handoff.
     const portableRequired = portableLifecycleReceiptMatchesGeneration(
       classifyPortableLifecycleReceipt(sandboxName),
       recreatedEntry.lifecycleGeneration,
@@ -570,14 +572,12 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(
-        `  OpenClaw pairing remains incomplete after prepared recovery: ${pairing.reason}`,
-      );
+      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
       );
-      bail("OpenClaw pairing remained incomplete after prepared recovery.");
+      bail("OpenClaw pairing remained incomplete after rebuild.");
       return;
     }
   }

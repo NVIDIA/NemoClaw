@@ -5,10 +5,7 @@ import { closeSync, constants, fstatSync, openSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import {
-  textContainsCredential,
-  textContainsHighConfidenceCredential,
-} from "../../security/credential-filter.js";
+import { textContainsHighConfidenceCredential } from "../../security/credential-filter.js";
 
 function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
@@ -45,8 +42,7 @@ function databaseContainsCredential(databasePath: string): boolean | null {
         .iterate()) {
         for (const value of Object.values(row)) {
           if (
-            (typeof value === "string" &&
-              textContainsCredential(value, { opaqueAssignments: true })) ||
+            (typeof value === "string" && textContainsHighConfidenceCredential(value)) ||
             (value instanceof Uint8Array &&
               textContainsHighConfidenceCredential(Buffer.from(value).toString("utf8")))
           ) {

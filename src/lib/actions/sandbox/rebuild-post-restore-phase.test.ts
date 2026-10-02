@@ -184,8 +184,12 @@ describe("rebuild post-restore phase", () => {
     );
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
     expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
-    expect(launchReadiness.settlePortableOpenClawPairing).not.toHaveBeenCalled();
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+    );
+    expect(launchReadiness.settlePortableOpenClawPairing).toHaveBeenCalledExactlyOnceWith("alpha", {
+      portableRequired: false,
+    });
   });
 
   it("settles baseline write pairing before completing prepared OpenClaw recovery", async () => {
@@ -197,19 +201,22 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it("rejects prepared recovery whose normal write pairing remains pending", async () => {
-    vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
-      kind: "incomplete",
-      reason: "scope-upgrade-not-approved",
-    });
-    const args = { ...input(), preparedBackupRecovery: true };
-    const result = await runRebuildPostRestorePhase(args);
-    expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw pairing remained incomplete after prepared recovery.",
-    );
-    expect(result).toBeUndefined();
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
-  });
+  it.each([false, true])(
+    "rejects rebuild with recovery=%s whose normal write pairing remains pending",
+    async (preparedBackupRecovery) => {
+      vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+        kind: "incomplete",
+        reason: "scope-upgrade-not-approved",
+      });
+      const args = { ...input(), preparedBackupRecovery };
+      const result = await runRebuildPostRestorePhase(args);
+      expect(args.bail).toHaveBeenCalledWith("OpenClaw pairing remained incomplete after rebuild.");
+      expect(result).toBeUndefined();
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+        "rebuild completed",
+      );
+    },
+  );
 
   it("keeps prepared Portable recovery with its existing pairing owner", async () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
@@ -251,9 +258,7 @@ describe("rebuild post-restore phase", () => {
       portableRequired: false,
     });
     expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
-    expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw pairing remained incomplete after prepared recovery.",
-    );
+    expect(args.bail).toHaveBeenCalledWith("OpenClaw pairing remained incomplete after rebuild.");
   });
 
   it("preserves restored native session selections that differ from the default (#11764)", async () => {

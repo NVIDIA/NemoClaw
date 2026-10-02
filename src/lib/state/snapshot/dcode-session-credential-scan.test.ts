@@ -52,4 +52,17 @@ describe("DCode session database credential scan", () => {
       inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
     ).toBe(true);
   });
+
+  it("preserves assignment-shaped text stored in a session transcript", () => {
+    const fixture = createDatabase();
+    fixture.database.exec("CREATE TABLE sessions (content TEXT)");
+    fixture.database
+      .prepare("INSERT INTO sessions VALUES (?)")
+      .run('Example configuration: {"API_KEY":"not-a-secret-marker"}');
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(false);
+  });
 });
