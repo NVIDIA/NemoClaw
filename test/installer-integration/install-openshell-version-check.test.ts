@@ -587,6 +587,7 @@ exit 0`,
       expect(result.stderr).toContain(
         `OpenShell Homebrew formula checksum does not match NemoClaw-pinned v${REQUIRED_OPENSHELL_VERSION} digest`,
       );
+      expect(result.stdout).not.toContain("OpenShell Homebrew formula SHA-256 verified");
       expect(fs.readFileSync(downloadLog, "utf-8")).toContain("openshell.rb");
       expect(fs.existsSync(brewLog) ? fs.readFileSync(brewLog, "utf-8") : "").toBe("");
     } finally {
@@ -734,6 +735,7 @@ exit 1`,
       const result = runStable();
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("OpenShell Homebrew formula SHA-256 verified");
       const downloads = fs.readFileSync(downloadLog, "utf-8");
       expect(downloads).toContain("openshell.rb");
       expect(downloads).not.toContain("openshell-aarch64-apple-darwin.tar.gz");
