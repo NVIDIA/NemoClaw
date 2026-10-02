@@ -6,26 +6,31 @@
 NemoClaw provides the desired-state SDK and its CLI and OpenTofu provider consumers.
 Read the [accepted scope](docs/design/scope.md) before changing boundaries.
 
-Write a behavioral test, observe it fail, implement the behavior, and run the focused tests before committing.
-Keep commits green and small; explain the failure, decision, and validation in commit bodies.
-Do not maintain a journal.
+## Make a Change
 
-Use Conventional Commits.
-Use SPDX Apache-2.0 headers for original NemoClaw code.
-Preserve upstream copyright and license notices in copied, adapted, translated, and generated code.
-Do not replace an upstream license with the repository default.
-Record the upstream source revision and dated modifications beside derived code; see [Qwen3.8 notices](runtimes/qwen38/NOTICE.md).
-Run `cargo ci` before pushing; it runs this platform's `CI / Native` steps, including the bundle lifecycle tests that `cargo test` skips.
-Push through a pull request and merge only after CI passes.
+1. Write a behavioral test, observe it fail, implement the behavior, and rerun the focused tests.
+2. Run `cargo ci` before pushing; it runs this platform's `CI / Native` steps, including the bundle lifecycle tests that `cargo test` skips.
+   Image changes also need the [image source checks](docs/testing.md#image-source-checks).
+3. Push a branch to `origin`, open a pull request against `v1`, and merge only after CI passes.
+   Never force-push.
 
-Preserve other worktrees and live resources.
-Target `v1` from a branch on `origin`; never force-push.
-Do not publish packages or images.
+Pull requests are squash-merged, so the PR title and body become the commit message.
+Keep each pull request small, give it a Conventional Commits title, and explain the failure, decision, and validation in its body.
+Do not maintain a progress journal; commit messages carry that history.
 
-Live tests require explicit configuration and must touch only their owned resources.
-Ask before changing system packages, drivers, or kernel settings.
+## Licensing
+
+- Add SPDX Apache-2.0 headers to original NemoClaw code.
+- Preserve upstream copyright and license notices in copied, adapted, translated, and generated code; do not replace them with the repository default.
+- Record the upstream source revision and dated modifications beside derived code, as in the [Qwen3.8 notices](runtimes/qwen38/NOTICE.md).
+
+## Resources and Safety
+
+- Preserve other worktrees and live resources.
+- Run live tests only with explicit configuration, and touch only the resources they own.
+- Do not publish packages or images.
+- Ask before changing system packages, drivers, or kernel settings.
 
 ## Documentation
 
-Follow [WRITING.md](WRITING.md) for explanatory text.
-Use [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for page ownership, structure, and documentation validation.
+Follow [WRITING.md](WRITING.md) for explanatory text and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for page ownership, structure, and validation.
