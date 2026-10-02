@@ -19,7 +19,7 @@ This experimental recipe demonstrates a cost-efficient architecture that runs AI
 
 Supported GPU inference runtimes include **`ollama` / `vllm` / `nim`**.  Example pairings for e2e demo include: OpenClaw + Ollama (`AGENT_NAME=openclaw`), Hermes + vLLM (`AGENT_NAME=hermes`), Deep Agents Code + NIM (`AGENT_NAME=deepagents`).
 
-Kubernetes HPA scales those inference pods using a Pods **`AverageValue`** metric (average across Ready pods). Example HPA metrics: **GPU utilization** (scale out when average per-pod util is **above 40%**) and **LLM latency** (scale out when average per-pod latency is **above 3000 ms**).
+Kubernetes HPA scales those inference pods using a Pods **`AverageValue`** metric (average across Ready pods). Example HPA metrics: **GPU utilization** (target **40%**) and **LLM latency** (target **3000 ms**). Kubernetes does not scale on every sample above the target; see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 
 ## Deployment Architecture
@@ -452,10 +452,34 @@ This is the **on-disk cache for downloaded model weights**, not a database. On t
 
 ### Kubernetes HPA metrics
 
-| Metric | Scale out when | Install / test |
-|--------|----------------|----------------|
-| `gpu_utilization` (default) | avg GPU util **> 40%** | `./scripts/install-hpa.sh` |
-| `latency_avg` | avg chat proxy latency **> 3000 ms** | `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/install-hpa.sh` |
+| Metric | Target | Install / test |
+|--------|--------|----------------|
+| `gpu_utilization` (default) | avg GPU util **40%** | `./scripts/install-hpa.sh` |
+| `latency_avg` | avg chat proxy latency **3000 ms** | `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000 ./scripts/install-hpa.sh` |
+
+This recipe sets those **targets** only. It does **not** set a 10% threshold in `install-hpa.sh` or `values.yaml`.
+
+Kubernetes HPA uses the ratio of current metric to target. From [Horizontal Pod Autoscaling — algorithm details](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#algorithm-details):
+
+```text
+desiredReplicas = ceil(currentReplicas × currentMetricValue / desiredMetricValue)
+```
+
+When a `targetAverageValue` (this chart) or `targetAverageUtilization` is set, `currentMetricValue` is the **average** of that metric across the pods in the HPA scale target (`gpu_utilization_percent` or `nemoclaw_llm_latency_avg_milliseconds`).
+
+Examples: replica `1` x current `3706m` / desired `3000m` = 1.235 
+
+ceiling to 2 desired replicas 
+
+The control plane **skips** a scale if that ratio is close to 1.0 (within a configurable tolerance, **0.1 by default**). The cluster-wide flag is kube-controller-manager `--horizontal-pod-autoscaler-tolerance`. This recipe does not set it.
+
+Example with this recipe’s 3000 ms latency target (`./scripts/get-hpa.sh -n nemoclaw-gpu -w`):
+
+```text
+3188/3000   # +6%  — no scale-up (ratio 1.06; inside the default 10% band)
+3713/3000   # +24% — eligible (ratio 1.24). At 1 replica: ceil(1 × 3713/3000) = 2
+```
+
 
 ```bash
 kubectl get --raw \
@@ -678,7 +702,7 @@ See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/gr
 
 ### How is LLM latency calculated for HPA?
 
-The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. It is stored in a rolling window of 128 samples and exported as `nemoclaw_llm_latency_avg_milliseconds`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`).
+The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. It is stored in a rolling window of 128 samples and exported as `nemoclaw_llm_latency_avg_milliseconds`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 ### What port numbers are used?
 
