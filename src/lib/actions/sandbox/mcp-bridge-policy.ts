@@ -30,6 +30,9 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy-render";
 
+/**
+ * applyGeneratedPolicy.
+ */
 export async function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -142,6 +145,9 @@ export async function refreshMcpPublicPolicyPins(
   }
 }
 
+/**
+ * applyGeneratedPolicyContent.
+ */
 async function applyGeneratedPolicyContent(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -164,6 +170,9 @@ async function applyGeneratedPolicyContent(
   }
 }
 
+/**
+ * assertMcpBridgePolicyTarget.
+ */
 export function assertMcpBridgePolicyTarget(
   entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
@@ -207,6 +216,9 @@ export function assertMcpBridgePolicyTarget(
   return recordedPins;
 }
 
+/**
+ * assertGeneratedPolicyMutationSafe.
+ */
 export function assertGeneratedPolicyMutationSafe(
   _sandboxName: string,
   entry: McpSourceEntry,
@@ -216,6 +228,9 @@ export function assertGeneratedPolicyMutationSafe(
   }
 }
 
+/**
+ * removeGeneratedPolicy.
+ */
 export async function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -236,6 +251,9 @@ export async function removeGeneratedPolicy(
   throw new McpBridgeError(`Failed to remove generated MCP policy '${entry.policyName}'.`);
 }
 
+/**
+ * getPolicyPresence.
+ */
 export async function getPolicyPresence(
   sandboxName: string,
   entry: McpSourceEntry | undefined,

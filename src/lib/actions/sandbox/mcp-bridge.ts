@@ -96,6 +96,9 @@ export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
+/**
+ * inspectCurrentBridgeEntries.
+ */
 async function inspectCurrentBridgeEntries(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -128,6 +131,9 @@ async function inspectCurrentBridgeEntries(
   return { entries: Object.values(bridges), runtimeSelection: selected };
 }
 
+/**
+ * addMcpBridge.
+ */
 export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -135,10 +141,16 @@ export async function addMcpBridge(
   return addMcpBridgeLifecycle(sandboxName, options);
 }
 
+/**
+ * restartMcpBridge.
+ */
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
   return restartMcpBridgeLifecycle(sandboxName, server);
 }
 
+/**
+ * updateMcpBridgeDenyTools.
+ */
 export async function updateMcpBridgeDenyTools(
   sandboxName: string,
   server: string,
@@ -147,6 +159,9 @@ export async function updateMcpBridgeDenyTools(
   return updateMcpBridgeDenyToolsLifecycle(sandboxName, server, denyTools);
 }
 
+/**
+ * removeMcpBridge.
+ */
 export async function removeMcpBridge(
   sandboxName: string,
   server: string,
@@ -155,6 +170,9 @@ export async function removeMcpBridge(
   return removeMcpBridgeLifecycle(sandboxName, server, options);
 }
 
+/**
+ * prepareMcpBridgesForAbsentSandboxDestroy.
+ */
 export async function prepareMcpBridgesForAbsentSandboxDestroy(
   sandboxName: string,
   options: {
@@ -165,6 +183,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
   return prepareMcpBridgesForAbsentSandboxDestroyLifecycle(sandboxName, options);
 }
 
+/**
+ * prepareMcpBridgesForDestroy.
+ */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
   options: {
@@ -176,6 +197,9 @@ export async function prepareMcpBridgesForDestroy(
   return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
+/**
+ * restoreMcpBridgesAfterDestroyAbort.
+ */
 export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
@@ -183,6 +207,9 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   return restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
 }
 
+/**
+ * finalizeMcpBridgesAfterSandboxDelete.
+ */
 export async function finalizeMcpBridgesAfterSandboxDelete(
   sandboxName: string,
   preparation: McpDestroyPreparation,
@@ -193,6 +220,9 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
 
 export { prepareMcpBridgesForStoppedSandboxRebuild } from "./mcp-bridge-rebuild";
 
+/**
+ * prepareMcpBridgesForAbsentSandboxRebuild.
+ */
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -201,6 +231,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
+/**
+ * prepareMcpBridgesForRebuild.
+ */
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -219,6 +252,9 @@ export async function prepareMcpBridgesForRebuild(
   );
 }
 
+/**
+ * reattachMcpProvidersAfterRebuildAbort.
+ */
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -233,6 +269,9 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   );
 }
 
+/**
+ * restoreMcpBridgesAfterRebuild.
+ */
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -241,6 +280,9 @@ export async function restoreMcpBridgesAfterRebuild(
   return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
+/**
+ * parseJsonFlag.
+ */
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
   return {
     json: args.includes("--json"),
@@ -248,6 +290,9 @@ function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
   };
 }
 
+/**
+ * parseProbeFlags.
+ */
 function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
   if (args.includes("--probe") && args.includes("--no-probe")) {
     throw new McpBridgeError("Pass at most one of --probe / --no-probe.", 2);
@@ -256,6 +301,9 @@ function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
   return { probe, rest: args.filter((arg) => arg !== "--probe" && arg !== "--no-probe") };
 }
 
+/**
+ * parseToolsFlag.
+ */
 function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
   return {
     tools: args.includes("--tools"),
@@ -268,6 +316,9 @@ function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
  * durably and a resolution failure is a host-side OpenShell defect, so a
  * nonzero exit here would break scripted adds mid-remediation; `mcp status
  * <server>` remains the authoritative recheck.
+ */
+/**
+ * reportAddCredentialResolution.
  */
 async function reportAddCredentialResolution(
   sandboxName: string,
@@ -307,19 +358,31 @@ async function reportAddCredentialResolution(
   }
 }
 
+/**
+ * requireNoExtraArgs.
+ */
 function requireNoExtraArgs(args: string[], usage: string): void {
   if (args.length > 0) throw new McpBridgeError(usage, 2);
 }
 
+/**
+ * requireAtMostOneArg.
+ */
 function requireAtMostOneArg(args: string[], usage: string): string | undefined {
   if (args.length > 1) throw new McpBridgeError(usage, 2);
   return args[0];
 }
 
+/**
+ * hasHelpFlag.
+ */
 function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
+/**
+ * renderMcpHelp.
+ */
 function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
@@ -398,6 +461,9 @@ FLAGS
   }
 }
 
+/**
+ * dispatchMcpBridgeCommand.
+ */
 export async function dispatchMcpBridgeCommand(
   sandboxName: string,
   actionArgs: string[],

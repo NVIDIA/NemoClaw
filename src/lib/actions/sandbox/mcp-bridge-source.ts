@@ -40,6 +40,9 @@ export type McpSourceObservationDeadline = Readonly<{
   now?: () => number;
 }>;
 
+/**
+ * remainingMcpObservationMs.
+ */
 function remainingMcpObservationMs(
   deadline: McpSourceObservationDeadline | undefined,
 ): number | undefined {
@@ -49,12 +52,18 @@ function remainingMcpObservationMs(
   return remainingMs;
 }
 
+/**
+ * sameMcpRegistration.
+ */
 export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
     left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
   );
 }
 
+/**
+ * assertNoLegacyMcpSources.
+ */
 export function assertNoLegacyMcpSources(
   sandboxName: string,
   legacySources: Readonly<Record<string, McpSourceEntry>>,
@@ -68,6 +77,9 @@ export function assertNoLegacyMcpSources(
   );
 }
 
+/**
+ * readCommittedLegacyRegistryEntries.
+ */
 export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
@@ -187,10 +199,16 @@ type SourceRecord = {
 const SOURCE_RECORD_MAX = 64;
 const SOURCE_OUTPUT_MAX_BYTES = 262_144;
 
+/**
+ * sourcePayload.
+ */
 function sourcePayload(value: unknown): string {
   return JSON.stringify(JSON.stringify(value));
 }
 
+/**
+ * commonPythonSourceReader.
+ */
 function commonPythonSourceReader(): string[] {
   return [
     "import json, os, pathlib, re, stat",
@@ -226,6 +244,9 @@ function commonPythonSourceReader(): string[] {
   ];
 }
 
+/**
+ * buildDeepAgentsSourceCommand.
+ */
 function buildDeepAgentsSourceCommand(configDir: string): string {
   const nativePath = path.posix.join(configDir, ".mcp.json");
   const legacyPath = path.posix.join(configDir, ".nemoclaw-mcp.json");
@@ -249,6 +270,9 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * buildHermesSourceCommand.
+ */
 function buildHermesSourceCommand(configDir: string): string {
   const configPath = path.posix.join(configDir, "config.yaml");
   return [
@@ -263,6 +287,9 @@ function buildHermesSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * buildJsonMcpSourceScript.
+ */
 function buildJsonMcpSourceScript(
   configDir: string,
   json5ModulePath: string,
@@ -292,6 +319,9 @@ function buildJsonMcpSourceScript(
   ].join("\n");
 }
 
+/**
+ * buildOpenClawSourceCommand.
+ */
 function buildOpenClawSourceCommand(configDir: string): string {
   return [
     "node - <<'NODE'",
@@ -300,6 +330,9 @@ function buildOpenClawSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * sourceCommand.
+ */
 function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
   switch (adapter) {
     case "openclaw-config":
@@ -311,6 +344,9 @@ function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
   }
 }
 
+/**
+ * parseSourceRecords.
+ */
 function parseSourceRecords(output: string): SourceRecord[] {
   if (Buffer.byteLength(output, "utf8") > SOURCE_OUTPUT_MAX_BYTES) {
     throw new McpBridgeError("Agent MCP source inspection returned oversized output.");
@@ -338,6 +374,9 @@ function parseSourceRecords(output: string): SourceRecord[] {
   });
 }
 
+/**
+ * parseHermesSourceRecords.
+ */
 function parseHermesSourceRecords(output: string): SourceRecord[] {
   if (Buffer.byteLength(output, "utf8") > SOURCE_OUTPUT_MAX_BYTES) {
     throw new McpBridgeError("Agent MCP source inspection returned oversized output.");
@@ -393,6 +432,9 @@ function parseHermesSourceRecords(output: string): SourceRecord[] {
   return parseSourceRecords(JSON.stringify(records));
 }
 
+/**
+ * entryFromRecord.
+ */
 function entryFromRecord(
   record: SourceRecord,
   agentName: string,
@@ -417,6 +459,9 @@ function entryFromRecord(
   };
 }
 
+/**
+ * inspectAgentMcpSources.
+ */
 export async function inspectAgentMcpSources(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -455,6 +500,9 @@ export async function inspectAgentMcpSources(
   return detected.sources;
 }
 
+/**
+ * inspectAgentMcpSourcesForAgent.
+ */
 async function inspectAgentMcpSourcesForAgent(
   sandbox: SandboxEntry,
   agent: ReturnType<typeof loadAgent>,
@@ -490,6 +538,9 @@ async function inspectAgentMcpSourcesForAgent(
   return sourceSnapshotFromRecords(records, agent.name, adapter);
 }
 
+/**
+ * sourceSnapshotFromRecords.
+ */
 function sourceSnapshotFromRecords(
   records: readonly SourceRecord[],
   agentName: string,
@@ -541,6 +592,9 @@ export function inspectCapturedAgentMcpSources(source: CapturedAgentState): Agen
   );
 }
 
+/**
+ * policyEntryForServer.
+ */
 function policyEntryForServer(
   policyDocument: string,
   server: string,
@@ -556,6 +610,9 @@ function policyEntryForServer(
   return isObjectRecord(value) ? value : null;
 }
 
+/**
+ * enrichFromPolicy.
+ */
 async function enrichFromPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -710,6 +767,9 @@ async function enrichFromPolicy(
   };
 }
 
+/**
+ * joinMcpEntriesToOpenShell.
+ */
 export async function joinMcpEntriesToOpenShell(
   sandbox: SandboxEntry,
   entries: Readonly<Record<string, McpSourceEntry>>,
@@ -743,6 +803,9 @@ export async function joinMcpEntriesToOpenShell(
   );
 }
 
+/**
+ * inspectPolicyOnlyMcpEntry.
+ */
 export async function inspectPolicyOnlyMcpEntry(
   sandbox: SandboxEntry,
   server: string,
@@ -798,6 +861,9 @@ export async function inspectPolicyOnlyMcpEntry(
   );
 }
 
+/**
+ * inspectSourceBridgeState.
+ */
 export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -807,6 +873,9 @@ export async function inspectSourceBridgeState(
   return { bridges, sources };
 }
 
+/**
+ * inspectLegacyBridgeState.
+ */
 export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -821,6 +890,9 @@ export async function inspectLegacyBridgeState(
   return { bridges, sources };
 }
 
+/**
+ * deepAgentsLegacyRemovalCommand.
+ */
 function deepAgentsLegacyRemovalCommand(configDir: string, server: string): string {
   const configPath = path.posix.join(configDir, ".nemoclaw-mcp.json");
   return [
@@ -864,6 +936,9 @@ function deepAgentsLegacyRemovalCommand(configDir: string, server: string): stri
   ].join("\n");
 }
 
+/**
+ * removeLegacyAgentMcpEntry.
+ */
 export async function removeLegacyAgentMcpEntry(
   sandbox: SandboxEntry,
   entry: McpSourceEntry,

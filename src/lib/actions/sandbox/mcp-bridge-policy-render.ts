@@ -40,24 +40,39 @@ export const MCP_BRIDGE_ALLOWED_METHODS = [
   "notifications/elicitation/complete",
 ] as const;
 
+/**
+ * buildMcpBridgePolicyName.
+ */
 export function buildMcpBridgePolicyName(server: string): string {
   validateMcpServerName(server);
   return `mcp-bridge-${server.toLowerCase().replace(/_/g, "-")}`;
 }
 
+/**
+ * buildMcpBridgePolicyKey.
+ */
 export function buildMcpBridgePolicyKey(server: string): string {
   return buildMcpBridgePolicyName(server).replace(/-/g, "_");
 }
 
+/**
+ * endpointPort.
+ */
 function endpointPort(url: URL): number {
   if (url.port) return Number.parseInt(url.port, 10);
   return url.protocol === "https:" ? 443 : 80;
 }
 
+/**
+ * endpointPath.
+ */
 function endpointPath(url: URL): string {
   return url.pathname || "/";
 }
 
+/**
+ * binariesForAdapter.
+ */
 function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   switch (adapter) {
     case "openclaw-config":
@@ -77,6 +92,9 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   }
 }
 
+/**
+ * renderMcpBridgePolicyYaml.
+ */
 function renderMcpBridgePolicyYaml(
   server: string,
   url: string,
@@ -163,6 +181,9 @@ function renderMcpBridgePolicyYaml(
   });
 }
 
+/**
+ * buildMcpBridgePolicyYaml.
+ */
 export function buildMcpBridgePolicyYaml(
   server: string,
   url: string,
@@ -192,6 +213,9 @@ export function buildMcpBridgePolicyYaml(
   );
 }
 
+/**
+ * buildMcpBridgeCapabilityPolicyYaml.
+ */
 export function buildMcpBridgeCapabilityPolicyYaml(
   server: string,
   url: string,

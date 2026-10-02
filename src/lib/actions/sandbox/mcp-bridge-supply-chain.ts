@@ -10,6 +10,9 @@ import { McpBridgeError, type McpSourceEntry, type McpTransport } from "./mcp-br
  * It protects against accidental configuration drift but not supply-chain substitution.
  * For attested verification, use SLSA provenance or sigstore attestation separately.
  */
+/**
+ * verifyMcpServerIdentity.
+ */
 export async function verifyMcpServerIdentity(
   entry: McpSourceEntry,
   expectedIdentity?: string,
@@ -49,6 +52,9 @@ export async function verifyMcpServerIdentity(
  * - STDIO bypasses network enforcement and runs with full host access
  * - SSE supports OAuth and credential rotation
  */
+/**
+ * enforceTransportTrust.
+ */
 export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boolean): void {
   const transport = entry.transport ?? inferTransportFromUrl(entry.url);
 
@@ -83,6 +89,9 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
  * HTTPS/HTTP URLs default to SSE (Streamable HTTP).
  * Local/file URLs would use STDIO.
  */
+/**
+ * inferTransportFromUrl.
+ */
 export function inferTransportFromUrl(url: string): McpTransport {
   try {
     const u = new URL(url);
@@ -96,6 +105,9 @@ export function inferTransportFromUrl(url: string): McpTransport {
 /**
  * Compute the expected allow/deny tool policy for OpenShell.
  * When allowTools is specified, deny-by-default mode is enabled.
+ */
+/**
+ * computeToolPolicy.
  */
 export function computeToolPolicy(
   allowTools?: readonly string[],

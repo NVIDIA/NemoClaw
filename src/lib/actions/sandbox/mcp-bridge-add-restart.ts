@@ -105,6 +105,9 @@ import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
  * Check whether an existing MCP registration matches the intent of a requested add/update.
  * Compares identity, endpoints, credentials, tool policies, and trust settings.
  */
+/**
+ * sameMcpAddIntent.
+ */
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
   // When comparing transport, use the stored transport if present; otherwise
   // infer it from the stored URL so that a missing transport field doesn't
@@ -140,6 +143,9 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
  * If they have, throw an error instructing the caller to use --refresh-public-pins.
  * Trusted-private registrations are excluded from this check.
  */
+/**
+ * assertNoPublicPinDrift.
+ */
 function assertNoPublicPinDrift(
   sandboxName: string,
   server: string,
@@ -164,6 +170,9 @@ function assertNoPublicPinDrift(
   }
 }
 
+/**
+ * replayMcpAddTarget.
+ */
 function replayMcpAddTarget(
   entry: McpSourceEntry,
   normalizedUrl: string,
@@ -206,6 +215,9 @@ function replayMcpAddTarget(
   return target;
 }
 
+/**
+ * recoverCommittedPolicyTarget.
+ */
 async function recoverCommittedPolicyTarget(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
@@ -274,6 +286,9 @@ type McpAddRecovery = {
   resuming: boolean;
 };
 
+/**
+ * remainingHermesMcpFinalityMs.
+ */
 function remainingHermesMcpFinalityMs(deadlineMs: number): number {
   const remainingMs = deadlineMs - performance.now();
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
@@ -282,6 +297,9 @@ function remainingHermesMcpFinalityMs(deadlineMs: number): number {
   return Math.max(1, Math.floor(remainingMs));
 }
 
+/**
+ * runHermesMcpFinalityProofWithinDeadline.
+ */
 async function runHermesMcpFinalityProofWithinDeadline<T>(
   deadline: HermesMcpReloadFinalityDeadline,
   operation: () => Promise<T>,
@@ -306,6 +324,9 @@ async function runHermesMcpFinalityProofWithinDeadline<T>(
   }
 }
 
+/**
+ * observeHermesMcpAddSandboxIdentity.
+ */
 function observeHermesMcpAddSandboxIdentity(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
@@ -343,6 +364,9 @@ function observeHermesMcpAddSandboxIdentity(
   return observation.liveIdentityFingerprint;
 }
 
+/**
+ * waitForHermesMcpAddSandboxIdentity.
+ */
 async function waitForHermesMcpAddSandboxIdentity(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
@@ -400,6 +424,9 @@ async function waitForHermesMcpAddSandboxIdentity(
   return readyIdentity;
 }
 
+/**
+ * inspectMcpAddRecovery.
+ */
 async function inspectMcpAddRecovery(
   sandboxName: string,
   adapter: AgentMcpAdapter,
@@ -551,6 +578,9 @@ async function inspectMcpAddRecovery(
   };
 }
 
+/**
+ * reconcileHermesMcpAddAfterRelayLoss.
+ */
 async function reconcileHermesMcpAddAfterRelayLoss(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
@@ -655,6 +685,12 @@ async function reconcileHermesMcpAddAfterRelayLoss(
   }
 }
 
+/**
+ * Add an MCP bridge registration to the specified sandbox.
+ */
+/**
+ * addMcpBridge.
+ */
 export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -665,6 +701,12 @@ export async function addMcpBridge(
   });
 }
 
+/**
+ * Update MCP denied tools for the specified server.
+ */
+/**
+ * updateMcpBridgeDenyTools.
+ */
 export async function updateMcpBridgeDenyTools(
   sandboxName: string,
   server: string,
@@ -727,6 +769,9 @@ export async function refreshMcpBridgePublicPins(
 
 /**
  * Update MCP denied tools without locking the lifecycle mutex (internal path).
+ */
+/**
+ * updateMcpBridgeDenyToolsUnlocked.
  */
 async function updateMcpBridgeDenyToolsUnlocked(
   sandboxName: string,
@@ -804,6 +849,9 @@ async function updateMcpBridgeDenyToolsUnlocked(
   );
 }
 
+/**
+ * addMcpBridgeUnlocked.
+ */
 async function addMcpBridgeUnlocked(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -1270,6 +1318,12 @@ async function addMcpBridgeUnlocked(
   return providerRuntimeSelection;
 }
 
+/**
+ * Update MCP allowlist for the specified server.
+ */
+/**
+ * updateMcpBridgeAllowTools.
+ */
 export async function updateMcpBridgeAllowTools(
   sandboxName: string,
   server: string,
@@ -1289,6 +1343,9 @@ export async function updateMcpBridgeAllowTools(
 
 /**
  * Update MCP allowlist tools without locking the lifecycle mutex (internal path).
+ */
+/**
+ * updateMcpBridgeAllowToolsUnlocked.
  */
 async function updateMcpBridgeAllowToolsUnlocked(
   sandboxName: string,
@@ -1358,6 +1415,12 @@ async function updateMcpBridgeAllowToolsUnlocked(
   console.log(`  Updated allowed tools for MCP server '${server}'.`);
 }
 
+/**
+ * Clear MCP allowlist for the specified server.
+ */
+/**
+ * clearMcpBridgeAllowTools.
+ */
 export async function clearMcpBridgeAllowTools(sandboxName: string, server: string): Promise<void> {
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
@@ -1367,6 +1430,9 @@ export async function clearMcpBridgeAllowTools(sandboxName: string, server: stri
 
 /**
  * Clear MCP allowlist tools without locking the lifecycle mutex (internal path).
+ */
+/**
+ * clearMcpBridgeAllowToolsUnlocked.
  */
 async function clearMcpBridgeAllowToolsUnlocked(
   sandboxName: string,

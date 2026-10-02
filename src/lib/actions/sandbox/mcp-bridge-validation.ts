@@ -82,6 +82,9 @@ export interface McpCredentialBoundaryRuntimeDeps {
   runVersionCommand?: (binary: string) => OpenshellVersionCommandResult;
 }
 
+/**
+ * runOpenshellVersionCommand.
+ */
 function runOpenshellVersionCommand(binary: string): OpenshellVersionCommandResult {
   return spawnSync(binary, ["--version"], {
     encoding: "utf8",
@@ -92,6 +95,9 @@ function runOpenshellVersionCommand(binary: string): OpenshellVersionCommandResu
   });
 }
 
+/**
+ * credentialBoundaryVersionError.
+ */
 function credentialBoundaryVersionError(
   actual: string,
   detail: string,
@@ -108,6 +114,9 @@ function credentialBoundaryVersionError(
  * retain stale approval after the binary changes. Teardown skips this check so
  * a version mismatch cannot strand detach/delete cleanup that only revokes
  * credential access.
+ */
+/**
+ * assertMcpCredentialBoundaryRuntimeVersion.
  */
 export function assertMcpCredentialBoundaryRuntimeVersion(
   deps: McpCredentialBoundaryRuntimeDeps = {},
@@ -171,6 +180,9 @@ const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
 const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set(childVisibleCredentialManifest.runtimeControlKeys);
 const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = childVisibleCredentialManifest.runtimeControlPrefixes;
 const MCP_PROVIDER_HASH_BYTES = 8;
+/**
+ * validateSandboxName.
+ */
 export function validateSandboxName(name: string): void {
   if (!isValidName(name)) {
     throw new McpBridgeError(
@@ -180,6 +192,9 @@ export function validateSandboxName(name: string): void {
   }
 }
 
+/**
+ * validateMcpServerName.
+ */
 export function validateMcpServerName(name: string): void {
   if (!VALID_SERVER_RE.test(name)) {
     throw new McpBridgeError(
@@ -189,6 +204,9 @@ export function validateMcpServerName(name: string): void {
   }
 }
 
+/**
+ * normalizeMcpDenyTools.
+ */
 export function normalizeMcpDenyTools(tools: readonly string[]): string[] {
   const inspection = inspectMcpDeniedToolSelectors(tools);
   if (!inspection.ok && inspection.reason === "too-many") {
@@ -209,6 +227,9 @@ export function normalizeMcpDenyTools(tools: readonly string[]): string[] {
   return inspection.selectors;
 }
 
+/**
+ * validateMcpCredentialEnvName.
+ */
 export function validateMcpCredentialEnvName(name: string): void {
   validatePersistedMcpCredentialEnvName(name);
   if (OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.test(name)) {
@@ -265,6 +286,9 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 export const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 export const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
 
+/**
+ * parseMcpAddArgs.
+ */
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
   const denyTools: string[] = [];
@@ -490,6 +514,9 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   };
 }
 
+/**
+ * parseMcpUpdateArgs.
+ */
 export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
   const denyTools: string[] = [];
   const allowTools: string[] = [];
@@ -618,11 +645,17 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
   return { server, denyTools: normalizeMcpDenyTools(denyTools) };
 }
 
+/**
+ * uniqueEnvNames.
+ */
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {
   const names = env.map((entry) => (typeof entry === "string" ? entry : entry.name));
   return [...new Set(names)];
 }
 
+/**
+ * assertAuthenticatedCredentialReference.
+ */
 export function assertAuthenticatedCredentialReference(env: readonly ParsedEnvReference[]): void {
   if (env.length !== 1) {
     throw new McpBridgeError(
@@ -633,6 +666,9 @@ export function assertAuthenticatedCredentialReference(env: readonly ParsedEnvRe
   validateMcpCredentialEnvName(env[0].name);
 }
 
+/**
+ * assertPersistedAuthenticatedBridgeEntry.
+ */
 export function assertPersistedAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   if (!Array.isArray(entry.env) || entry.env.length !== 1 || !entry.providerName) {
     throw new McpBridgeError(
@@ -643,6 +679,9 @@ export function assertPersistedAuthenticatedBridgeEntry(entry: McpSourceEntry): 
   validatePersistedMcpCredentialEnvName(entry.env[0]);
 }
 
+/**
+ * assertAuthenticatedBridgeEntry.
+ */
 export function assertAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   assertPersistedAuthenticatedBridgeEntry(entry);
   validateMcpCredentialEnvName(entry.env[0]);
@@ -651,6 +690,9 @@ export function assertAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
 /**
  * Read values only for local display redaction while cleaning legacy state.
  * Never pass this map to a subprocess environment or provider mutation.
+ */
+/**
+ * resolvePersistedCredentialEnvForRedaction.
  */
 export function resolvePersistedCredentialEnvForRedaction(
   envNames: readonly string[],
@@ -664,6 +706,9 @@ export function resolvePersistedCredentialEnvForRedaction(
   return resolved;
 }
 
+/**
+ * resolveCredentialEnv.
+ */
 export function resolveCredentialEnv(env: readonly ParsedEnvReference[]): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const entry of env) {
@@ -676,6 +721,9 @@ export function resolveCredentialEnv(env: readonly ParsedEnvReference[]): Record
   return resolved;
 }
 
+/**
+ * buildMcpBridgeProviderName.
+ */
 export function buildMcpBridgeProviderName(
   sandboxName: string,
   server: string,
