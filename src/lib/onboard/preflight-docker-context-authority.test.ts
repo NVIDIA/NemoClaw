@@ -139,6 +139,81 @@ describe("Docker context authority selection (#11719)", () => {
   });
 });
 
+// The OpenShell gateway reads DOCKER_HOST, not the Docker CLI's current context.
+describe("persisted current Docker context authority", () => {
+  const COLIMA_HOST = "unix:///Users/me/.colima/default/docker.sock";
+
+  function answeringDefaultHost(
+    current: { name: string; host: string } | null,
+    defaultSocketTarget: string | null = null,
+  ) {
+    return {
+      env: {},
+      platform: "darwin" as const,
+      home: "/Users/me",
+      existsSync: () => false,
+      probeDockerHost: () => ({ reachable: true, identity: "docker" as const }),
+      inspectCurrentDockerContext: () => current,
+      resolveSocketPath: (socketPath: string) =>
+        socketPath === "/var/run/docker.sock" ? defaultSocketTarget : null,
+    };
+  }
+
+  it("records the socket of a non-default current context the default answers through", () => {
+    const opts = answeringDefaultHost({ name: "colima", host: COLIMA_HOST });
+
+    expect(detectDockerHost(opts)).toEqual({
+      dockerHost: COLIMA_HOST,
+      source: "context",
+      socketPath: null,
+    });
+  });
+
+  it("records the context socket when the default socket reaches a different daemon", () => {
+    const opts = answeringDefaultHost(
+      { name: "rootless", host: "unix:///run/user/1000/docker.sock" },
+      "/var/run/docker.sock",
+    );
+
+    expect(detectDockerHost(opts)?.dockerHost).toBe("unix:///run/user/1000/docker.sock");
+  });
+
+  it("keeps the host default when the default socket already reaches the context socket", () => {
+    const opts = answeringDefaultHost(
+      { name: "desktop-linux", host: "unix:///Users/me/.docker/run/docker.sock" },
+      "/Users/me/.docker/run/docker.sock",
+    );
+
+    expect(detectDockerHost(opts)).toBeNull();
+  });
+
+  it("does not inspect the current context when the default does not answer", () => {
+    const inspectCurrentDockerContext = vi.fn(() => ({ name: "colima", host: COLIMA_HOST }));
+
+    detectDockerHost({
+      env: {},
+      platform: "darwin",
+      home: "/Users/me",
+      existsSync: () => false,
+      probeDockerHost: () => ({ reachable: false, identity: "unknown" }),
+      inspectCurrentDockerContext,
+    });
+
+    expect(inspectCurrentDockerContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the default context", { name: "default", host: "unix:///var/run/docker.sock" }],
+    ["a context with an empty endpoint", { name: "colima", host: "" }],
+    ["a remote context", { name: "builder", host: "ssh://builder@192.0.2.10" }],
+    ["a context that cannot be inspected", null],
+  ])("keeps the host default for %s", (_label, current) => {
+    const opts = answeringDefaultHost(current);
+
+    expect(detectDockerHost(opts)).toBeNull();
+  });
+});
+
 describe("assessHost Docker context endpoint (#11719)", () => {
   it("refuses to classify a host whose context selector it could not reduce", () => {
     const assessment = assessHost({
