@@ -4,8 +4,8 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, first-run model selection,
-# optional LangGraph CLI analytics, or child-process config paths that bypass
+# update/install flows, optional LangGraph CLI analytics, or child-process
+# config paths that bypass
 # NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { makeWrapperFixture } from "./dcode-wrapper-fixture.ts";
+import { makeWrapperFixture } from "../../helpers/langchain-deepagents-code-image.ts";
 import {
   cleanupPackageFixtures,
   createPackageFixture,

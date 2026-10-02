@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { makeWrapperFixture } from "./dcode-wrapper-fixture.ts";
+import { makeWrapperFixture } from "../../helpers/langchain-deepagents-code-image.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 vi.setConfig({ maxConcurrency: 4 });
@@ -57,6 +57,18 @@ function runCommand(
 }
 
 describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
+  it("rejects wrapper fixture construction when a required binding is missing", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fixture-drift-"));
+    const read = vi.spyOn(fs, "readFileSync").mockReturnValueOnce("#!/bin/bash\nexit 0\n");
+    try {
+      expect(() => makeWrapperFixture(tempDir)).toThrow("fixture drift: expected exactly one");
+      expect(fs.existsSync(path.join(tempDir, "dcode-wrapper.sh"))).toBe(false);
+    } finally {
+      read.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses loopback with a canonical DNS URL when the build validator has no route", async () => {
     const validator = path.join(agentDir, "validate-read-only-mcp-call.py");
     const probe = await runCommand(
@@ -327,7 +339,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     "allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)",
     async (arg) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
-      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
       const result = await runCommand("bash", [wrapperPath, arg], {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -343,7 +355,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
 
   it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
     const enabled = await runCommand("bash", [wrapperPath, "-n", "hi", "--auto-approve"], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
@@ -378,7 +390,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     ["--startup-cmd", "printf unsafe"],
   ])("preserves native local execution for managed headless runs: %s", async (...args) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-local-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
     const result = await runCommand("bash", [wrapperPath, "-n", "hi", ...args], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",

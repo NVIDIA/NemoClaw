@@ -60,17 +60,24 @@ function materializeWrapperFixture(
 export function makeWrapperFixture(
   tempDir: string,
   envFileOverride?: string,
+  autoApprovalContent?: string,
 ): {
   wrapperPath: string;
   ranMarker: string;
   envFile: string;
   authFile: string;
   codexAuthFile: string;
+  autoApprovalPath: string;
 } {
   const ranMarker = path.join(tempDir, "dcode-ran");
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
+  const autoApprovalPath = path.join(tempDir, "dcode-auto-approval");
+  if (autoApprovalContent !== undefined) {
+    fs.writeFileSync(autoApprovalPath, autoApprovalContent, { mode: 0o444 });
+    fs.chmodSync(autoApprovalPath, 0o444);
+  }
   const wrapperPath = materializeWrapperFixture(tempDir, envFile, (source) =>
     mustReplaceOnce(source, [
       [
@@ -81,14 +88,22 @@ export function makeWrapperFixture(
         'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
         `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
       ],
+      [
+        'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
+        `readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="${autoApprovalPath}"`,
+      ],
+      [
+        "readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0",
+        `readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=${process.getuid?.() ?? 0}`,
+      ],
       ['/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"'],
       [
         DEEPAGENTS_CODE_EXEC,
-        `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+        `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s approval-mode=%s startup-mode=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}" "\${DEEPAGENTS_CODE_APPROVAL_MODE-__unset__}" "\${DEEPAGENTS_CODE_STARTUP_MODE-__unset__}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
       ],
     ]),
   );
-  return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile };
+  return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile, autoApprovalPath };
 }
 
 export function makeNetworkSimulatingFixture(tempDir: string): {
