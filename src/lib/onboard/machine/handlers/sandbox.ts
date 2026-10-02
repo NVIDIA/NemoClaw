@@ -534,6 +534,37 @@ export function apfCreateFingerprintFields(requested: boolean): readonly string[
   return requested ? ["apf-interceptor"] : [];
 }
 
+function sandboxGpuCreateInputs(config: unknown): unknown {
+  if (config === null || typeof config !== "object") return config ?? null;
+  const { sandboxGpuProof: _sandboxGpuProof, ...inputs } = config as { sandboxGpuProof?: unknown };
+  return inputs;
+}
+
+// Earlier releases also serialized sandboxGpuProof, a result that sandbox creation
+// writes onto the GPU settings. The GPU settings end at the first "}|" whose
+// preceding text parses as one JSON object.
+function withoutRecordedSandboxGpuProof(
+  recordedFingerprint: string,
+  gpuFieldPrefix: string,
+): string {
+  if (!recordedFingerprint.startsWith(`${gpuFieldPrefix}{`)) return recordedFingerprint;
+  for (
+    let end = recordedFingerprint.indexOf("}|", gpuFieldPrefix.length);
+    end !== -1;
+    end = recordedFingerprint.indexOf("}|", end + 1)
+  ) {
+    let gpuSettings: object;
+    try {
+      gpuSettings = JSON.parse(recordedFingerprint.slice(gpuFieldPrefix.length, end + 1)) as object;
+    } catch {
+      continue;
+    }
+    if (!Object.hasOwn(gpuSettings, "sandboxGpuProof")) return recordedFingerprint;
+    return `${gpuFieldPrefix}${JSON.stringify(sandboxGpuCreateInputs(gpuSettings))}${recordedFingerprint.slice(end + 1)}`;
+  }
+  return recordedFingerprint;
+}
+
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
   readonly sandboxName: string | null;
@@ -880,7 +911,7 @@ class SandboxStateFlow<
       checkpoint && checkpointIdentityForResumeTarget(checkpoint, state.sandboxName, agentName);
     if (!checkpoint || !identity) return decision;
 
-    const recordedFingerprint = checkpoint.effectGroups.sandbox_create?.fingerprint;
+    const recordedFingerprint = this.recordedSandboxCreateFingerprint(checkpoint, identity.name);
     const currentLightFingerprint = this.currentSandboxCreateFingerprint(identity.name);
     if (
       recordedFingerprint &&
@@ -904,15 +935,12 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private currentSandboxCreateFingerprint(
-    sandboxName: string,
-    createIntent?: ResolvedSandboxCreateIntent,
-  ): string {
+  private sandboxCreateFingerprintPrefix(sandboxName: string): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
     );
-    const lightFingerprint = [
+    return [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
       this.options.provider,
@@ -922,7 +950,16 @@ class SandboxStateFlow<
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       ),
       this.options.fromDockerfile ?? "",
-      JSON.stringify(this.options.sandboxGpuConfig ?? null),
+    ].join("|");
+  }
+
+  private currentSandboxCreateFingerprint(
+    sandboxName: string,
+    createIntent?: ResolvedSandboxCreateIntent,
+  ): string {
+    const lightFingerprint = [
+      this.sandboxCreateFingerprintPrefix(sandboxName),
+      JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
     if (!createIntent) return lightFingerprint;
@@ -939,13 +976,28 @@ class SandboxStateFlow<
     return `${lightFingerprint}|${JSON.stringify(durableCreateIntent)}`;
   }
 
+  private recordedSandboxCreateFingerprint(
+    checkpoint: OnboardCheckpoint | null | undefined,
+    sandboxName: string,
+  ): string | undefined {
+    const recordedFingerprint = checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    if (!recordedFingerprint) return recordedFingerprint;
+    return withoutRecordedSandboxGpuProof(
+      recordedFingerprint,
+      `${this.sandboxCreateFingerprintPrefix(sandboxName)}|`,
+    );
+  }
+
   private assertCheckpointCreateInputsStillMatch(
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
     createIntent: ResolvedSandboxCreateIntent,
   ): void {
     if (this.options.recreateSandbox(false)) return;
-    const recordedFingerprint = state.session?.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    const recordedFingerprint = this.recordedSandboxCreateFingerprint(
+      state.session?.checkpoint,
+      sandboxName,
+    );
     if (!recordedFingerprint) return;
     // Older and reuse-backfilled receipts contain the stable create-input prefix.
     // Accept that reviewed compatibility form while requiring an exact match
