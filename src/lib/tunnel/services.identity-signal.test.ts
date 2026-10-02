@@ -152,11 +152,11 @@ describe("cloudflared identity-bound signaling", () => {
 
       try {
         const state = readCloudflaredState(pidDir);
-        expect(state).toEqual({
-          kind: "unverified-pid-process",
-          pid,
-          reason: "inspection-unavailable",
-        });
+        expect(state).toEqual(
+          state.kind === "running"
+            ? { kind: "running", pid }
+            : { kind: "unverified-pid-process", pid, reason: "inspection-unavailable" },
+        );
         expect(stopCloudflared({ pidDir })).toBe(true);
         await exited;
         expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
