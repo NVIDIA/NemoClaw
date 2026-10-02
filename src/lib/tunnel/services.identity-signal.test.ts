@@ -16,7 +16,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProcessControl } from "./services";
-import { signalCloudflaredForPlatform, stopAll, stopCloudflared } from "./services";
+import {
+  readCloudflaredState,
+  readWindowsProcessCommandLine,
+  signalCloudflaredForPlatform,
+  stopAll,
+  stopCloudflared,
+} from "./services";
 
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
@@ -146,6 +152,11 @@ describe("cloudflared identity-bound signaling", () => {
       );
 
       try {
+        const commandLine = readWindowsProcessCommandLine(pid);
+        console.log(`[identity-test] Windows process record: ${JSON.stringify(commandLine)}`);
+        expect(commandLine).not.toBeNull();
+        const state = readCloudflaredState(pidDir);
+        console.log(`[identity-test] Windows tunnel state: ${JSON.stringify(state)}`);
         expect(stopCloudflared({ pidDir })).toBe(true);
         await exited;
         expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
