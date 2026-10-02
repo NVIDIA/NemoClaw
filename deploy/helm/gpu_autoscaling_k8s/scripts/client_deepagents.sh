@@ -33,7 +33,6 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-3}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
-export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
@@ -83,10 +82,10 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox pod is Ready"
 
-echo "Pinning Deep Agents max_tokens=${MAX_TOKENS} (one dcode -n per sandbox)"
+echo "Pinning Deep Agents max_tokens=${MAX_TOKENS} (keep provisioned model; one dcode -n per sandbox)"
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
-  agent_common_pin_deepagents_model "${name}" "${INFERENCE_MODEL}" \
+  agent_common_pin_deepagents_max_tokens "${name}" \
     || fail "could not pin max_tokens on sandbox ${i}"
 done
 
@@ -96,7 +95,6 @@ exec python3 "${SCRIPT_DIR}/e2e-deepagents-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
   --output "${E2E_OUTPUT_DIR}" \
-  --model "${INFERENCE_MODEL}" \
   --duration "${DURATION_SEC}" \
   --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
   --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \

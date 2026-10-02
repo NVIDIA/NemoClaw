@@ -139,15 +139,14 @@ Queries from end users go **into the sandboxes**, one sandbox per end user. Any 
 | **6b** | Hermes | `vllm` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | `agentscaling_hermes_gpuutil.sh` | `client_hermes.sh` |
 | **6c** | Deep Agents | `nim` | `nvidia/nemotron-3-nano` | `agentscaling_deepagents_gpuutil.sh` | `client_deepagents.sh` |
 
-**Other model** (same agent and runtime — an Ollama tag, vLLM HF id, or NIM catalog id):
+**Other model** (same agent and runtime — an Ollama tag, vLLM HF id, or NIM catalog id). Set `INFERENCE_MODEL` on **provision only**. The client talks to the sandbox; the agent already has the model.
 
 ```bash
 INFERENCE_MODEL=llama3.1:8b \
   E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
-INFERENCE_MODEL=llama3.1:8b E2E_USERS=5 ./scripts/client.sh
 ```
 
-Same pattern on 6b / 6c (`INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct` with the Hermes scripts, or `INFERENCE_MODEL=nvidia/<nim-model-id>` with the Deep Agents scripts). Use the same `INFERENCE_MODEL` on provision and client. Latency e2e: the same prefix on `agentscaling_latency.sh` / `agentscaling_hermes_latency.sh` / `agentscaling_deepagents_latency.sh`.
+Same pattern on 6b / 6c (`INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct` with the Hermes provision script, or `INFERENCE_MODEL=nvidia/<nim-model-id>` with the Deep Agents provision script). Latency e2e: the same `INFERENCE_MODEL` on `agentscaling_latency.sh` / `agentscaling_hermes_latency.sh` / `agentscaling_deepagents_latency.sh`.
 
 **Other agent:** run that pairing’s scripts (6b or 6c below). `./scripts/uninstall-e2e.sh` first if another pairing’s sandboxes are still up. Do not pass `AGENT_NAME=hermes` into `agentscaling_gpuutil.sh` — each wrapper pins its own agent. 
 

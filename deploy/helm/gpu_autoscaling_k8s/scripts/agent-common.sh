@@ -375,3 +375,31 @@ path.write_text(text)
 print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
 ' >/dev/null
 }
+
+# Client path: keep the provisioned model.default; only raise max_tokens.
+agent_common_pin_deepagents_max_tokens() {
+  local sandbox_name="${1:?sandbox}"
+  local max_tokens="${2:-${MAX_TOKENS:-2048}}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    env -u VIRTUAL_ENV PIN_MAX_TOKENS="${max_tokens}" python3 -c '
+import os, pathlib, re
+max_tokens = int(os.environ["PIN_MAX_TOKENS"])
+if max_tokens < 8:
+    raise SystemExit("PIN_MAX_TOKENS must be >= 8")
+path = pathlib.Path("/sandbox/.deepagents/config.toml")
+text = path.read_text()
+if re.search(r"(?m)^max_tokens = \d+$", text):
+    text, n = re.subn(r"(?m)^max_tokens = \d+$", "max_tokens = " + str(max_tokens), text, count=1)
+else:
+    text, n = re.subn(
+        r"(?m)^use_responses_api = false$",
+        "use_responses_api = false\nmax_tokens = " + str(max_tokens),
+        text,
+        count=1,
+    )
+if n != 1:
+    raise SystemExit("failed to set max_tokens")
+path.write_text(text)
+print("NEMOCLAW_DEEPAGENTS_MAX_TOKENS_OK")
+' >/dev/null
+}

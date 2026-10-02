@@ -226,7 +226,7 @@ async def run_test(args: argparse.Namespace) -> int:
         f"  Concurrent prompts per user: {args.inflight_start}→{args.inflight_per_user} "
         "(default 1; inflight 2 OOMed a CPU node)"
     )
-    print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
+    print(f"  HPA {args.hpa_namespace}/{args.hpa_name} (model already pinned in each sandbox)")
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
     print("=" * 70)
 
@@ -363,10 +363,6 @@ def main() -> int:
     parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "3")))
     parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "hermes-vllm-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/hermes"))
-    parser.add_argument(
-        "--model",
-        default=os.environ.get("INFERENCE_MODEL", "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8"),
-    )
     parser.add_argument("--duration", type=int, default=int(os.environ.get("DURATION_SEC", "900")))
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "180")))
     parser.add_argument(

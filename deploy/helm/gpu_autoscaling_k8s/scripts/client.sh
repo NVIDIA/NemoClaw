@@ -36,7 +36,6 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-5}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
-export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
@@ -100,7 +99,6 @@ exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
   --output "${E2E_OUTPUT_DIR}" \
-  --model "${INFERENCE_MODEL}" \
   --duration "${DURATION_SEC}" \
   --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
   --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \

@@ -358,7 +358,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("  E2E test: OpenClaw + Ollama")
     print(f"  {args.users} end users send requests to {args.users} OpenClaw agents (1:1)")
     print(f"  {args.users} OpenClaw agents run in {args.users} OpenShell sandboxes")
-    print(f"  LLM (Ollama {args.model}) runs on GPUs")
+    print("  LLM runs on GPUs (model already pinned in each sandbox)")
     print("  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs")
     print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
     print("  Each user prompts that user's sandbox on :18789")
@@ -368,7 +368,7 @@ async def run_test(args: argparse.Namespace) -> int:
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
         "(1:1 user→sandbox :18789; default inflight 1 so CPU sandboxes do not OOM)"
     )
-    print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
+    print(f"  HPA {args.hpa_namespace}/{args.hpa_name}")
     print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")
     print("=" * 70)
 
@@ -517,7 +517,6 @@ def main() -> int:
     parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "5")))
     parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "openclaw-ollama-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/openclaw-ollama"))
-    parser.add_argument("--model", default=os.environ.get("INFERENCE_MODEL", "llama3.2:3b"))
     parser.add_argument("--duration", type=int, default=int(os.environ.get("DURATION_SEC", "900")))
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "600")))
     parser.add_argument(
