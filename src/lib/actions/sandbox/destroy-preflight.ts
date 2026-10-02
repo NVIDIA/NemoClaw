@@ -24,7 +24,10 @@ import {
   isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
-import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
+import {
+  listHostGatewayRegistryEntries,
+  registryEntryGatewayPort,
+} from "../../state/gateway-registry";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
@@ -138,6 +141,14 @@ export function stopSandboxInferenceResources(
   }
 }
 
+function sandboxGatewayPort(entry: SandboxEntry): number {
+  return registryEntryGatewayPort({
+    name: entry.name,
+    gatewayName: entry.gatewayName,
+    gatewayPort: entry.gatewayPort,
+  });
+}
+
 /** Retire the shared proxy only after the caller confirms sandbox deletion. */
 export function stopDestroyedSandboxProxy(
   sandboxName: string,
@@ -166,7 +177,9 @@ export function stopDestroyedSandboxProxy(
     killStaleProxyIfUnused(() =>
       listInferenceRouteOwners().some(
         (entry) =>
-          entry.name !== sandboxName &&
+          !(
+            entry.name === sandboxName && sandboxGatewayPort(entry) === sandboxGatewayPort(sandbox)
+          ) &&
           (entry.provider?.includes("ollama") === true ||
             entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV),
       ),
