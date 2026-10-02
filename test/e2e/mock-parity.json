@@ -4,10 +4,7 @@
   "entries": [
     {
       "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": [
-        "test/e2e/live/brave-search-helpers.ts",
-        "test/e2e/fixtures/brave-backend.ts"
-      ],
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
       "fast": [
         "test/onboarding/brave-search-integration.test.ts",
         "test/e2e/support/brave-search-isolation.test.ts",
