@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   enforceDockerGpuPatchPreserveNetwork,
@@ -20,6 +24,8 @@ const HOST_NETWORK_ENV = {
 } as NodeJS.ProcessEnv;
 const LEGACY_PATCH_ENV = { NEMOCLAW_DOCKER_GPU_PATCH: "1" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };
+
+afterEach(() => vi.restoreAllMocks());
 
 function gpuPatchOptions(extra: Record<string, unknown> = {}) {
   return {
@@ -367,6 +373,34 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(logError).not.toHaveBeenCalled();
   });
 
+  it("threads typed OpenShell diagnostics into the direct GPU proof failure path", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-proof-diagnostics-"));
+    vi.spyOn(os, "homedir").mockReturnValue(tmpDir);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const collect = vi.fn(() => []);
+    const proofError = new Error("GPU proof failed");
+    try {
+      await expect(
+        verifyGpuSandboxAfterReady(
+          GPU_CONFIG,
+          "ollama-local",
+          baseOptions({
+            verifyDirectSandboxGpu: vi.fn(() => {
+              throw proofError;
+            }),
+            openShellGpuDiagnostics: { collect },
+            dockerCapture: vi.fn(() => ""),
+          }),
+        ),
+      ).rejects.toBe(proofError);
+      expect(collect).toHaveBeenCalledWith(
+        expect.objectContaining({ sandboxName: "alpha", timeoutMs: 30_000 }),
+      );
+    } finally {
+      fs.rmSync(tmpDir, { force: true, recursive: true });
+    }
+  });
+
   it("routes failure diagnostics through the provided error sink and throws for rollback", async () => {
     const logError = vi.fn();
     await expect(
@@ -445,6 +479,45 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
         runtimePatch,
       ),
     ).rejects.toThrow("GPU sandbox local inference reachability failed");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
+  });
+
+  it("redacts and retains a local inference rollback failure", async () => {
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    rollbackError.stack = `Rollback stack: ${secret}`;
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(async () => {
+        throw rollbackError;
+      }),
+    };
+
+    const failure = await verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      GPU_CONFIG,
+      "ollama-local",
+      {
+        ...options(),
+        deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
+      },
+      runtimePatch,
+    ).then(
+      () => {
+        throw new Error("Expected local inference verification to fail.");
+      },
+      (error: unknown) => error as Error & { runtimeRollbackError?: unknown },
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toContain(
+      "Runtime rollback requires attention: Rollback failed: <REDACTED>",
+    );
+    expect(failure.message).not.toContain(secret);
+    expect(failure.runtimeRollbackError).toBe(rollbackError);
+    expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });

@@ -8,8 +8,10 @@ import { DashboardUrlCommandError, runDashboardUrlCommand } from "../../lib/dash
 import type { SandboxEntry } from "../../lib/state/registry";
 
 type DashboardUrlRuntimeBridge = {
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
-  getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
+  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => Promise<string | null>;
+  getSandbox: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardExternalUrl"> | null;
   getAccessUrl?: (port: number) => string | null;
 };
 
@@ -86,7 +88,7 @@ export default class DashboardUrlCliCommand extends NemoClawCommand {
 
     const runtime = getRuntimeBridge();
     try {
-      runDashboardUrlCommand(
+      await runDashboardUrlCommand(
         args.sandboxName,
         { quiet: flags.quiet === true },
         {

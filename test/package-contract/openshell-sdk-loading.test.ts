@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { createPackageFixture } from "./helpers/package-fixture";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 
 const repositoryRoot = path.join(import.meta.dirname, "..", "..");
 const roots: string[] = [];
@@ -24,13 +25,14 @@ function packageFixture(): string {
       "dist/lib/inference/llama-cpp/contract.js",
       "dist/lib/config/canonical-mapping.js",
       "dist/lib/policy/sandbox-policy-validation.js",
+      "dist/lib/security/config-structure.js",
       "dist/lib/security/credential-filter.js",
       "nemoclaw/dist/shared",
       "schemas",
     ],
   });
   roots.push(root);
-  for (const name of ["yaml", "typebox", "ajv", "@bufbuild/protobuf"]) {
+  for (const name of ["yaml", "typebox", "ajv", "json5", "@bufbuild/protobuf"]) {
     const destination = path.join(root, "node_modules", name);
     mkdirSync(path.dirname(destination), { recursive: true });
     symlinkSync(path.join(repositoryRoot, "node_modules", name), destination, "dir");
@@ -118,18 +120,14 @@ console.log(JSON.stringify({ client, policy }));
       identity: ["fixture-ca", "fixture-cert", "fixture-key"],
     });
     expect(YAML.parse(result.policy)).toEqual({ version: 1 });
-    const packed = JSON.parse(
-      execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-        cwd: root,
-        encoding: "utf8",
-      }),
-    ) as Array<{ files: Array<{ path: string }> }>;
-    expect(packed[0]?.files.map(({ path: filePath }) => filePath)).toContain(
-      "dist/lib/adapters/openshell/sdk-import.mjs",
-    );
+    const packed = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(npmPackFilePaths(packed)).toContain("dist/lib/adapters/openshell/sdk-import.mjs");
   });
 
-  it("loads the compiled adapters before the optional SDK is installed", () => {
+  it("loads the compiled adapters when the required SDK is missing", () => {
     const root = packageFixture();
     const output = execFileSync(
       process.execPath,

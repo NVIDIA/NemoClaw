@@ -379,25 +379,10 @@ export function isAdvisoryGatewayRouteConflict(
   );
 }
 
-/**
- * True only when a provider/model-only route mutation can safely reconcile the
- * conflict. Provider-global endpoint, API-family, and credential changes stay
- * fail-closed while another registered sandbox depends on the current identity.
- */
-export function isAdvisoryProviderModelRouteConflict(
-  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
-): boolean {
-  return (
-    result.conflicts.length > 0 &&
-    result.conflicts.every(
-      (conflict) => conflict.scope !== "requested" && conflict.reason === "provider-model",
-    )
-  );
-}
-
 /** Explain the single-gateway side effect immediately before route mutation. */
 export function formatGatewayRouteImpactWarning(
   result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+  operation: "onboard" | "inference-set" = "onboard",
 ): string {
   const affected = [...result.conflicts]
     .sort((left, right) => left.sandboxName.localeCompare(right.sandboxName))
@@ -408,9 +393,14 @@ export function formatGatewayRouteImpactWarning(
         : name;
     })
     .join(", ");
-  const target = result.sandboxName
-    ? `Onboarding '${safeDisplay(result.sandboxName)}'`
-    : "This onboarding run";
+  const target =
+    operation === "inference-set"
+      ? result.sandboxName
+        ? `Changing inference for '${safeDisplay(result.sandboxName)}'`
+        : "This inference change"
+      : result.sandboxName
+        ? `Onboarding '${safeDisplay(result.sandboxName)}'`
+        : "This onboarding run";
   const nextRoute = `${safeDisplay(result.route.provider)} / ${safeDisplay(result.route.model)}`;
   return (
     `Warning: ${target} will re-point the one shared inference route on OpenShell gateway ` +

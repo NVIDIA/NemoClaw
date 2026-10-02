@@ -204,11 +204,11 @@ describe("managed llama.cpp selection", () => {
     });
   });
 
-  it("selects N1x WSL through the proof-backed GPU identity on an OEM host (#10962)", () => {
+  it("selects N1x WSL through the 5120-core proof-backed GPU identity (#12282)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
       type: "nvidia",
-      name: "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+      name: "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)",
       platform: "n1x" as const,
       count: 1,
       totalMemoryMB: 49_088,
@@ -226,6 +226,30 @@ describe("managed llama.cpp selection", () => {
         LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "selected" });
+  });
+
+  it("rejects the 5120-core N1x WSL identity below the GPU-memory floor (#12282)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)",
+      platform: "n1x" as const,
+      count: 1,
+      totalMemoryMB: 8_128,
+      perGpuMB: 8_128,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
   });
 
   it("rejects automatic N1x WSL selection for a remote runtime context (#10962)", () => {

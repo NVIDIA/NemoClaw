@@ -642,7 +642,10 @@ describe("onboard shared gateway route containment", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(releaseAbandonedRouteReservation).toHaveBeenCalledWith("delta");
+    expect(releaseAbandonedRouteReservation).toHaveBeenCalledWith(
+      "delta",
+      expect.objectContaining({ gatewayName: "nemoclaw", reservationSessionId: "session-delta" }),
+    );
     expect(events).toEqual(["release", "reserve"]);
     expect(log).toHaveBeenCalledWith(
       "  Released an abandoned inference route reservation for sandbox 'delta'.",

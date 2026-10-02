@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 
 import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-gateway-config-helpers";
@@ -345,6 +346,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,
@@ -353,10 +355,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
           hasOpenShellGatewayUserService: () => true,
           isDockerDriverGatewayReady: async () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: (args) =>
-            args[0] === "status"
-              ? "Gateway: nemoclaw\nConnected"
-              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();

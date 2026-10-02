@@ -222,6 +222,8 @@ function runHermesEnvSecretBoundary(opts: {
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
+      "ensure_hermes_config_root_mode() { :; }",
+      "migrate_legacy_hermes_dashboard_state() { :; }",
       ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
@@ -252,8 +254,6 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       'HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
-      'HERMES_GATEWAY_LAZY_INSTALL_TARGET="/run/nemoclaw/hermes-gateway-lazy-packages"',
-      'HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"',
       "validate_hermes_runtime_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -324,8 +324,8 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
       `_HERMES_PYTHON=${shellQuote(process.env.PYTHON || "python3")}`,
       `_HERMES_TIRITH_MARKER_FINALIZER=${shellQuote(TIRITH_FINALIZER)}`,
-      "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
+      "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_ROOT_DISPATCH=1)",
+      'NEMOCLAW_CMD=(bash -c \'printf "ROOT_DISPATCH=%s\\n" "${NEMOCLAW_ROOT_DISPATCH:-0}"; test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
     ].join("\n"),
     { mode: 0o700 },
@@ -346,13 +346,13 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
   }
 }
 
-function runHermesRootStartupMutableRootPreflight() {
+function runHermesRootStartupMutableRootPreflight(initialMode = 0o750) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-root-preflight-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
 
   fs.mkdirSync(hermesHome, { recursive: true });
-  fs.chmodSync(hermesHome, 0o750);
+  fs.chmodSync(hermesHome, initialMode);
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.writeFileSync(
@@ -367,8 +367,9 @@ function runHermesRootStartupMutableRootPreflight() {
       'refresh_hermes_runtime_config_hashes() { printf "adopt mode=%s args=%s\\n" "$(dir_mode)" "$*"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
-      "validate_hermes_env_secret_boundary() { :; }",
-      "validate_hermes_runtime_env_secret_boundary() { :; }",
+      'validate_hermes_env_secret_boundary() { printf "env-boundary mode=%s\\n" "$(dir_mode)"; }',
+      'validate_hermes_runtime_env_secret_boundary() { printf "runtime-boundary mode=%s\\n" "$(dir_mode)"; }',
+      'migrate_legacy_hermes_dashboard_state() { printf "dashboard-migration mode=%s\\n" "$(dir_mode)"; }',
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
@@ -780,7 +781,6 @@ function runRuntimeShellEnvBootstrap() {
       `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       'HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
-      'HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"',
       `SSL_CERT_FILE=${shellQuote(caFile)}`,
       "CURL_CA_BUNDLE=",
       "REQUESTS_CA_BUNDLE=",
@@ -911,7 +911,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileContent).toContain(
       'export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
     );
-    expect(run.envFileContent).toContain('export HERMES_BUNDLED_PLUGINS="/opt/hermes/plugins"');
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
@@ -1113,6 +1112,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "set -euo pipefail",
           "hash_state=stale",
           'trace() { printf "%s\\n" "$1"; }',
+          "migrate_legacy_hermes_dashboard_state() { trace dashboard-migration; }",
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
           "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
@@ -1131,6 +1131,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
+      "dashboard-migration",
       "env-boundary",
       "hashes:compat:adopt",
       "lazy-dependencies",
@@ -1449,20 +1450,34 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
       const run = runTirithExplicitCommandDispatch(mode);
       expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
       expect(run.markerExists, mode).toBe(false);
+      expect(run.result.stdout).toContain(`ROOT_DISPATCH=${mode === "root" ? "1" : "0"}`);
       expect(run.result.stderr).toContain(
         "download_failed marker present; letting Hermes runtime fallback retry Tirith",
       );
     },
   );
 
-  it("repairs the Hermes config root before strict runtime config updates", () => {
+  it("repairs the Hermes config root before runtime config inspection", () => {
     const run = runHermesRootStartupMutableRootPreflight();
 
     expect(run.result.status).toBe(0);
-    expect(run.result.stdout).toContain("adopt mode=750 args=both adopt");
-    expect(run.result.stdout).toContain("lazy mode=750");
+    expect(run.result.stdout).toContain("env-boundary mode=3770");
+    expect(run.result.stdout).toContain("runtime-boundary mode=3770");
+    expect(run.result.stdout).toContain("adopt mode=3770 args=both adopt");
+    expect(run.result.stdout).toContain("lazy mode=3770");
     expect(run.result.stdout).toContain("api-key mode=3770");
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
   });
+
+  it.runIf(process.platform === "linux")(
+    "repairs an owner-executable Hermes config root after capability drop",
+    () => {
+      const run = runHermesRootStartupMutableRootPreflight(0o300);
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stdout).toContain("env-boundary mode=3770");
+      expect(run.hermesDirMode).toBe("3770");
+    },
+  );
 });

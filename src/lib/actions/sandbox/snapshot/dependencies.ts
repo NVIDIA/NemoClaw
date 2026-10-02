@@ -8,6 +8,8 @@ import { assertHermesPortableCommandUnavailable } from "../../../onboard/experim
 export { isSandboxPolicyCredentialFree } from "../../../policy/sandbox-policy-validation";
 import type { SandboxEntry } from "../../../state/registry/types";
 
+export { preflightExternalImageRebuild } from "../lifecycle/rebuild-external-image-preflight";
+export { resolveSandboxWorkloadRuntimeCapabilities } from "../../../onboard/workload/runtime";
 export {
   confirmHostLocalInferenceAuthority,
   type PreparedHostLocalInferenceAuthority,
@@ -22,6 +24,13 @@ export type {
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
+export { getMcpProviderInspectionRuntimeSelection } from "../mcp-bridge-provider-inspection";
+export {
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "../runtime/openclaw-lifecycle";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,

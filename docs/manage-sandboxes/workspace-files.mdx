@@ -101,7 +101,8 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 
 ## File Reference
 
-NemoClaw seeds the six template files below when the default workspace directory exists, is not a symbolic link, and is empty.
+NemoClaw seeds the first six template files in the table below when the default workspace directory exists, is not a symbolic link, and is empty.
+The remaining entries appear later, when the policy step or the agent's own memory writes create them.
 Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.
 
 | File | Purpose |
@@ -112,6 +113,7 @@ Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace t
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
 | `TOOLS.md` | Records workspace-specific tool guidance and operational notes. |
 | `HEARTBEAT.md` | Defines recurring heartbeat checks when heartbeat processing is enabled. |
+| `POLICY.md` | Redacted network-policy context for the in-sandbox agent. NemoClaw writes this file during the onboarding policy step and refreshes it when a preset changes. |
 | `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
 | `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
 
@@ -125,6 +127,7 @@ All workspace files reside inside the sandbox filesystem:
 ├── HEARTBEAT.md
 ├── IDENTITY.md
 ├── MEMORY.md             # created on first long-term memory use
+├── POLICY.md             # written by the onboarding policy step
 ├── SOUL.md
 ├── TOOLS.md
 ├── USER.md
@@ -236,7 +239,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 | `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
 | `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
 | `/sandbox/.hermes/kanban.db` | Default Hermes kanban board database. NemoClaw snapshots preserve only this default board. |
-| `/sandbox/.hermes/profiles/dashboard-home/` | Hermes Web Dashboard profile, including `MEMORY.md` and `USER.md`. |
+| `/sandbox/.hermes/profiles/` | User-created named Hermes profiles. The Web Dashboard uses the shared native Hermes home instead of a separate profile. |
 | `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
 | `/sandbox/.hermes/logs/` | Hermes runtime logs. |
 | `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by NemoClaw snapshots. |
@@ -245,7 +248,9 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 
 Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
-Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md`, user-created named profiles, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
+Startup consumes an older reserved `.hermes/profiles/dashboard-home/` as a one-time migration source, moves safe contents into the shared native home, and removes the retired profile.
 Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included in the kanban backup.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.

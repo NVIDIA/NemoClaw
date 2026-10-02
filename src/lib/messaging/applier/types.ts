@@ -2,20 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  MessagingHookInputMap,
+  MessagingHookOutputMap,
+  MessagingHookRunResult,
+} from "../hooks";
+import type {
   ChannelHookFailureMode,
   ChannelHookOutputSpec,
   ChannelHookPhase,
   MessagingAgentId,
   MessagingChannelId,
   SandboxMessagingNetworkPolicyEntryPlan,
-  SandboxMessagingHookReferencePlan,
-  SandboxMessagingPlan,
 } from "../manifest";
-import type {
-  MessagingHookInputMap,
-  MessagingHookOutputMap,
-  MessagingHookRunResult,
-} from "../hooks";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
@@ -118,6 +116,8 @@ export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
     target?: OpenShellGatewayTarget;
     definitions?: readonly MessagingCredentialProviderEphemeralInput[];
     refreshes?: readonly MessagingProviderRefreshEphemeralInput[];
+    /** Caller-owned, process-local hashes of successful refresh registrations. */
+    refreshReceipts?: Map<string, string>;
     requireCompleteBindings?: boolean;
     replaceExisting?: boolean;
     allowedSandboxes?: readonly string[];
@@ -188,6 +188,3 @@ export interface MessagingPolicyApplyResult {
   readonly appliedPresets: readonly string[];
   readonly appliedPolicyKeys: readonly string[];
 }
-
-export type MessagingSerializablePlan = SandboxMessagingPlan;
-export type MessagingSerializableHook = SandboxMessagingHookReferencePlan;

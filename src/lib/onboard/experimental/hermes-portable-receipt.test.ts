@@ -294,7 +294,7 @@ function active(
     ...receipt,
     phase: "active",
     previousPhaseSha256: parent.sha256,
-    container: { ...receipt.container, restartPolicy: "unless-stopped" },
+    container: { ...receipt.container, restartPolicy: "no" },
     ...overrides,
   };
 }
@@ -503,7 +503,7 @@ describe("Hermes portable receipt identity", () => {
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toEqual(third);
     expect(third.receipt).toMatchObject({
       phase: "active",
-      container: { containerId: CONTAINER_ID, restartPolicy: "unless-stopped", running: true },
+      container: { containerId: CONTAINER_ID, restartPolicy: "no", running: true },
     });
   });
 

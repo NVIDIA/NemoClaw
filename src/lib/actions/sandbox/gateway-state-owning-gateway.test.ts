@@ -21,7 +21,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
       gatewayPort: 8091,
       registryFile: "/test/sandboxes.json",
     });
-    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
+    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockResolvedValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
     });
@@ -38,8 +38,8 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("pins both the sandbox and policy RPCs to the recorded owner", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     const capture = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValueOnce({ status: 0, output: "Policy:\nPhase: Ready" } as never)
@@ -60,16 +60,16 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     );
   });
 
-  it("classifies the owner-scoped Internal no-spec response as missing", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  it("does not classify an unconfirmed owner-scoped no-spec response as deletion", async () => {
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     const capture = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 1,
       output: 'status: Internal, message: "sandbox has no spec"',
     } as never);
 
     await expect(getSandboxGatewayState("beta", "nemoclaw-8091")).resolves.toMatchObject({
-      state: "missing",
+      state: "unknown_error",
     });
     expect(capture).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw-8091", "beta"],
@@ -78,8 +78,8 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("pins the async status RPC to the recorded owner", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     vi.spyOn(openshellRuntime, "isCommandTimeout").mockReturnValue(false);
     const capture = vi
       .spyOn(openshellRuntime, "captureOpenshellForStatus")
@@ -137,7 +137,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("queries the gateway returned by selection when registry ownership changes between snapshots", async () => {
-    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
+    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockResolvedValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8092",
     });
@@ -151,7 +151,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("keeps recovery pinned to the gateway returned by selection after ownership changes", async () => {
-    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
+    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockResolvedValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8092",
     });
@@ -208,7 +208,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("fails closed before lookup when the owning gateway cannot be selected", async () => {
-    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
+    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockResolvedValue({
       outcome: "failed",
       gatewayName: "nemoclaw-8091",
     });

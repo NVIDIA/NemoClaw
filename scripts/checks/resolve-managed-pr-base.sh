@@ -49,25 +49,13 @@ write_dcode_resolution() {
   printf 'resolution_key=%s\n' "$key" >>"$GITHUB_OUTPUT"
   printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >>"$GITHUB_OUTPUT"
 }
-if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
-  exit 1
-fi
-if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-  git fetch --no-tags --depth=1 origin "$BASE_SHA"
-fi
-diff_status=0
-git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
-if [ "$diff_status" -gt 1 ]; then
-  echo "ERROR: PR base Dockerfile comparison failed." >&2
-  exit "$diff_status"
-fi
-if [ "$diff_status" -eq 1 ]; then
-  echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
-  local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
-  local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
-  local_base_oci="$RUNNER_TEMP/pr-base.oci"
-  base_labels=()
+build_local_base() {
+  local reason="$1"
+  echo "::notice::${DISPLAY_NAME} ${reason}; building the exact PR base locally"
+  local local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
+  local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
+  local local_base_oci="$RUNNER_TEMP/pr-base.oci"
+  local base_labels=()
   if [ "$AGENT" = "langchain-deepagents-code" ]; then
     base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
   fi
@@ -84,6 +72,7 @@ if [ "$diff_status" -eq 1 ]; then
   docker load --input "$local_base_archive"
   mkdir -p "$local_base_oci"
   tar -C "$local_base_oci" -xf "$local_base_oci_archive"
+  local local_base_oci_digest
   local_base_oci_digest="$(
     jq -er '
       .manifests
@@ -104,9 +93,91 @@ if [ "$diff_status" -eq 1 ]; then
     "$LOCAL_BASE_REFERENCE" \
     "$CANDIDATE_SHA"
   # shellcheck disable=SC2016 # backticks are literal Markdown delimiters.
-  printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
-    "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
+  printf '### %s PR base\n\nLocally built from `%s` at `%s`.\nReason: %s.\n' \
+    "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
+}
+DCODE_COPY_PARSER_INPUT="scripts/lib/dockerfile-copy-sources.mts"
+dcode_changed_inputs() {
+  local source_revision="$1" candidate_revision="$2" input
+  local literal_inputs=()
+  shift 2
+  for input in "$@"; do
+    literal_inputs+=(":(literal)${input}")
+  done
+  git diff --name-only "$source_revision" "$candidate_revision" -- \
+    "${literal_inputs[@]}"
+}
+read_dcode_base_inputs() {
+  local dockerfile="$1" parser parsed_inputs source
+  parser="${BASH_SOURCE[0]%/*}/../lib/dockerfile-copy-sources.mts"
+  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore "$DCODE_COPY_PARSER_INPUT")
+  parsed_inputs="$(
+    node --experimental-strip-types --input-type=module -e '
+      import { pathToFileURL } from "node:url";
+      const { directDockerfileCopySources } = await import(pathToFileURL(process.argv[1]).href);
+      for (const { source } of directDockerfileCopySources(process.argv[2])) {
+        console.log(source);
+      }
+    ' "$parser" "$dockerfile"
+  )" || return 1
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
+    git cat-file -e "${CANDIDATE_SHA}:${source}" 2>/dev/null || return 1
+    DCODE_BASE_INPUTS+=("$source")
+  done <<<"$parsed_inputs"
+  [ "${#DCODE_BASE_INPUTS[@]}" -gt 1 ]
+}
+published_dcode_base_matches_candidate_contract() {
+  [ "$AGENT" = "langchain-deepagents-code" ] || return 0
+  local reference="$1" image_json source_revision changed_inputs
+  local bootstrap_inputs=("$BASE_DOCKERFILE" .dockerignore "$DCODE_COPY_PARSER_INPUT")
+  docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
+  image_json="$(docker image inspect "$reference")" || return 1
+  source_revision="$(
+    jq -er '
+      if length == 1
+      then .[0].Config.Labels["org.opencontainers.image.revision"]
+      else error("not one image")
+      end
+    ' <<<"$image_json"
+  )" || return 1
+  [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || return 1
+  PUBLISHED_DCODE_SOURCE_REVISION="$source_revision"
+  if ! git cat-file -e "${source_revision}^{commit}" 2>/dev/null; then
+    git fetch --no-tags --depth=1 origin "$source_revision" || return 1
+  fi
+  changed_inputs="$(
+    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
+      "${bootstrap_inputs[@]}"
+  )" || return 1
+  if [ -n "$changed_inputs" ]; then
+    PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+    return 1
+  fi
+  read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
+  changed_inputs="$(
+    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
+      "${DCODE_BASE_INPUTS[@]}"
+  )" || return 1
+  PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+  [ -z "$changed_inputs" ]
+}
+if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
+  exit 1
+fi
+if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+  git fetch --no-tags --depth=1 origin "$BASE_SHA"
+fi
+diff_status=0
+git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
+if [ "$diff_status" -gt 1 ]; then
+  echo "ERROR: PR base Dockerfile comparison failed." >&2
+  exit "$diff_status"
+fi
+if [ "$diff_status" -eq 1 ]; then
+  build_local_base "base Dockerfile changed"
   exit 0
 fi
 alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
@@ -144,6 +215,18 @@ actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
 if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
+fi
+PUBLISHED_DCODE_SOURCE_REVISION=""
+PUBLISHED_DCODE_CHANGED_INPUTS=""
+if ! published_dcode_base_matches_candidate_contract "$reference"; then
+  reason="published base ${reference} could not be proven compatible with candidate ${CANDIDATE_SHA}"
+  if [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ] && [ -n "$PUBLISHED_DCODE_CHANGED_INPUTS" ]; then
+    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} differs from candidate ${CANDIDATE_SHA} at ${PUBLISHED_DCODE_CHANGED_INPUTS}"
+  elif [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ]; then
+    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} could not be proven compatible with candidate ${CANDIDATE_SHA}"
+  fi
+  build_local_base "$reason"
+  exit 0
 fi
 {
   printf 'ref=%s\n' "$reference"

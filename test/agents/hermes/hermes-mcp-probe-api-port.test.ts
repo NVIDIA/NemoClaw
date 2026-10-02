@@ -18,7 +18,7 @@ describe("Hermes MCP lifecycle probe API port", () => {
       [
         "-c",
         `
-import importlib.util, json, sys, types
+import contextlib, importlib.util, json, sys, types
 sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -29,6 +29,7 @@ module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
 module._configure_gateway_public_port = lambda: None
+module._mcp_transaction_lock = lambda: contextlib.nullcontext()
 print(json.dumps(module.probe(), sort_keys=True))
 `,
         TRANSACTION,
@@ -37,7 +38,10 @@ print(json.dumps(module.probe(), sort_keys=True))
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
+    expect(JSON.parse(result.stdout)).toEqual({
+      capabilities: { reconcile_finality: 1 },
+      ok: true,
+    });
   });
 
   it("fails when the root API port marker cannot be resolved (#8543)", () => {

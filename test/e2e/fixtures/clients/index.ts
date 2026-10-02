@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  assertExitCode,
   assertExitZero,
   type CommandExitResult,
   type CommandResultText,

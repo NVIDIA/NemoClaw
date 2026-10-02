@@ -76,12 +76,8 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     expect(result.stdout).not.toContain("super-secret-gateway-token");
   });
 
-  it("preserves required non-credential proxy and gateway routing metadata", () => {
-    const command = [
-      "/bin/sh",
-      "-c",
-      'printf "%s|%s|%s" "$HTTP_PROXY" "$NEMOCLAW_OPENCLAW_GATEWAY_URL" "$NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"',
-    ];
+  it("preserves required non-credential proxy metadata", () => {
+    const command = ["/bin/sh", "-c", 'printf "%s" "$HTTP_PROXY"'];
     const wrapped = wrapExecCommandWithRuntimeEnv(command);
     const trustedArgv = trustedRuntimeEnvArgv(command);
     expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
@@ -90,14 +86,12 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       env: {
         ...process.env,
         HTTP_PROXY: "http://10.200.0.1:3128",
-        NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1",
-        NEMOCLAW_OPENCLAW_GATEWAY_URL: "ws://10.200.0.2:18789",
         OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token",
       },
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("http://10.200.0.1:3128|ws://10.200.0.2:18789|1");
+    expect(result.stdout).toBe("http://10.200.0.1:3128");
     expect(result.stdout).not.toContain("super-secret-gateway-token");
   });
 

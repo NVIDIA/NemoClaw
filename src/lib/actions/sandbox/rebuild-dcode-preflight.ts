@@ -83,7 +83,7 @@ export type DcodeReplacementPreflightInput = {
   gatewayPort?: number;
   log(message: string): void;
   bail: DcodeRebuildPreflightBail;
-  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean;
+  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean | Promise<boolean>;
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
@@ -551,7 +551,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     ) {
       return null;
     }
-    if (!input.checkGatewaySchema(runtimeSelection)) return null;
+    if (!(await input.checkGatewaySchema(runtimeSelection))) return null;
     if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
     requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
@@ -611,7 +611,7 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   ) {
     return false;
   }
-  if (!input.checkGatewaySchema(runtimeSelection)) return false;
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
   if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
@@ -650,7 +650,7 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
   ) {
     return false;
   }
-  if (!input.checkGatewaySchema(runtimeSelection)) return false;
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
   if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;

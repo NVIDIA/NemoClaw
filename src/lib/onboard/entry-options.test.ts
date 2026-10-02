@@ -242,6 +242,71 @@ describe("resolveOnboardEntryOptions", () => {
     );
   });
 
+  it("reads NEMOCLAW_FROM_IMAGE only in non-interactive mode", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(
+      resolveOnboardEntryOptions(
+        {
+          opts: { sandboxName: "alpha" },
+          env: { NEMOCLAW_FROM_IMAGE: reference },
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        createDeps({ isNonInteractive: vi.fn(() => true) }),
+      ).requestedFromImage,
+    ).toBe(reference);
+    expect(
+      resolveOnboardEntryOptions(
+        {
+          opts: {},
+          env: { NEMOCLAW_FROM_IMAGE: reference },
+          stdinIsTty: true,
+          stdoutIsTty: true,
+        },
+        createDeps(),
+      ).requestedFromImage,
+    ).toBeUndefined();
+  });
+
+  it("rejects NEMOCLAW_FROM_IMAGE for the Portable profile", () => {
+    const deps = createDeps({ isNonInteractive: vi.fn(() => true) });
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { experimentalProfile: "portable", sandboxName: "alpha" },
+          env: {
+            NEMOCLAW_FROM_IMAGE: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+          },
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      "  --from-image cannot be used with the Portable profile.",
+    );
+  });
+
+  it("rejects conflicting Dockerfile and external image environment sources", () => {
+    const deps = createDeps({ isNonInteractive: vi.fn(() => true) });
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { sandboxName: "alpha" },
+          env: {
+            NEMOCLAW_FROM_DOCKERFILE: "Dockerfile.custom",
+            NEMOCLAW_FROM_IMAGE: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+          },
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("cannot both be selected"));
+  });
+
   it("allows resume with --from and no recovered sandbox name so later resume guards can decide", () => {
     const deps = createDeps();
 

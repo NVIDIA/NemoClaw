@@ -25,6 +25,7 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
 ] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_GATEWAY_URL_ENV = "OPENCLAW_GATEWAY_URL";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
 
@@ -38,6 +39,16 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
     const value = env[key]?.trim();
     if (value) envArgs.push(formatEnvAssignment(key, value));
   }
+}
+
+function appendOpenClawGatewayUrlRuntimeEnvArg(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  const value = env[OPENCLAW_GATEWAY_URL_ENV]?.trim();
+  if (value) envArgs.push(formatEnvAssignment(OPENCLAW_GATEWAY_URL_ENV, value));
 }
 
 function appendOpenClawDiagnosticRuntimeEnvArgs(
@@ -110,6 +121,7 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, agent);
+  appendOpenClawGatewayUrlRuntimeEnvArg(envArgs, agent, env);
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
@@ -119,7 +131,6 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
       input.hermesApiPort ??
       resolveOnboardHermesApiPort(input.sandboxName, {
         env,
-        warn: console.warn,
         allowRegisteredOverride: input.allowHermesApiPortOverride,
       });
     envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));

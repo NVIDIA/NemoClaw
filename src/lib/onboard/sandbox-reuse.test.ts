@@ -77,6 +77,8 @@ describe("applyReusedSandboxDashboardState", () => {
         hermesDashboardPort: enabled ? 18789 : undefined,
         hermesDashboardInternalPort: enabled ? 19119 : undefined,
         hermesDashboardTui: undefined,
+        // No external CHAT_UI_URL configured -> loopback stays the reported form.
+        dashboardExternalUrl: null,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       });
@@ -87,6 +89,46 @@ describe("applyReusedSandboxDashboardState", () => {
       });
     },
   );
+
+  it("persists the external dashboard URL rebound to the effective port on reuse (#11439)", async () => {
+    const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18790);
+    const sandboxGpuConfig: SandboxGpuConfig = {
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      mode: "auto",
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+
+    await applyReusedSandboxDashboardState({
+      sandboxName: "reuse-me",
+      chatUiUrl: "http://127.0.0.1:18790",
+      env: { CHAT_UI_URL: "https://dash.example.com:18789" },
+      agent: loadAgent("hermes"),
+      model: "test-model",
+      provider: "openai-compatible",
+      selectionVerified: true,
+      sandboxGpuConfig,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      ensureDashboardForward,
+      hermesDashboardForwarding: {
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
+      },
+      updateSandbox,
+      updateReusedSandboxMetadata: vi.fn(),
+    });
+
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "reuse-me",
+      expect.objectContaining({
+        dashboardExternalUrl: "https://dash.example.com:18790",
+      }),
+    );
+  });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", async () => {
     const updateSandbox = vi.fn();
@@ -339,6 +381,51 @@ describe("createSandboxReuseHelpers", () => {
       "alpha",
       expect.stringContaining("Id: openshell-source-id"),
       "alpha Ready\n",
+    );
+  });
+
+  it.each([
+    ["Ready", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    ["Stopped", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    [
+      "Provisioning",
+      `Error:   × code: 'The system is not in a state required for the operation's\n  │ execution', message: "provider 'compatible-endpoint' not found"`,
+    ],
+  ])("observes retained legacy identity in phase %s through onboarding", (phase, diagnostic) => {
+    const captureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(failedCapture(diagnostic))
+      .mockReturnValueOnce(
+        successfulCapture(
+          JSON.stringify([
+            {
+              id: "legacy-source-id",
+              name: "alpha",
+              labels: {},
+              resource_version: 1,
+              created_at: "2026-09-14T00:00:00Z",
+              phase,
+              current_policy_version: 1,
+            },
+          ]),
+        ),
+      );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+      getGatewayName: () => "wrong-gateway",
+    });
+    expect(helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toEqual({
+      state: phase === "Ready" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("legacy-source-id"),
+    });
+    expect(captureOpenshell).toHaveBeenLastCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.objectContaining({
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      }),
     );
   });
 

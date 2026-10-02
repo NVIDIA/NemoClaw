@@ -45,9 +45,10 @@ describe("runInferenceSet local-provider verification", () => {
       .map(String);
     expect(openshellArgs).toContain("ollama-local");
     expect(openshellArgs).not.toContain("ollama_local");
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)?.[1]).toMatchObject({
-      provider: "ollama-local",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ provider: "ollama-local" }),
+    );
   });
 
   it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {

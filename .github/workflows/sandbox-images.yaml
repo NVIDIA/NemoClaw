@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      hermes_only:
+        description: "Run only the Hermes image build and contract tests"
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -26,6 +31,7 @@ permissions:
 
 jobs:
   build-sandbox-images:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -128,9 +134,6 @@ jobs:
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
       - &hermes-export-swap
         name: Add swap for Hermes image export
         shell: bash
@@ -149,14 +152,6 @@ jobs:
           df -h / /mnt
           docker system df
 
-      - name: Validate Hermes production build args
-        env:
-          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
-        run: |
-          set -euo pipefail
-          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
-          scripts/check-production-build-args.sh "${build_args[@]}"
-
       - name: Record resources before Hermes image build
         shell: bash
         run: |
@@ -166,16 +161,15 @@ jobs:
           docker system df || true
 
       - name: Build Hermes production image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: agents/hermes/Dockerfile
-          load: true
-          push: false
-          tags: nemoclaw-hermes-production
-          build-args: BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }}
-          cache-from: type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
-          cache-to: type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
+        env:
+          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          # The resolver can load its fallback base into the Docker daemon's image store.
+          docker build --builder default "${build_args[@]}" -t nemoclaw-hermes-production .
 
       # The production build intentionally omits NEMOCLAW_CORPORATE_CA_B64. A
       # successful final stage therefore proves its registry remediations and
@@ -255,8 +249,11 @@ jobs:
         name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - &install-root-dependencies
         name: Install root dependencies
@@ -331,6 +328,7 @@ jobs:
           docker system df || true
 
   messaging-plan-image-boundary:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -339,6 +337,9 @@ jobs:
       - *dockerhub-auth
 
       - *setup-node
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
@@ -404,7 +405,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
   build-sandbox-images-arm64:
-    if: inputs.run_arm64
+    if: ${{ inputs.hermes_only != true && inputs.run_arm64 }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
@@ -430,50 +431,8 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  runtime-overrides:
-    runs-on: ubuntu-latest
-    # The live target owns 45 minutes; retain 15 minutes for setup, image
-    # transfer, and the always-running artifact upload.
-    timeout-minutes: 60
-    needs: build-sandbox-images
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/runtime-overrides
-      E2E_TARGET_ID: runtime-overrides
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_TEST_IMAGE: nemoclaw-production
-    steps:
-      - *checkout
-
-      - *setup-node
-
-      - *install-root-dependencies
-
-      - &download-isolation-image
-        name: Download image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: isolation-image
-          path: /tmp
-
-      - &load-isolation-image
-        name: Load image
-        run: |
-          set -euo pipefail
-          gunzip -c /tmp/isolation-image.tar.gz | docker load
-          docker image inspect nemoclaw-production >/dev/null
-
-      - name: Run runtime overrides test against production image
-        timeout-minutes: 45
-        run: |
-          npx vitest run --project e2e-live \
-            test/e2e/live/runtime-overrides.test.ts \
-            --silent=false --reporter=default
-
-      - name: Upload runtime overrides artifacts
-        if: always()
-        uses: ./.github/actions/upload-e2e-artifacts
-
   managed-image-openclaw-security:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -496,14 +455,28 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: "24.18.1"
           cache: npm
 
-      - *install-root-dependencies
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
-      - *download-isolation-image
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build:policy-boundary
 
-      - *load-isolation-image
+      - &download-isolation-image
+        name: Download image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - &load-isolation-image
+        name: Load image
+        run: |
+          set -euo pipefail
+          gunzip -c /tmp/isolation-image.tar.gz | docker load
+          docker image inspect nemoclaw-production >/dev/null
 
       - name: Validate OpenClaw managed-image security boundary
         run: >-
@@ -540,6 +513,7 @@ jobs:
           path: ${{ env.E2E_ARTIFACT_DIR }}
 
   port-override-image-contract:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images

@@ -299,18 +299,92 @@ function Install-WslUbuntuDependencies {
     Invoke-WslScript @invokeParameters
 }
 
+function Repair-WslSystemdAfterInstall {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    # Windows PowerShell 5.1 can throw on redirected native stderr before
+    # returning an exit code. Capture expected manager errors inside Linux.
+    $probe = @('-d', $Distro, '--user', 'root', '--', 'bash', '-c',
+        'timeout 10s systemctl show --property=Version --value 2>&1')
+    $result = Invoke-WslNativeOutput -ArgumentList $probe
+    if ($result.ExitCode -eq 0) { return }
+
+    $diagnostic = @($result.Output) -join "`n"
+    if ($result.ExitCode -ne 124 -and
+        $diagnostic -notmatch 'Failed to connect.*bus|Transport endpoint is not connected') {
+        throw "WSL service-manager probe failed: $diagnostic"
+    }
+
+    # Package installation can leave the CI distro's systemd bus unavailable.
+    # Restart only that distro, once, before tests or credentials enter it.
+    Write-Host "Restarting CI distro '$Distro' after an unavailable systemd bus: $diagnostic"
+    $exitCode = Invoke-WslNative -ArgumentList @('--terminate', $Distro) -MergeError
+    if ($exitCode -ne 0) { throw "WSL distro termination failed with exit code $exitCode." }
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $result = Invoke-WslNativeOutput -ArgumentList $probe
+        if ($result.ExitCode -eq 0) { return }
+        if ($attempt -lt 19) { Start-Sleep -Seconds 1 }
+    }
+    throw "WSL systemd did not become available after one distro restart: $(@($result.Output) -join "`n")"
+}
+
+function Get-WslContainerRuntimeUnavailableScript {
+    return @'
+if docker info >/dev/null 2>&1; then
+  echo "Docker must remain unavailable during the non-live Vitest suite." >&2
+  systemctl show --property=LoadState,ActiveState,SubState docker.service docker.socket >&2 || true
+  exit 1
+fi
+'@
+}
+
+function Get-WslContainerRuntimeStopScript {
+    # This CI-owned distro can restart between steps; keep masks until live testing.
+    $script = @'
+set -euo pipefail
+systemctl mask --now docker.service docker.socket
+'@
+    return $script + "`n" + (Get-WslContainerRuntimeUnavailableScript)
+}
+
+function Stop-WslContainerRuntime {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    Repair-WslSystemdAfterInstall -Distro $Distro
+    Invoke-WslScript -Distro $Distro -User root -Script (Get-WslContainerRuntimeStopScript)
+}
+
+function Get-WslContainerRuntimeStartScript {
+    return @'
+set -euo pipefail
+systemctl unmask docker.service docker.socket
+systemctl start docker.service
+timeout 30s bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+docker info
+'@
+}
+
+function Start-WslContainerRuntime {
+    param([Parameter(Mandatory = $true)] [string]$Distro)
+
+    Invoke-WslScript -Distro $Distro -User root -Script (Get-WslContainerRuntimeStartScript)
+}
+
 function Get-WslNodeInstallScript {
     return @'
 set -euo pipefail
-node_version="22.23.2"
+node_version="24.18.1"
+npm_version="12.0.2"
+expected_npm_integrity="sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw=="
 case "$(uname -m)" in
   x86_64)
     node_arch="x64"
-    node_sha256="d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+    node_sha256="d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0"
     ;;
   aarch64 | arm64)
     node_arch="arm64"
-    node_sha256="fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
+    node_sha256="7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c"
     ;;
   *)
     echo "Unsupported Node.js architecture: $(uname -m)" >&2
@@ -332,6 +406,29 @@ printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
 }
 tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
 test "$(node --version)" = "v${node_version}"
+env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  npm pack "npm@${npm_version}" \
+  --pack-destination "$temp_dir" \
+  --userconfig /dev/null \
+  --registry https://registry.npmjs.org/ \
+  --ignore-scripts --no-audit --no-fund >/dev/null
+npm_archive="$temp_dir/npm-${npm_version}.tgz"
+actual_npm_integrity="sha512-$(
+  node -e '
+    const fs = require("node:fs");
+    const crypto = require("node:crypto");
+    process.stdout.write(crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"));
+  ' "$npm_archive"
+)"
+test "$actual_npm_integrity" = "$expected_npm_integrity" || {
+  echo "npm@${npm_version} archive integrity verification failed" >&2
+  exit 1
+}
+env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  npm install --global "$npm_archive" \
+  --userconfig /dev/null \
+  --ignore-scripts --no-audit --no-fund --offline
+test "$(npm --version)" = "$npm_version"
 node --version
 npm --version
 '@
@@ -366,7 +463,7 @@ function Get-WslCheckoutSyncScript {
 
     $normalizedCheckout = $Checkout.TrimEnd('/')
     $normalizedWorkdir = $Workdir.TrimEnd('/')
-    $dedicatedWorkdirPattern = '^/tmp/nemoclaw-wsl-(?:workdir|vitest)/[1-9][0-9]*-[1-9][0-9]*$'
+    $dedicatedWorkdirPattern = '^/(?:tmp/nemoclaw-wsl-(?:workdir|vitest)|home/nemoclaw-ci/nemoclaw-wsl-vitest)/[1-9][0-9]*-[1-9][0-9]*$'
     $workdirUsesDedicatedRoot = $normalizedWorkdir -cmatch $dedicatedWorkdirPattern
     $unsafePathSegment = '(^|/)\.{1,2}(/|$)'
     $pathsOverlap = $normalizedCheckout -eq $normalizedWorkdir -or
@@ -386,7 +483,7 @@ function Get-WslCheckoutSyncScript {
         $normalizedWorkdir -match $unsafePathSegment -or
         $pathsOverlap
     ) {
-        throw "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '$Workdir'."
+        throw "WSL sync workdir must use a supported dedicated root with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '$Workdir'."
     }
 
     $workdirRoot = $normalizedWorkdir.Substring(0, $normalizedWorkdir.LastIndexOf('/'))
@@ -424,6 +521,9 @@ function Get-WslCheckoutSyncScript {
         "git -C $workdirLiteral reset --hard HEAD"
         "git -C $workdirLiteral clean -ffdx"
         $ownerCommand
+        "chmod -R go-w -- $workdirLiteral"
+        "chmod 0711 $workdirRootLiteral"
+        "chmod 0700 $workdirLiteral"
         "git -C $workdirLiteral status --short"
         "echo 'WSL ext4 workspace is ready'"
     ) -join "`n"

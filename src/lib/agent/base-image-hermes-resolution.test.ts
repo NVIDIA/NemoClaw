@@ -220,7 +220,7 @@ describe("Hermes base-image resolver integration", () => {
 
     try {
       expect(() => stageHermesSandbox()).toThrow(
-        `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
+        `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass Hermes 0.21.3 with the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
       );
       expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(versionRef, expect.anything());
       expect(dockerMocks.forceRm).toHaveBeenCalledTimes(2);

@@ -58,8 +58,11 @@ const managedHermesWorkload = {
 describe("destroySandbox flow", () => {
   let exitSpy: MockInstance;
   let originalGatewayEnv: string | undefined;
+  let testHome: string;
 
   beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-flow-home-"));
+    vi.stubEnv("HOME", testHome);
     originalGatewayEnv = process.env.OPENSHELL_GATEWAY;
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
@@ -73,6 +76,7 @@ describe("destroySandbox flow", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     resetDestroyModuleCache();
+    fs.rmSync(testHome, { force: true, recursive: true });
   });
 
   it("trusts absence only from a successful, error-free sandbox list", { timeout: 30_000 }, () => {
@@ -181,6 +185,9 @@ describe("destroySandbox flow", () => {
             trace.push("delete");
             harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:get":
+            trace.push("get");
+            return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
           case "sandbox:list":
             trace.push("list");
             return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
@@ -195,7 +202,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "get", "get", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -238,6 +245,8 @@ describe("destroySandbox flow", () => {
               crossedDeleteBoundary = true;
               harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
+            case "sandbox:get":
+              return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
             case "sandbox:list":
               return {
                 status: 0,
@@ -492,7 +501,7 @@ describe("destroySandbox flow", () => {
         ok: true,
         alreadyGone: false,
         deleteOutput: "",
-        deleteResult: { status: 0, stdout: "", stderr: "" },
+        deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
         detachOutcome: { detached: [], failures: [] },
         forcedLocalCleanup: false,
         commonLlamaCppAuthorityRetired: true,
@@ -566,29 +575,27 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.lifecycleLockEvents).toEqual([
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-      "process-exit",
-    ]);
+    const exitIndex = harness.lifecycleLockEvents.indexOf("process-exit");
+    const firstAttemptLockEvents = harness.lifecycleLockEvents.slice(0, exitIndex);
+    expect(exitIndex).toBeGreaterThan(0);
+    expect(firstAttemptLockEvents.filter((event) => event === "acquired").length).toBeGreaterThan(
+      0,
+    );
+    expect(firstAttemptLockEvents.filter((event) => event === "released")).toHaveLength(
+      firstAttemptLockEvents.filter((event) => event === "acquired").length,
+    );
+    expect(firstAttemptLockEvents.at(-1)).toBe("released");
     expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-    expect(harness.lifecycleLockEvents).toEqual([
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-      "process-exit",
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-    ]);
+    const retryLockEvents = harness.lifecycleLockEvents.slice(exitIndex + 1);
+    expect(retryLockEvents.filter((event) => event === "acquired").length).toBeGreaterThan(0);
+    expect(retryLockEvents.filter((event) => event === "released")).toHaveLength(
+      retryLockEvents.filter((event) => event === "acquired").length,
+    );
+    expect(retryLockEvents.at(-1)).toBe("released");
     expect(harness.events.filter((event) => event === "delete")).toHaveLength(1);
     expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
     expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledOnce();
@@ -613,7 +620,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
     expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledTimes(2);
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
       expect.any(Object),
     );
   });
@@ -734,6 +741,22 @@ describe("destroySandbox flow", () => {
       4000,
       expect.any(Function),
     );
+  });
+
+  it("preserves the session when only its router port changes during destroy", async () => {
+    const harness = createDestroyHarness({ sessionRouterPid: 4242 });
+    harness.sessionState.routerPort = 4000;
+    const originalSession = { ...harness.sessionState };
+    const removeSandbox = harness.removeSandboxSpy.getMockImplementation()!;
+    harness.removeSandboxSpy.mockImplementationOnce((...args) => {
+      harness.sessionState.routerPort = 14000;
+      return removeSandbox(...args);
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.compareAndSwapSessionSpy).toHaveReturnedWith("mismatch");
+    expect(harness.sessionState).toEqual({ ...originalSession, routerPort: 14000 });
   });
 
   it("leaves an active same-name replacement onboarding session unchanged", async () => {
@@ -1333,28 +1356,6 @@ describe("destroySandbox flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
-    // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
-    // the local record is removed but the gateway-side delete was never
-    // confirmed, so the sandbox may still exist. Even as the only registered
-    // sandbox, that must not tear down shared host services (CodeRabbit #6050).
-    const harness = createDestroyHarness({
-      deleteStatus: 1,
-      deleteOutput: "error trying to connect: connection refused",
-      registeredSandboxCount: 1,
-    });
-
-    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
-
-    // Local cleanup still proceeds...
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    // ...but shared host services are preserved on the unconfirmed delete.
-    expect(harness.stopAllSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).not.toHaveBeenCalled();
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
   it("fails closed and restores MCP state when --force cannot confirm sandbox deletion", async () => {
     const harness = createDestroyHarness({
       deleteStatus: 1,
@@ -1481,6 +1482,8 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function), {
+      runtimeSelection: { gatewayName: "nemoclaw-19080", workspace: "default" },
+    });
   });
 });

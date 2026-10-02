@@ -18,7 +18,6 @@ import { requireSnapshotDestinationRegistryRemoval } from "../../../src/lib/acti
 import { COMMANDS, globalCommandTokens } from "../../../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../../../src/lib/cli/oclif-metadata";
 import { normalizeGarbageCollectImagesOptions } from "../../../src/lib/domain/lifecycle/options";
-import { getSandboxDeleteOutcome } from "../../../src/lib/domain/sandbox/destroy";
 import { createDockerRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../../src/lib/onboard/runtime-provider/registry";
 import { resolveNemoclawStateDir } from "../../../src/lib/state/paths";
@@ -280,16 +279,6 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     ).toBeNull();
     expect(removeSandbox).not.toHaveBeenCalled();
     expect(removeSandboxWithReceipt).not.toHaveBeenCalled();
-  });
-
-  it("treats missing sandbox delete results as already gone", () => {
-    expect(
-      getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" }),
-    ).toEqual({
-      output: "Error: sandbox alpha not found",
-      alreadyGone: true,
-      gatewayUnreachable: false,
-    });
   });
 
   it("state-dir helper resolves ~/.nemoclaw/state from a single shared helper", () => {

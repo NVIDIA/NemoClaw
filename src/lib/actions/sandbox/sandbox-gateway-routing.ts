@@ -11,39 +11,33 @@
  */
 
 import { dockerInspect } from "../../adapters/docker";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
-import {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+import { captureResolvedOpenshell } from "../../adapters/openshell/runtime";
+import { createCliOpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle-cli";
+import { createCliOpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse-cli";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
-import { isGatewayHealthy } from "../../state/gateway";
 import * as registry from "../../state/registry";
 
 /**
  * Docker/VM-driver sandboxes do not expose the legacy cluster container, so
  * verify gateway health through OpenShell metadata instead.
  */
-export function probeGatewayMetadataHealth(gatewayName: string): boolean {
-  const status = captureOpenshell(["status"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+export async function probeGatewayMetadataHealth(
+  gatewayName: string,
+  gatewayPort: number,
+): Promise<boolean> {
+  const observation = await createCliOpenShellGatewayReuseObserver(
+    captureResolvedOpenshell,
+  ).observeGatewayReuse({
+    target: { kind: "named", gatewayName },
+    expectedGatewayPort: gatewayPort,
   });
-  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  return isGatewayHealthy(
-    status.output || "",
-    namedGatewayInfo.output || "",
-    activeGatewayInfo.output || "",
-    gatewayName,
+  return (
+    !observation.error &&
+    observation.healthy &&
+    observation.namedMetadata &&
+    observation.endpointBinding === "match"
   );
 }
 
@@ -60,11 +54,11 @@ export function usesGatewayMetadataProbe(driver: string | null | undefined): boo
  * the process-level `GATEWAY_PORT` — so the probe targets the gateway the
  * sandbox was actually onboarded against.
  */
-export function probeGatewayRunning(sandboxName?: string): boolean {
+export async function probeGatewayRunning(sandboxName?: string): Promise<boolean> {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
   const gatewayName = entry ? resolveSandboxGatewayName(entry) : resolveGatewayName(GATEWAY_PORT);
   if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth(gatewayName);
+    return probeGatewayMetadataHealth(gatewayName, entry?.gatewayPort ?? GATEWAY_PORT);
   }
   const container = `openshell-cluster-${gatewayName}`;
   const result = dockerInspect(
@@ -79,13 +73,12 @@ export function probeGatewayRunning(sandboxName?: string): boolean {
  * so downstream unscoped `sandbox list` / `sandbox get` queries target the
  * right gateway.
  */
-export function selectSandboxGatewayIfRegistered(sandboxName: string): boolean {
+export async function selectSandboxGatewayIfRegistered(sandboxName: string): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return true;
-  const target = resolveSandboxGatewayName(entry);
-  const result = runOpenshell(["gateway", "select", target], {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  return result.status === 0;
+  const gatewayName = resolveSandboxGatewayName(entry);
+  const selected = await createCliOpenShellGatewayLifecycle(captureResolvedOpenshell).selectGateway(
+    { target: { kind: "named", gatewayName } },
+  );
+  return selected.ok;
 }

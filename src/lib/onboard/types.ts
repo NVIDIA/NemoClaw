@@ -99,9 +99,11 @@ export interface VerifiedSandboxCreateBoundary {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  readonly openshellGatewayStateDir?: string;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  readonly managedBootstrapIdentity?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
@@ -183,6 +185,7 @@ export type OnboardOptions = {
   /** Operator-selected APF compatibility mode for fresh sandbox creation. */
   apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
+  fromImage?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];

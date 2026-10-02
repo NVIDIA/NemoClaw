@@ -41,7 +41,7 @@ Classify transferred work and complete the canonical attribution checks before r
 When no PR passes Tier 0, rank eligible PRs by the work needed before merge.
 
 1. Classify each Tier 0 failure per PR:
-   - **Trivial** (author-fixable without changing commit compliance): missing issue link, stale base, force-pushed since last review
+   - **Trivial** (author-fixable without changing commit compliance): missing issue link, force-pushed since last review
    - **Ineligible**: The PR body has no DCO declaration, or GitHub does not show each commit as `Verified`. Reject the PR. The contributor must provide a compliant history.
    - **Substantive** (real work): CI red, mergeability conflicts, missing CODEOWNERS approvals, unresolved CodeRabbit threads
 2. Distance-to-ready ranking:

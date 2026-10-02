@@ -210,10 +210,11 @@ async function runSkillCommandWithStageCleanup(
   gatewayName: string,
   stageDirectory: string,
   command: readonly string[],
-): Promise<void> {
+): Promise<boolean> {
   const commandExit = await runAgentSkillCommand(sandboxName, gatewayName, command);
   const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
   process.exitCode = cleaned || commandExit !== 0 ? commandExit : 1;
+  return commandExit === 0 && cleaned;
 }
 
 /** Stream the unmodified selected agent's native skill list. */
@@ -415,7 +416,7 @@ export async function installSandboxSkill(
     stageCreated = true;
 
     const upload = captureOpenshell(
-      // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
+      // OpenShell SDK 0.0.116 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
       [
         "sandbox",
@@ -441,14 +442,25 @@ export async function installSandboxSkill(
     }
 
     const native = selected.integration.addCommand;
+    const verifiedContentDigest =
+      selected.integration.verifiedContentDigest === "sha256" ? snapshot.contentDigest : undefined;
     const command = native
       ? renderAgentSkillCommand(selected.binary, native, { source: stagedSkillDirectory })
       : skillInstall.buildCanonicalSkillAddCommand(
           selected.integration.writableRoot,
           local.name,
           stagedSkillDirectory,
+          verifiedContentDigest,
         );
-    await runSkillCommandWithStageCleanup(sandboxName, gatewayName, stageDirectory, command);
+    const installed = await runSkillCommandWithStageCleanup(
+      sandboxName,
+      gatewayName,
+      stageDirectory,
+      command,
+    );
+    if (installed && verifiedContentDigest) {
+      console.log(`  ${D}Content digest (SHA-256): ${verifiedContentDigest}${R}`);
+    }
     stageCreated = false;
   } finally {
     if (stageCreated && gatewayName) {

@@ -30,6 +30,16 @@ const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
 const replyFromPrompt = process.env.NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT === "1";
 const requestCanaryMarker = process.env.NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER || "";
+const toolCallOnCanary = (() => {
+  try {
+    const value = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_TOOL_CALL_ON_CANARY || "null");
+    return value && typeof value.name === "string" && typeof value.arguments === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+})();
 const forbiddenMarkers = (() => {
   try {
     const parsed = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS || "[]");
@@ -158,6 +168,13 @@ function latestUserPrompt(payload: JsonObject): string | null {
   return null;
 }
 
+function toolResultPresent(payload: JsonObject): boolean {
+  const entries = Array.isArray(payload.messages) ? payload.messages : [];
+  return entries.some(
+    (entry) => entry && typeof entry === "object" && (entry as JsonObject).role === "tool",
+  );
+}
+
 function requestedPromptReply(payload: JsonObject): string | null {
   if (!replyFromPrompt) return null;
   const embeddedReplies = new Set(
@@ -190,6 +207,23 @@ function requestedPromptReply(payload: JsonObject): string | null {
   );
   if (profileMarker) return profileMarker[1];
   return null;
+}
+
+function requestedCanaryToolCall(payload: JsonObject, raw: Buffer): JsonObject | null {
+  if (!toolCallOnCanary || !raw.toString("utf8").includes(requestCanaryMarker)) return null;
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (
+    messages.some(
+      (entry) => entry && typeof entry === "object" && (entry as JsonObject).role === "tool",
+    )
+  )
+    return null;
+  return {
+    index: 0,
+    id: "call_nemoclaw_managed_subagent",
+    type: "function",
+    function: { name: toolCallOnCanary.name, arguments: toolCallOnCanary.arguments },
+  };
 }
 
 const server = createServer(async (req, res) => {
@@ -235,6 +269,7 @@ const server = createServer(async (req, res) => {
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
     requestCanaryPresent: requestCanaryPresent(req, raw),
+    toolResultPresent: toolResultPresent(payload),
   });
 
   if (req.method === "POST" && ["/v1/chat/completions", "/chat/completions"].includes(path)) {
@@ -246,6 +281,32 @@ const server = createServer(async (req, res) => {
       return;
     }
     const content = requestedPromptReply(payload) ?? chatContent;
+    const toolCall = requestedCanaryToolCall(payload, raw);
+    if (toolCall && payload.stream) {
+      const chunk = JSON.stringify({
+        id: "chatcmpl-fake-openai-compatible",
+        object: "chat.completion.chunk",
+        created: 0,
+        model,
+        choices: [
+          { index: 0, delta: { role: "assistant", tool_calls: [toolCall] }, finish_reason: null },
+        ],
+      });
+      const done = JSON.stringify({
+        id: "chatcmpl-fake-openai-compatible",
+        object: "chat.completion.chunk",
+        created: 0,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      });
+      const body = `data: ${chunk}\n\ndata: ${done}\n\ndata: [DONE]\n\n`;
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Content-Length": Buffer.byteLength(body),
+      });
+      res.end(body);
+      return;
+    }
     if (payload.stream) {
       sendChatSse(res, content);
       return;
@@ -258,8 +319,10 @@ const server = createServer(async (req, res) => {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content },
-          finish_reason: "stop",
+          message: toolCall
+            ? { role: "assistant", content: null, tool_calls: [toolCall] }
+            : { role: "assistant", content },
+          finish_reason: toolCall ? "tool_calls" : "stop",
         },
       ],
     });

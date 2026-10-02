@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Unit tests for gateway-state.ts classifiers.
+// Unit tests for gateway and sandbox state classifiers.
 // Covers ARM64/non-TTY fallback paths where `openshell status` returns empty output.
 // See: https://github.com/NVIDIA/NemoClaw/issues/1711
 
@@ -11,14 +11,13 @@ import { mergeLivePolicyIntoSandboxOutput } from "../../../src/lib/actions/sandb
 import {
   getGatewayReuseState,
   getReportedGatewayName,
-  getSandboxStateFromOutputs,
   hasActiveGatewayInfo,
   hasStaleGateway,
   isGatewayConnected,
   isGatewayHealthy,
-  parseSandboxPhase,
   shouldSelectNamedGatewayForReuse,
-} from "../../../src/lib/state/gateway.js";
+} from "../../../src/lib/domain/gateway-reuse.js";
+import { getSandboxStateFromOutputs, parseSandboxPhase } from "../../../src/lib/state/gateway.js";
 import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 
 const OPENSHELL_STATUS_ERROR_CONTRACT = JSON.parse(

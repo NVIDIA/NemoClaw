@@ -7,9 +7,7 @@ type SensitiveKeyDetector = (key: string) => boolean;
 type StandaloneSecretRedactor = (text: string, replacement: string) => string;
 type MalformedUrlRedactor = (text: string) => string | null;
 
-// Redaction intentionally accepts every RFC-style URI scheme. Proxy and
-// custom-scheme URLs can carry credentials too; an allowlist here would create
-// a bypass rather than enforce a network boundary.
+/** @deprecated Retained for package compatibility; use redaction helpers for untrusted diagnostics. */
 export const URL_TOKEN_PATTERN = new RegExp(URL_TOKEN_PATTERN_SOURCE, "gi");
 
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";

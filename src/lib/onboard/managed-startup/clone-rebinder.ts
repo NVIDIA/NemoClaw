@@ -154,6 +154,7 @@ function currentInference(
   return {
     routeProvider: resolved.providerKey,
     upstreamProvider: provider,
+    servingPreset: profile.inference?.servingPreset ?? null,
     model,
     routedBaseUrl: resolved.inferenceBaseUrl,
     upstreamEndpointUrl,
@@ -341,8 +342,9 @@ function reconcileCurrentSourceProfile(
       profile.inference?.upstreamProvider !== current.provider ||
       profile.inference?.model !== current.model
     ) {
+      const currentProvider = requireCurrentString(current.provider, "inference provider");
       contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
-        requireCurrentString(current.provider, "inference provider"),
+        currentProvider,
         requireCurrentString(current.model, "inference model"),
       );
       if (contextWindow === null) {

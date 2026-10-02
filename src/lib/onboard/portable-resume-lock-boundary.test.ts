@@ -215,7 +215,7 @@ describe("portable resume command lock boundary", () => {
             runOnboard: (options) => runWithObservedPreparation(onboardModule, options),
           }),
         ).rejects.toThrow(
-          "Cannot update onboarding recovery while another onboarding run owns the lock.",
+          "Cannot update onboarding recovery because the onboarding lock is unavailable.",
         );
         expect(preparePortableHost).not.toHaveBeenCalled();
         expect(fs.existsSync(configWriteMarker)).toBe(false);
@@ -537,6 +537,7 @@ describe("portable resume command lock boundary", () => {
     let innerObserved = false;
     let innerError = "";
     const harness = harnessModule.createRebuildFlowHarness({
+      useRealPortableRetirementBoundary: true,
       onboard: async (_session, options) => {
         const lockPath = retirement.portableHostFencePath(tempHome);
         const outerInode = fs.lstatSync(lockPath, { bigint: true }).ino;

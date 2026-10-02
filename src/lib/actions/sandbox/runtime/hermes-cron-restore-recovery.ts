@@ -9,6 +9,7 @@ import {
   prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
 } from "../rebuild-hermes-post-restore";
+import { waitForGatedHermesGatewayRecovery } from "./hermes-lifecycle";
 
 const RECOVERY_LOCK_TIMEOUT_MS = 30_000;
 
@@ -27,7 +28,15 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
       }
       const agent = agentRuntime.getSessionAgent(sandboxName);
       if (agent?.name === "hermes") {
-        prepareHermesCronRestoreRecovery(sandboxName);
+        const preparation = prepareHermesCronRestoreRecovery(sandboxName);
+        if (preparation !== "unsupported" && preparation.gatewayRecoveryRequested) {
+          const started = await waitForGatedHermesGatewayRecovery(sandboxName);
+          if (!started) {
+            throw new Error(
+              `Hermes gateway did not become observable after its gated recovery request in sandbox '${sandboxName}'`,
+            );
+          }
+        }
       }
       await connectSandbox(sandboxName, {
         probeOnly: true,
