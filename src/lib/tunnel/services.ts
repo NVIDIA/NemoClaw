@@ -138,7 +138,27 @@ export type CloudflaredState =
   | { kind: "stale-pid-process"; pid: number };
 
 function readProcessCommandLine(pid: number): string | null {
-  if (process.platform === "win32") return null;
+  if (process.platform === "win32") {
+    try {
+      const executablePath = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `$ErrorActionPreference = 'Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId = ${String(pid)}' -ErrorAction Stop).ExecutablePath`,
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 1000,
+        },
+      ).trim();
+      return executablePath.length > 0 ? JSON.stringify(executablePath) : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
@@ -158,7 +178,14 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
   return commandLine
     .split(/\0|\s+/)
     .filter(Boolean)
-    .some((token) => basename(token) === "cloudflared");
+    .some((token) => {
+      const pathToken = token.replace(/^"|"$/g, "").replaceAll("\\", "/");
+      return (
+        basename(pathToken)
+          .replace(/\.exe$/i, "")
+          .toLowerCase() === "cloudflared"
+      );
+    });
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -1137,8 +1164,12 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
 export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
+  const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
   return SERVICE_NAMES.map((name) => {
-    const running = isRunning(pidDir, name);
+    const running =
+      name === "cloudflared"
+        ? readCloudflaredState(pidDir, processControl).kind === "running"
+        : isRunning(pidDir, name);
     return {
       name,
       running,

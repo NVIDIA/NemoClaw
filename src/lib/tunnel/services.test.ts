@@ -124,6 +124,32 @@ describe("getServiceStatuses", () => {
     expect(cf?.pid).toBeNull();
   });
 
+  it.each([
+    ["a reused PID belonging to another process", "/usr/bin/node vitest", false],
+    [
+      "a confirmed Windows cloudflared executable",
+      '"C:\\Program Files\\cloudflared\\cloudflared.exe"',
+      true,
+    ],
+  ])(
+    "uses executable identity for global status: %s",
+    (_description, commandLine, expectedRunning) => {
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+      const processControl: ProcessControl = {
+        isAlive: () => true,
+        commandLine: () => commandLine,
+        signal: vi.fn(),
+      };
+
+      const cloudflared = getServiceStatuses({ pidDir, processControl }).find(
+        (service) => service.name === "cloudflared",
+      );
+
+      expect(cloudflared?.running).toBe(expectedRunning);
+      expect(cloudflared?.pid).toBe(expectedRunning ? process.pid : null);
+    },
+  );
+
   it("ignores invalid PID file contents", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
     const statuses = getServiceStatuses({ pidDir });
@@ -197,7 +223,14 @@ describe("status host service PID dir matches start/stop env (#1077)", () => {
     }));
     expect(resolved).toBe(INTEGRATION_ENV_SANDBOX);
 
-    const statuses = getServiceStatuses({ sandboxName: resolved });
+    const statuses = getServiceStatuses({
+      sandboxName: resolved,
+      processControl: {
+        isAlive: (pid) => pid === process.pid,
+        commandLine: () => "cloudflared tunnel --url http://localhost:18789",
+        signal: vi.fn(),
+      },
+    });
     const cloudflared = statuses.find((service) => service.name === "cloudflared");
     expect(cloudflared?.running).toBe(true);
     expect(cloudflared?.pid).toBe(process.pid);
@@ -1084,6 +1117,26 @@ describe("stopAll", () => {
     expect(signals).toEqual([]);
     expect(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8")).toBe("4242");
     expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("12345");
+  });
+
+  it("stops a confirmed cloudflared executable with a Windows path", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true, false],
+      cmdlines: ['"C:\\Program Files\\cloudflared\\cloudflared.exe"'],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals).toEqual([{ pid: 4242, sig: "SIGTERM" }]);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
   });
 
   it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
