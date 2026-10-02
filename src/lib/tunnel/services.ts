@@ -360,7 +360,7 @@ public static class NemoClawCloudflaredProcess {
 '@
 Add-Type -TypeDefinition $source
 $processId = [uint32]$env:NEMOCLAW_CLOUDFLARED_PROCESS_ID
-$handle = [NemoClawCloudflaredProcess]::OpenProcess(0x1001, $false, $processId)
+$handle = [NemoClawCloudflaredProcess]::OpenProcess(0x101001, $false, $processId)
 if ($handle -eq [IntPtr]::Zero) {
   $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
   if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { "unavailable-open-$errorCode" }
