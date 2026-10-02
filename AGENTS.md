@@ -7,7 +7,7 @@ Follow [WRITING.md](WRITING.md) for all prose, including messages and pull reque
 
 - Write a behavioral test and observe it fail before implementing.
 - Run `cargo ci` before pushing; `cargo test` alone skips the bundle lifecycle tests.
-- Merge into `v1` only through a pull request after CI passes; never force-push.
+- Never force-push.
 - Pull requests are squash-merged: use a Conventional Commits title, and explain the failure, decision, and validation in the body.
 - Add SPDX Apache-2.0 headers to new files.
   In copied or adapted code, keep the upstream notices and record the source revision and your changes.
