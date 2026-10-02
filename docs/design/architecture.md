@@ -11,7 +11,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Configuration constraints, question dependencies, validated draft edits, and review data |
+| Authoring library | Sparse desired-state values, question guidance, answer resolution, and validation results |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -33,10 +33,13 @@ Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/m
 ## OpenShell SDK Boundary
 
 NemoClaw's [OpenShell adapter](../../crates/nemoclaw-provider/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+Reconciliation calls a private, domain-shaped gateway boundary for observations, mutations, sandbox state, and exec.
+The connected implementation owns the pinned `OpenShellClient`, protobuf conversion, transport errors, and the choice between a high-level SDK operation and its supported raw client.
+The boundary does not mirror gRPC methods or create a second public client API.
 NemoClaw uses the SDK's public operations directly where they cover the deployment contract.
 Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wait_deleted`; it checks ownership before deletion and requires confirmed absence afterward.
 Teardown does not require the sandbox's old image, command, or policy to remain intact.
-The reconciliation code retains the SDK's raw API only for operations or fields missing from the high-level interface, without a separate raw-client wrapper.
+The connected implementation retains the SDK's raw API only for operations or fields missing from the high-level interface.
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
 NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
 
@@ -77,9 +80,10 @@ See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
 Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
 Configuration retains credential references, not values.
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) retains sparse authored values while a frontend answers questions.
+It materializes an SDK `Document` only after the current question and validation gates pass.
 It has no terminal or deployment operations.
-Its guided API consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
+Its journey resolver consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
 Provider presets supply presentation defaults; they do not form a compatibility matrix.
 The SDK owns deployment references, credentials, security grants, and resource lifecycle.
 Fabric owns adapter identity, native capability claims, accepted settings, configuration validation, and native mapping.
@@ -97,24 +101,21 @@ That change removes `config.schema` without a replacement; NemoClaw must stop us
 Settings, model, and target schemas remain owner contracts.
 A pin update must preserve the currently qualified native configuration, model roles, web integrations, and retained adapter state before regenerating discovery metadata.
 
-The authoring dependency graph relates fields independently of their screen order.
-The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
-Ties retain presentation order; inactive fields and choices with only one valid answer do not require a question.
-The authoring API distinguishes suggested, accepted, delegated, implied, and inactive answers.
-Delegation accepts the current suggestion; later dependency changes can reopen it.
-Changes to accepted dependent answers still require confirmation, while unrelated accepted answers remain intact.
-These answer states describe user intent, separately from evidence about a target.
+The [authoring domain model](authoring-domain.md) defines the journey's configuration, run state, question resolution, and validation gates.
+It separates authored intent from decision status, interview position, and target observations.
+The [onboarding prototype](onboarding-journeys.md) records supported question coverage, inspection scenarios, and remaining work.
 
 With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
 An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
 It does not create deployment state.
 Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
-Changing the engine invalidates target observations; changing the compute driver invalidates the engine check, and changing the image invalidates its catalog observation.
-Changing only the harness re-evaluates the existing image catalog; unrelated identity or inference edits preserve those observations.
+Onboarding reads target observations for the current document and ignores observations whose engine, compute driver, image, or inference endpoint request no longer match it.
+Changing only the harness re-evaluates the existing image catalog against the new requirement.
 Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
 Known engine incompatibility or conflicting image/adapter requirements block review and saving.
-Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies provisional choices when target inspection is unavailable.
-Onboarding and planning share engine, hardware-advertisement, image, adapter, and model-catalog observations.
+Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies harness choices whether or not target inspection is available, and target inspection only assesses compatibility.
+Onboarding and planning read engine, hardware-advertisement, image, adapter, and model-catalog observations through the same OpenTofu data sources.
+Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
 Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
@@ -129,8 +130,8 @@ The host calls Fabric's public plan/start/invoke/stop APIs.
 The bridge reports health as unsupported for the pinned Fabric revision.
 Native model or agent probes with no Fabric contract remain unavailable.
 
-The authoring dependency graph and OpenTofu execution graph have different jobs.
-The former chooses questions and invalidates dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
+Authoring question resolution and the OpenTofu execution graph have different jobs.
+The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
 
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 

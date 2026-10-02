@@ -12,15 +12,15 @@ import stat
 import sys
 import threading
 import uuid
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from bridge_contract import OPERATIONS, REQUEST_LIMIT, RESULT_LIMIT, SHUTDOWN_SECONDS
-from nemo_fabric import Fabric, FabricConfig, FabricConfigError, FabricError
-from pydantic import ValidationError
 
 SOCKET = "/sandbox/fabric.sock"
 PROVENANCE = "/opt/nemoclaw/provenance.json"
 CALL_SECONDS = 320
+HEALTH_SECONDS = 10
 LEVELS = ("live", "active", "ready", "operational")
 CONFIG_OPERATIONS = ("validate", "prepare", "configure")
 MUTATIONS = ("prepare", "configure")
@@ -28,9 +28,12 @@ MUTATIONS = ("prepare", "configure")
 MESSAGES = {
     "invalid_request": "The request is invalid.",
     "invalid_file": "The input file must contain one bounded UTF-8 JSON object.",
+    "invalid_input": "Standard input must be a pipe or file with one bounded UTF-8 JSON object.",
     "wrong_agent": "The request does not identify this agent.",
     "stale_generation": "The host generation has changed; observe state again.",
     "fabric_health_unsupported": "This Fabric revision does not support runtime health checks.",
+    "fabric_health_failed": "The native runtime did not confirm the requested health level.",
+    "health_observation_changed": "The runtime changed during the health observation.",
     "operational_unsupported": "Operational checks are deferred; use explicit invocation.",
     "streaming_unsupported": "Streaming invocation is not supported.",
     "host_unavailable": "The runtime host is unavailable.",
@@ -139,6 +142,19 @@ def read_object(path):
         raise ProtocolError("invalid_file") from error
 
 
+def read_stdin():
+    try:
+        # Stdin is read only when a flag names it, never from a terminal that waits for a person.
+        if sys.stdin is None or sys.stdin.isatty():
+            raise ValueError("stdin is unavailable or a terminal")
+        encoded = sys.stdin.buffer.read(REQUEST_LIMIT + 1)
+        if len(encoded) > REQUEST_LIMIT:
+            raise ValueError("stdin exceeds limit")
+        return decode_object(encoded)
+    except (OSError, ValueError, RecursionError) as error:
+        raise ProtocolError("invalid_input") from error
+
+
 def fabric_revision():
     try:
         revision = read_object(PROVENANCE).get("fabric_revision")
@@ -231,7 +247,8 @@ def parse_command(arguments):
     request = {"operation": operation, "agent": flags["--agent"]}
     for flag, field in (("--config", "config"), ("--input", "input")):
         if flag in flags:
-            request[field] = read_object(flags[flag])
+            # Only an exact dash selects stdin; every other value names a file.
+            request[field] = read_stdin() if flags[flag] == "-" else read_object(flags[flag])
     if "--expected-generation" in flags:
         request["expected_generation"] = flags["--expected-generation"]
     if operation == "check":
@@ -243,11 +260,19 @@ def parse_command(arguments):
     return request
 
 
+def load_backend():
+    # Each image installs its owner implementation at this fixed module path.
+    # Clients and protocol parsing do not need to import an adapter or the SDK.
+    from backend import Backend
+
+    return Backend()
+
+
 class RuntimeHost:
-    def __init__(self, name, directory=Path("/sandbox")):
+    def __init__(self, name, directory=Path("/sandbox"), *, backend=None):
         self.name = name
         self.directory = directory
-        self.fabric = Fabric()
+        self.backend = load_backend() if backend is None else backend
         self.config = None
         self.runtime = None
         self.state = "stopped"
@@ -268,11 +293,7 @@ class RuntimeHost:
         }
 
     def validate(self, config):
-        typed = FabricConfig.model_validate(config)
-        if typed.metadata.name != self.name:
-            raise ProtocolError("wrong_agent")
-        self.fabric.plan(typed, base_dir=self.directory)
-        return typed
+        return self.backend.validate(config, base_dir=self.directory)
 
     async def stop(self):
         if self.runtime is not None:
@@ -299,12 +320,29 @@ class RuntimeHost:
             if self.shutting_down or operation == "serve":
                 raise ProtocolError("host_stopping")
             if operation == "check":
-                code = (
-                    "operational_unsupported"
-                    if request["level"] == "operational"
-                    else "fabric_health_unsupported"
+                stage = "check"
+                level = request["level"]
+                if level == "operational":
+                    raise ProtocolError("operational_unsupported", stage, unsupported=True)
+                if level not in self.backend.health_checks:
+                    raise ProtocolError("fabric_health_unsupported", stage, unsupported=True)
+                observed = self.snapshot()
+                passed, report = await asyncio.wait_for(
+                    self.backend.check(self.runtime, level), HEALTH_SECONDS
                 )
-                raise ProtocolError(code, "check", unsupported=True)
+                current = self.snapshot()
+                if any(
+                    current[key] != observed[key]
+                    for key in ("generation", "runtime_id", "runtime_state")
+                ):
+                    result = {**current, "health": None}
+                    raise ProtocolError("health_observation_changed", stage)
+                if type(passed) is not bool or not isinstance(report, dict):
+                    raise ProtocolError("fabric_health_failed", stage)
+                result["health"] = report
+                if not passed:
+                    raise ProtocolError("fabric_health_failed", stage)
+                return envelope(operation, result)
             if operation in CONFIG_OPERATIONS:
                 stage = "validate"
                 config = copy.deepcopy(request["config"])
@@ -323,8 +361,6 @@ class RuntimeHost:
                 )
                 typed = await asyncio.to_thread(self.validate, config)
                 if operation == "validate":
-                    if result["fabric_revision"] is None:
-                        raise ProtocolError("validation_unavailable", "validate")
                     result["valid"] = True
                     return envelope(operation, result)
             async with self.lock:
@@ -349,7 +385,7 @@ class RuntimeHost:
                     if operation == "configure":
                         stage = "start"
                         self.state = "unknown"
-                        self.runtime = await self.fabric.start_runtime(
+                        self.runtime = await self.backend.start_runtime(
                             typed, base_dir=self.directory
                         )
                         if self.runtime.status != "active":
@@ -372,20 +408,15 @@ class RuntimeHost:
                 return envelope(operation, result, changed=None)
         except Exception as error:
             if not isinstance(error, ProtocolError):
-                code = error.code if isinstance(error, FabricError) else None
+                code, error_is_invalid, unverified = self.backend.error_details(error)
                 if code not in NATIVE_CODES:
                     code = (
                         f"fabric_{stage}_failed"
                         if stage in ("validate", "start", "stop", "invoke")
+                        else "fabric_health_failed"
+                        if stage == "check"
                         else "fabric_configuration_failed"
                     )
-                unverified = (
-                    isinstance(error, FabricConfigError)
-                    and error.code == "adapter_capability_unverified"
-                )
-                error_is_invalid = (
-                    isinstance(error, (FabricConfigError, ValidationError)) and not unverified
-                )
                 if stage == "validate" and not error_is_invalid:
                     code = "validation_unavailable"
                 if operation == "validate" and result is not None:
@@ -571,8 +602,8 @@ async def serve(name, directory=Path("/sandbox"), stop_event=None):
             host.shutting_down = True
             stop.set()
             if watchdog is None:
-                # Native Fabric calls can outlive asyncio cancellation. The supervisor
-                # owns descendants; terminate this host before its grace period expires.
+                # Native calls can outlive asyncio cancellation. Bound this host's
+                # exit; callers must confirm sandbox stop before replacing the host.
                 watchdog = threading.Timer(SHUTDOWN_SECONDS, os._exit, args=(1,))
                 watchdog.daemon = True
                 watchdog.start()
@@ -622,7 +653,13 @@ def main(arguments=None):
             # Inherit stderr for Fabric and subprocess logs, reserving stdout for clients.
             os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
             return asyncio.run(serve(request["agent"]))
-        response = asyncio.run(client(request))
+        if operation == "validate":
+            # Validation belongs to the selected image and needs no running host.
+            # Reserve stdout for the response even if an owner library logs there.
+            with redirect_stdout(sys.stderr):
+                response = asyncio.run(RuntimeHost(request["agent"]).handle(request))
+        else:
+            response = asyncio.run(client(request))
     except Exception as error:
         if operation == "serve":
             print("Fabric host could not start or shut down cleanly.", file=sys.stderr)

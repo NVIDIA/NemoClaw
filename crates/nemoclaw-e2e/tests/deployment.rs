@@ -827,25 +827,29 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
                 .unwrap()
         );
         assert!(!original.to_string().contains("fixture-only-inference-key"));
-        assert!(
-            fixture
-                .state
-                .lock()
-                .unwrap()
-                .exec_calls
-                .iter()
-                .any(|command| {
-                    command
-                        .first()
-                        .is_some_and(|entrypoint| entrypoint == "/usr/local/bin/fabric-agent")
-                        && command
-                            .get(1)
-                            .is_some_and(|operation| operation == "configure")
-                        && command.windows(2).any(|args| {
-                            args[0] == "--config" && args[1].starts_with("/sandbox/.nemoclaw-")
-                        })
-                })
-        );
+        {
+            // Configuration travels on the configure command's stdin, not a staged file.
+            let state = fixture.state.lock().unwrap();
+            assert!(
+                state
+                    .exec_calls
+                    .iter()
+                    .zip(&state.exec_stdin)
+                    .any(|(command, stdin)| {
+                        command
+                            .first()
+                            .is_some_and(|entrypoint| entrypoint == "/usr/local/bin/fabric-agent")
+                            && command
+                                .get(1)
+                                .is_some_and(|operation| operation == "configure")
+                            && command
+                                .windows(2)
+                                .any(|args| args[0] == "--config" && args[1] == "-")
+                            && serde_json::from_slice::<serde_json::Value>(stdin).ok()
+                                == Some(original.clone())
+                    })
+            );
+        }
         // Native settings belong to the owned Fabric configuration. Refresh must
         // detect drift without mutating either the host or durable deployment.
         fixture

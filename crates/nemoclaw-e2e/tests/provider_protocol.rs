@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::PathBuf,
-    process::{Command, Output},
+    path::{Path, PathBuf},
+    process::Output,
 };
-use tempfile::TempDir;
 
 struct Experiment {
-    dir: TempDir,
-    tofu: PathBuf,
+    dir: TofuWorkspace,
 }
 impl Experiment {
     fn kubernetes_config(&self) {
@@ -67,27 +66,15 @@ impl Experiment {
             "resource":{"nemoclaw_inference_service":{"gpu":{"spec":spec.to_string().replace("${", "$${").replace("%{", "%%{")}}}
         }).to_string()).unwrap();
     }
-    fn new() -> Self {
+    fn new(provider: impl AsRef<Path>) -> Self {
         let tofu = PathBuf::from(
             std::env::var_os("NEMOCLAW_TEST_TOFU")
                 .expect("explicit pinned OpenTofu executable required"),
         );
         assert!(tofu.is_absolute());
         let this = Self {
-            dir: tempfile::tempdir().unwrap(),
-            tofu,
+            dir: TofuWorkspace::new(tofu, provider),
         };
-        let provider = PathBuf::from(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
-        // The fixture binary is this test package's own target. Production
-        // bundles will be supplied explicitly for SDK/CLI lifecycle tests.
-        fs::copy(
-            provider,
-            this.dir.path().join(nemoclaw_sdk::bundle::executable(
-                "terraform-provider-nemoclaw",
-            )),
-        )
-        .unwrap();
-        fs::write(this.dir.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(this.dir.path().to_str().unwrap()).unwrap())).unwrap();
         this.config("https://initial.example/v1");
         this.mode("normal");
         this
@@ -103,12 +90,9 @@ impl Experiment {
         fs::write(self.dir.path().join("mode"), mode).unwrap();
     }
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(&self.tofu)
+        self.dir
+            .command()
             .args(args)
-            .current_dir(self.dir.path())
-            .env("TF_CLI_CONFIG_FILE", self.dir.path().join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
             .env("NEMOCLAW_FIXTURE_DIR", self.dir.path())
             .output()
             .unwrap()
@@ -137,7 +121,7 @@ impl Experiment {
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_resumes_incomplete_kubernetes_creation_without_taint_or_replacement() {
     for kind in ["kubernetes_storage", "kubernetes_gateway"] {
-        let e = Experiment::new();
+        let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
         e.kubernetes_config();
         e.mode(&format!("create-error-{kind}"));
         let failed = e.run(&["apply", "-auto-approve", "-input=false"]);
@@ -196,7 +180,7 @@ fn real_tofu_resumes_incomplete_kubernetes_creation_without_taint_or_replacement
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
-    let e = Experiment::new();
+    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
     e.hardware_config(true);
     let result = e.run(&["validate", "-json"]);
     assert!(!result.status.success());
@@ -256,7 +240,7 @@ fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and_absence() {
-    let e = Experiment::new();
+    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
     e.success(&["apply", "-auto-approve", "-input=false"]);
     let original = e.state();
     assert_eq!(
@@ -299,7 +283,7 @@ fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
-    let e = Experiment::new();
+    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
     e.mode("create-error");
     let output = e.run(&["apply", "-auto-approve", "-input=false"]);
     assert!(!output.status.success());
@@ -343,14 +327,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
         };
         Some((response.0, serde_json::to_vec(&response.1).unwrap()))
     }).await;
-    let e = Experiment::new();
-    fs::copy(
-        provider,
-        e.dir.path().join(nemoclaw_sdk::bundle::executable(
-            "terraform-provider-nemoclaw",
-        )),
-    )
-    .unwrap();
+    let e = Experiment::new(provider);
     let document =
         Document::parse(include_bytes!("../../../examples/spark/vllm.yaml").as_slice()).unwrap();
     let generations = [

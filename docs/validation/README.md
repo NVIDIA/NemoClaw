@@ -33,9 +33,11 @@ The [inference authentication preflight](kubernetes-inference-preflight-linux-am
 The [v1 integration checks](kubernetes-v1-integration-linux-amd64.md) record regression and real OpenTofu fixture results after adopting upstream Fabric ownership.
 The [OpenShift offline validation](openshift-offline.md) records profile checks and the remaining live qualification requirements.
 The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-amd64.md) records a fresh Linux AMD64 run with three hosted agent responses, export/reapply, destroy, and owned-cluster cleanup.
+The [v1 rebase validation](kubernetes-v1-rebase-linux-amd64.md) records rebuilt Kubernetes/OpenShift images, passing integration and inference checks, and the live apply failure caused by unsupported native Fabric health.
 
 | Behavior | Tests and Results |
 |---|---|
+| Dummy and ten interim image command contracts, native fixture regression, and retained image identities | [Linux ARM64 reference contract qualification](fabric-agent-contract-linux-arm64.md) |
 | Relocated image launch, separate executable grants, unchanged apply, export, and teardown | [Linux ARM64 runtime consumer qualification](image-runtime-consumers-linux-arm64.md) |
 | Image-owned runtime metadata, executable resolution, and SDK catalog validation | [Linux ARM64 metadata qualification](image-runtime-metadata-linux-arm64.md) |
 | Failure-state boundaries, authored resource identities, restart guidance, and deferred proxy previews | [Linux ARM64 CLI results](cli-results-linux-arm64.md) |

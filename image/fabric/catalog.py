@@ -10,7 +10,8 @@ import argparse
 import json
 from pathlib import Path
 
-from bridge_contract import HEALTH_CHECKS, INTERFACE_VERSION, OPERATIONS
+from backend import HEALTH_CHECKS
+from bridge_contract import capabilities
 from nemo_fabric import DiscoveryConfig, Fabric
 from runtime_metadata import read_runtime
 
@@ -70,11 +71,7 @@ def snapshot(
         },
     }
     if installed_only:
-        catalog["bridge"] = {
-            "interface_version": INTERFACE_VERSION,
-            "operations": list(OPERATIONS),
-            "health_checks": list(HEALTH_CHECKS),
-        }
+        catalog["bridge"] = capabilities(HEALTH_CHECKS)
     # Kept beside the descriptors so Fabric's records stay unedited.
     files = read_runtime_files(runtime_files, catalog["adapters"])
     if files:

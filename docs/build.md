@@ -134,6 +134,44 @@ Pinned archives and wheels do not make the whole image bit-reproducible: Debian 
 
 Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.
 
+### Reference Contract Image
+
+Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
+It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
+It is a test fixture, excluded from the production `agents` target and SDK harness catalog.
+On Linux ARM64, run from the repository root:
+
+```sh
+IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 dummy
+python3 image/qualify_contract.py nc-contract:dummy
+```
+
+Use `linux/amd64` on a native AMD64 host.
+The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
+It removes that container on success, failure, or timeout; the built image remains local.
+The suite exercises standalone validation and all six commands, including generation conflicts and readiness failure that preserves the configured runtime.
+The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings and the real adapter backend boundary.
+
+To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
+
+```sh
+IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 agents
+python3 image/qualify_contract.py nc-contract:openclaw nc-contract:hermes nc-contract:pi
+```
+
+Pass each remaining built image to the same qualifier; CI runs it for every selected target.
+On a native Linux AMD64 host, build and qualify its two production targets instead:
+
+```sh
+IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/amd64 agents
+python3 image/qualify_contract.py nc-contract:deepagents nc-contract:openclaw
+```
+
+The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
+Production images additionally retain their Fabric discovery catalog.
+A passing command contract does not establish native readiness: production backends still report unsupported health at the pinned Fabric revision.
+See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
+
 ## Build a Runtime Image
 
 Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.

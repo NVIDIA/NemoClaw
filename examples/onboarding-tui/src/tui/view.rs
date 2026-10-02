@@ -2,23 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    app::{Step, Wizard},
-    labels,
+    app::JourneyWizard,
+    labels::{self, terminal_text},
     logo::BrandImage,
 };
+use nemoclaw_authoring::JourneyQuestion;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, Paragraph, Wrap},
 };
 
 const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
 const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
-const DEEP_GREEN: Color = Color::Rgb(15, 35, 18);
+const DIM: Color = Color::Rgb(82, 121, 84);
 const MUTED: Color = Color::Rgb(126, 145, 128);
 const WHITE: Color = Color::Rgb(238, 245, 238);
+const WARNING: Color = Color::Rgb(255, 170, 70);
 const LOGO_GRADIENT: [Color; 6] = [
     Color::Rgb(180, 246, 72),
     Color::Rgb(154, 226, 51),
@@ -37,13 +39,13 @@ const TEXTURE_GRADIENT: [Color; 7] = [
     Color::Rgb(174, 238, 72),
 ];
 
-impl Wizard {
+impl JourneyWizard {
     #[cfg(test)]
-    pub(crate) fn render(&self, frame: &mut Frame<'_>) {
+    pub(super) fn render(&self, frame: &mut Frame<'_>) {
         self.render_with_brand(frame, None);
     }
 
-    pub(crate) fn render_with_brand(&self, frame: &mut Frame<'_>, brand: Option<BrandImage>) {
+    pub(super) fn render_with_brand(&self, frame: &mut Frame<'_>, brand: Option<BrandImage>) {
         let area = frame.area();
         frame.render_widget(
             Block::new().style(Style::new().bg(Color::Rgb(5, 10, 7))),
@@ -66,25 +68,243 @@ impl Wizard {
             area.width.saturating_sub(margin * 2),
             area.height,
         );
-        let content_height = 10;
         let rows = Layout::vertical([
             Constraint::Length(8),
-            Constraint::Min(content_height),
-            Constraint::Length(if self.target_status.is_some() { 4 } else { 0 }),
-            Constraint::Length(if self.can_offer_delegation() { 3 } else { 2 }),
+            Constraint::Length(1),
+            Constraint::Min(10),
+            Constraint::Length(2),
         ])
         .split(body);
         self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
-        self.render_question(frame, rows[1]);
-        if let Some(status) = &self.target_status {
-            frame.render_widget(
-                Paragraph::new(status.as_str())
-                    .style(Style::new().fg(MUTED))
-                    .wrap(Wrap { trim: true }),
-                rows[2],
+        let current = self.question();
+        let reviewing = self.started && matches!(&current, Ok(None));
+        let asking = self.started && matches!(&current, Ok(Some(_)));
+        let lines = if !self.started {
+            welcome()
+        } else if let Err(error) = &current {
+            vec![
+                Line::from(Span::styled(
+                    terminal_text(&error.to_string()),
+                    Style::new().fg(WARNING),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "The questionnaire cannot continue. Press ← to go back or Esc to cancel.",
+                    Style::new().fg(MUTED),
+                )),
+            ]
+        } else if let Ok(Some(question)) = current.as_ref() {
+            self.question_lines(question, rows[2].width)
+        } else {
+            self.review_lines()
+        };
+        let mut content = Paragraph::new(lines).wrap(Wrap { trim: false });
+        if reviewing {
+            content = content.scroll((self.review_scroll, 0));
+        }
+        frame.render_widget(content, rows[2]);
+        let optional = matches!(&current, Ok(Some(question)) if !question.required());
+        let choosing = matches!(&current, Ok(Some(question))
+            if !question.choices().is_empty() && !self.custom_answer);
+        self.render_footer(frame, rows[3], reviewing, asking, choosing, optional);
+    }
+
+    fn question_lines(&self, question: &JourneyQuestion, width: u16) -> Vec<Line<'static>> {
+        let mut title = vec![Span::styled(
+            terminal_text(&labels::title(question)),
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )];
+        // The resolver reveals later questions as answers arrive, so there is
+        // no stable total to show.
+        title.extend([
+            Span::raw("  "),
+            Span::styled(
+                format!("⟦ {} ⟧", self.history.len() + 1),
+                Style::new().fg(DIM),
+            ),
+        ]);
+        let mut lines = vec![Line::from(title)];
+        if let Some(service) = labels::service(question) {
+            lines.push(Line::from(Span::styled(
+                format!("Service: {}", terminal_text(service)),
+                Style::new().fg(MUTED),
+            )));
+        }
+        lines.push(Line::from(""));
+        if let Some(description) = labels::description(question) {
+            lines.push(Line::from(Span::styled(
+                terminal_text(&description),
+                Style::new().fg(MUTED),
+            )));
+        }
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{}  ·  {}",
+                if question.required() {
+                    "Required"
+                } else {
+                    "Optional"
+                },
+                terminal_text(question.id())
+            ),
+            Style::new().fg(DIM),
+        )));
+        if let Some(cause) = question.reopened_because() {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Recheck this answer because {} changed.",
+                    terminal_text(cause)
+                ),
+                Style::new().fg(WARNING),
+            )));
+        }
+        lines.push(Line::from(""));
+        if question.choices().is_empty() || self.custom_answer {
+            let input = if self.input.is_empty() {
+                self.suggested_input(question)
+            } else {
+                self.input.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(terminal_text(&input), Style::new().fg(WHITE)),
+                Span::styled("▌", Style::new().fg(BRIGHT_GREEN)),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "─".repeat(width as usize),
+                Style::new().fg(BRIGHT_GREEN),
+            )));
+            if question.suggestion().is_some() {
+                lines.push(Line::from(Span::styled(
+                    "Enter accepts the suggested value; typing replaces it.",
+                    Style::new().fg(MUTED),
+                )));
+            }
+        } else {
+            let selected = self.choice_index(question);
+            let mut choices = question
+                .choices()
+                .iter()
+                .map(|value| labels::choice(question, value))
+                .collect::<Vec<_>>();
+            if question.allows_custom_answer() {
+                choices.push("Type another model".into());
+            }
+            if !question.required() {
+                choices.push("Omit".into());
+            }
+            lines.extend(
+                choices
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| choice_line(value, index == selected)),
             );
         }
-        self.render_footer(frame, rows[3]);
+        lines
+    }
+
+    fn review_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "Review desired state",
+                Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+        match self.state.resolve_with_evidence(
+            &self.capabilities,
+            &self.facts,
+            self.discovery.as_ref(),
+        ) {
+            Ok(resolution) => {
+                if let Some(document) = resolution.materialized_document() {
+                    if let Ok(yaml) = document.yaml() {
+                        lines.extend(yaml.lines().map(yaml_line));
+                    }
+                } else {
+                    lines.extend(resolution.unverified().iter().map(|warning| {
+                        Line::from(Span::styled(
+                            terminal_text(warning),
+                            Style::new().fg(WARNING),
+                        ))
+                    }));
+                    lines.extend(
+                        resolution
+                            .assessment()
+                            .issues()
+                            .iter()
+                            .take(5)
+                            .map(|issue| {
+                                Line::from(Span::styled(
+                                    terminal_text(&format!("{}: {}", issue.path(), issue.rule())),
+                                    Style::new().fg(WARNING),
+                                ))
+                            }),
+                    );
+                }
+                if let Some(assessment) = resolution.target_assessment() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!("Target: {:?}", assessment.status),
+                        Style::new().fg(MUTED),
+                    )));
+                    lines.extend(assessment.reasons.iter().take(2).map(|reason| {
+                        Line::from(Span::styled(terminal_text(reason), Style::new().fg(MUTED)))
+                    }));
+                }
+            }
+            Err(error) => lines.push(Line::from(Span::styled(
+                terminal_text(&error.to_string()),
+                Style::new().fg(WARNING),
+            ))),
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Press Enter to save.",
+            Style::new().fg(MUTED),
+        )));
+        lines
+    }
+
+    fn render_footer(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        reviewing: bool,
+        asking: bool,
+        choosing: bool,
+        optional: bool,
+    ) {
+        let rows = Layout::vertical([Constraint::Length(1); 2]).split(area);
+        let controls = if !self.started {
+            "Enter  begin     Esc  exit".to_owned()
+        } else if reviewing {
+            "Enter  save     ↑/↓  scroll     ←  back     Esc  exit".to_owned()
+        } else {
+            format!(
+                "{}     Enter  continue     ←  back     Esc  exit{}",
+                if choosing {
+                    "↑/↓  choose"
+                } else {
+                    "Type to replace"
+                },
+                if optional { "     Ctrl+O  omit" } else { "" }
+            )
+        };
+        let (controls, color) = match &self.error {
+            Some(error) => (terminal_text(error), WARNING),
+            None => (controls, MUTED),
+        };
+        frame.render_widget(
+            Paragraph::new(controls).style(Style::new().fg(color)),
+            rows[0],
+        );
+        if asking {
+            frame.render_widget(
+                Paragraph::new("Ctrl+D  choose remaining settings and review")
+                    .style(Style::new().fg(MUTED)),
+                rows[1],
+            );
+        }
     }
 
     fn render_logo(&self, frame: &mut Frame<'_>, area: Rect, brand: Option<BrandImage>) {
@@ -97,7 +317,7 @@ impl Wizard {
             "╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ",
         ];
         let mut lines = vec![Line::from("")];
-        lines.extend(rows.into_iter().enumerate().map(|(index, row)| {
+        for (index, row) in rows.into_iter().enumerate() {
             let mut spans = Vec::new();
             if let Some(brand) = brand {
                 if (2..=3).contains(&index) {
@@ -108,409 +328,69 @@ impl Wizard {
                 spans.push(Span::raw("  "));
             }
             spans.push(Span::styled(row, Style::new().fg(LOGO_GRADIENT[index])));
-            Line::from(spans)
-        }));
-        lines.push(texture_line(area.width as usize));
-        frame.render_widget(Paragraph::new(Text::from(lines)), area);
-    }
-
-    fn render_question(&self, frame: &mut Frame<'_>, area: Rect) {
-        let area = Rect::new(
-            area.x,
-            area.y.saturating_add(1),
-            area.width,
-            area.height.saturating_sub(1),
-        );
-        if self.pending_edit.is_some() {
-            frame.render_widget(
-                Paragraph::new(self.conflict_message())
-                    .style(Style::new().fg(WHITE))
-                    .wrap(Wrap { trim: true }),
-                area,
-            );
-        } else if self.step == Step::Welcome {
-            self.render_welcome(frame, area);
-        } else if self.step == Step::Review {
-            self.render_review(frame, area);
-        } else {
-            let rows = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Min(4),
-            ])
-            .split(area);
-            let mut title = vec![Span::styled(
-                self.title(),
-                Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
-            )];
-            if let Some((position, total)) = self.progress() {
-                title.extend([
-                    Span::raw("  "),
-                    Span::styled(
-                        format!("⟦ {position}/{total} ⟧"),
-                        Style::new().fg(Color::Rgb(82, 121, 84)),
-                    ),
-                ]);
-            }
-            frame.render_widget(Paragraph::new(Line::from(title)), rows[0]);
-            frame.render_widget(
-                Paragraph::new(self.help())
-                    .style(Style::new().fg(MUTED))
-                    .wrap(Wrap { trim: true }),
-                rows[1],
-            );
-            if self.is_choice() {
-                self.render_choices(frame, rows[2]);
-            } else {
-                self.render_input(frame, rows[2]);
-            }
+            lines.push(Line::from(spans));
         }
-    }
-
-    fn render_welcome(&self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    "Welcome to NemoClaw",
-                    Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "NemoClaw runs an AI agent inside an isolated sandbox.",
-                    Style::new().fg(MUTED),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Choose your agent, inference, and deployment settings.",
-                    Style::new().fg(MUTED),
-                )),
-                Line::from(Span::styled(
-                    "Press Enter to keep each suggested answer.",
-                    Style::new().fg(MUTED),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Review your choices and save a deployment YAML file.",
-                    Style::new().fg(MUTED),
-                )),
-                Line::from(Span::styled(
-                    "Nothing is installed or started yet.",
-                    Style::new().fg(MUTED),
-                )),
-            ]),
-            area,
-        );
-    }
-
-    fn render_choices(&self, frame: &mut Frame<'_>, area: Rect) {
-        let area = if let Some(error) = &self.error {
-            let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-            frame.render_widget(
-                Paragraph::new(error.as_str())
-                    .style(Style::new().fg(Color::Rgb(255, 170, 70)))
-                    .wrap(Wrap { trim: true }),
-                rows[1],
-            );
-            rows[0]
-        } else {
-            area
-        };
-        let labels = self.choice_labels();
-        let visible = area.height as usize;
-        let start = self
-            .selected
-            .saturating_sub(visible.saturating_sub(1))
-            .min(labels.len().saturating_sub(visible));
-        let lines = labels
-            .into_iter()
-            .enumerate()
-            .skip(start)
-            .take(visible)
-            .map(|(index, label)| {
-                let active = index == self.selected;
-                let unavailable = self.choice_unavailable_reason(index);
-                let label = match unavailable {
-                    Some(reason) => format!("{label} (unavailable: {reason})"),
-                    None => label,
-                };
-                Line::from(vec![
-                    Span::styled(
-                        if unavailable.is_some() {
-                            "  ×  "
-                        } else if active {
-                            "  ●  "
-                        } else {
-                            "  ○  "
-                        },
-                        Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
-                    ),
-                    Span::styled(
-                        terminal_text(&label),
-                        Style::new()
-                            .fg(if active && unavailable.is_none() {
-                                WHITE
-                            } else {
-                                MUTED
-                            })
-                            .add_modifier(if active {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            }),
-                    ),
-                ])
-            })
-            .collect::<Vec<_>>();
+        lines.push(texture_line(area.width as usize));
         frame.render_widget(Paragraph::new(lines), area);
     }
-
-    fn render_input(&self, frame: &mut Frame<'_>, area: Rect) {
-        let field = Rect::new(area.x, area.y, area.width, 3.min(area.height));
-        frame.render_widget(
-            Paragraph::new(self.input.as_str())
-                .style(Style::new().fg(WHITE))
-                .block(
-                    Block::new()
-                        .borders(Borders::BOTTOM)
-                        .border_style(Style::new().fg(BRIGHT_GREEN)),
-                ),
-            field,
-        );
-        let cursor_x = field
-            .x
-            .saturating_add(self.input.chars().count().min(field.width as usize - 1) as u16);
-        frame.set_cursor_position((cursor_x, field.y));
-        if let Some(error) = &self.error {
-            let error_area = Rect::new(
-                area.x,
-                area.y.saturating_add(3),
-                area.width,
-                area.height.saturating_sub(3),
-            );
-            frame.render_widget(
-                Paragraph::new(format!("▲ {error}"))
-                    .style(Style::new().fg(Color::Rgb(255, 170, 70)))
-                    .wrap(Wrap { trim: true }),
-                error_area,
-            );
-        }
-    }
-
-    fn render_review(&self, frame: &mut Frame<'_>, area: Rect) {
-        let answers = self
-            .draft
-            .guided_answers(&self.capabilities)
-            .expect("wizard retains a guided document");
-        let mut lines = Vec::new();
-        if self.draft.has_delegated_answers() {
-            lines.push(Line::from(
-                "Remaining suggestions chosen with your permission.",
-            ));
-        }
-        for credential in &self.facts.credentials {
-            if credential.status == nemoclaw_sdk::discovery::ObservationStatus::Unavailable {
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        "Set {} before applying.",
-                        terminal_text(&credential.reference)
-                    ),
-                    Style::new().fg(Color::Rgb(255, 170, 70)),
-                )));
-            }
-        }
-        lines.extend(review_field("Deployment", &answers.deployment_name));
-        lines.extend(review_field("Harness", labels::harness(&answers.harness)));
-        if let Some(settings) = &answers.harness_settings {
-            for (name, value) in settings {
-                lines.push(Line::from(format!("{name}: {value}")));
-            }
-        }
-
-        lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
-        let document = self.draft.document();
-        let sandbox = &document.spec.sandboxes[0];
-        let inference = document
-            .sandbox_inference(sandbox)
-            .expect("validated inference");
-        for route in &inference.routes {
-            if inference.routes.len() > 1 {
-                lines.extend(review_field("Route", &route.name));
-            }
-            let provider = document
-                .sandbox_route_provider(sandbox, route)
-                .expect("validated provider");
-            if provider.service_ref.is_none() && inference.routes.len() == 1 {
-                lines.extend(review_field(
-                    "Provider",
-                    labels::inference(answers.inference),
-                ));
-            } else {
-                lines.extend(review_field("Provider", &provider.name));
-            }
-            if let Some(service) = &provider.service_ref {
-                lines.extend(review_field("Managed service", service));
-            }
-            lines.extend(review_field(
-                "API",
-                labels::api(provider.api.unwrap_or_else(|| {
-                    nemoclaw_sdk::config::InferenceApi::for_provider(provider.provider)
-                })),
-            ));
-            lines.extend(review_field("Model", &route.overrides.model));
-            if provider.service_ref.is_none() {
-                lines.extend(review_field("Endpoint", &provider.endpoint));
-            }
-        }
-        lines.extend(review_field("Gateway", document.spec.gateway.endpoint()));
-        if let Some(error) = &self.error {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                error.as_str(),
-                Style::new().fg(Color::Rgb(255, 170, 70)),
-            )));
-        }
-        frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: true })
-                .scroll((self.review_scroll, 0)),
-            area,
-        );
-    }
-
-    fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let controls = if self.pending_edit.is_some() {
-            "Enter  revise affected answers     ←  keep current answers     Esc  exit"
-        } else {
-            match self.step {
-                Step::Welcome => "Enter  begin     Esc  exit",
-                Step::Review => "Enter  author YAML     ↑/↓  scroll     ←  back     Esc  exit",
-                _ if self.is_choice() => {
-                    "↑/↓  choose     Enter  continue     ←  back     Esc  exit"
-                }
-                _ => "Type to replace     Enter  continue     ←  back     Esc exit",
-            }
-        };
-        let rows = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(u16::from(self.can_offer_delegation())),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        frame.render_widget(
-            Paragraph::new(controls).style(Style::new().fg(MUTED)),
-            rows[0],
-        );
-        if self.can_offer_delegation() {
-            frame.render_widget(
-                Paragraph::new("Ctrl+D  choose remaining settings and review")
-                    .style(Style::new().fg(MUTED)),
-                rows[1],
-            );
-        }
-        if let Some((position, total)) = self.progress() {
-            let width = rows[2].width as usize;
-            let filled = width.saturating_mul(position) / total;
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("▄".repeat(filled), Style::new().fg(Color::Rgb(82, 135, 49))),
-                    Span::styled(
-                        "▄".repeat(width.saturating_sub(filled)),
-                        Style::new().fg(DEEP_GREEN),
-                    ),
-                ])),
-                rows[2],
-            );
-        }
-    }
-
-    fn progress(&self) -> Option<(usize, usize)> {
-        if self.step == Step::Welcome {
-            return None;
-        }
-        let steps = self.flow_steps();
-        let position = steps.iter().position(|step| *step == self.step)? + 1;
-        Some((position, steps.len()))
-    }
-
-    fn title(&self) -> String {
-        if let Some(question) = self.setting_question() {
-            return question.title;
-        }
-        match self.step {
-            Step::Harness => "Choose your agent harness",
-            Step::Route => "Choose a model route to configure",
-            Step::Runtime => "Where should the sandbox run?",
-            Step::Inference => "How should your agent reach its model?",
-            Step::Api => "Which inference API should the harness speak?",
-            Step::DeploymentName => "Name this deployment",
-            Step::Endpoint => "Where is the compatible inference endpoint?",
-            Step::Model => "Choose the model",
-            _ => "",
-        }
-        .into()
-    }
-
-    fn help(&self) -> String {
-        if matches!(
-            self.step,
-            Step::Inference | Step::Api | Step::Endpoint | Step::Model
-        ) && self
-            .draft
-            .route_names()
-            .is_ok_and(|routes| routes.len() > 1)
-        {
-            return format!(
-                "Settings for route {}. Press Enter to keep its current value.",
-                terminal_text(self.draft.current_route().unwrap_or_default())
-            );
-        }
-        if let Some(question) = self.setting_question() {
-            return format!(
-                "{}{}",
-                question.description,
-                if question.required {
-                    " Required."
-                } else {
-                    " Optional; leave empty to skip."
-                }
-            );
-        }
-        match self.step {
-            Step::Harness => "The harness is the agent environment NemoClaw installs and isolates.",
-            Step::Route => "Each route keeps its own provider, model, and settings.",
-            Step::Runtime => "The runtime owns the gateway and local sandbox resources.",
-            Step::Inference => "Hosted inference keeps model compute outside the sandbox.",
-            Step::Api => "Only APIs compatible with the selected harness are shown.",
-            Step::DeploymentName => "A human-readable DNS label for this desired-state document.",
-            Step::Endpoint => "Enter the complete HTTP or HTTPS endpoint URL.",
-            Step::Model => "Choose a suggestion or enter another model identifier.",
-            _ => "",
-        }
-        .into()
-    }
 }
 
-// External labels are text; escaping must not alter the selected identity.
-fn terminal_text(value: &str) -> String {
-    value
-        .chars()
-        .flat_map(|character| {
-            if character.is_control()
-                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-            {
-                character.escape_default().collect::<Vec<_>>()
-            } else {
-                vec![character]
-            }
-        })
-        .collect()
+fn welcome() -> Vec<Line<'static>> {
+    let muted = |text: &'static str| Line::from(Span::styled(text, Style::new().fg(MUTED)));
+    vec![
+        Line::from(Span::styled(
+            "Welcome to NemoClaw",
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        muted("Create desired state for an isolated sandbox."),
+        Line::from(""),
+        muted("Review deployment settings and author deployment YAML."),
+        muted("Nothing is installed or started yet."),
+        Line::from(""),
+        muted("Press Enter to begin."),
+    ]
 }
 
-fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 1] {
-    [Line::from(vec![
-        Span::styled(format!("{label}: "), Style::new().fg(MUTED)),
-        Span::styled(terminal_text(value), Style::new().fg(WHITE)),
-    ])]
+fn choice_line(value: &str, active: bool) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            if active { "  ●  " } else { "  ○  " },
+            Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
+        ),
+        Span::styled(
+            terminal_text(value),
+            if active {
+                Style::new().fg(WHITE).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(MUTED)
+            },
+        ),
+    ])
+}
+
+/// Mute YAML keys so the authored values stand out.
+fn yaml_line(line: &str) -> Line<'static> {
+    let line = terminal_text(line);
+    let body = line.trim_start().trim_start_matches("- ");
+    let key_end = body
+        .find(": ")
+        .or_else(|| body.ends_with(':').then(|| body.len() - 1))
+        .filter(|&end| {
+            body[..end]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        });
+    match key_end {
+        Some(end) => {
+            let split = line.len() - body.len() + end + 1;
+            Line::from(vec![
+                Span::styled(line[..split].to_owned(), Style::new().fg(MUTED)),
+                Span::styled(line[split..].to_owned(), Style::new().fg(WHITE)),
+            ])
+        }
+        None => Line::from(Span::styled(line, Style::new().fg(WHITE))),
+    }
 }
 
 fn texture_line(width: usize) -> Line<'static> {
@@ -526,16 +406,4 @@ fn texture_line(width: usize) -> Line<'static> {
             })
             .collect::<Vec<_>>(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn discovered_identifiers_are_escaped_only_for_terminal_display() {
-        let identifier = "org.fixture.\u{1b}[31m\n\u{202e}agent";
-        let line = super::review_field("Harness", identifier);
-        let displayed = line[0].spans[1].content.as_ref();
-        assert_eq!(displayed, "org.fixture.\\u{1b}[31m\\n\\u{202e}agent");
-        assert_eq!(identifier, "org.fixture.\u{1b}[31m\n\u{202e}agent");
-    }
 }

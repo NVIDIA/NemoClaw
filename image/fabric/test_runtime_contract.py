@@ -36,7 +36,7 @@ class RuntimeReadback(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(runtime_id="owned", status="active", stop=AsyncMock())
         self.api = SimpleNamespace(plan=Mock(), start_runtime=AsyncMock(return_value=self.runtime))
-        mock = patch("fabric.Fabric", return_value=self.api)
+        mock = patch("backend.Fabric", return_value=self.api)
         mock.start()
         self.addCleanup(mock.stop)
         self.host = RuntimeHost("main")
@@ -213,9 +213,9 @@ class NativeFailure(unittest.IsolatedAsyncioTestCase):
             host = RuntimeHost("main", Path(directory))
             with (
                 patch.object(
-                    host.fabric, "plan", return_value=SimpleNamespace(to_mapping=lambda: {})
+                    host.backend.fabric, "plan", return_value=SimpleNamespace(to_mapping=lambda: {})
                 ),
-                patch.object(host.fabric, "_require_native_module", return_value=native),
+                patch.object(host.backend.fabric, "_require_native_module", return_value=native),
             ):
                 response = await configure(host, CONFIG)
         self.assertEqual(response["error"]["code"], "pi_model_unknown")

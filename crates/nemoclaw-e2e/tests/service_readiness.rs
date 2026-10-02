@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
@@ -22,7 +23,7 @@ async fn standalone_readiness(proxy: bool) {
     let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
     let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
     assert!(tofu.is_absolute() && provider.is_absolute());
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
     fs::write(
@@ -31,8 +32,6 @@ async fn standalone_readiness(proxy: bool) {
     )
     .unwrap();
     fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root.to_str().unwrap()).unwrap())).unwrap();
     let document = Document::parse(
         include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
@@ -136,12 +135,9 @@ async fn standalone_readiness(proxy: bool) {
     let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":1,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
-        let output = Command::new(&tofu)
+        let output = directory
+            .command()
             .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
             .env("NEMOCLAW_TEST_REMOTE", root)
             .env(
                 "PATH",

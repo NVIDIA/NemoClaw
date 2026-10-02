@@ -109,15 +109,14 @@ fn assert_noop(bundle: &Bundle, root: &Path) {
 }
 
 async fn wait_ready(engine: &Engine, observed: &nemoclaw_provider::managed::RuntimeObservation) {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let status = engine.runtime_status(observed).await.unwrap();
-            if status.phase == "ready" {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    })
+    let connections = nemoclaw_provider::docker::Connections::fixed([engine.clone()]).unwrap();
+    nemoclaw_provider::services::wait_service_ready(
+        &connections,
+        &serde_json::to_string(&observed.spec).unwrap(),
+        &observed.container_id,
+        std::time::Duration::from_secs(10),
+        &crate::CancellationToken::new(),
+    )
     .await
     .unwrap();
 }
@@ -200,6 +199,23 @@ fn fixture(
     container["ports"][0]["ip"] = json!("127.0.0.1");
     container["ports"][0]["external"] = json!(port);
     (graph, spec, storage, address)
+}
+
+#[test]
+fn cpu_runtime_fixture_has_valid_readiness_specification() {
+    for kind in ["ollama", "vllm"] {
+        let (_, spec, _, _) = fixture(
+            kind,
+            &format!("fixture@sha256:{}", "a".repeat(64)),
+            "01234567-89ab-cdef-0123-456789abcdef",
+            42,
+            "0.1.0",
+        );
+        nemoclaw_provider::services::validate_readiness_spec(
+            &serde_json::to_string(&spec).unwrap(),
+        )
+        .unwrap();
+    }
 }
 
 fn free_port() -> u16 {

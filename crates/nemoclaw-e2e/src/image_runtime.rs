@@ -58,6 +58,40 @@ pub fn targets(
 #[cfg(unix)]
 use crate::docker as transport;
 
+/// Installed-image metadata for isolated fixtures.
+pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
+    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+    let mut catalog = FabricCatalog::bundled();
+    catalog.bridge = Some(BridgeCapabilities {
+        interface_version: 1,
+        operations: [
+            "validate",
+            "prepare",
+            "configure",
+            "check",
+            "invoke",
+            "serve",
+        ]
+        .map(String::from)
+        .to_vec(),
+        health_checks: vec![],
+        input_sources: vec!["file".into(), "stdin".into()],
+    });
+    let mut runtime = binding("fixture").runtime;
+    runtime.binaries = catalog
+        .adapters
+        .iter()
+        .map(|adapter| {
+            (
+                adapter.adapter_id().into(),
+                vec!["/usr/local/bin/python3.99".into()],
+            )
+        })
+        .collect();
+    catalog.runtime = Some(runtime);
+    catalog
+}
+
 /// Installed-image evidence for isolated deployment tests; never queries a live engine.
 #[cfg(unix)]
 pub async fn engine(document: &mut Document) -> transport::Fixture {
@@ -85,38 +119,6 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
     };
     gateway.engine = fixture.endpoint.clone();
     fixture
-}
-
-fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
-    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .map(String::from)
-        .to_vec(),
-        health_checks: vec![],
-    });
-    let mut runtime = binding("fixture").runtime;
-    runtime.binaries = catalog
-        .adapters
-        .iter()
-        .map(|adapter| {
-            (
-                adapter.adapter_id().into(),
-                vec!["/usr/local/bin/python3.99".into()],
-            )
-        })
-        .collect();
-    catalog.runtime = Some(runtime);
-    catalog
 }
 
 /// A local OCI proof used by cluster protocol tests without any engine fixture.

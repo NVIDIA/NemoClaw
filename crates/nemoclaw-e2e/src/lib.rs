@@ -4,6 +4,7 @@
 //! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod image_runtime;
 pub mod openshell;
+pub mod tofu;
 
 #[cfg(unix)]
 #[path = "../../test-support/docker.rs"]

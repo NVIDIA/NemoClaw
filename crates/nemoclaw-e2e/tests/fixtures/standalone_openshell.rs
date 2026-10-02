@@ -3,25 +3,16 @@
 use super::*;
 
 struct Standalone {
-    root: tempfile::TempDir,
-    tofu: PathBuf,
+    root: TofuWorkspace,
 }
 impl Standalone {
     fn new(endpoint: &str) -> Self {
-        let root = tempfile::tempdir().unwrap();
         let tofu =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu"));
         let provider =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider"));
         assert!(tofu.is_absolute() && provider.is_absolute());
-        fs::copy(
-            provider,
-            root.path().join(nemoclaw_sdk::bundle::executable(
-                "terraform-provider-nemoclaw",
-            )),
-        )
-        .unwrap();
-        fs::write(root.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root.path()).unwrap())).unwrap();
+        let root = TofuWorkspace::new(tofu, provider);
         fs::write(
             root.path().join("main.tf"),
             include_str!("openshell_resources.tf"),
@@ -49,16 +40,14 @@ impl Standalone {
             .to_string(),
         )
         .unwrap();
-        Self { root, tofu }
+        Self { root }
     }
     fn run(&self, args: &[&str], success: bool) -> Output {
-        let output = Command::new(&self.tofu)
+        let output = self
+            .root
+            .command()
             .args(args)
             .arg("-no-color")
-            .current_dir(self.root.path())
-            .env("TF_CLI_CONFIG_FILE", self.root.path().join("tofu.rc"))
-            .env("CHECKPOINT_DISABLE", "1")
-            .env("TF_IN_AUTOMATION", "1")
             .env("NEMOCLAW_TEST_REGISTRATION_KEY", "fixture-secret")
             .env("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret")
             .output()
