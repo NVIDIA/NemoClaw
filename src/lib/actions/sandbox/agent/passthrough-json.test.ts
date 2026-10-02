@@ -293,6 +293,43 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("exits zero for a completed tool turn that OpenClaw marks replayInvalid (#11844)", async () => {
+    const payload = JSON.stringify({
+      runId: "run-1",
+      status: "ok",
+      summary: "completed",
+      result: {
+        payloads: [{ text: "56" }],
+        meta: {
+          stopReason: "stop",
+          livenessState: "working",
+          replayInvalid: true,
+          finalAssistantVisibleText: "56",
+          toolSummary: { calls: 1, tools: ["exec"], failures: 0 },
+        },
+      },
+    });
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
+      stdout: payload,
+      stderr: "",
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    await expect(
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        runDispatch,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:0");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(stderr.join("")).not.toContain("did not complete");
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it("exits non-zero with deadline guidance for a turn the payload marks timed out (#8723)", async () => {
     // The shape measured on a real timed-out run: the envelope reports a
     // timeout, the payload holds the partial answer, and `livenessState` is

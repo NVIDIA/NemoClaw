@@ -381,6 +381,35 @@ function finalAgentResponse(docs: unknown[]): {
   return null;
 }
 
+const WORKING_LIVENESS_VALUE = "working";
+const SETTLED_TOOL_FALLBACK_TEXT =
+  "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
+// The reply directives OpenClaw strips from payload text.
+const LEADING_REPLY_DIRECTIVES_RE =
+  /^(?:\s*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+|audio_as_voice)\s*\]\])+/i;
+
+/** The final assistant text without leading reply directives such as [[reply_to_current]]. */
+function visibleReplyText(value: unknown): string {
+  return typeof value === "string" ? value.replace(LEADING_REPLY_DIRECTIVES_RE, "").trim() : "";
+}
+
+/** Whether a payload carries the visible text, with its MEDIA: lines as payload media. */
+function payloadMatchesVisibleReply(payload: unknown, visible: string): boolean {
+  if (!isObjectRecord(payload) || payload.isError === true) return false;
+  const lines = visible.split("\n");
+  const isMedia = (line: string) => line.trimStart().startsWith("MEDIA:");
+  const media = lines.filter(isMedia).map((line) => line.trim().slice("MEDIA:".length).trim());
+  const text = lines
+    .filter((line) => !isMedia(line))
+    .join("\n")
+    .trim();
+  const urls = [payload.mediaUrl, ...(Array.isArray(payload.mediaUrls) ? payload.mediaUrls : [])];
+  return (
+    (typeof payload.text === "string" ? payload.text.trim() : "") === text &&
+    media.every((url) => url.length > 0 && urls.includes(url))
+  );
+}
+
 /** Require a completed tool run and a final reply before accepting replay risk. */
 function hasCompletedToolReply(
   document: UnknownRecord,
@@ -389,13 +418,21 @@ function hasCompletedToolReply(
 ): boolean {
   if (meta.aborted === true || meta.error !== undefined) return false;
   if (meta.stopReason !== undefined && normalized(meta.stopReason) !== "stop") return false;
+  if (meta.continuationPending === true || timedOutPhase(meta)) return false;
+  // A missing liveness state is accepted; any declared state other than working is not.
+  if (
+    meta.livenessState !== undefined &&
+    normalized(meta.livenessState) !== WORKING_LIVENESS_VALUE
+  ) {
+    return false;
+  }
   const completed =
     document === response
       ? meta.aborted === false && normalized(meta.stopReason) === "stop"
       : document.status === "ok" && document.summary === "completed";
   const summary = meta.toolSummary;
-  const visible =
-    typeof meta.finalAssistantVisibleText === "string" ? meta.finalAssistantVisibleText.trim() : "";
+  const visible = visibleReplyText(meta.finalAssistantVisibleText);
+  if (visible === SETTLED_TOOL_FALLBACK_TEXT) return false;
   return (
     completed &&
     isObjectRecord(summary) &&
@@ -405,13 +442,7 @@ function hasCompletedToolReply(
     summary.failures === 0 &&
     visible.length > 0 &&
     Array.isArray(response.payloads) &&
-    response.payloads.some(
-      (payload) =>
-        isObjectRecord(payload) &&
-        payload.isError !== true &&
-        typeof payload.text === "string" &&
-        payload.text.trim() === visible,
-    )
+    response.payloads.some((payload) => payloadMatchesVisibleReply(payload, visible))
   );
 }
 
