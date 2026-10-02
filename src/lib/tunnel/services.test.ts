@@ -369,6 +369,42 @@ describe("startAll", () => {
     expect(output).not.toContain("secret-fragment");
   });
 
+  it("replaces a live unrelated PID record before starting a tunnel", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      "#!/usr/bin/env sh\necho 'https://replacement.trycloudflare.com'\nsleep 20\n",
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    writeFileSync(join(pidDir, "cloudflared.dashboard-port"), "12345");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({
+      pidDir,
+      dashboardPort: 18_791,
+      processControl: {
+        isAlive: (pid) => pid === process.pid,
+        commandLine: () => process.execPath,
+        signal: () => {
+          throw new Error("must not signal an unrelated live process");
+        },
+      },
+    });
+
+    const tunnelPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    expect(tunnelPid).not.toBe(process.pid);
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("18791");
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "https://replacement.trycloudflare.com",
+    );
+  });
+
   it("restarts a quick tunnel when the registered dashboard port changes", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -693,6 +729,16 @@ describe("startAll", () => {
 
     const namedState = readCloudflaredState(pidDir);
     expect(namedState.kind).toBe("running");
+    const outputBeforeTokenMismatch = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    await expect(startAll({ pidDir, dashboardPort: 18_791 })).rejects.toThrow(
+      "logged ingress does not confirm the selected dashboard port",
+    );
+    expect(readCloudflaredState(pidDir)).toEqual(namedState);
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toBe(
+      outputBeforeTokenMismatch,
+    );
+
     delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
     await startAll({ pidDir, dashboardPort: 12345 });
 
@@ -702,12 +748,53 @@ describe("startAll", () => {
 
     const outputBeforeMismatch = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     await expect(startAll({ pidDir, dashboardPort: 18789 })).rejects.toThrow(
-      "existing named cloudflared tunnel is still running",
+      "logged ingress does not confirm the selected dashboard port",
     );
     expect(readCloudflaredState(pidDir)).toEqual(namedState);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
     expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toBe(outputBeforeMismatch);
   });
+
+  it(
+    "replaces a quick tunnel before starting a token-enabled named tunnel",
+    testTimeoutOptions(15_000),
+    async () => {
+      const binDir = join(tmpDir, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const fakeCloudflared = join(binDir, "cloudflared");
+      writeFileSync(
+        fakeCloudflared,
+        [
+          "#!/usr/bin/env sh",
+          "printf 'argv:%s\\n' \"$*\"",
+          "if [ \"${TUNNEL_TOKEN:-}\" = 'named-secret' ]; then",
+          '  echo \'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:18791\\"}]}"\'',
+          "else",
+          "  echo 'https://quick.trycloudflare.com'",
+          "fi",
+          "sleep 20",
+        ].join("\n"),
+      );
+      chmodSync(fakeCloudflared, 0o700);
+      process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+      delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await startAll({ pidDir, dashboardPort: 12_345 });
+      const quickPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+      process.env.CLOUDFLARE_TUNNEL_TOKEN = "named-secret";
+      await startAll({ pidDir, dashboardPort: 18_791 });
+
+      const namedPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+      expect(namedPid).not.toBe(quickPid);
+      expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain("argv:tunnel run");
+      expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+        "http://localhost:18791",
+      );
+      expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
+      expect(logSpy.mock.calls.flat().join("\n")).toContain("https://agent.example.com");
+    },
+  );
 });
 
 // #2604: readCloudflaredState is the shared source of truth used by both
