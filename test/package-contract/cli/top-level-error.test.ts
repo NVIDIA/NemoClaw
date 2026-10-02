@@ -295,6 +295,40 @@ describe("compiled CLI top-level errors", () => {
     expect(result.stderr).not.toContain("An install or upgrade did not finish.");
   });
 
+  it("loads the compiled CLI on Windows without a POSIX gateway resolver (#10799)", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--eval",
+        `Object.defineProperty(process, "platform", { value: "win32" });
+require("node:child_process").spawnSync = () => {
+  throw new Error("A POSIX startup resolver cannot run on native Windows.");
+};
+require.cache[${mainPath}] = {
+  loaded: true,
+  exports: {
+    get mainPromise() {
+      process.stdout.write("compiled-cli-started");
+      return Promise.resolve();
+    },
+  },
+};
+require(${cliPath});`,
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "" },
+        timeout: 5_000,
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("compiled-cli-started");
+    expect(result.stderr).toBe("");
+  });
+
   it("restores an automatically selected gateway port for later CLI commands (#10824)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-automatic-port-"));
     try {
