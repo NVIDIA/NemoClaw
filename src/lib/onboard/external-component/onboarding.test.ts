@@ -112,6 +112,7 @@ describe("external component onboarding lifecycle", () => {
         lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId(sandboxId)!,
       })),
       setDefault: vi.fn(),
+      recordCompletedExternalComponentSelection: vi.fn(() => true),
     };
     const runCaptureOpenshell = vi.fn(() =>
       JSON.stringify([

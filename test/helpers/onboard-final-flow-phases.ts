@@ -403,6 +403,7 @@ export function createProviderlessComponentFlow(agentName = "openclaw") {
           id,
         ),
       setExternalComponentActivationEvidence: evidence,
+      recordCompletedExternalComponentSelection: vi.fn(() => true),
     },
   });
   const initial = prepareFinalOnboardFlowContext({

@@ -79,6 +79,15 @@ export interface SandboxHostLocalInferenceProvenance {
   readonly receiptSha256: string;
 }
 
+/** Completed external-component activation for one exact sandbox generation. */
+export interface SandboxExternalComponentSelection {
+  readonly schemaVersion: 1;
+  readonly componentId: string;
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+}
+
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
@@ -165,6 +174,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   lifecycleGeneration?: string;
   /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */
   lifecycleLiveIdentityFingerprint?: string;
+  /** Retained only after activation completes for this sandbox identity. */
+  externalComponentSelection?: SandboxExternalComponentSelection;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a
