@@ -48,6 +48,28 @@ describe("showStatus named tunnel diagnostics", () => {
     expect(output).toContain("dashboard target is unconfirmed for port 18791");
     expect(output).toContain("rerun `nemoclaw tunnel status`");
   });
+
+  it("shows the configured public URL when the named ingress targets the selected port", () => {
+    mkdirSync(pidDir, { recursive: true });
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    writeFileSync(
+      join(pidDir, "cloudflared.log"),
+      'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:18791\\"}]}"',
+    );
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel run",
+      signalCloudflared: vi.fn(() => "signaled" as const),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    showStatus({ pidDir, dashboardPort: 18_791, processControl });
+
+    const output = [...logSpy.mock.calls, ...warnSpy.mock.calls].flat().join("\n");
+    expect(output).toContain("https://agent.example.com");
+    expect(output).not.toContain("dashboard target is unconfirmed");
+  });
 });
 
 describe("startAll named tunnel validation", () => {

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProcessControl } from "./services";
-import { signalCloudflaredForPlatform, stopAll } from "./services";
+import { signalCloudflaredForPlatform, stopAll, stopCloudflared } from "./services";
 
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
@@ -51,7 +51,14 @@ describe("cloudflared identity-bound signaling", () => {
     const signal = vi.fn(() => "signaled" as const);
     expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("signaled");
     expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
-    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32")).toBe("unavailable");
+    const windowsSignal = vi.fn(() => "signaled" as const);
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32", signal, windowsSignal)).toBe(
+      "signaled",
+    );
+    expect(windowsSignal).toHaveBeenCalledWith(4242, "SIGTERM");
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "freebsd" as NodeJS.Platform)).toBe(
+      "unavailable",
+    );
   });
 
   it.skipIf(process.platform !== "darwin")(
@@ -125,7 +132,7 @@ describe("cloudflared identity-bound signaling", () => {
   );
 
   it.skipIf(process.platform !== "win32")(
-    "terminates only the confirmed cloudflared process through its Windows process handle",
+    "stops only the confirmed cloudflared process through its Windows process handle",
     async () => {
       const executable = join(pidDir, "cloudflared.exe");
       copyFileSync(process.execPath, executable);
@@ -133,13 +140,15 @@ describe("cloudflared identity-bound signaling", () => {
         stdio: "ignore",
       });
       const pid = subprocess.pid as number;
+      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
       const exited = new Promise<void>((resolveExit) =>
         subprocess.once("exit", () => resolveExit()),
       );
 
       try {
-        expect(signalCloudflaredForPlatform(pid, "SIGTERM")).toBe("signaled");
+        expect(stopCloudflared({ pidDir })).toBe(true);
         await exited;
+        expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
         expect(signalCloudflaredForPlatform(process.pid, "SIGTERM")).toBe("not-cloudflared");
       } finally {
         try {

@@ -335,6 +335,53 @@ function run(argv) {
 }
 `;
 
+const WINDOWS_PROCESS_HANDLE_SIGNAL_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$source = @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class NemoClawCloudflaredProcess {
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref uint size);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool TerminateProcess(IntPtr process, uint exitCode);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+Add-Type -TypeDefinition $source
+$processId = [uint32]$args[0]
+$handle = [NemoClawCloudflaredProcess]::OpenProcess(0x1001, $false, $processId)
+if ($handle -eq [IntPtr]::Zero) {
+  $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+  exit 0
+}
+try {
+  $image = New-Object System.Text.StringBuilder 32768
+  [uint32]$capacity = $image.Capacity
+  if (-not [NemoClawCloudflaredProcess]::QueryFullProcessImageName($handle, 0, $image, [ref]$capacity)) {
+    $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+    exit 0
+  }
+  if ([IO.Path]::GetFileName($image.ToString()) -ine 'cloudflared.exe') { 'not-cloudflared'; exit 0 }
+  if (-not [NemoClawCloudflaredProcess]::TerminateProcess($handle, 1)) {
+    $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    if ($errorCode -eq 87 -or $errorCode -eq 1168) { 'not-running' } else { 'unavailable' }
+    exit 0
+  }
+  if ([NemoClawCloudflaredProcess]::WaitForSingleObject($handle, 5000) -eq 0) { 'signaled' } else { 'unavailable' }
+} finally {
+  [void][NemoClawCloudflaredProcess]::CloseHandle($handle)
+}
+`;
+
 function signalCloudflaredWithPidfd(
   pid: number,
   sig: "SIGTERM" | "SIGKILL",
@@ -389,10 +436,44 @@ function signalCloudflaredWithAuditToken(
   return "unavailable";
 }
 
+function signalCloudflaredWithWindowsHandle(
+  pid: number,
+  _sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "win32" || !Number.isSafeInteger(pid) || pid <= 0 || pid > 0xffff_ffff) {
+    return "unavailable";
+  }
+  try {
+    const result = execFileSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_PROCESS_HANDLE_SIGNAL_SCRIPT,
+        String(pid),
+      ],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 7000 },
+    ).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    )
+      return result;
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
 /**
  * Signal cloudflared only when the operating system exposes an identity-bound
  * process handle. Linux uses pidfd; macOS uses an audit token carrying the
- * kernel process-version identity. Hosts without either primitive fail closed.
+ * kernel process-version identity; Windows opens and verifies the image through
+ * the same handle it terminates. Hosts without these primitives fail closed.
  */
 export function signalCloudflaredForPlatform(
   pid: number,
@@ -402,9 +483,14 @@ export function signalCloudflaredForPlatform(
     pid: number,
     sig: "SIGTERM" | "SIGKILL",
   ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
+  windowsSignal: (
+    pid: number,
+    sig: "SIGTERM" | "SIGKILL",
+  ) => IdentityBoundSignalOutcome = signalCloudflaredWithWindowsHandle,
 ): IdentityBoundSignalOutcome {
   if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
   if (platform === "darwin") return macSignal(pid, sig);
+  if (platform === "win32") return windowsSignal(pid, sig);
   return "unavailable";
 }
 
@@ -1084,7 +1170,9 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): boolean {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+  return withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
+    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL),
+  );
 }
 
 /**

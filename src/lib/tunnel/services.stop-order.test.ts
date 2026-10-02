@@ -19,7 +19,7 @@ vi.mock("./gateway-stop", () => ({
   releaseGatewayPortForStop: stopMocks.releaseGatewayPortForStop,
 }));
 
-import { type ProcessControl, stopAll } from "./services";
+import { type ProcessControl, stopAll, stopCloudflared } from "./services";
 import { isMcpLifecycleLockHeld } from "../state/mcp-lifecycle-lock";
 
 describe("stopAll tunnel stop ordering", () => {
@@ -95,5 +95,32 @@ describe("stopAll tunnel stop ordering", () => {
     expect(stopMocks.stopSandboxChannels).toHaveBeenCalledOnce();
     expect(unloadOllamaModels).toHaveBeenCalledOnce();
     expect(stopMocks.releaseGatewayPortForStop).toHaveBeenCalledOnce();
+  });
+});
+
+describe("stopCloudflared lifecycle lock", () => {
+  it("holds the tunnel lifecycle lock while stopping the registered process", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-stop-cloudflared-lock-test-"));
+    const lockName = `cloudflared-${createHash("sha256").update(resolve(pidDir)).digest("hex")}`;
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+    let alive = true;
+    const signalCloudflared = vi.fn(() => {
+      expect(isMcpLifecycleLockHeld(lockName)).toBe(true);
+      alive = false;
+      return "signaled" as const;
+    });
+    const processControl: ProcessControl = {
+      isAlive: () => alive,
+      commandLine: () => "cloudflared tunnel run",
+      signalCloudflared,
+    };
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      expect(stopCloudflared({ pidDir, processControl })).toBe(true);
+      expect(signalCloudflared).toHaveBeenCalledWith(4242, "SIGTERM");
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
   });
 });
