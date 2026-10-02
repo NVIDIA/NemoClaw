@@ -5,7 +5,7 @@
 # Shared sandbox-side steps for Deep Agents Code + NIM e2e. Sourced by
 # agentscaling_deepagents_gpuutil.sh and agentscaling_deepagents_latency.sh.
 # The caller must set HPA_METRIC (gpu_utilization or latency_avg).
-# Clients do not source this. Pairing (no HPA) is test-deepagents-vllm.sh.
+# Clients do not source this.
 
 agentscaling_deepagents_common_fail() {
   echo "ERROR: $*" >&2
@@ -18,13 +18,14 @@ agentscaling_deepagents_common_pin() {
     agentscaling_deepagents_common_fail "Deep Agents Code + NIM e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
   if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "nim" ]]; then
-    agentscaling_deepagents_common_fail "Deep Agents Code + NIM e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-deepagents-vllm.sh."
+    agentscaling_deepagents_common_fail "Deep Agents Code + NIM e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
   fi
   export AGENT_NAME="deepagents"
   export INFERENCE_RUNTIME="nim"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
   # Default nvidia/nemotron-3-nano. Ignore leftover 6a/6b models in this shell.
-  export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
+  INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
+  export INFERENCE_MODEL
   export MAX_TOKENS="${MAX_TOKENS:-2048}"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -42,7 +43,8 @@ agentscaling_deepagents_common_pin() {
   export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
   export E2E_USERS="${E2E_USERS:-3}"
   export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
-  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image deepagents)"
+  AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image deepagents)"
+  export AGENT_SANDBOX_IMAGE
   agent_common_require_sandbox_image_for_agent deepagents "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"

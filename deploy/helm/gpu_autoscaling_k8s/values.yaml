@@ -218,7 +218,7 @@ ingress:
   # Basic auth in front of the completion proxy, which has no authentication of its own.
   # On by default. Leaving password unset (null, not an empty string — this is intentional,
   # not an accidentally-blank credential) auto-generates a random one on first install and
-  # reuses it across `helm upgrade` re-runs (install-hpa.sh/hpa-load-test.sh/hpa-reset.sh
+  # reuses it across `helm upgrade` re-runs (install-hpa.sh/hpa-load-test-dgx-8xh100.sh/hpa-reset.sh
   # never pass --reuse-values) so the credential doesn't rotate underneath you. Retrieve it
   # with `kubectl get secret <fullname>-metrics-proxy-ingress-auth -o jsonpath='{.data.password}' |
   # base64 -d` (see README "Ingress security").
@@ -314,9 +314,8 @@ autoscaling:
   # Chart-level fallback only (used when Helm is invoked directly, without the recipe
   # scripts). Defaults to 8 GPUs (on-prem DGX 8× H100) — override per cluster with
   # `--set autoscaling.maxReplicas=N --set autoscaling.maxGpus=N`, or use the
-  # install-hpa.sh / hpa-reset.sh `MAX_REPLICAS` env var (and hpa-load-test.sh
-  # `TARGET_PODS`), which auto-detect and pass through your cluster's actual allocatable
-  # GPU count unless you set them explicitly.
+  # install-hpa.sh / hpa-reset.sh `MAX_REPLICAS` env var. The HPA-only load-test
+  # scripts pin TARGET_PODS to 8 (DGX) or 4 (Brev) unless you set them explicitly.
   maxReplicas: 8
   maxGpus: 8
   # Built-in (live-validated): gpu_utilization | latency_avg.

@@ -5,7 +5,7 @@
 # Sandbox-side provision for Deep Agents Code + NIM with GPU-utilization HPA
 # (DCGM gpu_utilization_percent, target 40%). One sandbox per end user.
 # Clients send dcode -n into each sandbox. They call inference.local →
-# Envoy → NIM. Pairing without HPA is Deep Agents + vLLM (test-deepagents-vllm.sh).
+# Envoy → NIM.
 #
 # Default is 3 users at 4Gi. Inflight stays 1.
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.

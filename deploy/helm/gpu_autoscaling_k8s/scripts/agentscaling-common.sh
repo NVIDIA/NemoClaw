@@ -22,7 +22,8 @@ agentscaling_common_pin_openclaw_ollama() {
   export AGENT_NAME="openclaw"
   export INFERENCE_RUNTIME="ollama"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+  INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+  export INFERENCE_MODEL
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -39,7 +40,8 @@ agentscaling_common_pin_openclaw_ollama() {
   export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
   export E2E_USERS="${E2E_USERS:-5}"
   export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
-  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image openclaw)"
+  AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image openclaw)"
+  export AGENT_SANDBOX_IMAGE
   agent_common_require_sandbox_image_for_agent openclaw "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"

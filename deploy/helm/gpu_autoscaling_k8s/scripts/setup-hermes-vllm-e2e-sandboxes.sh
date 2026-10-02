@@ -66,12 +66,13 @@ export AGENT_NAME="${AGENT_NAME:-hermes}"
 [[ "${AGENT_NAME}" == "hermes" ]] \
   || fail "setup-hermes-vllm-e2e-sandboxes.sh is Hermes-only (got AGENT_NAME=${AGENT_NAME})"
 if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "vllm" ]]; then
-  fail "this e2e is Hermes + vLLM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-hermes-nim.sh."
+  fail "this e2e is Hermes + vLLM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
 fi
 agent_common_validate "${AGENT_NAME}"
 export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-vllm}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-export INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
+INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
+export INFERENCE_MODEL
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-vllm-e2e-}"
 [[ "${SANDBOX_PREFIX}" =~ ^[a-z][a-z0-9-]{0,40}$ ]] \
@@ -86,7 +87,8 @@ if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; the
 fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+export AGENT_SANDBOX_IMAGE
 agent_common_require_sandbox_image_for_agent hermes "${AGENT_SANDBOX_IMAGE}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # 2Gi + inflight 2 OOMed dgx-19. 4Gi with inflight 1. 8Gi is OpenClaw-only.

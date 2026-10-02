@@ -5,7 +5,7 @@
 # Sandbox-side provision for Hermes + vLLM with GPU-utilization HPA
 # (DCGM gpu_utilization_percent, target 40%). One sandbox per end user.
 # Clients send hermes -z into each sandbox. They call inference.local →
-# Envoy → vLLM. Pairing without HPA is Hermes + NIM (test-hermes-nim.sh).
+# Envoy → vLLM.
 #
 # Default is 3 users at 4Gi (2Gi + inflight 2 OOMed dgx-19). Inflight stays 1.
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.

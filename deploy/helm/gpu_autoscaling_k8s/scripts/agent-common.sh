@@ -165,7 +165,6 @@ agent_common_example_model() {
 }
 
 # Pin AGENT_NAME / INFERENCE_RUNTIME / INFERENCE_MODEL to one README example.
-# Used by test-openclaw-ollama.sh / test-hermes-nim.sh / test-deepagents-vllm.sh.
 agent_common_pin_example_pairing() {
   local agent="${1:?agent}" runtime="${2:?runtime}" model
   model="$(agent_common_example_model "${agent}" "${runtime}")" || {
@@ -173,7 +172,7 @@ agent_common_pin_example_pairing() {
     exit 1
   }
   if [[ -n "${AGENT_NAME:-}" && "${AGENT_NAME}" != "${agent}" ]]; then
-    echo "ERROR: AGENT_NAME=${AGENT_NAME} does not match this pairing test (${agent}). Use ./scripts/test-openclaw-ollama.sh, ./scripts/test-hermes-nim.sh, or ./scripts/test-deepagents-vllm.sh." >&2
+    echo "ERROR: AGENT_NAME=${AGENT_NAME} does not match this pairing (${agent})." >&2
     exit 1
   fi
   if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "${runtime}" ]]; then
@@ -373,6 +372,46 @@ if n != 1:
     raise SystemExit("failed to set max_tokens")
 path.write_text(text)
 print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
+' >/dev/null
+}
+
+# Client path: keep the provisioned OpenClaw model; only raise max_tokens.
+# Same idea as agent_common_pin_deepagents_max_tokens. Default 2048 so one
+# chat.send per sandbox keeps Ollama busy enough for GPU-util HPA to 8.
+agent_common_pin_openclaw_max_tokens() {
+  local sandbox_name="${1:?sandbox}"
+  local max_tokens="${2:-${MAX_TOKENS:-2048}}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    env PIN_MAX_TOKENS="${max_tokens}" python3 -c '
+import json, os, pathlib
+max_tokens = int(os.environ["PIN_MAX_TOKENS"])
+if max_tokens < 8:
+    raise SystemExit("PIN_MAX_TOKENS must be >= 8")
+path = pathlib.Path("/sandbox/.openclaw/openclaw.json")
+cfg = json.loads(path.read_text())
+provider = ((cfg.get("models") or {}).get("providers") or {}).get("inference") or {}
+models = provider.get("models")
+if not isinstance(models, list) or not models or not isinstance(models[0], dict):
+    raise SystemExit("missing inference model entry")
+params = models[0].get("params")
+if not isinstance(params, dict):
+    params = {}
+    models[0]["params"] = params
+params["max_tokens"] = max_tokens
+models[0]["maxTokens"] = max_tokens
+text = json.dumps(cfg, indent=2) + "\n"
+path.write_text(text)
+for name in (
+    "openclaw.json.bak",
+    "openclaw.json.last-good",
+    "openclaw.json.nemoclaw-baseline",
+):
+    snap = path.with_name(name)
+    try:
+        snap.write_text(text)
+    except OSError:
+        pass
+print("NEMOCLAW_OPENCLAW_MAX_TOKENS_OK")
 ' >/dev/null
 }
 

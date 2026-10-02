@@ -283,7 +283,7 @@ async def simulate_user(
         script,
         "bash",
         helper_b64(),
-        "Say OK in one word.",
+        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
         str(duration_sec),
         str(inflight_start),
         str(inflight),
@@ -368,7 +368,10 @@ async def run_test(args: argparse.Namespace) -> int:
         f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
         "(1:1 user→sandbox :18789; default inflight 1 so CPU sandboxes do not OOM)"
     )
-    print(f"  HPA {args.hpa_namespace}/{args.hpa_name}")
+    print(
+        f"  max_tokens={os.environ.get('MAX_TOKENS', '2048')}  "
+        f"HPA {args.hpa_namespace}/{args.hpa_name} (model already pinned in each sandbox)"
+    )
     print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")
     print("=" * 70)
 

@@ -11,8 +11,9 @@
 #   ./scripts/agentscaling_gpuutil.sh   # GPU util HPA (this DGX success path)
 #   ./scripts/agentscaling_latency.sh   # LLM latency HPA (same client)
 #
-# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=608.
-# Inflight 2 OOMed a CPU node (dgx-19). Do not raise without extra sandbox RAM.
+# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=2048
+# (same client pin as client_deepagents.sh). Inflight 2 OOMed a CPU node
+# (dgx-19). Do not raise inflight without extra sandbox RAM.
 # Users never talk to the Envoy load balancer. OpenShell is only the exec
 # tunnel into each sandbox; it is not the user-facing listener.
 #
@@ -40,8 +41,7 @@ export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
-export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
-export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
+export MAX_TOKENS="${MAX_TOKENS:-2048}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
@@ -92,6 +92,13 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   fi
 done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox listens on :18789"
+
+echo "Pinning OpenClaw max_tokens=${MAX_TOKENS} (keep provisioned model; one chat.send per sandbox)"
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  agent_common_pin_openclaw_max_tokens "${name}" \
+    || fail "could not pin max_tokens on sandbox ${i}"
+done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"

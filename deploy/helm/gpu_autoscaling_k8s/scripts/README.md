@@ -23,12 +23,12 @@ what each script in this directory does — it has no instructions of its own.
 | `agentscaling-common.sh` | Shared HPA apply + sandbox steps. Do not run it directly. |
 | `setup-openclaw-ollama-e2e-sandboxes.sh` | Sandbox create/start/stop used by the agentscaling scripts |
 | `e2e-openclaw-ollama-load-test.py` | Implementation used by `client.sh` |
-| `test-openclaw-ollama-e2e-hpa.sh` | Optional one-process wrapper: `agentscaling_gpuutil.sh` then `client.sh` |
-| `test-openclaw-ollama-e2e-latency-hpa.sh` | Optional one-process wrapper: `agentscaling_latency.sh` then `client.sh` |
 | `uninstall-e2e.sh` | Stop e2e agents/sandboxes/providers before another pairing. Does not uninstall GPU inference or OpenShell. |
-| `test-hermes-e2e-hpa.sh` | Hermes + vLLM e2e (`hermes -z`); run `uninstall-e2e.sh` first if OpenClaw sandboxes are still up |
 | `setup-hermes-vllm-e2e-sandboxes.sh` | Create / start / stop / cleanup `hermes-vllm-e2e-*` only |
-| `e2e-hermes-load-test.py` | Per-user driver used by `test-hermes-e2e-hpa.sh` |
+| `e2e-hermes-load-test.py` | Per-user driver used by `client_hermes.sh` |
+| `agentscaling_hermes_gpuutil.sh` | Hermes + vLLM sandbox provision + GPU-util HPA |
+| `agentscaling_hermes_latency.sh` | Same Hermes sandboxes, LLM-latency HPA |
+| `client_hermes.sh` | End users: 1:1 `hermes -z` into each `hermes-vllm-e2e-*` sandbox |
 | `agentscaling_deepagents_gpuutil.sh` | Deep Agents + NIM sandbox provision + GPU-util HPA |
 | `agentscaling_deepagents_latency.sh` | Same Deep Agents sandboxes, LLM-latency HPA |
 | `client_deepagents.sh` | End users: 1:1 `dcode -n` into each `deepagent-nim-e2e-*` sandbox |
@@ -40,9 +40,5 @@ what each script in this directory does — it has no instructions of its own.
 | `install-openshell-k8s.sh` | OpenShell gateway |
 | `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Called by the e2e setup scripts. Do not run them as the HPA demo path. |
 | `agent-common.sh` | Per-agent config table sourced by the scripts above |
-| `test-openclaw-ollama.sh` | Optional developer test: OpenClaw + Ollama, one replica, no HPA, no load test. Not required for autoscaling. |
-| `test-hermes-nim.sh` | Optional developer test: Hermes + NIM, one replica, no HPA, no load test (needs NGC Secrets). Not required for autoscaling. |
-| `test-deepagents-vllm.sh` | Optional developer test: Deep Agents Code + vLLM, one replica, no HPA, no load test. Not required for autoscaling. |
-| `e2e-common.sh` | Shared steps sourced by those three optional pairing tests — do not run it directly |
 | `test-inference-auth-contract.ts` | Local contract: metrics-proxy requires the inference API key and rejects non-object chat bodies |
 | `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` gauge idle-expires so HPA can scale down |

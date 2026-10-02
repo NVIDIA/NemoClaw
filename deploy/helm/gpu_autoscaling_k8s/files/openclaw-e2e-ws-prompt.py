@@ -94,8 +94,7 @@ def _gateway_token() -> str:
         if isinstance(token, str) and token.strip():
             return token.strip()
     except (OSError, json.JSONDecodeError):
-        # Missing or unreadable gateway config: fall back to the env token.
-        pass
+        pass  # Missing or unreadable gateway config: fall back to the env token.
     return os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
 
 
@@ -256,8 +255,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     try:
         threading.stack_size(256 * 1024)
     except (ValueError, RuntimeError):
-        # Some libcs reject a custom stack size after threads have started.
-        pass
+        pass  # Some libcs reject a custom stack size after threads have started.
 
     duration = float(os.environ.get("E2E_DURATION_SEC", "0"))
     start_n = max(1, int(os.environ.get("E2E_INFLIGHT", "1")))
@@ -266,9 +264,10 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
     prompts = [
-        prompt or "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
-        "Write a long summary of transformer inference on NVIDIA GPUs.",
-        "Describe how Ollama serves models and batches concurrent chat requests.",
+        prompt
+        or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+        "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
     ]
     stop = threading.Event()
     ok = 0

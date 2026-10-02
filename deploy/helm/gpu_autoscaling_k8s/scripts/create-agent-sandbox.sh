@@ -45,7 +45,8 @@ agent_common_validate "${AGENT_NAME}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME:-}"
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 
-export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image "${AGENT_NAME}")"
+AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image "${AGENT_NAME}")"
+export AGENT_SANDBOX_IMAGE
 agent_common_require_sandbox_image_for_agent "${AGENT_NAME}" "${AGENT_SANDBOX_IMAGE}"
 SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE}"
 SANDBOX_NAME="${AGENT_SANDBOX_NAME:-$(agent_common_default_sandbox_name "${AGENT_NAME}")}"

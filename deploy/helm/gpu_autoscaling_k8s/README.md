@@ -158,7 +158,7 @@ Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end 
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- Job-like chats (`files/load-generator.ts`, `stream=false`). Questions average **~38 llama3.2 tokens**; `MAX_TOKENS` defaults to **608**
+- Long completions (`MAX_TOKENS` default **2048**). `client.sh` re-pins `max_tokens` on each sandbox the same way `client_deepagents.sh` does, and keeps the provisioned model. Inflight stays **1** so 8Gi CPU sandboxes do not OOM.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
 
@@ -202,9 +202,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 
 ```bash
 # Terminal C 
-E2E_USERS=5 \
-MAX_TOKENS=608 \
-./scripts/client.sh
+E2E_USERS=5 ./scripts/client.sh
 ```
 
 
@@ -221,9 +219,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 
 ```bash
 # Terminal C 
-E2E_USERS=5 \
-MAX_TOKENS=608 \
-./scripts/client.sh
+E2E_USERS=5 ./scripts/client.sh
 ```
 
 Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
@@ -546,14 +542,19 @@ Other Prometheus → Adapter metrics: extend `monitoring/prometheus-adapter-gpu-
 
 ## Simple HPA only test (optional)
 
-This only checks that Kubernetes HPA can change GPU pod count from synthetic inference load (`files/load-generator.ts`). 
+This is the **OpenClaw + Ollama** HPA-only path (same defaults as Quick start 6a: `INFERENCE_RUNTIME=ollama`, `INFERENCE_MODEL=llama3.2:3b`). It only checks that Kubernetes HPA can change GPU pod count from synthetic inference load (`files/load-generator.ts`). It does **not** create OpenClaw sandboxes and does **not** use `client.sh`.
 The HPA-only test has been verified on DGX 8xH100 on-prem `maxReplicas=8`, and [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), `MAX_REPLICAS=4`.
 
+If you already ran Quick start 4 or the OpenClaw + Ollama e2e (`agentscaling_gpuutil.sh` / `agentscaling_latency.sh`), HPA is already installed. Skip `install-hpa.sh` and run a load-test script below.
+
+If you did **not** run e2e, install Prometheus, Envoy, and the GPU chart + HPA first (default Ollama / `llama3.2:3b`):
+
 ```bash
-# First install / switch runtime+model (no e2e)
-INFERENCE_RUNTIME=vllm INFERENCE_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8 ./scripts/install-hpa.sh
-INFERENCE_RUNTIME=nim INFERENCE_MODEL=nvidia/nemotron-3-nano ./scripts/install-hpa.sh
+DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
+  ./scripts/install-hpa.sh
 ```
+
+The HPA-only test **uses** Prometheus (DCGM GPU util and metrics-proxy latency → adapter → HPA) and Envoy (LeastRequest). `install-hpa.sh` puts that stack on the cluster when Quick start 4 / e2e has not already done so. The load-test scripts then Helm-upgrade the GPU chart and send synthetic load through Envoy.
 
 Use GPU utilization as a HPA metric
 

@@ -141,9 +141,9 @@ esac
 if [[ "${RUN_MODE}" == "gateway" ]]; then
   GATEWAY_HEALTH_URL="$(agent_common_gateway_health_url "${AGENT_NAME}")"
   log "Waiting for ${AGENT_DISPLAY_NAME} gateway at ${GATEWAY_HEALTH_URL} (timeout ${HEALTH_TIMEOUT_SEC}s)..."
+  # shellcheck disable=SC2016 # remote script: $1/$2/SECONDS must expand inside the sandbox
   GATEWAY_HEALTH_CODE="$(
     sandbox_exec "$((HEALTH_TIMEOUT_SEC + 5))" \
-      # shellcheck disable=SC2016 # remote script: $1/$2/SECONDS must expand inside the sandbox
       bash -c '
         deadline=$((SECONDS + $2))
         while ((SECONDS < deadline)); do

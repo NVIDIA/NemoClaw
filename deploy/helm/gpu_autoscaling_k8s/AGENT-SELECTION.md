@@ -60,13 +60,6 @@ chart is agent-neutral; only the sandbox image and `AGENT_NAME` change.
 
 The loops below are optional pairing (one sandbox, no HPA). The DGX e2e path does **not** use them: `agentscaling_gpuutil.sh` / `agentscaling_latency.sh` (OpenClaw), `agentscaling_hermes_gpuutil.sh` / `agentscaling_hermes_latency.sh` (Hermes), and `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` (Deep Agents + NIM) create the sandboxes. See [README Quick start](README.md#quick-start).
 
-The loops below are the recipe path. Optional developer pairing tests (one GPU
-replica, no Kubernetes autoscaling, no load test; not required for HPA) live in
-[`scripts/README.md`](scripts/README.md):
-[`scripts/test-openclaw-ollama.sh`](scripts/test-openclaw-ollama.sh),
-[`scripts/test-hermes-nim.sh`](scripts/test-hermes-nim.sh),
-[`scripts/test-deepagents-vllm.sh`](scripts/test-deepagents-vllm.sh).
-
 ### OpenClaw
 
 Matches the official [OpenClaw quickstart](../../../docs/get-started/quickstart.mdx)
@@ -95,9 +88,7 @@ export INFERENCE_MODEL=llama3.2:3b
 ./scripts/verify-agent-sandbox.sh
 ```
 
-Optional pairing test (not required for autoscaling): [`scripts/test-openclaw-ollama.sh`](scripts/test-openclaw-ollama.sh).
-
-Multi-user HPA e2e: N sandboxes (one per end user). This DGX demo uses `E2E_USERS=5`. Provision with [`scripts/agentscaling_gpuutil.sh`](scripts/agentscaling_gpuutil.sh) (GPU util) or [`scripts/agentscaling_latency.sh`](scripts/agentscaling_latency.sh) (LLM latency). Send chats with the same [`scripts/client.sh`](scripts/client.sh). **Hermes + vLLM next:** [`scripts/test-hermes-e2e-hpa.sh`](scripts/test-hermes-e2e-hpa.sh). Run [`scripts/uninstall-e2e.sh`](scripts/uninstall-e2e.sh) first if OpenClaw sandboxes or `client.sh` are still running.
+Multi-user HPA e2e: N sandboxes (one per end user). This DGX demo uses `E2E_USERS=5`. Provision with [`scripts/agentscaling_gpuutil.sh`](scripts/agentscaling_gpuutil.sh) (GPU util) or [`scripts/agentscaling_latency.sh`](scripts/agentscaling_latency.sh) (LLM latency). Send chats with the same [`scripts/client.sh`](scripts/client.sh). **Hermes + vLLM next:** [`scripts/agentscaling_hermes_gpuutil.sh`](scripts/agentscaling_hermes_gpuutil.sh) then [`scripts/client_hermes.sh`](scripts/client_hermes.sh). Run [`scripts/uninstall-e2e.sh`](scripts/uninstall-e2e.sh) first if OpenClaw sandboxes or `client.sh` are still running.
 
 ### Hermes
 
@@ -159,10 +150,7 @@ For an already-running vLLM release, use `INFERENCE_RUNTIME=vllm` and
 `HERMES_MCP_CONFIG_DRIFT`, rebuild the sandbox; the simple `hermes -z` test
 above still proves inference.
 
-Optional pairing test for Hermes + NIM (not required for autoscaling): [`scripts/test-hermes-nim.sh`](scripts/test-hermes-nim.sh).
-Official docs also list vLLM and Ollama for Hermes; the optional NIM test exists so one example shows the NGC Secret flow.
-
-Multi-user HPA e2e for Hermes + vLLM is the next step after OpenClaw + Ollama (`E2E_USERS=10` is only an example; `hermes -z` into each sandbox): [`scripts/test-hermes-e2e-hpa.sh`](scripts/test-hermes-e2e-hpa.sh). Run [`scripts/uninstall-e2e.sh`](scripts/uninstall-e2e.sh) first if OpenClaw sandboxes or `client.sh` are still running.
+Multi-user HPA e2e for Hermes + vLLM is the next step after OpenClaw + Ollama (`hermes -z` into each sandbox): [`scripts/agentscaling_hermes_gpuutil.sh`](scripts/agentscaling_hermes_gpuutil.sh) or [`scripts/agentscaling_hermes_latency.sh`](scripts/agentscaling_hermes_latency.sh), then [`scripts/client_hermes.sh`](scripts/client_hermes.sh). Run [`scripts/uninstall-e2e.sh`](scripts/uninstall-e2e.sh) first if OpenClaw sandboxes or `client.sh` are still running.
 
 ### Deep Agents Code
 
@@ -192,8 +180,6 @@ Interactive TUI (TTY), equivalent to `nemo-deepagents … connect` then `dcode`:
 ```bash
 openshell sandbox exec -n deepagents-onprem -- dcode
 ```
-
-Optional pairing test (not required for autoscaling): [`scripts/test-deepagents-vllm.sh`](scripts/test-deepagents-vllm.sh).
 
 Multi-user HPA e2e for Deep Agents + NIM is [README Quick start 6c](README.md#6c-deep-agents-code--nim): `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` then `client_deepagents.sh` (`dcode -n` into each sandbox).
 

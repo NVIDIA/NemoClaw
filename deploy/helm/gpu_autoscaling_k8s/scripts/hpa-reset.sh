@@ -30,7 +30,7 @@ HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values.yaml}"
 WAIT_ROLLOUT="${WAIT_ROLLOUT:-1}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900}"
 MIN_REPLICAS="${MIN_REPLICAS:-1}"
-# Empty → allocatable GPU count (same default as install-hpa.sh / hpa-load-test.sh).
+# Empty → allocatable GPU count (same default as install-hpa.sh).
 MAX_REPLICAS="${MAX_REPLICAS:-}"
 GPU_TARGET="${GPU_TARGET:-40}"
 INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
@@ -78,7 +78,7 @@ fi
 
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
 kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
-# Matches the RBAC hpa-load-test.sh creates for pod/HPA discovery — clean it up here too in
+# Matches the RBAC the HPA-only load-test scripts create for pod/HPA discovery — clean it up here too in
 # case a load test's own EXIT trap didn't run (e.g. the shell was killed).
 kubectl delete rolebinding "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
 kubectl delete role "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
@@ -147,5 +147,6 @@ fi
 hpa_common_print_hpa "${NAMESPACE}"
 
 if [[ "${RUN_LOAD_TEST}" == "1" ]]; then
-  exec "${SCRIPT_DIR}/hpa-load-test.sh"
+  echo "RUN_LOAD_TEST=1: hpa-reset.sh no longer starts a load test. Use ./scripts/hpa-load-test-dgx-8xh100.sh or ./scripts/hpa-load-test-brev-4xl40s.sh." >&2
+  exit 1
 fi

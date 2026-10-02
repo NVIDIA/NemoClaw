@@ -77,7 +77,8 @@ fi
 export AGENT_NAME="openclaw"
 export INFERENCE_RUNTIME="ollama"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
+export INFERENCE_MODEL
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 PIN_OPENCLAW_MODEL_PY="${CHART_DIR}/files/pin-openclaw-ollama-model.py"
 SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
@@ -93,7 +94,8 @@ if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; the
 fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image "${AGENT_NAME}")"
+AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image "${AGENT_NAME}")"
+export AGENT_SANDBOX_IMAGE
 agent_common_require_sandbox_image_for_agent "${AGENT_NAME}" "${AGENT_SANDBOX_IMAGE}"
 # E2E sandboxes only proxy prompts. Keep requests small so N pods schedule
 # quickly; pairing/create-agent-sandbox.sh still defaults to 2 CPU / 4Gi.
@@ -102,8 +104,7 @@ export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # workers remain (openclaw-devices ~150–220Mi each). 8Gi is the floor
 # that lets one OpenClaw listen for the client.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
-export QUESTION_AVG_TOKENS="${QUESTION_AVG_TOKENS:-38}"
-export MAX_TOKENS="${MAX_TOKENS:-$((QUESTION_AVG_TOKENS * 16))}"
+export MAX_TOKENS="${MAX_TOKENS:-2048}"
 export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"

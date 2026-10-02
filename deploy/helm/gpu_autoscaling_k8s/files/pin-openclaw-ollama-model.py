@@ -93,8 +93,7 @@ def _slim_openclaw_state() -> None:
         try:
             con.execute("DELETE FROM state_leases WHERE scope = ?", ("startup-migrations",))
         except sqlite3.Error:
-            # Older OpenClaw DBs omit state_leases; skip the lock cleanup.
-            pass
+            pass  # Older OpenClaw DBs omit state_leases; skip the lock cleanup.
         try:
             rows = list(con.execute("SELECT index_key, install_records_json FROM installed_plugin_index"))
         except sqlite3.Error:
@@ -143,13 +142,11 @@ def _own(path: pathlib.Path) -> None:
     try:
         os.chown(path, SANDBOX_UID, SANDBOX_GID)
     except OSError:
-        # Image user may already own the file; keep going so chmod still runs.
-        pass
+        pass  # Image user may already own the file; keep going so chmod still runs.
     try:
         path.chmod(0o660)
     except OSError:
-        # Read-only snapshots are left as-is.
-        pass
+        pass  # Read-only snapshots are left as-is.
 
 
 def main() -> int:
@@ -262,16 +259,14 @@ def main() -> int:
         try:
             stale.unlink()
         except OSError:
-            # Concurrent start may already have removed a clobbered snapshot.
-            pass
+            pass  # Concurrent start may already have removed a clobbered snapshot.
     try:
         digest = subprocess.check_output(["sha256sum", PATH.name], cwd=PATH.parent, text=True)
         hash_path = PATH.parent / ".config-hash"
         _replace_text(hash_path, digest)
         targets.append(hash_path)
     except (OSError, subprocess.CalledProcessError):
-        # Hash file is optional; OpenClaw still reads the rewritten JSON.
-        pass
+        pass  # Hash file is optional; OpenClaw still reads the rewritten JSON.
     for path in dict.fromkeys(targets):
         _own(path)
     _slim_openclaw_state()

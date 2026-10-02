@@ -5,7 +5,7 @@
 # Shared sandbox-side steps for Hermes + vLLM e2e. Sourced by
 # agentscaling_hermes_gpuutil.sh and agentscaling_hermes_latency.sh.
 # The caller must set HPA_METRIC (gpu_utilization or latency_avg).
-# Clients do not source this. Pairing (no HPA) is test-hermes-nim.sh.
+# Clients do not source this.
 
 agentscaling_hermes_common_fail() {
   echo "ERROR: $*" >&2
@@ -18,12 +18,13 @@ agentscaling_hermes_common_pin() {
     agentscaling_hermes_common_fail "Hermes + vLLM e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
   if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "vllm" ]]; then
-    agentscaling_hermes_common_fail "Hermes + vLLM e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-hermes-nim.sh."
+    agentscaling_hermes_common_fail "Hermes + vLLM e2e (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME})"
   fi
   export AGENT_NAME="hermes"
   export INFERENCE_RUNTIME="vllm"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  export INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
+  INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
+  export INFERENCE_MODEL
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -42,7 +43,8 @@ agentscaling_hermes_common_pin() {
   # gateway floor (Node workers); hermes -z does not need that.
   export E2E_USERS="${E2E_USERS:-3}"
   export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-vllm-e2e-}"
-  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+  AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+  export AGENT_SANDBOX_IMAGE
   agent_common_require_sandbox_image_for_agent hermes "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
