@@ -57,7 +57,12 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
   assertMcpCredentialBoundaryRuntimeVersion: vi.fn(),
 }));
 
-import { refreshMcpBridgePublicPins, updateMcpBridgeDenyTools } from "./mcp-bridge-add-restart";
+import {
+  clearMcpBridgeAllowTools,
+  refreshMcpBridgePublicPins,
+  updateMcpBridgeAllowTools,
+  updateMcpBridgeDenyTools,
+} from "./mcp-bridge-add-restart";
 import { assertMcpBridgePolicyTarget } from "./mcp-bridge-policy";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { dispatchMcpBridgeCommand } from "./mcp-bridge";
@@ -377,4 +382,29 @@ describe("source-backed MCP denied-tool policy updates", () => {
       assertMcpBridgePolicyTarget(updatedEntry, appliedTarget as never),
     ).not.toThrow();
   });
+
+  it.each([
+    ["denied-tool update", () => updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])],
+    ["allowlist update", () => updateMcpBridgeAllowTools("alpha", "github", ["read_issue"])],
+    ["allowlist clear", () => clearMcpBridgeAllowTools("alpha", "github")],
+  ])(
+    "refuses %s on entries with conflicting live policy",
+    async (_label, mutate) => {
+      // A conflicted entry must never feed a replacement policy: reusing its
+      // tool state could silently widen access (e.g. an all-invalid allowlist
+      // would otherwise fall through to unrestricted denylist mode).
+      const conflicted = {
+        ...entry,
+        policyConflict: "Live policy contains invalid tool selectors.",
+      };
+      mocks.inspectSourceBridgeState.mockReturnValueOnce({
+        bridges: { github: conflicted },
+        sources: { native: { github: conflicted }, legacy: {} },
+      });
+
+      await expect(mutate()).rejects.toThrow(/conflicting live policy/);
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -31,7 +31,10 @@ const privateCopies = new Map<string, { agent: AgentDefinition; directory: strin
  */
 export function privateHermesManifestAgent(source: AgentDefinition): AgentDefinition {
   const existing = privateCopies.get(source.manifestPath);
-  if (existing) return existing.agent;
+  // Return the CURRENT definition with the cached private manifest path. The
+  // cached agent snapshot goes stale when a test passes a changed definition
+  // for the same manifest path; the on-disk private copy is unaffected.
+  if (existing) return { ...source, manifestPath: existing.agent.manifestPath };
   const copy = copyHermesManifestAgent(source);
   // Extract the directory from the manifest path for cleanup
   const directory = path.dirname(copy.manifestPath);

@@ -66,7 +66,7 @@ describe("managed gateway state root ownership", () => {
   });
 
   it("rejects a pre-created directory that is not owner-private", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-public-gateway-root-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-public-gateway-root-"));
     const stateDir = path.join(root, "gateway");
     try {
       fs.mkdirSync(stateDir, { mode: 0o755 });
@@ -80,7 +80,7 @@ describe("managed gateway state root ownership", () => {
   });
 
   it("rejects a custom root beneath a group- or world-writable parent", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-writable-gateway-parent-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-writable-gateway-parent-"));
     const stateDir = path.join(root, "gateway");
     try {
       fs.chmodSync(root, 0o777);
@@ -97,7 +97,7 @@ describe("managed gateway state root ownership", () => {
   });
 
   it("rejects a private immediate parent beneath a replaceable ancestor", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-replaceable-gateway-parent-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-replaceable-gateway-parent-"));
     const replaceableAncestor = path.join(root, "replaceable");
     const immediateParent = path.join(replaceableAncestor, "private");
     const stateDir = path.join(immediateParent, "gateway");
@@ -117,7 +117,7 @@ describe("managed gateway state root ownership", () => {
   });
 
   it("marks an empty dedicated directory and binds it to one gateway", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-owned-gateway-root-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-owned-gateway-root-"));
     const stateDir = path.join(root, "gateway");
     try {
       ensureManagedGatewayStateRoot(target(stateDir));
@@ -135,7 +135,7 @@ describe("managed gateway state root ownership", () => {
   });
 
   it("rejects a marker path replaced while its descriptor is being read", () => {
-    const root = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-replaced-gateway-marker-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-replaced-gateway-marker-"));
     const stateDir = path.join(root, "gateway");
     const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
     const displacedPath = path.join(stateDir, "opened-marker.json");

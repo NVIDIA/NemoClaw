@@ -133,8 +133,13 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index]) &&
     existingTransport === requestedTransport &&
-    existing.requireOAuth === requested.requireOAuth &&
-    existing.serverIdentity?.digest === requested.serverIdentity?.digest
+    // serverIdentity and requireOAuth cannot round-trip through durable
+    // agent-native state (readers reconstruct only server/url/env), so an
+    // absent stored value means "nothing retained to compare against", not a
+    // mismatch. Compare strictly whenever the stored entry carries them.
+    (existing.requireOAuth === undefined || existing.requireOAuth === requested.requireOAuth) &&
+    (existing.serverIdentity?.digest === undefined ||
+      existing.serverIdentity.digest === requested.serverIdentity?.digest)
   );
 }
 
@@ -796,6 +801,15 @@ async function updateMcpBridgeDenyToolsUnlocked(
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
   assertAuthenticatedBridgeEntry(storedEntry);
+  // A conflicted entry (invalid selectors or a drifted endpoint) must not feed
+  // a replacement policy: preserving or dropping its tool state could silently
+  // widen access. Resolve it with remove plus re-add first.
+  if (storedEntry.policyConflict) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has conflicting live policy. Resolve it before updating denied tools.`,
+      2,
+    );
+  }
   const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
   if (!target || target.addresses.length === 0) {
     throw new McpBridgeError(
@@ -990,10 +1004,22 @@ async function addMcpBridgeUnlocked(
     throw new McpBridgeError("--require-oauth requires an HTTPS MCP endpoint.", 2);
   }
 
-  // Supply-chain verification: if an existing entry has a pinned identity, verify it matches.
-  // Also verify when a new pin is provided for an existing entry without a prior pin,
-  // so the verifier can report the supply-chain error before sameMcpAddIntent handles it.
-  if (existingEntry && options.serverIdentity) {
+  // A reconstructed entry with a policy conflict must not be reused: its live
+  // policy disagrees with the durable registration (invalid selectors or a
+  // drifted endpoint). Refusing the retry keeps the route untouched until the
+  // operator resolves it with remove plus re-add.
+  if (existingEntry?.policyConflict) {
+    throw new McpBridgeError(
+      `MCP server '${options.server}' has conflicting live policy. Resolve it before retrying the add (remove with --force and re-add).`,
+      2,
+    );
+  }
+
+  // Supply-chain verification runs only against an actually stored pin. Durable
+  // agent-native state cannot retain the pin, so a reconstructed entry without
+  // one means there is nothing to verify against (see sameMcpAddIntent); a
+  // stored pin that differs still fails closed inside the verifier.
+  if (existingEntry?.serverIdentity && options.serverIdentity) {
     await verifyMcpServerIdentity(existingEntry, options.serverIdentity);
   }
 
@@ -1378,6 +1404,13 @@ async function updateMcpBridgeAllowToolsUnlocked(
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
   assertAuthenticatedBridgeEntry(storedEntry);
+  // See updateMcpBridgeDenyToolsUnlocked: never rewrite policy from conflicted state.
+  if (storedEntry.policyConflict) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has conflicting live policy. Resolve it before updating allowed tools.`,
+      2,
+    );
+  }
   const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
   if (!target || target.addresses.length === 0) {
     throw new McpBridgeError(
@@ -1455,6 +1488,13 @@ async function clearMcpBridgeAllowToolsUnlocked(
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
   assertAuthenticatedBridgeEntry(storedEntry);
+  // See updateMcpBridgeDenyToolsUnlocked: never rewrite policy from conflicted state.
+  if (storedEntry.policyConflict) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has conflicting live policy. Resolve it before clearing allowed tools.`,
+      2,
+    );
+  }
   const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
   if (!target || target.addresses.length === 0) {
     throw new McpBridgeError(

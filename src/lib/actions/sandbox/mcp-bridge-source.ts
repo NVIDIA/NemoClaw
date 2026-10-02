@@ -741,14 +741,19 @@ async function enrichFromPolicy(
       ? "Live policy contains invalid tool selectors."
       : endpointConflict;
 
-  const allowTools =
-    allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)) : undefined;
+  // Never emit an empty allowTools array: it would read as "no allowlist" and
+  // let computeToolPolicy fall through to denylist mode, silently widening
+  // access when deny rules are also empty. An all-invalid allowlist is reported
+  // through policyConflict instead, and mutations refuse conflicted entries.
+  const validAllowTools =
+    allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)) : [];
+  const allowTools = validAllowTools.length > 0 ? validAllowTools : undefined;
 
-  // serverIdentity, transport, and requireOAuth are persisted in the authoritative
-  // durable registration state (agent native config). They are NOT read from the
-  // live OpenShell policy. The entry parameter already carries these values from
-  // the durable state via inspectAgentMcpSources -> entryFromRecord.
-  // Do not read from endpoint.mcp or add a transient-only copy here.
+  // serverIdentity, transport, and requireOAuth are request-scoped options, not
+  // reconstructed state: agent-native readers round-trip only server/url/env,
+  // and the live OpenShell policy carries none of these fields. Do not read
+  // them from endpoint.mcp or invent them here; retry handling in
+  // sameMcpAddIntent tolerates their absence on reconstructed entries.
 
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&

@@ -6,6 +6,12 @@ import { describe, expect, test } from "vitest";
 import { visibleEntries, parseUsageHints, missingUsageFlags } from "./usage-parity-support";
 
 describe("public display usage parity", () => {
+  /** Fail loudly if hint parsing ever yields nothing instead of silently passing. */
+  const usageHints = parseUsageHints();
+  test("parses usage hints", () => {
+    expect(usageHints.length).toBeGreaterThan(0);
+  });
+
   test.each(visibleEntries())(
     "documents every usage flag of %s (%s)",
     ({ commandId, usage: _usage, flags }) => {
@@ -14,7 +20,7 @@ describe("public display usage parity", () => {
     },
   );
 
-  test.each(parseUsageHints())(
+  test.each(usageHints)(
     "documents every usage flag in hint for %s (%s)",
     ({ commandId, hint }) => {
       const missing = missingUsageFlags(commandId, hint);
