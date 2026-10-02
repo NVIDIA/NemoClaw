@@ -241,6 +241,13 @@ describe("textContainsHighConfidenceCredential", () => {
     },
   );
 
+  it("allows only whatsapp-rust-bridge's public WASM byte sequence", () => {
+    const publishedBytes = ["AKIA", "1JDQYCQC", "ANIA9GDQ"].join("");
+
+    expect(textContainsHighConfidenceCredential(publishedBytes)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${publishedBytes.slice(0, -1)}1`)).toBe(true);
+  });
+
   it("allows only MSAL's synthetic private-key documentation block", () => {
     const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
     const end = ["-----END", "PRIVATE KEY-----"].join(" ");

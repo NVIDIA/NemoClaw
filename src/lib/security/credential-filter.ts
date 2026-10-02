@@ -25,6 +25,9 @@ const MSAL_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${PRIVATE_KEY_BEGIN} ... ${PRIVATE
 const DSA_PRIVATE_KEY_BEGIN = ["-----BEGIN", "DSA PRIVATE KEY-----"].join(" ");
 const DSA_PRIVATE_KEY_END = ["-----END", "DSA PRIVATE KEY-----"].join(" ");
 const BOTOCORE_DSA_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${DSA_PRIVATE_KEY_BEGIN}<a very long private key string>${DSA_PRIVATE_KEY_END}`;
+// whatsapp-rust-bridge publishes this byte sequence inside its generated WASM
+// bundle. It only happens to have the shape of an AWS access-key identifier.
+const WHATSAPP_RUST_BRIDGE_WASM_AWS_SHAPED_BYTES = ["AKIA", "1JDQYCQC", "ANIA9GDQ"].join("");
 
 export {
   CREDENTIAL_PLACEHOLDER,
@@ -87,6 +90,7 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // AWS and botocore publish synthetic access-key examples whose final
       // marker is literally EXAMPLE. Preserve only that visibly public shape.
       .replace(/(?<![A-Z0-9])A(?:K|S)IA[A-Z0-9]{9}EXAMPLE(?![A-Z0-9])/gu, "unused")
+      .replaceAll(WHATSAPP_RUST_BRIDGE_WASM_AWS_SHAPED_BYTES, "unused")
       .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
       // MSAL's shipped TypeScript source documents the PEM shape with a
       // literal ellipsis between its delimiters; it is not key material.

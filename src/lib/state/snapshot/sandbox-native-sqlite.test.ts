@@ -66,4 +66,25 @@ describe("native OpenClaw SQLite archive sanitation", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it.each(["-wal", "-shm", "-journal"])(
+    "rejects an archived database%s companion before it can replay authority",
+    (suffix) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sqlite-sidecar-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const stateRoot = path.join(nativeRoot, ".openclaw", "state");
+        const archivePath = path.join(fixture, "native-home.tar");
+        fs.mkdirSync(stateRoot, { recursive: true });
+        fs.writeFileSync(path.join(stateRoot, `openclaw.sqlite${suffix}`), "machine-authority");
+        expect(spawnSync("tar", ["-cf", archivePath, "-C", nativeRoot, "."]).status).toBe(0);
+
+        expect(sanitizeMachineLocalArchiveConfig(archivePath)).toContain(
+          "transient OpenClaw database companion",
+        );
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 });

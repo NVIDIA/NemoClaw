@@ -94,6 +94,9 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
+  "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
+  "--exclude='./.openclaw/state/openclaw.sqlite-shm'",
+  "--exclude='./.openclaw/state/openclaw.sqlite-wal'",
   "--exclude='./.hermes/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.lock'",
@@ -1329,6 +1332,11 @@ function sanitizedStructuredAuthority(
 export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
   const hermesTarget = ".hermes/.env";
   const openClawDatabaseTarget = ".openclaw/state/openclaw.sqlite";
+  const openClawDatabaseCompanions = new Set([
+    `${openClawDatabaseTarget}-journal`,
+    `${openClawDatabaseTarget}-shm`,
+    `${openClawDatabaseTarget}-wal`,
+  ]);
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
@@ -1367,6 +1375,9 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
         const entry = nextPath ?? headerPath;
         nextPath = null;
         const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+        if (openClawDatabaseCompanions.has(normalized)) {
+          return `the native archive contains the transient OpenClaw database companion '${normalized}'`;
+        }
         const fileName = path.posix.basename(normalized).toLowerCase();
         const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
         if (
@@ -1948,6 +1959,9 @@ function capturePreparedNativeState(
         '  rm -rf -- "$stage/.nemoclaw/blueprints"',
         '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
         '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
+        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-journal"',
+        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-shm"',
+        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-wal"',
         '  rm -f -- "$stage/.hermes/gateway.pid"',
         '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
         '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',

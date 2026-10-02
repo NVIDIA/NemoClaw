@@ -33,7 +33,7 @@ const { backupSandboxStateWithManagedAuthority } = await import(
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 const PUBLIC_AWS_EXAMPLE_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const BOTO3_DOC = ".hermes/lazy-packages/boto3/examples/cloudfront.rst";
-const OPENCLAW_SQLITE_WAL = ".openclaw/state/openclaw.sqlite-wal";
+const OPENCLAW_SQLITE_WAL = ".openclaw/state/cache.sqlite-wal";
 const SQLITE_CREDENTIAL_BYTES = `SQLite format 3\0ghp_${"02468ace13579bdf"}`;
 
 afterAll(() => {
@@ -343,6 +343,7 @@ describe("complete native home persistence", () => {
       fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, ".hermes", "runtime"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, ".openclaw"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, ".openclaw", "state"));
       fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), {
         recursive: true,
       });
@@ -363,6 +364,7 @@ describe("complete native home persistence", () => {
         ".openclaw/agents/main/sessions/nemoclaw-onboard-warmup-1.trajectory.jsonl",
         "managed-warmup",
       );
+      writeNative(".openclaw/state/openclaw.sqlite-wal", "transient-wal");
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
       writeNative(".hermes/config.yaml", hermesManagedConfig);
       writeNative(".hermes/gateway.pid", "legacy-pid");
@@ -463,7 +465,6 @@ describe("complete native home persistence", () => {
       fs.writeFileSync(arbitraryConfig, "configuration");
       const assertCurrent = vi.fn();
       writeOpenClawRegistry("alpha");
-
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
           root: "/sandbox",
@@ -471,7 +472,6 @@ describe("complete native home persistence", () => {
           assertCurrent,
         },
       });
-
       expect(backup.success, backup.error).toBe(true);
       const archivedPaths = spawnSync("tar", [
         "-tf",
@@ -480,6 +480,7 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".nemoclaw/config.json");
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
+      expect(archivedPaths).not.toContain(".openclaw/state/openclaw.sqlite-wal");
       expect(archivedPaths).not.toContain(".hermes/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.lock");
@@ -513,7 +514,6 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
   it("removes only OpenClaw machine-local gateway authority from the archive copy", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-gateway-state-"));
     try {
