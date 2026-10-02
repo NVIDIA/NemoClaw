@@ -18,6 +18,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import {
   assertAgentExecutionSucceeded,
   cleanupGpu,
+  createGpuPrivateHome,
   env,
   hasExactReadyPhase,
   ollamaCleanupScript,
@@ -735,6 +736,17 @@ describe("GPU E2E helpers", () => {
     expect(ollamaProxyTokenFile("/private/export-home")).toBe(
       "/private/export-home/.nemoclaw/ollama-proxy-token",
     );
+  });
+
+  it("creates isolated GPU state beneath the account home", () => {
+    const accountHome = mkdtempSync(path.join(tmpdir(), "nemoclaw-gpu-account-home-"));
+    try {
+      const privateHome = createGpuPrivateHome(accountHome);
+      expect(path.dirname(privateHome)).toBe(accountHome);
+      expect(path.basename(privateHome)).toMatch(/^\.nemoclaw-gpu-e2e-/u);
+    } finally {
+      rmSync(accountHome, { recursive: true, force: true });
+    }
   });
 
   it("forwards the workflow-owned trace directory through availability probes", () => {

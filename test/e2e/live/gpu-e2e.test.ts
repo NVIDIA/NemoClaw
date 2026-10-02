@@ -23,6 +23,7 @@ import {
   chatContent,
   cleanupGpu,
   cleanupOllama,
+  createGpuPrivateHome,
   detectOllamaModel,
   ensureOllama,
   env,
@@ -431,7 +432,8 @@ test(
       credentialBoundary:
         "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
+    // The SDK rejects gateway state below a world-writable ancestor such as /tmp.
+    const directory = createGpuPrivateHome(os.homedir());
     cleanup.trackDisposable("remove private Ollama export state and documents", () =>
       fs.rmSync(directory, { recursive: true, force: true }),
     );

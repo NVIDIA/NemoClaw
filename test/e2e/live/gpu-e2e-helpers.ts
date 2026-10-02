@@ -120,6 +120,10 @@ export function ollamaProxyTokenFile(home = process.env.HOME): string {
   return path.join(home, ".nemoclaw", "ollama-proxy-token");
 }
 
+export function createGpuPrivateHome(home: string): string {
+  return fs.mkdtempSync(path.join(home, ".nemoclaw-gpu-e2e-"));
+}
+
 export function openClawModelConfigProjectionScript(
   configPath = "/sandbox/.openclaw/openclaw.json",
 ): string {
