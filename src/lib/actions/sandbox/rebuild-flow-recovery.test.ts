@@ -46,7 +46,7 @@ describe("rebuildSandbox flow: recovery", () => {
         throwOnError: true,
         recoveryManifest: manifest,
       }),
-    ).rejects.toThrow("OpenClaw pairing remained incomplete after prepared recovery.");
+    ).rejects.toThrow("OpenClaw pairing remained incomplete after rebuild.");
 
     expect(fs.existsSync(path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
       true,
