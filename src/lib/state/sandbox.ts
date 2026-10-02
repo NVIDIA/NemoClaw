@@ -1552,7 +1552,6 @@ function scanNativeTarFilePayload(
   npmConfig: boolean,
   providerProfileSchema: boolean,
   privateKeyHeader: boolean,
-  dependencyBinary: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1562,9 +1561,6 @@ function scanNativeTarFilePayload(
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
-    if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
-      return false;
-    }
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
     // Provider profiles describe whether injected material is secret with a
@@ -1652,7 +1648,6 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               fileName === ".npmrc",
               providerProfileSchema,
               !dependencyTree,
-              dependencyTree,
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;

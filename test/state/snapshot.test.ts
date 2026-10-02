@@ -1087,6 +1087,7 @@ describe("complete native home persistence", () => {
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
     ["dependency source code", "node_modules/example/token.js", `ghp_${"fedcba9876543210"}`],
+    ["a NUL-prefixed dependency artifact", "node_modules/a.node", `\0ghp_${"a".repeat(36)}`],
     [
       "a concrete token in bundled NemoClaw runtime code",
       ".openclaw/extensions/nemoclaw/dist/injected.js",
@@ -1097,11 +1098,7 @@ describe("complete native home persistence", () => {
       "node_modules/example/package.json",
       JSON.stringify({ config: { apiKey: `ghp_${"0123fedcba987654"}` } }),
     ],
-    [
-      "a Python virtual-environment file",
-      ".venv/lib/python3.13/site-packages/example/token.txt",
-      `ghp_${"13579bdf2468ace0"}`,
-    ],
+    ["a virtual-environment file", ".venv/example/token.txt", `ghp_${"13579bdf2468ace0"}`],
     [
       "a dependency lockfile",
       "node_modules/example/yarn.lock",
@@ -1138,7 +1135,7 @@ describe("complete native home persistence", () => {
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
       writeOpenClawRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success).toBe(false);
+      expect([backup.success, backup.manifest]).toEqual([false, undefined]);
       expect(backup.error).toContain("credential-bearing or uninspectable content");
       expect(backup.error).toContain(`./${relativePath}`);
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
