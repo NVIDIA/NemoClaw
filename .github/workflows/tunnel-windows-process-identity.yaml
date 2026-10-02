@@ -50,5 +50,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Prepare managed inference catalog for source imports
+        run: npm run catalog:compile
+
       - name: Verify Windows process identity and stop behavior
         run: npx vitest run --project cli src/lib/tunnel/services.identity-signal.test.ts
