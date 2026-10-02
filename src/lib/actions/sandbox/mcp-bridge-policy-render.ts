@@ -4,7 +4,7 @@
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpServerIdentity } from "./mcp-bridge-contracts";
+import type { McpServerIdentity, McpTransport } from "./mcp-bridge-contracts";
 import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
@@ -119,18 +119,14 @@ function renderMcpBridgePolicyYaml(
 
   // In denylist mode, emit deny rules at endpoint level (deny_rules)
   // Do NOT emit deny entries in the rules array — not part of schema
-  const mcpConfig = isAllowlistMode
-    ? {
-        allow: normalizedAllowTools.map((tool) => ({ params: { name: tool } })),
-      }
-    : {};
+  // No serverIdentity, transport, or requireOAuth in mcp config - these are unsupported by OpenShell v0.0.116.
+  // They are persisted separately in the bridge state and restored during add/rebuild.
+  // The mcp.allow field is also unsupported; allowlist rules belong in rules[].allow.params.name.
+  const mcpConfig: Record<string, unknown> = {};
 
   // In denylist mode, emit deny rules at endpoint level
   const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
 
-  // No serverIdentity, transport, or requireOAuth in mcp config - these are unsupported by OpenShell v0.0.116.
-  // They are persisted separately in the bridge state and restored during add/rebuild.
-  // Keep mcpConfig clean with only supported fields (allow rules for allowlist mode).
   const mcpExtras: Record<string, unknown> = {};
 
   return YAML.stringify({
