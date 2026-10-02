@@ -22,7 +22,6 @@ import stat
 import struct
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 
 import yaml
@@ -2973,35 +2972,21 @@ def _validate_env_text_with_boundary(
         raise UnsafePathError(
             "Hermes provider placeholder refresh requires the secret-boundary validator"
         )
-    fd, temp_path = tempfile.mkstemp(prefix="hermes-env-boundary-", text=True)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
-            handle.write(text)
-        try:
-            result = subprocess.run(
-                [sys.executable, boundary_validator_path, "env-file", temp_path],
-                check=False,
-                timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
-        except OSError as exc:
-            raise UnsafePathError(
-                f"Hermes secret-boundary validator failed: {exc}"
-            ) from exc
-        if result.returncode != 0:
-            raise UnsafePathError(
-                "Hermes provider placeholder refresh would violate the secret boundary"
-            )
-    finally:
-        if fd != -1:
-            os.close(fd)
-        try:
-            os.unlink(temp_path)
-        except FileNotFoundError:
-            # Temp file may already be removed; cleanup should remain best-effort.
-            pass
+        result = subprocess.run(
+            [sys.executable, boundary_validator_path, "env-text"],
+            input=text.encode("utf-8"),
+            check=False,
+            timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
+    except OSError as exc:
+        raise UnsafePathError(f"Hermes secret-boundary validator failed: {exc}") from exc
+    if result.returncode != 0:
+        raise UnsafePathError(
+            "Hermes provider placeholder refresh would violate the secret boundary"
+        )
 
 
 def _runtime_plan_replacements_and_provider_keys(

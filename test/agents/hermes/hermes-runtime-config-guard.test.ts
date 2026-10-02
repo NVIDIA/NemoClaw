@@ -689,6 +689,35 @@ with tempfile.TemporaryDirectory() as tmp:
     );
   });
 
+  it("validates the candidate .env without handing the installed validator a temp path (#12510)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import os
+import tempfile
+
+# Stand-in for the installed validator: like the real one in installed mode it
+# refuses \`env-file\` for any path other than /sandbox/.hermes/.env.
+validator = "\\n".join([
+    "import sys",
+    "if sys.argv[1] == 'env-file' and sys.argv[2] != '/sandbox/.hermes/.env':",
+    "    print('[SECURITY] the installed validator only accepts the canonical Hermes env path', file=sys.stderr)",
+    "    raise SystemExit(1)",
+    "raise SystemExit(0)",
+])
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "validator.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(validator)
+    guard._validate_env_text_with_boundary(
+        "TEAMS_CLIENT_SECRET=openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD\\n", path
+    )
+print("validated")
+`);
+
+    expect(result.stderr).not.toContain("canonical Hermes env path");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("validated");
+  });
+
   it.each([
     ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
     ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
