@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "../onboard/hermes-managed-tools";
+import { DCODE_AGENT_NAME, DCODE_ONLY_POLICY_PRESETS } from "../onboard/observability-policy-presets";
 import { OPENCLAW_ONLY_POLICY_PRESETS } from "../onboard/openclaw-otel-policy-presets";
 
 export type PresetProvenance =
-  | { source: "agent"; agent: "openclaw" | "hermes" }
+  | { source: "agent"; agent: "openclaw" | "hermes" | "dcode" }
   | { source: "user" };
 
 export interface PresetProvenanceContext {
@@ -32,6 +33,9 @@ export function classifyPresetProvenance(
   }
   if (agentName === "hermes" && HERMES_TOOL_GATEWAY_PRESET_NAMES.has(name)) {
     return { source: "agent", agent: "hermes" };
+  }
+  if (agentName === DCODE_AGENT_NAME && DCODE_ONLY_POLICY_PRESETS.has(name)) {
+    return { source: "agent", agent: "dcode" };
   }
   return { source: "user" };
 }
