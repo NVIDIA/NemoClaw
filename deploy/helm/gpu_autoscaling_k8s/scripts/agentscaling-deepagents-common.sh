@@ -25,6 +25,7 @@ agentscaling_deepagents_common_pin() {
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
   # Default nvidia/nemotron-3-nano. Ignore leftover 6a/6b models in this shell.
   export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
+  export MAX_TOKENS="${MAX_TOKENS:-2048}"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then

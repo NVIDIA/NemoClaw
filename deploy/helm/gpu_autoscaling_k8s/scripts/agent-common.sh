@@ -330,12 +330,19 @@ agent_common_pin_hermes_model() {
 # GHCR Deep Agents images bake NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b.
 # Point dcode -n at the chart NIM model and drop leftover openai.params for
 # that baked id (Deep Agents errors if params name a model not in models[]).
+# max_tokens is a ChatOpenAI constructor kwarg on the live GHCR image
+# ([models.providers.openai.params] flat keys). Default 2048 so one
+# dcode -n per sandbox keeps NIM busy enough for GPU-util HPA to 8.
 agent_common_pin_deepagents_model() {
   local sandbox_name="${1:?sandbox}" model="${2:?model}"
+  local max_tokens="${3:-${MAX_TOKENS:-2048}}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-    env -u VIRTUAL_ENV PIN_MODEL="${model}" python3 -c '
+    env -u VIRTUAL_ENV PIN_MODEL="${model}" PIN_MAX_TOKENS="${max_tokens}" python3 -c '
 import os, pathlib, re
 model = os.environ["PIN_MODEL"].removeprefix("openai:")
+max_tokens = int(os.environ["PIN_MAX_TOKENS"])
+if max_tokens < 8:
+    raise SystemExit("PIN_MAX_TOKENS must be >= 8")
 path = pathlib.Path("/sandbox/.deepagents/config.toml")
 text = path.read_text()
 text, n = re.subn(r"(?m)^default = \".*\"$", "default = \"openai:" + model + "\"", text, count=1)
@@ -353,6 +360,17 @@ for chunk in re.split(r"(?m)(?=^\[)", text):
 text = "".join(kept)
 if "[models.providers.openai.params.\"nvidia/nemotron-3-ultra-550b-a55b\"]" in text:
     raise SystemExit("leftover ultra-550b params still present")
+if re.search(r"(?m)^max_tokens = \d+$", text):
+    text, n = re.subn(r"(?m)^max_tokens = \d+$", "max_tokens = " + str(max_tokens), text, count=1)
+else:
+    text, n = re.subn(
+        r"(?m)^use_responses_api = false$",
+        "use_responses_api = false\nmax_tokens = " + str(max_tokens),
+        text,
+        count=1,
+    )
+if n != 1:
+    raise SystemExit("failed to set max_tokens")
 path.write_text(text)
 print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
 ' >/dev/null

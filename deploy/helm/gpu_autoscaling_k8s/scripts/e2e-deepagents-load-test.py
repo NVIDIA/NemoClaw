@@ -43,12 +43,12 @@ FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Longer prompts so NIM GPUs stay busy enough for HPA. Short one-word chats
-# do not move gpu_utilization_percent.
+# Long answers (config.toml max_tokens=2048) so one dcode -n per sandbox
+# keeps NIM above 40% through the 7→8 HPA step. Short chats go idle first.
 PROMPTS = [
-    "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
-    "Write a long summary of transformer inference on NVIDIA GPUs.",
-    "Describe how NIM serves models and batches concurrent chat requests.",
+    "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+    "Do not use tools. Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+    "Do not use tools. Write a detailed 2000-word description of how NIM serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
 ]
 
 
@@ -226,7 +226,10 @@ async def run_test(args: argparse.Namespace) -> int:
         f"  Concurrent prompts per user: {args.inflight_start}→{args.inflight_per_user} "
         "(default 1; inflight 2 OOMed a CPU node)"
     )
-    print(f"  GPU inference model={args.model}  HPA {args.hpa_namespace}/{args.hpa_name}")
+    print(
+        f"  GPU inference model={args.model}  max_tokens={os.environ.get('MAX_TOKENS', '2048')}  "
+        f"HPA {args.hpa_namespace}/{args.hpa_name}"
+    )
     print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
     print("=" * 70)
 
@@ -368,7 +371,7 @@ def main() -> int:
         default=os.environ.get("INFERENCE_MODEL", "nvidia/nemotron-3-nano"),
     )
     parser.add_argument("--duration", type=int, default=int(os.environ.get("DURATION_SEC", "900")))
-    parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "180")))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get("E2E_PROMPT_TIMEOUT_SEC", "300")))
     parser.add_argument(
         "--inflight-per-user",
         type=int,

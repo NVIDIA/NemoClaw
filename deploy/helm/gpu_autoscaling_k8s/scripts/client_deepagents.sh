@@ -38,9 +38,11 @@ export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
-export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
+export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-300}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+# One agent per sandbox. Longer completions keep NIM busy (Hermes-style 7→8 climb).
+export MAX_TOKENS="${MAX_TOKENS:-2048}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}"
@@ -80,6 +82,13 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   fi
 done
 ((unhealthy == 0)) || fail "client will not send chat until every sandbox pod is Ready"
+
+echo "Pinning Deep Agents max_tokens=${MAX_TOKENS} (one dcode -n per sandbox)"
+for ((i = 0; i < E2E_USERS; i += 1)); do
+  name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+  agent_common_pin_deepagents_model "${name}" "${INFERENCE_MODEL}" \
+    || fail "could not pin max_tokens on sandbox ${i}"
+done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"

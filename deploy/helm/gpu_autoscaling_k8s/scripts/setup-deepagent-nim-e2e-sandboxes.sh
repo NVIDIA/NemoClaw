@@ -412,7 +412,7 @@ bringup_one() {
     create_one_sandbox "${name}" || return 1
   fi
   skip_connect_shell_nproc "${name}" || return 1
-  echo "  ${name}: pinning Deep Agents model.default=${INFERENCE_MODEL}"
+  echo "  ${name}: pinning Deep Agents model.default=${INFERENCE_MODEL} max_tokens=${MAX_TOKENS:-2048}"
   agent_common_pin_deepagents_model "${name}" "${INFERENCE_MODEL}" || return 1
 }
 
