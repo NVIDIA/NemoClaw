@@ -421,7 +421,6 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.any(Object),
       "qwen3.6-35b-a3b",
       null,
-      { skipSandboxReachability: true },
     );
     expect(harness.checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
       model: "qwen3.6-35b-a3b",
@@ -511,7 +510,6 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.any(Object),
       "qwen3.6-35b-a3b",
       null,
-      { skipSandboxReachability: true },
     );
     const expectedSelection = producedSelection!;
     expect(checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({

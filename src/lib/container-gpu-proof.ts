@@ -27,15 +27,28 @@ export interface ContainerGpuProofResult {
   timedOut: boolean;
   exitCode: number | null;
   diagnostic: string;
-  /** Capacity reported from the same container-visible device that ran the CUDA workload. */
-  verifiedCapacity?: {
+  /** Per-device identity and capacity observed inside the proved container namespace. */
+  verifiedDevices?: readonly {
+    name: string;
     totalMemoryMB: number;
     availableMemoryMB: number;
-  };
+  }[];
   cleanup?: {
     readonly resourceName: string;
     readonly status: "absent" | "removed" | "failed";
   };
+}
+
+/** Derive the only accepted aggregate capacity from provider-verified device rows. */
+export function aggregateVerifiedGpuCapacity(
+  devices: ContainerGpuProofResult["verifiedDevices"],
+): { totalMemoryMB: number; availableMemoryMB: number } | undefined {
+  return devices
+    ? {
+        totalMemoryMB: devices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
+        availableMemoryMB: devices.reduce((sum, device) => sum + device.availableMemoryMB, 0),
+      }
+    : undefined;
 }
 
 /** Minimal provider-bound proof state safe to project into readiness reports. */
@@ -53,5 +66,6 @@ export type Arm64ContainerGpuProver = (gpuNames: string[]) => ContainerGpuProofR
 // by provider-neutral execution and Docker-specific operator remediation.
 export const NVIDIA_CONTAINER_GPU_PROOF_IMAGE =
   "nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41";
-export const NVIDIA_CONTAINER_GPU_PROOF_SCRIPT =
-  'set -eu; /cuda-samples/sample; memory="$(nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || true)"; printf "NEMOCLAW_GPU_MEMORY_MIB=%s\\n" "$memory"';
+export const NVIDIA_CONTAINER_GPU_SNAPSHOT_AWK =
+  'BEGIN { count=0 } { device_uuid=$1; device_index=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", device_uuid); gsub(/^[[:space:]]+|[[:space:]]+$/, "", device_index); if (device_uuid !~ /^GPU-[0-9A-Fa-f-]+$/ || seen_uuid[device_uuid]++ || device_index !~ /^[0-9]+$/ || seen_index[device_index]++ || ++count > 16) exit 1; print device_uuid } END { if (count < 1) exit 1 }';
+export const NVIDIA_CONTAINER_GPU_PROOF_SCRIPT = `set -eu; snapshot="$(nvidia-smi --query-gpu=uuid,index,name,memory.total,memory.free --format=csv,noheader,nounits)"; device_uuids="$(printf "%s\\n" "$snapshot" | awk -F, '${NVIDIA_CONTAINER_GPU_SNAPSHOT_AWK}')"; for device_uuid in $device_uuids; do CUDA_VISIBLE_DEVICES="$device_uuid" /cuda-samples/sample >/dev/null; done; printf "%s\\n" "$snapshot" | sed "s/^/NEMOCLAW_GPU_DEVICE=/"`;

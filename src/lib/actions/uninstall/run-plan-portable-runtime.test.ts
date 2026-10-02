@@ -1229,7 +1229,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       const result = await runUninstallPlanWithBackup(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         withProvenManagedGatewayProcess({
-          commandExists: (command) => ["openshell", "pgrep", "lsof"].includes(command),
+          commandExists: (command) => ["openshell", "pgrep", "lsof", "docker"].includes(command),
           env: { HOME: homeDir } as NodeJS.ProcessEnv,
           existsSync: fs.existsSync,
           hasPortableRuntimeCleanup: detectPortable,
@@ -1271,7 +1271,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     }
   });
 
-  it("leaves keep-openshell and external-supervisor flows unchanged (#9189)", async () => {
+  it("skips portable cleanup for keep-openshell and fails closed for external supervisors (#11831)", async () => {
     const hasPortable = vi.fn(() => true);
     const runPortableCleanup = vi.fn(async () => ({
       registryRemoved: true,
@@ -1322,7 +1322,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
           },
         )
       ).exitCode,
-    ).toBe(0);
+    ).toBe(1);
     expect(hasPortable).not.toHaveBeenCalled();
     expect(runPortableCleanup).not.toHaveBeenCalled();
   });

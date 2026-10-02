@@ -106,6 +106,9 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
   it("persists a fresh managed llama.cpp recipe through provider and inference completion", async () => {
     const { deps, calls } = createDeps({
+      probeLlamaCppSandboxReachability: vi.fn(async () => {
+        throw new Error("Managed runtime readiness must remain with its lifecycle owner.");
+      }),
       setupNim: vi.fn(async () => ({
         ...baseSelection,
         provider: "llama-cpp-local",
@@ -139,47 +142,56 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     });
   });
 
-  it("does not skip operator-attached llama.cpp resume when the sandbox hop fails (#11626)", async () => {
-    const session = createSession({
-      sandboxName: "operator-agent",
-      provider: "llama-cpp-local",
-      model: "team/model-alias",
-      endpointUrl: "http://host.openshell.internal:8081/v1",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: false,
-        messaging: false,
-        resourceProfile: false,
-      },
-    });
-    session.steps.provider_selection.status = "complete";
-    const probeLlamaCppSandboxReachability = vi.fn(async () => ({
-      ok: false as const,
-      reason: "tcp_failed" as const,
-      networkName: "openshell",
-      gatewayIp: "172.18.0.1",
-    }));
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      probeLlamaCppSandboxReachability,
-    });
-
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
+  it.each([false, true])(
+    "rejects an unreachable operator llama.cpp route before inference completes (resume=%s)",
+    async (resume) => {
+      const route = {
+        provider: "llama-cpp-local",
+        model: "team/model-alias",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      };
+      const session = createSession({
+        ...route,
         sandboxName: "operator-agent",
-      }),
-    ).rejects.toThrow("exit 1");
-    expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
-    expect(calls.skipped).not.toHaveBeenCalled();
-    expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("host.openshell.internal:8081"),
-    );
-  });
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = resume ? "complete" : "pending";
+      const probeLlamaCppSandboxReachability = vi.fn(async () => ({
+        ok: false as const,
+        reason: "tcp_failed" as const,
+        networkName: "openshell",
+        gatewayIp: "172.18.0.1",
+      }));
+      const setupNim = vi.fn(async () => ({ ...baseSelection, ...route }));
+      const { deps, calls } = createDeps({
+        setupNim,
+        isInferenceRouteReady: vi.fn(() => true),
+        probeLlamaCppSandboxReachability,
+      });
+
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          resume,
+          sandboxName: "operator-agent",
+        }),
+      ).rejects.toThrow("exit 1");
+      expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
+      expect(setupNim).toHaveBeenCalledTimes(resume ? 0 : 1);
+      expect(calls.setupInference).not.toHaveBeenCalled();
+      expect(calls.complete.mock.calls.map(([step]) => step)).not.toContain("inference");
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("host.openshell.internal:8081"),
+      );
+    },
+  );
 
   it("persists installer vLLM profile provenance returned by provider setup (#11896)", async () => {
     const session = createSession({
@@ -238,6 +250,10 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     const productionSetupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "vLLM fixture has no managed llama.cpp choice" },
+        }),
         localModelProfileIntegration: { resolvePlan: () => plan, onboard },
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),

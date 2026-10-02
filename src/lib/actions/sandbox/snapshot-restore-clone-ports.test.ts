@@ -97,11 +97,13 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     );
     expect(dashboardPortMocks.withDashboardPortReservationLock).toHaveBeenCalledOnce();
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
-    expect(createArgs.slice(0, 6)).toEqual([
+    expect(createArgs.slice(0, 8)).toEqual([
       "sandbox",
       "create",
       "-g",
       "nemoclaw-18080",
+      "--from",
+      "nemoclaw-alpha:test",
       "--name",
       "beta",
     ]);

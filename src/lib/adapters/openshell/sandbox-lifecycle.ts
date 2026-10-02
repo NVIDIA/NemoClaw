@@ -17,11 +17,10 @@ export type CreateOpenShellSandboxRequest = Readonly<{
   gpu?: Readonly<{ device?: string }>;
   resources?: Readonly<{ cpu?: string; memory?: string }>;
   providers?: readonly string[];
+  autoProviders?: boolean;
   labels?: Readonly<Record<string, string>>;
   startupCommand: readonly string[];
   environment: NodeJS.ProcessEnv;
-  /** Credential-free Docker client config prepared for this create process only. */
-  dockerClientConfigDirectory?: string;
   workingDirectory?: string;
   runtimeSelection?: OpenShellRuntimeSelection;
 }>;
@@ -70,16 +69,34 @@ export type DeleteOpenShellSandboxRequest = Readonly<{
   timeoutMs?: number;
 }>;
 
+export type DeleteAllOpenShellSandboxesRequest = Readonly<{
+  target: Extract<OpenShellGatewayTarget, { kind: "selected" }>;
+  runtimeSelection: OpenShellRuntimeSelection;
+  timeoutMs?: number;
+}>;
+
+type OpenShellSandboxDeleteAccepted = Readonly<{
+  kind: "accepted";
+  diagnostic: string;
+  exitCode: 0;
+}>;
+
+export type OpenShellSandboxDeleteFailed = Readonly<{
+  kind: "failed";
+  diagnostic: string;
+  error: OpenShellSandboxError;
+  ambiguous: boolean;
+  exitCode: number | null;
+}>;
+
 export type OpenShellSandboxDeleteSubmission =
-  | Readonly<{ kind: "accepted"; diagnostic: string; exitCode: 0 }>
+  | OpenShellSandboxDeleteAccepted
   | Readonly<{ kind: "absent"; diagnostic: string; exitCode: number }>
-  | Readonly<{
-      kind: "failed";
-      diagnostic: string;
-      error: OpenShellSandboxError;
-      ambiguous: boolean;
-      exitCode: number | null;
-    }>;
+  | OpenShellSandboxDeleteFailed;
+
+export type OpenShellSandboxDeleteAllSubmission =
+  | OpenShellSandboxDeleteAccepted
+  | OpenShellSandboxDeleteFailed;
 
 /** Sandbox mutation transport. Authorization, convergence, and retry stay with each action. */
 export interface OpenShellSandboxLifecycle {
@@ -87,5 +104,8 @@ export interface OpenShellSandboxLifecycle {
     request: CreateOpenShellSandboxRequest,
     options?: OpenShellSandboxCreateOptions,
   ): Promise<OpenShellSandboxCreateSubmission>;
+  deleteAllSandboxes(
+    request: DeleteAllOpenShellSandboxesRequest,
+  ): Promise<OpenShellSandboxDeleteAllSubmission>;
   deleteSandbox(request: DeleteOpenShellSandboxRequest): Promise<OpenShellSandboxDeleteSubmission>;
 }

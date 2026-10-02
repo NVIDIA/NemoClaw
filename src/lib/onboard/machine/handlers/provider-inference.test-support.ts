@@ -143,6 +143,7 @@ export function createDeps(
       }),
     ),
     reserveRoute: vi.fn(() => true),
+    hasSandboxLifecycleAuthority: vi.fn(() => false),
     updateSandbox: vi.fn(),
     checkpointSandboxIdentity: vi.fn(async () => undefined),
     prepareLocalProviderForInference: vi.fn(async () => null),
@@ -161,6 +162,8 @@ export function createDeps(
       checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
       preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
       getSandboxRecoveryAuthority: (): "missing" => "missing",
+      withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
+        await operation(),
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
         operation: () => Promise<T> | T,
@@ -213,6 +216,7 @@ export function createDeps(
       reconcileModelRouter: calls.reconcileRouter,
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
       reserveSandboxInferenceRoute: calls.reserveRoute,
+      hasSandboxLifecycleAuthority: calls.hasSandboxLifecycleAuthority,
       registryUpdateSandbox: calls.updateSandbox,
       checkpointSandboxIdentity: calls.checkpointSandboxIdentity,
       prepareLocalProviderForInference: calls.prepareLocalProviderForInference,

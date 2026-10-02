@@ -308,9 +308,12 @@ function assertReviewedNodeBases(file: string, source: string): void {
 }
 
 function completedStage(source: string): string {
-  const finalStageStart = [...source.matchAll(/^FROM\b/gmu)].at(-1)?.index;
-  assert(finalStageStart !== undefined, "Dockerfile must contain a completed image stage");
-  return source.slice(finalStageStart);
+  const stages = [...source.matchAll(/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/gmu)];
+  const finalStage = stages.at(-1);
+  assert(finalStage, "Dockerfile must contain a completed image stage");
+  const parent = stages.findIndex((stage) => stage[2] === finalStage[1]);
+  const inherited = parent < 0 ? "" : completedStage(source.slice(0, stages[parent + 1]!.index));
+  return inherited + source.slice(finalStage.index);
 }
 
 function namedStage(source: string, name: string): string {
@@ -321,6 +324,14 @@ function namedStage(source: string, name: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
+  it("checks inherited runtime instructions without including unrelated stages", () => {
+    expect(
+      completedStage(
+        "FROM base AS prepared\nRUN patch\nFROM scratch AS unused\nRUN unrelated\nFROM prepared\nRUN npm ci\n",
+      ),
+    ).toBe("FROM base AS prepared\nRUN patch\nFROM prepared\nRUN npm ci\n");
+  });
+
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
     const observedBases = new Set<string>();
     pinnedBaseDockerfiles.forEach((file) => {

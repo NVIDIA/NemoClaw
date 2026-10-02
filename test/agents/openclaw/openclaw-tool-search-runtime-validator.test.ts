@@ -235,18 +235,21 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
-  it("selects the exact 2026.9.1 agent-tools and local-model-lean runtime layout", async () => {
-    const fixture = writeFixture({
-      runtimeFileName: "agent-tools-fixture.js",
-      source: AGENT_TOOLS_FIXTURE_SOURCE,
-      secondRuntimeFileName: "local-model-lean-fixture.js",
-      secondSource: LOCAL_MODEL_LEAN_FIXTURE_SOURCE,
-      version: "2026.9.1",
-    });
-    const result = await validateFixture(fixture, "progressive", "2026.9.1");
+  it.each(["2026.9.1", "2026.9.2"])(
+    "selects the exact %s agent-tools and local-model-lean runtime layout",
+    async (version) => {
+      const fixture = writeFixture({
+        runtimeFileName: "agent-tools-fixture.js",
+        source: AGENT_TOOLS_FIXTURE_SOURCE,
+        secondRuntimeFileName: "local-model-lean-fixture.js",
+        secondSource: LOCAL_MODEL_LEAN_FIXTURE_SOURCE,
+        version,
+      });
+      const result = await validateFixture(fixture, "progressive", version);
 
-    expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
-  });
+      expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
+    },
+  );
 
   it("fails closed when package metadata does not match the expected pin", async () => {
     const fixture = writeFixture({ version: "2026.5.28" });

@@ -84,11 +84,18 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL`, or null
+   * when the dashboard is a plain loopback address. Persisted so post-onboard
+   * commands can report the external origin (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  openshellGatewayStateDir?: string | null;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -274,6 +281,9 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    ...(input.dashboardExternalUrl != null
+      ? { dashboardExternalUrl: input.dashboardExternalUrl }
+      : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
@@ -282,6 +292,7 @@ export function buildCreatedSandboxRegistryEntry(
       : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    openshellGatewayStateDir: input.openshellGatewayStateDir ?? undefined,
     ...(input.hostMounts && input.hostMounts.length > 0
       ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
       : {}),

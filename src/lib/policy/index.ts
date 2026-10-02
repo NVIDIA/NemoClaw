@@ -120,6 +120,8 @@ type MergePresetNamesOptions = {
 type SandboxPresetLoadOptions = {
   includeMessagingCredentialBindings?: boolean;
   messagingConfig?: MessagingPolicyConfig | null;
+  sandbox?: registry.SandboxEntry | null;
+  gatewayName?: string;
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -325,8 +327,9 @@ function liveCustomPresetContentFromPolicy(current: string, presetName: string):
 async function liveCustomPresetContent(
   sandboxName: string,
   presetName: string,
+  gatewayName?: string,
 ): Promise<string | null> {
-  const current = await readCurrentSandboxPolicy(sandboxName);
+  const current = await readCurrentSandboxPolicy(sandboxName, gatewayName);
   return current ? liveCustomPresetContentFromPolicy(current, presetName) : null;
 }
 
@@ -365,9 +368,11 @@ function loadAgentPresetContent(
   sandboxName: string,
   presetName: string,
   builtinPresetContent: string,
+  sandboxOverride?: registry.SandboxEntry | null,
 ): string | null {
   try {
-    const sandbox = registry.getSandbox(sandboxName);
+    const sandbox =
+      sandboxOverride === undefined ? registry.getSandbox(sandboxName) : sandboxOverride;
     if (!sandbox?.agent) return null;
 
     const agent = loadAgent(sandbox.agent);
@@ -407,7 +412,8 @@ async function loadPresetForSandbox(
   let configuredMessagingChannels: string[] = [];
   let messagingConfig = options.messagingConfig;
   try {
-    const sandbox = registry.getSandbox(sandboxName);
+    const sandbox =
+      options.sandbox === undefined ? registry.getSandbox(sandboxName) : options.sandbox;
     sandboxAgent = sandbox?.agent ?? null;
     configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
     if (messagingConfig === undefined) {
@@ -440,9 +446,12 @@ async function loadPresetForSandbox(
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
   const builtinPresetContent = loadCentralPreset(presetName, { reportMissing: false });
-  if (!builtinPresetContent) return await liveCustomPresetContent(sandboxName, presetName);
+  if (!builtinPresetContent) {
+    return await liveCustomPresetContent(sandboxName, presetName, options.gatewayName);
+  }
   const resolvedPresetContent =
-    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
+    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent, options.sandbox) ||
+    builtinPresetContent;
   return presetName === "outlook" &&
     sandboxAgent !== "hermes" &&
     configuredMessagingChannels.includes("teams")
@@ -676,6 +685,8 @@ async function inspectLivePolicyBoundary(
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<PolicyMutationContext> {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
@@ -713,18 +724,29 @@ async function inspectLivePolicyBoundary(
     );
   }
   const target = namedOpenShellGateway(gatewayName);
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - now());
+    if (remainingMs <= 0) {
+      throw new PolicyObservationError(
+        `Refusing to ${operation}: the policy observation deadline expired.`,
+      );
+    }
+    return remainingMs;
+  };
   const inspection = requirePolicyObservation(
     await cliOpenShellSandboxPolicyReader.inspectSandboxPolicy({
       target,
       sandboxName,
       ...(runtimeSelection ? { runtimeSelection } : {}),
+      ...(deadlineMs === undefined ? {} : { timeoutMs: remainingTimeoutMs() }),
     }),
   );
   const basePolicyDocument = await readLivePolicyDocument(
     sandboxName,
     gatewayName,
     "base",
-    undefined,
+    remainingTimeoutMs(),
     runtimeSelection,
   );
   return {
@@ -758,6 +780,8 @@ export async function captureRecordedSandboxBasePolicy(
   sandboxName: string,
   operation: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<string> {
   return (
     await inspectLivePolicyBoundary(
@@ -765,6 +789,8 @@ export async function captureRecordedSandboxBasePolicy(
       operation,
       runtimeSelection?.gatewayName,
       runtimeSelection,
+      deadlineMs,
+      now,
     )
   ).basePolicyDocument;
 }
@@ -2742,8 +2768,8 @@ async function getAppliedPresets(sandboxName: string, timeoutMs?: number): Promi
   return (await getGatewayPresets(sandboxName, timeoutMs)) ?? [];
 }
 
-async function listCustomPresets(sandboxName: string): Promise<PresetInfo[]> {
-  const current = await readCurrentSandboxPolicy(sandboxName);
+async function listCustomPresets(sandboxName: string, gatewayName?: string): Promise<PresetInfo[]> {
+  const current = await readCurrentSandboxPolicy(sandboxName, gatewayName);
   if (!current) return [];
   const parsed = YAML.parse(current);
   if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return [];
@@ -2788,11 +2814,12 @@ async function customPresetOwnsNetworkPolicyKey(
 async function getGatewayPresets(
   sandboxName: string,
   timeoutMs?: number,
+  sandboxOverride?: registry.SandboxEntry | null,
 ): Promise<string[] | null> {
-  let sandbox: ReturnType<typeof registry.getSandbox>;
+  let sandbox: registry.SandboxEntry | null;
   let gatewayName: string;
   try {
-    sandbox = registry.getSandbox(sandboxName);
+    sandbox = sandboxOverride === undefined ? registry.getSandbox(sandboxName) : sandboxOverride;
     if (!sandbox) return null;
     gatewayName = resolveSandboxGatewayName(sandbox);
   } catch {
@@ -2809,7 +2836,7 @@ async function getGatewayPresets(
   for (const preset of listPresets({ agent: sandboxAgent })) {
     sources.push({
       name: preset.name,
-      content: await loadPresetForSandbox(sandboxName, preset.name),
+      content: await loadPresetForSandbox(sandboxName, preset.name, { sandbox, gatewayName }),
     });
   }
   const builtins = inspectGatewayPresetNames({
@@ -2820,7 +2847,10 @@ async function getGatewayPresets(
   });
   if (builtins === null) return null;
   return [
-    ...new Set([...builtins, ...(await listCustomPresets(sandboxName)).map((entry) => entry.name)]),
+    ...new Set([
+      ...builtins,
+      ...(await listCustomPresets(sandboxName, gatewayName)).map((entry) => entry.name),
+    ]),
   ];
 }
 
