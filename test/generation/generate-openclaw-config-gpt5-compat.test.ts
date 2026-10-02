@@ -79,6 +79,8 @@ describe("generate-openclaw-config.mts: GPT-5-family reply-budget compat", () =>
     "gpt-5.4",
     "gpt-5.4-turbo",
     "azure/gpt-5.4",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
     "o1",
     "o1-mini",
     "openai/o3-mini",
