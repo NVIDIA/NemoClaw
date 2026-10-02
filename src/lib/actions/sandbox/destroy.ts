@@ -81,6 +81,8 @@ import {
 } from "./destroy-presence";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
+  delegateSandboxDestroyToOwningRoot,
+  isOnlyPublishedSandbox,
   prepareSandboxDestroy,
   recordManagedVllmRetirementPending,
   reportManagedVllmDestroyOutcome,
@@ -231,13 +233,8 @@ export type CleanupSandboxServicesDeps = {
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
-async function confirmCleanupGatewayDecision(
-  decision: DestroyGatewayCleanupDecision,
-): Promise<boolean> {
-  if (decision === "cleanup") return true;
-  if (decision === "preserve") return false;
-
-  console.log(`  ${YW}This was the last sandbox.${R}`);
+async function promptCleanupGateway(lastSandboxNotice: string): Promise<boolean> {
+  console.log(`  ${YW}${lastSandboxNotice}${R}`);
   console.log(
     "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
   );
@@ -247,6 +244,14 @@ async function confirmCleanupGatewayDecision(
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
+}
+
+async function confirmCleanupGatewayDecision(
+  decision: DestroyGatewayCleanupDecision,
+): Promise<boolean> {
+  if (decision === "cleanup") return true;
+  if (decision === "preserve") return false;
+  return promptCleanupGateway("This was the last sandbox.");
 }
 
 function reportGatewayPreserved(gatewayName: string): void {
@@ -657,6 +662,36 @@ function requestSandboxDestroyExit(exitCode: number): never {
   throw new SandboxDestroyExitRequest(exitCode);
 }
 
+/** Return the status that a destroy exit request carries, or undefined for other errors. */
+export function sandboxDestroyExitCode(error: unknown): number | undefined {
+  return error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined;
+}
+
+/**
+ * Resolve the destroy confirmation and the final gateway question before a
+ * detached owning-root worker runs the destroy. Returns null when the user
+ * cancels the destroy.
+ */
+async function confirmDelegatedSandboxDestroy(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+): Promise<DestroySandboxOptions | null> {
+  if (options.yes === true || options.force === true) return options;
+  if (!(await confirmSandboxDestroy(sandboxName, options))) return null;
+  const gatewayDecision = resolveDestroyGatewayCleanupDecision(options, {
+    nonInteractive: isDestroyNonInteractiveEnv(),
+    platform: process.platform,
+  });
+  if (gatewayDecision !== "prompt" || !isOnlyPublishedSandbox(sandboxName)) {
+    return { ...options, yes: true };
+  }
+  return {
+    ...options,
+    yes: true,
+    cleanupGatewayPromptAnswer: await promptCleanupGateway("This is the last sandbox."),
+  };
+}
+
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
@@ -665,23 +700,46 @@ export async function destroySandbox(
   } = {},
 ): Promise<void> {
   try {
-    return await withSandboxLifecycleLock(sandboxName, () => {
-      const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
-        sandboxName,
-        { allowStateRecord: true },
-      );
-      assertSandboxDestroyCommandAvailable(sandboxName);
-      return destroySandboxUnlocked(
-        sandboxName,
-        options,
-        removedImmutabilityMigration.stateRecord !== null,
-        deps,
-      );
-    });
+    const normalized = normalizeDestroySandboxOptions(options);
+    const delegation = await delegateSandboxDestroyToOwningRoot(
+      sandboxName,
+      normalized,
+      (requested) => confirmDelegatedSandboxDestroy(sandboxName, requested),
+    );
+    if (delegation.delegated) {
+      if (delegation.exitCode !== null) requestSandboxDestroyExit(delegation.exitCode);
+      return;
+    }
+    return await destroySandboxInSelectedRoot(sandboxName, normalized, deps);
   } catch (error) {
     if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
     throw error;
   }
+}
+
+/**
+ * Destroy a sandbox in the gateway state root that this process selects.
+ * An exit request stays thrown, so an owning-root worker can report its status.
+ */
+export async function destroySandboxInSelectedRoot(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
+): Promise<void> {
+  return withSandboxLifecycleLock(sandboxName, () => {
+    const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+      allowStateRecord: true,
+    });
+    assertSandboxDestroyCommandAvailable(sandboxName);
+    return destroySandboxUnlocked(
+      sandboxName,
+      options,
+      removedImmutabilityMigration.stateRecord !== null,
+      deps,
+    );
+  });
 }
 
 async function destroySandboxUnlocked(

@@ -6,7 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 
-import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import type {
+  DestroySandboxOptions,
+  RebuildSandboxOptions,
+} from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
@@ -39,9 +42,15 @@ export interface RetireRecoveryOwningRegistryInput {
   readonly confirmDataRecovered: boolean;
 }
 
+export interface DestroyOwningRegistryInput {
+  readonly sandboxName: string;
+  readonly options: DestroySandboxOptions;
+}
+
 export type OwningRegistryWorkerInput =
   | ({ readonly operation: "rebuild" } & RebuildOwningRegistryInput)
-  | ({ readonly operation: "retire-recovery" } & RetireRecoveryOwningRegistryInput);
+  | ({ readonly operation: "retire-recovery" } & RetireRecoveryOwningRegistryInput)
+  | ({ readonly operation: "destroy" } & DestroyOwningRegistryInput);
 
 export interface RebuildRecoveryStorageRoot {
   readonly backupPath: string;
@@ -55,7 +64,15 @@ export type OwningRegistryWorkerResult = Readonly<{
   sandboxName: string;
   gatewayPort: number;
   message?: string;
+  /** Exit status requested by a delegated destroy that already printed its diagnostics. */
+  exitCode?: number;
 }>;
+
+const WORKER_OPERATION_LABELS: Readonly<Record<OwningRegistryWorkerInput["operation"], string>> = {
+  rebuild: "rebuild",
+  "retire-recovery": "recovery retirement",
+  destroy: "destroy",
+};
 
 function assertWorkerPlatformSupported(platform: NodeJS.Platform): void {
   if (platform === "win32") {
@@ -100,6 +117,26 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_REBUILD_VERBOSE",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
 ] as const;
+// Non-secret settings that the destroy path reads. Forwarding them keeps the
+// ports, dashboard bind, gateway runtime and state directory, OpenShell
+// binaries, prompt mode, and CLI name of a delegated destroy equal to the caller's.
+const DESTROY_ENV_NAMES = [
+  "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+  "NEMOCLAW_DASHBOARD_BIND",
+  "NEMOCLAW_DASHBOARD_PORT",
+  "NEMOCLAW_GATEWAY_RUNTIME",
+  "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+  "NEMOCLAW_INVOKED_AS",
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_OLLAMA_PORT",
+  "NEMOCLAW_OLLAMA_PROXY_PORT",
+  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+  "NEMOCLAW_OPENSHELL_BIN",
+  "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+  "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+  "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+  "NEMOCLAW_VLLM_PORT",
+] as const;
 
 /** Recover the recorded gateway location before rebuild can start or replace it. */
 export function restoreRecordedRebuildGatewayStateDir(
@@ -123,7 +160,8 @@ export function restoreRecordedRebuildGatewayStateDir(
   });
 }
 
-function rebuildWorkerEnv(
+function owningRegistryWorkerEnv(
+  operation: OwningRegistryWorkerInput["operation"],
   gatewayPort: number,
   credentialEnvNames: readonly string[],
 ): Record<string, string> {
@@ -131,7 +169,7 @@ function rebuildWorkerEnv(
     ...snapshotCredentialEnv(credentialEnvNames),
     NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
   };
-  for (const name of REBUILD_ENV_NAMES) {
+  for (const name of operation === "destroy" ? DESTROY_ENV_NAMES : REBUILD_ENV_NAMES) {
     const value = process.env[name];
     if (value !== undefined) extra[name] = value;
   }
@@ -172,17 +210,19 @@ async function readWorkerResult(stream: Readable): Promise<OwningRegistryWorkerR
   } catch {
     return null;
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const result = parsed as Record<string, unknown>;
   if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed) ||
-    typeof (parsed as Record<string, unknown>).ok !== "boolean" ||
-    ((parsed as Record<string, unknown>).operation !== "rebuild" &&
-      (parsed as Record<string, unknown>).operation !== "retire-recovery") ||
-    typeof (parsed as Record<string, unknown>).sandboxName !== "string" ||
-    !Number.isInteger((parsed as Record<string, unknown>).gatewayPort) ||
-    ((parsed as Record<string, unknown>).message !== undefined &&
-      typeof (parsed as Record<string, unknown>).message !== "string")
+    typeof result.ok !== "boolean" ||
+    typeof result.operation !== "string" ||
+    !Object.hasOwn(WORKER_OPERATION_LABELS, result.operation) ||
+    typeof result.sandboxName !== "string" ||
+    !Number.isInteger(result.gatewayPort) ||
+    (result.message !== undefined && typeof result.message !== "string") ||
+    (result.exitCode !== undefined &&
+      (!Number.isInteger(result.exitCode) ||
+        (result.exitCode as number) < 1 ||
+        (result.exitCode as number) > 255))
   ) {
     return null;
   }
@@ -301,7 +341,7 @@ async function runWorker(
   try {
     const child = spawn(process.execPath, [WORKER_PATH], {
       detached: dedicatedProcessGroup,
-      env: rebuildWorkerEnv(gatewayPort, options.credentialEnvNames ?? []),
+      env: owningRegistryWorkerEnv(input.operation, gatewayPort, options.credentialEnvNames ?? []),
       stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
     });
     const inputStream = child.stdio[3];
@@ -353,7 +393,11 @@ async function runWorker(
     } finally {
       if (deadline) clearTimeout(deadline);
     }
-    if (!outcome) throw new Error("Rebuild in the owning gateway registry did not complete.");
+    if (!outcome) {
+      throw new Error(
+        `Delegated ${WORKER_OPERATION_LABELS[input.operation]} in the owning gateway registry did not complete.`,
+      );
+    }
     if (outcome.kind !== "completed") {
       const workerReaped = await terminateWorkerProcessGroup(
         child,
@@ -361,7 +405,7 @@ async function runWorker(
         terminationGraceMs,
       );
       await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
-      const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
+      const operation = WORKER_OPERATION_LABELS[input.operation];
       if (outcome.kind === "interrupted") {
         if (!workerReaped) {
           const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
@@ -400,7 +444,15 @@ async function runWorker(
     if (workerResult?.ok === false && resultMatchesRequest && workerResult.message) {
       throw new Error(workerResult.message, { cause: workerResult });
     }
-    throw new Error("Rebuild in the owning gateway registry did not complete successfully.");
+    if (workerResult?.ok === false && resultMatchesRequest && workerResult.exitCode !== undefined) {
+      throw new Error(
+        `Delegated ${WORKER_OPERATION_LABELS[input.operation]} exited with status ${String(workerResult.exitCode)}.`,
+        { cause: workerResult },
+      );
+    }
+    throw new Error(
+      `Delegated ${WORKER_OPERATION_LABELS[input.operation]} in the owning gateway registry did not complete successfully.`,
+    );
   } finally {
     process.removeListener("SIGINT", onSigint);
     process.removeListener("SIGTERM", onSigterm);
@@ -526,4 +578,45 @@ export async function delegateRecoveryRetirementToOwningRegistry(
     hit.gatewayPort,
   );
   return true;
+}
+
+/**
+ * Re-enter destroy in a fresh process whose static state paths are bound to
+ * the sandbox's owning gateway root, so the registry row, onboarding session,
+ * and retained recovery records are read and cleared in that root. The
+ * detached worker cannot prompt, so `confirm` resolves every prompt first and
+ * returns null when the user cancels. Returns true when the caller must stop
+ * its local destroy.
+ */
+export async function delegateDestroyToOwningRegistry(
+  input: DestroyOwningRegistryInput,
+  homeDir: string,
+  currentRegistryFile: string,
+  confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
+): Promise<boolean> {
+  const hit = rebuildOwningRegistryDependencies.findSandbox(input.sandboxName, homeDir);
+  if (!hit || path.resolve(hit.registryFile) === path.resolve(currentRegistryFile)) return false;
+  if (hit.registryGatewayPort === undefined) {
+    throw new Error("Cannot resolve the gateway registry root that owns the sandbox.");
+  }
+  if (rebuildOwningRegistryDependencies.isHostFenceHeld(homeDir)) {
+    throw new Error(
+      `Cannot transfer destroy for '${input.sandboxName}' while another lifecycle command owns the host fence. Run 'nemoclaw ${input.sandboxName} destroy' directly.`,
+    );
+  }
+  const options = await confirm(input.options);
+  if (!options) return true;
+  await rebuildOwningRegistryDependencies.runWorker(
+    { operation: "destroy", sandboxName: input.sandboxName, options },
+    hit.registryGatewayPort,
+  );
+  return true;
+}
+
+/** Return the exit status a delegated destroy worker reported, or undefined for other errors. */
+export function delegatedDestroyExitCode(error: unknown): number | undefined {
+  const result = error instanceof Error ? error.cause : undefined;
+  if (typeof result !== "object" || result === null) return undefined;
+  const { operation, exitCode } = result as Partial<OwningRegistryWorkerResult>;
+  return operation === "destroy" && typeof exitCode === "number" ? exitCode : undefined;
 }

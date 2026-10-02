@@ -152,6 +152,26 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     );
   });
 
+  it("keeps exit status 0 when a recorded prompt answer cannot remove the gateway", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+      liveListOutput: READY_BETA_LIST,
+    });
+
+    await expect(
+      harness.destroySandboxInSelectedRoot("alpha", {
+        yes: true,
+        cleanupGatewayPromptAnswer: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
+    expect(warnOutput(harness)).not.toContain("--cleanup-gateway was not applied");
+  });
+
   it("reports a failed live list when gateway cleanup is explicitly requested", async () => {
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,

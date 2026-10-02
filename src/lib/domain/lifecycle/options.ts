@@ -29,6 +29,13 @@ export interface DestroySandboxOptions {
    */
   cleanupGateway?: boolean;
   /**
+   * The answer to the final-sandbox gateway cleanup prompt that the caller
+   * showed before it handed the destroy to an owning-root worker. It applies
+   * like an accepted or declined prompt, not like `--cleanup-gateway`, so a
+   * gateway that cannot be removed does not fail the destroy.
+   */
+  cleanupGatewayPromptAnswer?: boolean;
+  /**
    * Keep the host-global managed vLLM container running after destroying
    * the last registered sandbox that uses Local vLLM. Resolution order during
    * normalization: explicit option, then the `--keep-vllm` argv flag, then

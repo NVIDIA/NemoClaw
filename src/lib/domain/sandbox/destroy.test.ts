@@ -67,6 +67,27 @@ describe("sandbox destroy helpers", () => {
     ).toBe("prompt");
   });
 
+  it("applies a recorded gateway prompt answer below the explicit flag and above the unattended default", () => {
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { yes: true, cleanupGatewayPromptAnswer: true },
+        { nonInteractive: false, platform: "linux" },
+      ),
+    ).toBe("cleanup");
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { yes: true, cleanupGatewayPromptAnswer: false },
+        { nonInteractive: true, platform: "darwin" },
+      ),
+    ).toBe("preserve");
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { cleanupGateway: false, cleanupGatewayPromptAnswer: true },
+        { nonInteractive: false, platform: "linux" },
+      ),
+    ).toBe("preserve");
+  });
+
   it("treats only terminal OpenShell rows without Docker containers as no live sandboxes (#4662)", () => {
     const liveListOutput =
       "NAME              CREATED              PHASE\nnpmtest           2026-06-01 00:00:00  Error\n";
