@@ -1022,17 +1022,36 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   if (
     tunnelTransition.namedTunnelStarted &&
     stillOwnsTunnel() &&
-    isRunning(pidDir, "cloudflared") &&
-    !namedTunnelTargetsDashboard(pidDir, dashboardPort)
+    isRunning(pidDir, "cloudflared")
   ) {
-    if (!stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)) {
-      throw new Error(
-        "The new named cloudflared tunnel does not confirm the selected dashboard port and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+    if (!hasNamedTunnelConfiguration(pidDir)) {
+      warn(
+        "The new named cloudflared tunnel is still running, but its ingress route has not been logged yet. Its dashboard target is unconfirmed; check tunnel status before relying on it.",
       );
+    } else if (!namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
+      const rejectionOutcome = await withMcpLifecycleLock(
+        cloudflaredLifecycleLockName(pidDir),
+        () => {
+          if (!stillOwnsTunnel()) return "superseded" as const;
+          return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)
+            ? ("stopped" as const)
+            : ("unconfirmed" as const);
+        },
+      );
+      if (rejectionOutcome === "superseded") {
+        warn(
+          "The cloudflared process changed during named tunnel validation; leaving the replacement process running.",
+        );
+      } else if (rejectionOutcome === "unconfirmed") {
+        throw new Error(
+          "The new named cloudflared tunnel does not confirm the selected dashboard port and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+        );
+      } else {
+        throw new Error(
+          "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.",
+        );
+      }
     }
-    throw new Error(
-      "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.",
-    );
   }
 
   let tunnelUrl = "";
