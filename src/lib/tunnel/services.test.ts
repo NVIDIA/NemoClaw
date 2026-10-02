@@ -1075,7 +1075,7 @@ describe("stopAll", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       expect(() => stopAll({ pidDir, processControl: control })).toThrow(
-        "cloudflared could not be stopped",
+        "verify its command line identifies cloudflared; do not stop it if its identity is uncertain",
       );
     } finally {
       logSpy.mockRestore();

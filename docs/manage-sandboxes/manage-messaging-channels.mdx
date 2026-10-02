@@ -200,7 +200,7 @@ Use `channels stop` for an individual bridge or stop the sandbox when you need t
 <AgentOnly variant="openclaw">
 `$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start` created and asks NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
 If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains its process and state.
-Stop `cloudflared` manually, then retry the command using the [tunnel stop recovery steps](../../reference/commands).
+Do not stop the recorded PID while its identity is uncertain. Follow the [tunnel stop recovery steps](../../reference/commands) to verify its command line identifies `cloudflared` before stopping it manually, then retry.
 The deprecated full `$$nemoclaw stop` command also attempts to release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
 
 Stopping the in-sandbox gateway stops all channel delivery for that sandbox until you restart the sandbox or gateway.
@@ -211,8 +211,9 @@ Stopping the in-sandbox gateway stops all channel delivery for that sandbox unti
   `$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start`
   created without stopping the supervisor-owned Hermes gateway, agent-owned host forwards, or
   managed OpenShell gateway port. If NemoClaw cannot confirm that `cloudflared` stopped, the command
-  returns an error and retains its process and state. Stop `cloudflared` manually, then retry using
-  the [tunnel stop recovery steps](../../reference/commands). The deprecated full `$$nemoclaw stop`
+  returns an error and retains its process and state. Do not stop the recorded PID while its identity
+  is uncertain. Follow the [tunnel stop recovery steps](../../reference/commands) to verify its
+  command line identifies `cloudflared` before stopping it manually, then retry. The deprecated full `$$nemoclaw stop`
   command attempts to stop host forwards and safely release an unshared OpenShell gateway port while
   the Hermes gateway remains under sandbox supervision.
 </AgentOnly>

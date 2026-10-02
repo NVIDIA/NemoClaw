@@ -712,7 +712,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     if (!hostServicesStopped) {
       info("Cloudflared remains running; service stop was not confirmed.");
       throw new Error(
-        "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
+        "cloudflared could not be stopped; its process and state were retained. Before stopping it manually, verify its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
       );
     }
 
@@ -839,7 +839,7 @@ export function stopCloudflared(opts: ServiceOptions = {}): void {
   );
   if (!stopped) {
     throw new Error(
-      "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
+      "cloudflared could not be stopped; its process and state were retained. Before stopping it manually, verify its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
     );
   }
 }
@@ -928,7 +928,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
             if (!namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
               targetReady = false;
               targetFailure =
-                "The existing named cloudflared tunnel is still running, but its logged ingress does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.";
+                "The existing named cloudflared tunnel is still running, but its logged ingress does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.";
             }
           } else if (runningQuickTunnel || recordedQuickTunnel) {
             // A named-tunnel request must not silently reuse a quick tunnel.
@@ -937,12 +937,12 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
             if (!stopService(pidDir, "cloudflared", processControl)) {
               targetReady = false;
               targetFailure =
-                "The existing quick cloudflared tunnel could not be stopped before starting the named tunnel. Stop it manually, then retry.";
+                "The existing quick cloudflared tunnel could not be stopped before starting the named tunnel. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.";
             }
           } else {
             targetReady = false;
             targetFailure =
-              "The existing cloudflared process type cannot be confirmed. Stop it manually, then retry.";
+              "The existing cloudflared process type cannot be confirmed. Do not stop the process while its identity is uncertain. Verify its command line identifies cloudflared before stopping it, then retry.";
           }
         }
         if (targetReady && !runningNamedTunnel) {
@@ -971,7 +971,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         if (runningNamedTunnel && !namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
           targetReady = false;
           targetFailure =
-            "The existing named cloudflared tunnel is still running, but its logged ingress does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.";
+            "The existing named cloudflared tunnel is still running, but its logged ingress does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.";
         }
         // On platforms where the command line is unavailable, the private
         // dashboard-port record is the only durable evidence that this PID
@@ -1016,7 +1016,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   if (!tunnelTransition.targetReady) {
     throw new Error(
       tunnelTransition.targetFailure ??
-        "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually, then retry.",
+        "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
     );
   }
 
@@ -1062,7 +1062,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       }
       if (rejectionOutcome === "unconfirmed") {
         throw new Error(
-          "The new named cloudflared tunnel did not log its ingress route and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+          "The new named cloudflared tunnel did not log its ingress route and could not be confirmed stopped. Its process state was retained. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
         );
       }
       throw new Error(
@@ -1084,11 +1084,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         );
       } else if (rejectionOutcome === "unconfirmed") {
         throw new Error(
-          "The new named cloudflared tunnel does not confirm the selected dashboard port and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+          "The new named cloudflared tunnel does not confirm the selected dashboard port and could not be confirmed stopped. Its process state was retained. Stop it manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
         );
       } else {
         throw new Error(
-          "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.",
+          "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually only after verifying its command line identifies cloudflared; do not stop it if its identity is uncertain. Then retry.",
         );
       }
     }
