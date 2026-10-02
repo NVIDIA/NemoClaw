@@ -3,7 +3,14 @@
 
 import { isNativeError, isProxy } from "node:util/types";
 
-import { redact, redactFull, redactFullWithUrls, redactSensitiveText } from "../../security/redact";
+import {
+  redact,
+  redactFull,
+  redactFullWithUrls,
+  redactSensitiveText,
+  redactStandaloneSecretsFull,
+  redactUrl,
+} from "../../security/redact";
 
 interface DiagnosticTask {
   source: object;
@@ -435,6 +442,12 @@ export function redactOnboardErrorText(message: string): string {
 /** Bound a diagnostic after removing recognized credential values. */
 export function redactOnboardDiagnosticText(message: string): string {
   return redactSensitiveText(message) ?? "";
+}
+
+/** Redact endpoint credentials before bounding and escaping the displayed URL. */
+export function formatOnboardEndpointDiagnostic(endpointUrl: string): string {
+  const endpoint = redactStandaloneSecretsFull(redactUrl(endpointUrl) ?? "<REDACTED>");
+  return JSON.stringify(endpoint.slice(0, 240));
 }
 
 /** Preserve the command diagnostic's existing redaction and length contract. */
