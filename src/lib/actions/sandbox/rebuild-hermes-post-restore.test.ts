@@ -147,7 +147,7 @@ describe("binding the Hermes gateway to restored state", () => {
 describe("Hermes rebuild post-restore verification", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
-  it("restores MCP without taking native Hermes lifecycle ownership", async () => {
+  it("rebinds restored Hermes state before restoring MCP", async () => {
     const mcpEntry = {
       server: "blender",
       providerName: "nemoclaw-mcp-alpha-blender",
@@ -176,8 +176,14 @@ describe("Hermes rebuild post-restore verification", () => {
       gatewayName: "nemoclaw",
       workspace: "default",
     });
-    expect(harness.restartSandboxGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.checkAndRecoverSandboxProcessesSpy).not.toHaveBeenCalled();
+    expect(harness.restartSandboxGatewaySpy).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    });
+    expect(harness.checkAndRecoverSandboxProcessesSpy).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    });
   });
 
   it("returns a failed rebuild when managed Hermes MCP restoration is incomplete (#7084)", async () => {
@@ -225,7 +231,7 @@ describe("Hermes rebuild post-restore verification", () => {
     );
   });
 
-  it("leaves ordinary Hermes lifecycle ownership with the managed image", async () => {
+  it("rebinds and verifies ordinary Hermes after restoring its durable state", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
       sandboxEntry: { agent: "hermes" },
@@ -235,11 +241,12 @@ describe("Hermes rebuild post-restore verification", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.restartSandboxGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.checkAndRecoverSandboxProcessesSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy).not.toHaveBeenCalledWith(
-      expect.stringMatching(/Hermes gateway (?:restarted|recovered) after state restore/),
-    );
+    expect(harness.restartSandboxGatewaySpy).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+    });
+    expect(harness.checkAndRecoverSandboxProcessesSpy).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+    });
   });
 
   it("fails before recovery when recreated Hermes identity mismatches (#7084)", async () => {
