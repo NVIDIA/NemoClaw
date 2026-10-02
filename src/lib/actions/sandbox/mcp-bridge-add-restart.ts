@@ -749,12 +749,15 @@ async function updateMcpBridgeDenyToolsUnlocked(
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
   const {
     denyTools: _previousDenyTools,
-    allowTools: _previousAllowTools,
-    ...entryWithoutTools
+    ...entryWithoutDenyTools
   } = storedEntry;
   const updatedEntry: McpSourceEntry = {
-    ...entryWithoutTools,
-    ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
+    ...entryWithoutDenyTools,
+    // Clearing the denylist preserves allowTools (allowlist mode).
+    // A non-empty denylist removes allowTools (denylist mode takes precedence).
+    ...(normalizedDenyTools.length > 0
+      ? { denyTools: normalizedDenyTools }
+      : { ...(storedEntry.allowTools ? { allowTools: storedEntry.allowTools } : {}) }),
     allowedIps: [...target.addresses],
   };
   assertGeneratedPolicyMutationSafe(sandboxName, updatedEntry);
