@@ -99,11 +99,12 @@ agentscaling_hermes_common_apply_hpa() {
   elif [[ "${current_runtime}" == "${INFERENCE_RUNTIME}" && "${current_mode}" == "${wanted}" ]]; then
     echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${INFERENCE_RUNTIME} and ${wanted}"
   else
-    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1 maxReplicas=8)"
+    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1, maxReplicas held at 1 until the client)"
     SKIP_MONITORING=1 USE_EXISTING_PROMETHEUS=1 \
       INFERENCE_RUNTIME="${INFERENCE_RUNTIME}" \
       INFERENCE_MODEL="${INFERENCE_MODEL}" \
       HPA_METRIC="${wanted}" \
+      HPA_APPLY_MAX_REPLICAS=1 \
       ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP}" \
       "${SCRIPT_DIR}/install-hpa.sh"
   fi
@@ -115,21 +116,9 @@ agentscaling_hermes_common_apply_hpa() {
   if [[ "${wanted}" == "latency_avg" ]]; then
     kubectl get apiservice v1beta1.custom.metrics.k8s.io 2>/dev/null | grep -q True \
       || agentscaling_hermes_common_fail "custom.metrics.k8s.io is not ready; latency HPA cannot run"
-    echo "Waiting up to ${LATENCY_METRIC_WAIT_SEC}s for nemoclaw_llm_latency_avg_milliseconds"
-    local ready=0
-    local deadline=$((SECONDS + LATENCY_METRIC_WAIT_SEC))
-    while ((SECONDS < deadline)); do
-      if hpa_common_verify_gpu_hpa_metric "${NAMESPACE}" >/dev/null 2>&1; then
-        ready=1
-        break
-      fi
-      sleep 5
-    done
-    if [[ "${ready}" -ne 1 ]]; then
-      hpa_common_verify_gpu_hpa_metric "${NAMESPACE}" || true
-      agentscaling_hermes_common_fail "Latency metric did not appear within ${LATENCY_METRIC_WAIT_SEC}s"
-    fi
+    echo "Latency HPA is armed after client_hermes.sh; not waiting for chats during provision"
   fi
+  hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}"
   hpa_common_print_hpa "${NAMESPACE}" || true
   agentscaling_hermes_common_wait_baseline
 }
@@ -159,7 +148,7 @@ agentscaling_hermes_common_main() {
       agentscaling_hermes_common_apply_hpa
       ;;
   esac
-  echo "HPA metric=${HPA_METRIC}. Client ./scripts/client_hermes.sh does not set this."
+  echo "HPA metric=${HPA_METRIC}. Provision holds GPUs at 1 replica. Client ./scripts/client_hermes.sh arms maxReplicas=8 and sends chats."
   echo "After sandboxes are Ready, run the client in another terminal. Keep the one OpenShell gateway; do not start a per-sandbox Hermes listener."
   exec "${SCRIPT_DIR}/setup-hermes-vllm-e2e-sandboxes.sh" "${cmd}"
 }

@@ -116,6 +116,44 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
     )
 
 
+# Marker in the in-sandbox kubectl exec. pkill this when client.sh exits so
+# chats cannot outlive the host client.
+LOAD_HELPER_PATTERN = "E2E_ESCALATE_INTERVAL_SEC"
+
+
+def stop_sandbox_chats(prefix: str, users: int) -> None:
+    """SIGTERM leftover OpenClaw load helpers inside sandboxes."""
+    kubectl = shutil.which("kubectl")
+    if not kubectl or users < 1:
+        return
+    print("Client finished: stopping in-sandbox chat helpers")
+    for user_id in range(users):
+        name = sandbox_name(prefix, user_id)
+        try:
+            subprocess.run(
+                [
+                    kubectl,
+                    "exec",
+                    "-n",
+                    SANDBOX_NS,
+                    name,
+                    "-c",
+                    "agent",
+                    "--",
+                    "bash",
+                    "-c",
+                    f"pkill -TERM -f '[E]2E_ESCALATE_INTERVAL_SEC' || true; "
+                    f"sleep 1; pkill -KILL -f '[E]2E_ESCALATE_INTERVAL_SEC' || true",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            continue
+
+
 def parse_load_counts(log_path: Path) -> tuple[int, int]:
     """Last [load] ok/err in the sandbox log is the chat count, not process exit."""
     ok = err = 0
@@ -264,7 +302,7 @@ async def simulate_user(
         "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN || true; "
         "if [ -f /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi; "
         "unset OPENCLAW_GATEWAY_TOKEN || true; "
-        "export E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
+        "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
         "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" python3 -"
@@ -401,6 +439,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     stop_load.set()
+                    await asyncio.to_thread(stop_sandbox_chats, args.prefix, args.users)
                     return
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
@@ -415,7 +454,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 prefix=args.prefix,
                 inflight=args.inflight_per_user,
                 inflight_start=args.inflight_start,
-                duration_sec=max(args.duration, 3600),
+                duration_sec=args.duration,
                 timeout_sec=args.timeout,
                 stop_event=stop_load,
                 log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
@@ -424,20 +463,25 @@ async def run_test(args: argparse.Namespace) -> int:
         for i in range(args.users)
     ]
 
-    deadline = time.monotonic() + max(args.duration, 1200)
-    while True:
-        if stop_load.is_set() or all(t.done() for t in user_tasks):
-            break
-        if time.monotonic() >= deadline and not stop_load.is_set():
-            print(
-                f"[load] still below {args.target_pods} GPUs after the wait cap; stopping user queries",
-                file=sys.stderr,
-            )
-            stop_load.set()
-            break
-        await asyncio.sleep(1)
+    deadline = time.monotonic() + args.duration + 30
+    results: list[object] = []
+    try:
+        while True:
+            if stop_load.is_set() or all(t.done() for t in user_tasks):
+                break
+            if time.monotonic() >= deadline and not stop_load.is_set():
+                print(
+                    f"[load] duration elapsed or still below {args.target_pods} GPUs; stopping user queries",
+                    file=sys.stderr,
+                )
+                stop_load.set()
+                break
+            await asyncio.sleep(1)
 
-    results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
+        results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
+    finally:
+        stop_load.set()
+        stop_sandbox_chats(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):

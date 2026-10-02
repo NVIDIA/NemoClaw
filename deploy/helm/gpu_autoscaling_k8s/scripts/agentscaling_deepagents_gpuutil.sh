@@ -15,7 +15,8 @@
 # the same release to INFERENCE_RUNTIME (default nim).
 #
 # The client does not know this metric. Use ./scripts/client_deepagents.sh after
-# sandboxes are Ready. For LLM-latency HPA use
+# sandboxes are Ready. Provision holds HPA at 1 replica; the client arms
+# maxReplicas=8 and sends dcode -n. For LLM-latency HPA use
 # ./scripts/agentscaling_deepagents_latency.sh.
 #
 # Defaults in this script: AGENT_NAME=deepagents INFERENCE_RUNTIME=nim

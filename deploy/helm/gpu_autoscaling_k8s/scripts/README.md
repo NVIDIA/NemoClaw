@@ -17,21 +17,21 @@ what each script in this directory does — it has no instructions of its own.
 | `install-hpa.sh` | Monitoring + chart + HPA (+ Envoy if enabled). This is the autoscaling install path. |
 | `hpa-load-test-dgx-8xh100.sh` | **Keep.** Fast HPA-only test for **8× H100** (metrics-proxy pod-IP Job, `files/load-generator.ts`). GPU util default, or `HPA_METRIC=latency_avg HPA_TARGET_LATENCY_MS=3000`. The sandbox e2e does not replace this. |
 | `hpa-load-test-brev-4xl40s.sh` | HPA load test for **4× L40S** on AWS (Brev). Same GPU-util default / latency env vars. |
-| `agentscaling_gpuutil.sh` | Sandbox provision + GPU-util HPA (`gpu_utilization_percent` > 40%). This DGX success path. |
-| `agentscaling_latency.sh` | Same sandboxes, LLM-latency HPA (`latency_avg` > 3000 ms). |
-| `client.sh` | End users: 1:1 `chat.send` into each sandbox's `:18789`. Does not create sandboxes or set the HPA metric. Use after either agentscaling script. |
+| `agentscaling_gpuutil.sh` | Sandbox provision + GPU-util HPA. Holds GPUs at 1 replica until `client.sh`. |
+| `agentscaling_latency.sh` | Same sandboxes, LLM-latency HPA. Holds GPUs at 1 replica until `client.sh`. |
+| `client.sh` | End users: 1:1 `chat.send` into each sandbox's `:18789`. Arms HPA `maxReplicas=8`, then sends chats. |
 | `agentscaling-common.sh` | Shared HPA apply + sandbox steps. Do not run it directly. |
 | `setup-openclaw-ollama-e2e-sandboxes.sh` | Sandbox create/start/stop used by the agentscaling scripts |
 | `e2e-openclaw-ollama-load-test.py` | Implementation used by `client.sh` |
 | `uninstall-e2e.sh` | Remove e2e sandboxes/providers before another pairing. Does not uninstall GPU inference or OpenShell. Next `agentscaling_*` helm-upgrades `INFERENCE_RUNTIME`. |
 | `setup-hermes-vllm-e2e-sandboxes.sh` | Create / start / stop / cleanup `hermes-vllm-e2e-*` only |
 | `e2e-hermes-load-test.py` | Per-user driver used by `client_hermes.sh` |
-| `agentscaling_hermes_gpuutil.sh` | Hermes + vLLM sandbox provision + GPU-util HPA |
-| `agentscaling_hermes_latency.sh` | Same Hermes sandboxes, LLM-latency HPA |
-| `client_hermes.sh` | End users: 1:1 `hermes -z` into each `hermes-vllm-e2e-*` sandbox |
-| `agentscaling_deepagents_gpuutil.sh` | Deep Agents + NIM sandbox provision + GPU-util HPA |
-| `agentscaling_deepagents_latency.sh` | Same Deep Agents sandboxes, LLM-latency HPA |
-| `client_deepagents.sh` | End users: 1:1 `dcode -n` into each `deepagent-nim-e2e-*` sandbox |
+| `agentscaling_hermes_gpuutil.sh` | Hermes + vLLM sandbox provision + GPU-util HPA. Holds GPUs at 1 until `client_hermes.sh`. |
+| `agentscaling_hermes_latency.sh` | Same Hermes sandboxes, LLM-latency HPA. Holds GPUs at 1 until `client_hermes.sh`. |
+| `client_hermes.sh` | End users: 1:1 `hermes -z`. Arms HPA `maxReplicas=8`, then sends chats. |
+| `agentscaling_deepagents_gpuutil.sh` | Deep Agents + NIM sandbox provision + GPU-util HPA. Holds GPUs at 1 until `client_deepagents.sh`. |
+| `agentscaling_deepagents_latency.sh` | Same Deep Agents sandboxes, LLM-latency HPA. Holds GPUs at 1 until `client_deepagents.sh`. |
+| `client_deepagents.sh` | End users: 1:1 `dcode -n`. Arms HPA `maxReplicas=8`, then sends chats. |
 | `setup-deepagent-nim-e2e-sandboxes.sh` | Create / cleanup `deepagent-nim-e2e-*` only |
 | `e2e-deepagents-load-test.py` | Per-user driver used by `client_deepagents.sh` |
 | `hpa-reset.sh` | Restore idle HPA / inference |

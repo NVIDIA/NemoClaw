@@ -579,6 +579,27 @@ hpa_common_require_live_runtime() {
   echo "Live GPU runtime is ${expected}"
 }
 
+# agentscaling_* holds HPA at 1 replica so provision / OpenClaw start cannot
+# scale GPUs. client.sh / client_hermes.sh / client_deepagents.sh arm maxReplicas.
+hpa_common_hold_hpa_until_client() {
+  local ns="${1:?namespace}"
+  local hpa="${2:?hpa}"
+  local deploy="${3:?deployment}"
+  echo "Holding HPA ${ns}/${hpa} at 1 replica until the client sends chats"
+  kubectl patch hpa "${hpa}" -n "${ns}" --type merge \
+    -p '{"spec":{"minReplicas":1,"maxReplicas":1}}' >/dev/null
+  kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
+}
+
+hpa_common_arm_hpa_for_client() {
+  local ns="${1:?namespace}"
+  local hpa="${2:?hpa}"
+  local max="${3:?maxReplicas}"
+  echo "Client starting: arming HPA ${ns}/${hpa} maxReplicas=${max}"
+  kubectl patch hpa "${hpa}" -n "${ns}" --type merge \
+    -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${max}}}" >/dev/null
+}
+
 hpa_common_release_selector() {
   local release="${RELEASE:-nemoclaw-gpu}"
   local chart="${CHART_NAME:-nemoclaw-gpu}"

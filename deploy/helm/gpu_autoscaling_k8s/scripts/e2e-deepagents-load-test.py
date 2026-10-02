@@ -95,6 +95,41 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
     )
 
 
+SANDBOX_NS = os.environ.get("OPENSHELL_NAMESPACE", "nemoclaw-sandboxes")
+
+
+def stop_sandbox_chats(prefix: str, users: int) -> None:
+    """Stop leftover dcode -n so chats cannot outlive client_deepagents.sh."""
+    kubectl = shutil.which("kubectl")
+    if not kubectl or users < 1:
+        return
+    print("Client finished: stopping in-sandbox dcode -n")
+    for user_id in range(users):
+        name = sandbox_name(prefix, user_id)
+        try:
+            subprocess.run(
+                [
+                    kubectl,
+                    "exec",
+                    "-n",
+                    SANDBOX_NS,
+                    name,
+                    "-c",
+                    "agent",
+                    "--",
+                    "bash",
+                    "-c",
+                    "pkill -TERM -f '[d]code -n' || true; sleep 1; pkill -KILL -f '[d]code -n' || true",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            continue
+
+
 def print_chat_table(
     results: list[dict[str, object]],
     duration_sec: int,
@@ -160,6 +195,9 @@ async def send_user_query(sandbox: str, prompt: str, timeout_sec: int) -> tuple[
     except asyncio.TimeoutError:
         await terminate_proc(proc)
         return False, f"timed out after {timeout_sec}s"
+    except asyncio.CancelledError:
+        await terminate_proc(proc)
+        raise
     stdout = stdout_b.decode("utf-8", errors="replace").strip()
     stderr = stderr_b.decode("utf-8", errors="replace").strip()
     combined = f"{stdout}\n{stderr}"
@@ -222,6 +260,9 @@ async def simulate_user(
             for task in done:
                 task.result()
         if pending:
+            if stop_event.is_set():
+                for task in pending:
+                    task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
     finally:
         log_handle.write(f"ok={ok} err={err}\n")
@@ -286,6 +327,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     stop_load.set()
+                    await asyncio.to_thread(stop_sandbox_chats, args.prefix, args.users)
                     return
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
@@ -310,15 +352,20 @@ async def run_test(args: argparse.Namespace) -> int:
     ]
 
     deadline = time.monotonic() + args.duration + 30
-    while True:
-        if stop_load.is_set() or time.monotonic() >= deadline or all(t.done() for t in user_tasks):
-            if time.monotonic() >= deadline and not stop_load.is_set():
-                print("[load] duration elapsed; stopping user queries", file=sys.stderr)
-            stop_load.set()
-            break
-        await asyncio.sleep(1)
+    results: list[object] = []
+    try:
+        while True:
+            if stop_load.is_set() or time.monotonic() >= deadline or all(t.done() for t in user_tasks):
+                if time.monotonic() >= deadline and not stop_load.is_set():
+                    print("[load] duration elapsed; stopping user queries", file=sys.stderr)
+                stop_load.set()
+                break
+            await asyncio.sleep(1)
 
-    results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
+        results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
+    finally:
+        stop_load.set()
+        stop_sandbox_chats(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):

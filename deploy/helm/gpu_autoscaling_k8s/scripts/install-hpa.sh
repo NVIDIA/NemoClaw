@@ -472,7 +472,7 @@ EOF
 
 helm_install() {
   hpa_common_gpu_helm_upgrade "${RELEASE}" "${CHART_DIR}" "${NAMESPACE}" "${HPA_VALUES}" \
-    "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}" "${INGRESS_HOST}" \
+    "${MIN_REPLICAS}" "${HPA_APPLY_MAX_REPLICAS:-${MAX_REPLICAS}}" "${GPU_TARGET}" "${INFERENCE_MODEL}" "${INGRESS_HOST}" \
     "${INFERENCE_RUNTIME}"
 }
 
@@ -504,8 +504,13 @@ if [[ ! "${MAX_REPLICAS}" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 hpa_common_verify_gpu_capacity "${MAX_REPLICAS}" || exit 1
+HPA_APPLY_MAX_REPLICAS="${HPA_APPLY_MAX_REPLICAS:-${MAX_REPLICAS}}"
+if [[ ! "${HPA_APPLY_MAX_REPLICAS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "HPA_APPLY_MAX_REPLICAS must be a positive integer (got '${HPA_APPLY_MAX_REPLICAS}')" >&2
+  exit 1
+fi
 if [[ "${ENABLE_AUTOSCALING}" == "1" ]]; then
-  echo "HPA maxReplicas=${MAX_REPLICAS} (allocatable GPUs / MAX_REPLICAS)"
+  echo "HPA maxReplicas=${HPA_APPLY_MAX_REPLICAS} (client will arm ${MAX_REPLICAS})"
   kubectl get pods -n "${DCGM_NAMESPACE}" -l app=nvidia-dcgm-exporter 2>/dev/null | grep -q Running || {
     echo "nvidia-dcgm-exporter not running in namespace ${DCGM_NAMESPACE} — GPU HPA metric unavailable" >&2
     exit 1
@@ -546,7 +551,7 @@ if ! hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}"
 fi
 
 if [[ "${ENABLE_AUTOSCALING}" == "1" ]]; then
-  hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${MAX_REPLICAS}" || true
+  hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${HPA_APPLY_MAX_REPLICAS}" || true
   hpa_common_print_hpa "${NAMESPACE}"
 else
   kubectl get deploy,pods,service -n "${NAMESPACE}"

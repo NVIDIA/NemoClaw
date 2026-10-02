@@ -8,7 +8,8 @@
 #
 # Switches the cluster HPA metric, then creates sandboxes.
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
-# Run ./scripts/client_hermes.sh in another terminal after sandboxes are Ready.
+# Provision holds HPA at 1 replica. Run ./scripts/client_hermes.sh after
+# sandboxes are Ready; the client arms maxReplicas=8 and sends hermes -z.
 # The client does not set HPA_METRIC. For GPU-util HPA use
 # ./scripts/agentscaling_hermes_gpuutil.sh.
 #

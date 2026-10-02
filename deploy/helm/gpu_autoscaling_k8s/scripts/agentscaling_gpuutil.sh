@@ -11,7 +11,9 @@
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
 #
 # The client does not know this metric. Use ./scripts/client.sh after
-# :18789 is up. For LLM-latency HPA use ./scripts/agentscaling_latency.sh.
+# :18789 is up. Provision holds HPA at 1 replica; client.sh arms
+# maxReplicas=8 and sends chats. For LLM-latency HPA use
+# ./scripts/agentscaling_latency.sh.
 #
 # Defaults in this script: AGENT_NAME=openclaw INFERENCE_RUNTIME=ollama
 # INFERENCE_MODEL=llama3.2:3b. Override GPU backend:

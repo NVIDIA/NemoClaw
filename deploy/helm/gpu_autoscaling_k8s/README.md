@@ -198,7 +198,7 @@ E2E test: OpenClaw + Ollama
             1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
 ```
 
-**GPU util** HPA metric `gpu_utilization_percent`, target 40%. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. 
+**GPU util** HPA metric `gpu_utilization_percent`, target 40%. Provision holds GPUs at **1** replica. `client.sh` arms `maxReplicas=8`, then users → sandboxes → Envoy → Ollama. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. 
 
 ```bash
 cd deploy/helm/gpu_autoscaling_k8s
@@ -212,6 +212,7 @@ export KUBECONFIG="${HOME}/.kube/config"
 # A TLS install can omit that variable.
 # Default INFERENCE_RUNTIME=ollama. Do not set vllm/nim unless you intend to override.
 # If Hermes or Deep Agents sandboxes are still up, run ./scripts/uninstall-e2e.sh first.
+# Holds HPA at 1 replica. Terminal C (client.sh) arms maxReplicas=8.
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 ```
 
@@ -227,7 +228,7 @@ E2E_USERS=5 ./scripts/client.sh
 ```
 
 
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms). `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and **holds GPUs at 1 replica**. OpenClaw start must not scale. `client.sh` arms `maxReplicas=8`, then users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
 
 ```bash
 # Terminal A 
@@ -329,7 +330,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
-**LLM latency.** Same sandboxes and the same `client_hermes.sh`. Provision switches HPA to `latency_avg` (target 3000 ms).
+**LLM latency.** Same sandboxes and the same `client_hermes.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and holds GPUs at 1 replica. `client_hermes.sh` arms `maxReplicas=8` and sends `hermes -z`.
 
 ```bash
 # Terminal A
@@ -420,7 +421,7 @@ E2E_USERS=5 ./scripts/client_deepagents.sh
 
 
 
-**LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms).
+**LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and holds GPUs at 1 replica. `client_deepagents.sh` arms `maxReplicas=8` and sends `dcode -n`.
 
 ```bash
 # Terminal A 
