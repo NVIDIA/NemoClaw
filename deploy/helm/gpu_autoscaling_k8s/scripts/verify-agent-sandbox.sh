@@ -143,6 +143,7 @@ if [[ "${RUN_MODE}" == "gateway" ]]; then
   log "Waiting for ${AGENT_DISPLAY_NAME} gateway at ${GATEWAY_HEALTH_URL} (timeout ${HEALTH_TIMEOUT_SEC}s)..."
   GATEWAY_HEALTH_CODE="$(
     sandbox_exec "$((HEALTH_TIMEOUT_SEC + 5))" \
+      # shellcheck disable=SC2016 # remote script: $1/$2/SECONDS must expand inside the sandbox
       bash -c '
         deadline=$((SECONDS + $2))
         while ((SECONDS < deadline)); do
@@ -161,12 +162,19 @@ fi
 log "GET https://inference.local/v1/models (timeout ${CURL_TIMEOUT_SEC}s)..."
 MODELS_JSON="$(
   sandbox_exec "${CURL_TIMEOUT_SEC}" \
-    curl -fsS --max-time "${CURL_TIMEOUT_SEC}" https://inference.local/v1/models
+    python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" "${CURL_TIMEOUT_SEC}"
 )" || fail "GET /v1/models timed out or failed after ${CURL_TIMEOUT_SEC}s"
 python3 -c 'import json,sys; expected=sys.argv[1]; payload=json.loads(sys.argv[2]); ids=[item.get("id") for item in payload.get("data") or []];
 assert expected in ids, f"inference.local /v1/models missing {expected!r}; got {ids!r}";
 print("models:", ", ".join(ids))' \
   "${MODEL}" "${MODELS_JSON}"
+
+if [[ "${AGENT_NAME}" == "hermes" ]]; then
+  log "Confirming curl cannot reach inference.local (Hermes managed_inference deny)..."
+  if sandbox_exec 15 curl -fsS --max-time 5 https://inference.local/v1/models >/dev/null 2>&1; then
+    fail "curl reached inference.local; /usr/bin/curl must not be on Hermes managed_inference"
+  fi
+fi
 
 QUERY='In one sentence, what is an AI agent sandbox?'
 # Exercise the actual agent binary/CLI for every agent, not a curl probe of the inference

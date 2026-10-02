@@ -75,6 +75,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
   # curl %{http_code} is literal; do not expand it in the sandbox shell.
   # shellcheck disable=SC2016
+  # shellcheck disable=SC2016 # remote script: $ns/$code must expand inside the sandbox
   if kubectl exec -n "${OPENSHELL_NAMESPACE}" "${name}" -c agent -- bash -c '
     for ns in /run/netns/*; do
       [ -e "$ns" ] || continue

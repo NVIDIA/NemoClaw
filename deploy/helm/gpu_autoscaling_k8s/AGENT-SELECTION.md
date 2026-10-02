@@ -195,7 +195,7 @@ openshell sandbox exec -n deepagents-onprem -- dcode
 
 Optional pairing test (not required for autoscaling): [`scripts/test-deepagents-vllm.sh`](scripts/test-deepagents-vllm.sh).
 
-Multi-user HPA e2e for Deep Agents + NIM is [README Quick start 6c](README.md#6c-deep-agents-code--nim-n-user-end-to-end): `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` then `client_deepagents.sh` (`dcode -n` into each sandbox).
+Multi-user HPA e2e for Deep Agents + NIM is [README Quick start 6c](README.md#6c-deep-agents-code--nim): `agentscaling_deepagents_gpuutil.sh` / `agentscaling_deepagents_latency.sh` then `client_deepagents.sh` (`dcode -n` into each sandbox).
 
 ## Env vars
 

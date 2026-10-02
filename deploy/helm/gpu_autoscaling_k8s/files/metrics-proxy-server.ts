@@ -269,11 +269,13 @@ const server = http.createServer(
     // and the leftover-drain wait never lets HPA scale-down proceed in the test.
     if (!isProbe) inflight += 1;
     try {
+      // codeql[js/user-controlled-bypass] kubelet liveness/readiness must stay unauthenticated
       if (pathOnly === "/healthz" || pathOnly === "/health") {
         res.writeHead(200, { "content-type": "text/plain" });
         res.end("ok\n");
         return;
       }
+      // codeql[js/user-controlled-bypass] kubelet readiness must stay unauthenticated
       if (pathOnly === "/readyz" || pathOnly === "/ready") {
         const ok = await checkInference();
         inferenceReachable = ok ? 1 : 0;
@@ -281,6 +283,7 @@ const server = http.createServer(
         res.end(ok ? "ready\n" : `${RUNTIME} model not ready\n`);
         return;
       }
+      // codeql[js/user-controlled-bypass] Prometheus scrape of /metrics must stay unauthenticated
       if (pathOnly === "/metrics") {
         res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
         res.end(metricsText());

@@ -31,6 +31,7 @@ spec:
       {{- if and (eq $runtime "nim") .Values.nim.startupProbeSeconds }}
       {{- $startupSec = int .Values.nim.startupProbeSeconds }}
       {{- end }}
+      {{- $vllmTP := int (.Values.vllm.tensorParallelSize | default 1) }}
       {{- if eq $runtime "nim" }}
       {{- if and (not .Values.nim.ngcApiKey.value) (not .Values.nim.ngcApiKey.existingSecret) }}
       {{- fail "nim.ngcApiKey.value or nim.ngcApiKey.existingSecret is required when inference.runtime=nim" }}
@@ -170,13 +171,23 @@ spec:
           volumeMounts:
             - name: inference-data
               mountPath: {{ include "nemoclaw-gpu.runtimeMountPath" . }}
+            {{- if gt $vllmTP 1 }}
+            - name: dshm
+              mountPath: /dev/shm
+            {{- end }}
           resources:
             {{- include "nemoclaw-gpu.ollamaResources" . | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /v1/models
+              port: inference
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: {{ max (div $startupSec 10) 12 }}
           livenessProbe:
             httpGet:
               path: /v1/models
               port: inference
-            initialDelaySeconds: 30
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 6
@@ -184,7 +195,6 @@ spec:
             httpGet:
               path: /v1/models
               port: inference
-            initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 12
@@ -338,6 +348,12 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if and (eq $runtime "vllm") (gt $vllmTP 1) }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.vllm.shmSize | default "16Gi" | quote }}
+        {{- end }}
         - name: inference-data
           {{- if and $rt.persistence.enabled $rt.persistence.hostPath }}
           hostPath:

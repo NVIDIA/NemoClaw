@@ -56,6 +56,7 @@ require_cmd python3
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
+E2E_USERS_FROM_ENV="${E2E_USERS:-}"
 E2E_USERS="${E2E_USERS:-3}"
 ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
@@ -171,6 +172,7 @@ sandbox_pod_ready() {
 
 gateway_health_ok() {
   local name="${1:?sandbox}"
+  # shellcheck disable=SC2016 # remote script: ${code} must expand inside the sandbox
   timeout --foreground 20 openshell sandbox exec -n "${name}" --no-tty -- \
     bash -c 'code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:8642/health 2>/dev/null || true)"; case "${code}" in 200|401) exit 0 ;; esac; exit 1' \
     >/dev/null 2>&1
@@ -239,7 +241,7 @@ inference_local_ok() {
   local name="${1:?sandbox}"
   # OpenShell MITM injects credentials. Do not copy the gateway API key into the sandbox.
   timeout --foreground 12 openshell sandbox exec -n "${name}" --no-tty -- \
-    curl -fsS --http1.1 --max-time 5 https://inference.local/v1/models >/dev/null 2>&1
+    python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" 5 >/dev/null 2>&1
 }
 
 skip_connect_shell_nproc() {
@@ -247,6 +249,7 @@ skip_connect_shell_nproc() {
   # OpenShell exec sources this hook. harden+verify set nproc=512, and
   # RLIMIT_NPROC is per real UID on the node. Several e2e sandboxes share that
   # UID, so the verify fork fails with EAGAIN and hermes -z never runs.
+  # shellcheck disable=SC2016 # remote script must not expand on the host
   kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
     cat > /etc/profile.d/nemoclaw-rlimits.sh << "EOF"
 # Connect-shell must not re-apply nproc=512 (RLIMIT_NPROC is per-UID on the node).
@@ -518,7 +521,7 @@ case "${ACTION}" in
     print_e2e_layout "${E2E_USERS}"
     ;;
   start)
-    start_gateways "${E2E_USERS:-$(count_from_existing)}"
+    start_gateways "${E2E_USERS_FROM_ENV:-$(count_from_existing)}"
     ;;
   refresh-inference)
     refresh_openshell_inference_backend \

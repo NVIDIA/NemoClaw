@@ -61,6 +61,7 @@ require_cmd openshell
 require_cmd kubectl
 require_cmd python3
 
+E2E_USERS_FROM_ENV="${E2E_USERS:-}"
 E2E_USERS="${E2E_USERS:-5}"
 ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
@@ -327,6 +328,7 @@ skip_connect_shell_nproc() {
   # RLIMIT_NPROC is per real UID on the node. Ten e2e sandboxes share that
   # UID, so the verify fork fails with EAGAIN and nemoclaw-start never runs.
   # PID 1 already applied sandbox rlimits; connect-shell does not need them.
+  # shellcheck disable=SC2016 # remote script must not expand on the host
   kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- bash -c '
     cat > /etc/profile.d/nemoclaw-rlimits.sh << "EOF"
 # Connect-shell must not re-apply nproc=512 (RLIMIT_NPROC is per-UID on the node).
@@ -681,7 +683,7 @@ case "${ACTION}" in
     print_e2e_layout "${E2E_USERS}"
     ;;
   start)
-    start_agents "${E2E_USERS:-$(count_from_existing)}"
+    start_agents "${E2E_USERS_FROM_ENV:-$(count_from_existing)}"
     ;;
   refresh-inference)
     refresh_openshell_inference_backend \

@@ -63,7 +63,6 @@ def _recv_frames(sock: socket.socket, buf: bytearray) -> tuple[list[tuple[int, b
             payload = bytes(buf[idx : idx + n])
         buf = buf[need:]
         out.append((opcode, payload))
-    return out, buf
 
 
 def _text(message: object) -> str:
@@ -95,6 +94,7 @@ def _gateway_token() -> str:
         if isinstance(token, str) and token.strip():
             return token.strip()
     except (OSError, json.JSONDecodeError):
+        # Missing or unreadable gateway config: fall back to the env token.
         pass
     return os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
 
@@ -256,6 +256,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     try:
         threading.stack_size(256 * 1024)
     except (ValueError, RuntimeError):
+        # Some libcs reject a custom stack size after threads have started.
         pass
 
     duration = float(os.environ.get("E2E_DURATION_SEC", "0"))

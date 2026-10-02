@@ -19,6 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=hpa-common.sh
 source "${SCRIPT_DIR}/hpa-common.sh"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 hpa_common_load_local_env "${CHART_DIR}"
 NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -26,7 +28,6 @@ JOB_NAME="${JOB_NAME:-nemoclaw-gpu-hpa-load-test}"
 require_cmd kubectl
 require_cmd helm
 hpa_common_verify_gpu_nodes || exit 1
-ALLOC_GPUS="$(hpa_common_allocatable_gpus)"
 if [[ -n "${TARGET_PODS:-}" && "${TARGET_PODS}" != "4" ]]; then
   echo "hpa-load-test-brev-4xl40s.sh always tests 4 pods." >&2
   exit 1
@@ -116,7 +117,8 @@ if ! hpa_common_ensure_metrics_proxy_ready "${NAMESPACE}" "${RELEASE}" "${CHART_
   exit 1
 fi
 
-INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
+INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-ollama}"
+INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
 HPA_HELM_ARGS=(
   upgrade --install "${RELEASE}" "${CHART_DIR}"
   --namespace "${NAMESPACE}"
@@ -124,7 +126,6 @@ HPA_HELM_ARGS=(
   --set namespace.create=false
   --set "namespace.name=${NAMESPACE}"
   -f "${HPA_VALUES}"
-  --set inference.model="${INFERENCE_MODEL}"
   --set probes.readinessChecksInference=true
   --set autoscaling.enabled=true
   --set autoscaling.minReplicas=1
@@ -139,6 +140,10 @@ HPA_HELM_ARGS=(
   --set "ingress.gateway.className=${INGRESS_CLASS:-eg}"
 )
 hpa_common_append_target_node_helm_sets HPA_HELM_ARGS
+hpa_common_append_servicemonitor_release_helm_set HPA_HELM_ARGS
+hpa_common_append_inference_runtime_helm_sets HPA_HELM_ARGS \
+  "${INFERENCE_RUNTIME}" \
+  "${INFERENCE_MODEL}"
 helm "${HPA_HELM_ARGS[@]}" >/dev/null
 
 IFS=$'\t' read -r DEPLOYED_INFERENCE_SECRET DEPLOYED_INFERENCE_SECRET_KEY < <(

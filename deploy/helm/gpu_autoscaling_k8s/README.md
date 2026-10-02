@@ -26,7 +26,7 @@ Kubernetes HPA scales those inference pods using a Pods **`AverageValue`** metri
 
 HPA scales to **N** inference pods (1 GPU each). The load balancer is **Envoy** (LeastRequest). Sandboxes reach GPUs at `https://inference.local`. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Test autoscaling and load balancing](#test-autoscaling-and-load-balancing).
 
-Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). Metrics-proxy, HPA, and the Envoy load balancer stay the same. Official pairings: [6a OpenClaw + Ollama](#6a-openclaw--ollama), [6b Hermes + vLLM](#6b-hermes--vllm-n-user-end-to-end), [6c Deep Agents + NIM](#6c-deep-agents-code--nim-n-user-end-to-end).
+Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). Metrics-proxy, HPA, and the Envoy load balancer stay the same. Official pairings: [6a OpenClaw + Ollama](#6a-openclaw--ollama), [6b Hermes + vLLM](#6b-hermes--vllm), [6c Deep Agents + NIM](#6c-deep-agents-code--nim).
 
 Isolated eval uses `ALLOW_INSECURE_HTTP=1` (Envoy with no TLS overlay). HTTPS Envoy uses [TLS values](#tls-values).
 
@@ -220,7 +220,7 @@ Check the log to see the end users, sandboxes, and chats:
 
 
 
-#### 6b. Hermes + vLLM 
+#### 6b. Hermes + vLLM
 
 vLLM pulls the image `nvcr.io/nvidia/vllm`. Kubelet needs an `nvcr.io` **image-pull** Secret before `agentscaling_hermes_gpuutil.sh`. The `nvapi-` value in `secrets.env` is that pull password. `apply-local-secrets.sh` stores it as Kubernetes Secret `ngc-registry` (`dockerconfigjson`). The vLLM **container** never gets `NGC_API_KEY`; only NIM uses that in-container env for model-profile download.
 
@@ -238,7 +238,7 @@ If `HF_TOKEN` is set, the script also creates Secret `hf-token`. Put only the **
 # local.env — names, not key values
 export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
-``` 
+```
 
 After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
 

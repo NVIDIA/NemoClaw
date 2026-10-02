@@ -297,7 +297,7 @@ wait_inference_local() {
   echo "  ${name}: waiting for https://inference.local"
   for ((i = 1; i <= 20; i += 1)); do
     if timeout --foreground 12 openshell sandbox exec -n "${name}" --no-tty -- \
-      curl -fsS --http1.1 --max-time 5 https://inference.local/v1/models >>"${OPENSHELL_LOG}" 2>&1; then
+      python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" 5 >>"${OPENSHELL_LOG}" 2>&1; then
       echo "  ${name}: inference.local reachable"
       return 0
     fi

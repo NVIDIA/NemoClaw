@@ -190,7 +190,7 @@ async def simulate_user(
                 break
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
-                await task
+                task.result()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
     finally:

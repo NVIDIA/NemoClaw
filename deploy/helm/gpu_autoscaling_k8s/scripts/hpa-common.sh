@@ -33,6 +33,7 @@ hpa_common_servicemonitor_release_label() {
 }
 
 hpa_common_append_servicemonitor_release_helm_set() {
+  # shellcheck disable=SC2178 # nameref to the caller's Helm argv array
   local -n __helm_args="${1:?helm_args array name}"
   local release_label
   release_label="$(hpa_common_servicemonitor_release_label)" || true
@@ -1479,6 +1480,7 @@ hpa_common_target_node_helm_value() {
 # Pin GPU pods and the Envoy dataplane to NEMOCLAW_TARGET_NODE. Envoy requests no
 # GPUs; the GPU taint toleration is only so it can schedule on that node.
 hpa_common_append_target_node_helm_sets() {
+  # shellcheck disable=SC2178 # nameref to the caller's Helm argv array
   local -n __helm_args="${1:?helm_args array name}"
   local target_node="${NEMOCLAW_TARGET_NODE:-}"
   [[ -n "${target_node}" ]] || return 0
@@ -1493,6 +1495,7 @@ hpa_common_append_target_node_helm_sets() {
 # Shared by the HPA upgrade and the 1-replica baseline so a vLLM/NIM release
 # is not rewritten as Ollama during hpa_common_ensure_metrics_proxy_ready.
 hpa_common_append_inference_runtime_helm_sets() {
+  # shellcheck disable=SC2178 # nameref to the caller's Helm argv array
   local -n __helm_args="${1:?helm_args array name}"
   local inference_runtime="${2:-${INFERENCE_RUNTIME:-ollama}}"
   local inference_model="${3:-${INFERENCE_MODEL:-llama3.2:3b}}"

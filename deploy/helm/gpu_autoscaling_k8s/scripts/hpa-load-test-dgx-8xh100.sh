@@ -43,12 +43,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=hpa-common.sh
 source "${SCRIPT_DIR}/hpa-common.sh"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 hpa_common_load_local_env "${CHART_DIR}"
 NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 RELEASE="${RELEASE:-nemoclaw-gpu}"
 JOB_NAME="${JOB_NAME:-nemoclaw-gpu-hpa-load-test}"
-INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
 INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-ollama}"
+INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
 # Pin generators to the DGX 8× H100 node so they do not land on other GPU nodes.
 # Hostname comes from gitignored local.env (NEMOCLAW_TARGET_NODE).
 HPA_LOAD_NODE_NAME="${HPA_LOAD_NODE_NAME:-${NEMOCLAW_TARGET_NODE:-}}"
@@ -137,6 +139,7 @@ HPA_TEST_SCALE_DOWN_STABILIZATION_SEC="${HPA_TEST_SCALE_DOWN_STABILIZATION_SEC:-
 HPA_TEST_GPU_TARGET="${HPA_TEST_GPU_TARGET:-${HPA_TEST_DEFAULT_GPU_TARGET}}"
 HPA_EFFECTIVE_GPU_TARGET="${HPA_CONFIGURED_GPU_TARGET}"
 HPA_TEST_BEHAVIOR_APPLIED=0
+HPA_SCALE_DOWN_PAUSED=0
 HPA_RESTORE_HELM_ARGS=()
 # shellcheck disable=SC2034 # passed by name to hpa_common_log_hpa_if_changed
 LAST_HPA_LINE=""
@@ -168,8 +171,6 @@ HPA_HELM_ARGS=(
   --set namespace.create=false
   --set "namespace.name=${NAMESPACE}"
   -f "${HPA_VALUES}"
-  --set inference.model="${INFERENCE_MODEL}"
-  --set inference.runtime="${INFERENCE_RUNTIME}"
   --set probes.readinessChecksInference=true
   --set autoscaling.enabled=true
   --set autoscaling.minReplicas=1
@@ -184,22 +185,10 @@ HPA_HELM_ARGS=(
   --set "ingress.gateway.className=${INGRESS_CLASS:-eg}"
 )
 hpa_common_append_target_node_helm_sets HPA_HELM_ARGS
-if [[ -n "${NIM_NGC_API_KEY:-}" ]]; then
-  HPA_HELM_ARGS+=(--set-string "nim.ngcApiKey.value=${NIM_NGC_API_KEY}")
-fi
-if [[ -n "${NIM_NGC_API_KEY_SECRET:-}" ]]; then
-  HPA_HELM_ARGS+=(--set-string "nim.ngcApiKey.existingSecret=${NIM_NGC_API_KEY_SECRET}")
-fi
-if [[ -n "${NIM_IMAGE_PULL_SECRET:-}" ]]; then
-  HPA_HELM_ARGS+=(--set-string "nim.imagePullSecret.existingSecret=${NIM_IMAGE_PULL_SECRET}")
-fi
-if [[ -n "${VLLM_IMAGE_PULL_SECRET:-}" ]]; then
-  HPA_HELM_ARGS+=(--set-string "vllm.imagePullSecret.existingSecret=${VLLM_IMAGE_PULL_SECRET}")
-fi
-if [[ -n "${VLLM_HF_TOKEN_SECRET:-}" ]]; then
-  HPA_HELM_ARGS+=(--set-string "vllm.huggingFaceToken.existingSecret=${VLLM_HF_TOKEN_SECRET}")
-fi
 hpa_common_append_servicemonitor_release_helm_set HPA_HELM_ARGS
+hpa_common_append_inference_runtime_helm_sets HPA_HELM_ARGS \
+  "${INFERENCE_RUNTIME}" \
+  "${INFERENCE_MODEL}"
 
 # The test restores the configured policy in cleanup. Require all five knobs
 # together so a half-configured override cannot leave an invalid HPA policy behind.
@@ -241,6 +230,25 @@ if [[ "${HPA_TEST_BEHAVIOR_SET}" -eq 5 ]]; then
   )
   HPA_TEST_BEHAVIOR_APPLIED=1
 fi
+
+cleanup() {
+  # Remove every resource this script creates (Job, RBAC, ConfigMap) so repeated runs
+  # don't accumulate unused ServiceAccounts/Roles/RoleBindings/ConfigMaps in the namespace.
+  hpa_common_cleanup_load_test_resources "${NAMESPACE}" "${JOB_NAME}"
+  kubectl delete pod "${LB_TEST_PROBE_POD:-nemoclaw-gpu-envoy-lb-probe}" \
+    -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
+  if [[ "${HPA_SCALE_DOWN_PAUSED}" -eq 1 ]]; then
+    hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}" || true
+    HPA_SCALE_DOWN_PAUSED=0
+  fi
+  if [[ "${HPA_TEST_BEHAVIOR_APPLIED}" -eq 1 ]]; then
+    hpa_common_log "Restoring the configured HPA scale behavior..."
+    helm "${HPA_RESTORE_HELM_ARGS[@]}" >/dev/null \
+      || echo "Warning: could not restore configured HPA behavior; rerun ./scripts/install-hpa.sh" >&2
+  fi
+}
+trap cleanup EXIT
+
 helm "${HPA_HELM_ARGS[@]}" >/dev/null
 hpa_common_wait_for_envoy_dataplane_on_target_node "${NAMESPACE}" "${DEPLOYMENT}" 180
 
@@ -359,20 +367,6 @@ hpa_wait_for_one_replica_baseline || exit 1
 hpa_common_log "Smoke test OK — starting load generators"
 
 LOAD_SA="${JOB_NAME}-sa"
-cleanup() {
-  # Remove every resource this script creates (Job, RBAC, ConfigMap) so repeated runs
-  # don't accumulate unused ServiceAccounts/Roles/RoleBindings/ConfigMaps in the namespace.
-  hpa_common_cleanup_load_test_resources "${NAMESPACE}" "${JOB_NAME}"
-  kubectl delete pod "${LB_TEST_PROBE_POD:-nemoclaw-gpu-envoy-lb-probe}" \
-    -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1 || true
-  if [[ "${HPA_TEST_BEHAVIOR_APPLIED}" -eq 1 ]]; then
-    hpa_common_log "Restoring the configured HPA scale behavior..."
-    helm "${HPA_RESTORE_HELM_ARGS[@]}" >/dev/null \
-      || echo "Warning: could not restore configured HPA behavior; rerun ./scripts/install-hpa.sh" >&2
-  fi
-}
-trap cleanup EXIT
-
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
 
 kubectl apply -f - >/dev/null <<EOF

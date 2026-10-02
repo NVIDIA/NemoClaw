@@ -77,6 +77,8 @@ vllm:
   gpuMemoryUtilization: 0.85
   # One GPU per pod (see gpuScaling.perPodGpu) — keep at 1 unless you also change perPodGpu.
   tensorParallelSize: 1
+  # Memory-backed /dev/shm for NCCL when tensorParallelSize > 1. Unused at the default of 1.
+  shmSize: 16Gi
   # Model-specific vllm serve flags (from vLLM's published recipe: recipes.vllm.ai). These
   # defaults are specific to the Nemotron-3-Nano-4B-FP8 family — replace them (or clear the
   # list) when switching inference.model to a different architecture.

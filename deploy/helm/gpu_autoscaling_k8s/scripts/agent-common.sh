@@ -207,6 +207,11 @@ agent_common_extra_build_args() {
   esac
 }
 
+# In-sandbox GET of https://inference.local/v1/models.
+# Hermes managed_inference allows python3, not curl (curl would inherit injected credentials).
+# Usage: openshell sandbox exec -n NAME --no-tty -- python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" [timeout]
+AGENT_COMMON_INFERENCE_MODELS_PY='import urllib.request,sys; t=float(sys.argv[1]) if len(sys.argv)>1 else 5.0; print(urllib.request.urlopen("https://inference.local/v1/models", timeout=t).read().decode())'
+
 # Fast smoke test run immediately after `openshell sandbox create` in
 # create-agent-sandbox.sh. No retries/timeouts here — hpa_common_verify_target_node /
 # openshell already waited for the sandbox to be Ready; verify-agent-sandbox.sh is the
@@ -236,7 +241,7 @@ agent_common_create_smoke_test() {
       ;;
   esac
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-    curl -fsS https://inference.local/v1/models >/dev/null
+    python3 -c "${AGENT_COMMON_INFERENCE_MODELS_PY}" 5 >/dev/null
 }
 
 # GHCR Hermes images bake NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b.
