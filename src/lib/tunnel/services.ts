@@ -280,6 +280,12 @@ export function getTunnelUrl(pidDir: string, dashboardPort: number): string {
   return extractNamedCloudflareUrl(log, dashboardPort) ?? extractTryCloudflareUrl(log) ?? "";
 }
 
+function namedTunnelTargetsDashboard(pidDir: string, dashboardPort: number): boolean {
+  const logFile = join(pidDir, "cloudflared.log");
+  if (!existsSync(logFile)) return false;
+  return extractNamedCloudflareUrl(readFileSync(logFile, "utf-8"), dashboardPort) !== null;
+}
+
 export function readCloudflaredState(pidDir: string): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
@@ -788,6 +794,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const tunnelTransition = await withMcpLifecycleLock(cloudflaredLifecycleLockName(pidDir), () => {
     let targetReady = true;
     let dashboardPortBound = false;
+    let targetFailure: string | null = null;
     if (cloudflaredAvailable) {
       if (tunnelToken) {
         const wasRunning = isRunning(pidDir, "cloudflared");
@@ -810,6 +817,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         const runningNamedTunnel = tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run";
         const runningQuickTunnel =
           tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
+        if (runningNamedTunnel && !namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
+          targetReady = false;
+          targetFailure =
+            "The existing named cloudflared tunnel is still running, but its logged ingress does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.";
+        }
         // On platforms where the command line is unavailable, the private
         // dashboard-port record is the only durable evidence that this PID
         // was started as our quick tunnel. Require it to be valid before
@@ -843,6 +855,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     }
     return {
       targetReady,
+      targetFailure,
       pid: readPid(pidDir, "cloudflared"),
       dashboardPortBound,
     };
@@ -850,7 +863,8 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
 
   if (!tunnelTransition.targetReady) {
     throw new Error(
-      "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually, then retry.",
+      tunnelTransition.targetFailure ??
+        "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually, then retry.",
     );
   }
 

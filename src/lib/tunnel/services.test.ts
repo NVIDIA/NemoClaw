@@ -409,6 +409,37 @@ describe("startAll", () => {
     );
   });
 
+  it("serializes overlapping starts for one sandbox and leaves one coherent final target", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "printf 'argv:%s\\n' \"$*\"",
+        "echo 'https://concurrent.trycloudflare.com'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await Promise.all([
+      startAll({ pidDir, dashboardPort: 12_345 }),
+      startAll({ pidDir, dashboardPort: 18_791 }),
+    ]);
+
+    const finalPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const finalTarget = readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8");
+    const finalLog = readFileSync(join(pidDir, "cloudflared.log"), "utf-8");
+    expect(finalPid).toBeGreaterThan(0);
+    expect(finalTarget).toBe("18791");
+    expect(finalLog).toContain("argv:tunnel --url http://localhost:18791");
+    expect(finalLog).not.toContain("argv:tunnel --url http://localhost:12345");
+  });
+
   it("reuses a quick tunnel with a recorded dashboard port when process arguments are unavailable", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -668,6 +699,14 @@ describe("startAll", () => {
     expect(readCloudflaredState(pidDir)).toEqual(namedState);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
     expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
+
+    const outputBeforeMismatch = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    await expect(startAll({ pidDir, dashboardPort: 18789 })).rejects.toThrow(
+      "existing named cloudflared tunnel is still running",
+    );
+    expect(readCloudflaredState(pidDir)).toEqual(namedState);
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toBe(outputBeforeMismatch);
   });
 });
 
