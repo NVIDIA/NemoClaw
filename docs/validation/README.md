@@ -34,6 +34,7 @@ The [v1 integration checks](kubernetes-v1-integration-linux-amd64.md) record reg
 The [OpenShift offline validation](openshift-offline.md) records profile checks and the remaining live qualification requirements.
 The subsequent [Kubernetes Fabric live validation](kubernetes-fabric-live-linux-amd64.md) records a fresh Linux AMD64 run with three hosted agent responses, export/reapply, destroy, and owned-cluster cleanup.
 The [v1 rebase validation](kubernetes-v1-rebase-linux-amd64.md) records rebuilt Kubernetes/OpenShift images, passing integration and inference checks, and the live apply failure caused by unsupported native Fabric health.
+The [development health exception validation](kubernetes-development-health-linux-amd64.md) records a complete opt-in Kubernetes test with real agent replies and explicitly unverified Fabric health; ordinary SDK apply remains strict.
 
 | Behavior | Tests and Results |
 |---|---|
