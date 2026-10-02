@@ -14,18 +14,18 @@
 #
 # Does not run openshell gateway start, nemohermes launch, or the
 # metrics-proxy chat-completions Job. Does not destroy sandboxes outside
-# SANDBOX_PREFIX (default hermes-e2e-). Does not touch openclaw-ollama-e2e-*
+# SANDBOX_PREFIX (default hermes-vllm-e2e-). Does not touch openclaw-ollama-e2e-*
 # or hermes-onprem.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/agentscaling_hermes_gpuutil.sh                      # default E2E_USERS=3, GPU util HPA
 #   E2E_USERS=3 ./scripts/agentscaling_hermes_latency.sh bringup   # LLM latency HPA
-#   ./scripts/setup-hermes-e2e-sandboxes.sh 3
-#   ./scripts/setup-hermes-e2e-sandboxes.sh start
-#   ./scripts/setup-hermes-e2e-sandboxes.sh refresh-inference
-#   ./scripts/setup-hermes-e2e-sandboxes.sh stop
-#   ./scripts/setup-hermes-e2e-sandboxes.sh cleanup
+#   ./scripts/setup-hermes-vllm-e2e-sandboxes.sh 3
+#   ./scripts/setup-hermes-vllm-e2e-sandboxes.sh start
+#   ./scripts/setup-hermes-vllm-e2e-sandboxes.sh refresh-inference
+#   ./scripts/setup-hermes-vllm-e2e-sandboxes.sh stop
+#   ./scripts/setup-hermes-vllm-e2e-sandboxes.sh cleanup
 #
 # Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh are still up.
 
@@ -64,20 +64,20 @@ if [[ -z "${ACTION}" ]]; then
 fi
 export AGENT_NAME="${AGENT_NAME:-hermes}"
 [[ "${AGENT_NAME}" == "hermes" ]] \
-  || fail "setup-hermes-e2e-sandboxes.sh is Hermes-only (got AGENT_NAME=${AGENT_NAME})"
+  || fail "setup-hermes-vllm-e2e-sandboxes.sh is Hermes-only (got AGENT_NAME=${AGENT_NAME})"
 if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "vllm" ]]; then
   fail "this e2e is Hermes + vLLM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-hermes-nim.sh."
 fi
 agent_common_validate "${AGENT_NAME}"
 export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-vllm}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
-SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
+SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-vllm-e2e-}"
 [[ "${SANDBOX_PREFIX}" =~ ^[a-z][a-z0-9-]{0,40}$ ]] \
   || fail "SANDBOX_PREFIX must be a lowercase Kubernetes-style prefix"
-[[ "${SANDBOX_PREFIX}" == hermes-e2e-* || "${SANDBOX_PREFIX}" == "hermes-e2e-" ]] \
-  || fail "SANDBOX_PREFIX must stay under hermes-e2e- so OpenClaw e2e / hermes-onprem are not destroyed"
+[[ "${SANDBOX_PREFIX}" == hermes-vllm-e2e-* || "${SANDBOX_PREFIX}" == "hermes-vllm-e2e-" ]] \
+  || fail "SANDBOX_PREFIX must stay under hermes-vllm-e2e- so OpenClaw e2e / hermes-onprem are not destroyed"
 
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -86,7 +86,8 @@ if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; the
 fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54}"
+export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+agent_common_require_sandbox_image_for_agent hermes "${AGENT_SANDBOX_IMAGE}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # 2Gi + inflight 2 OOMed dgx-19. 4Gi with inflight 1. 8Gi is OpenClaw-only.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"

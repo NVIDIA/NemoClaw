@@ -17,6 +17,11 @@
 # sandboxes are Ready. For LLM-latency HPA use
 # ./scripts/agentscaling_deepagents_latency.sh.
 #
+# Defaults in this script: AGENT_NAME=deepagents INFERENCE_RUNTIME=nim
+# INFERENCE_MODEL=nvidia/nemotron-3-nano. Other NIM catalog id:
+#   INFERENCE_MODEL=nvidia/<nim-model-id> ./scripts/agentscaling_deepagents_gpuutil.sh
+# Other agent: agentscaling_gpuutil.sh or agentscaling_hermes_gpuutil.sh
+#
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   E2E_USERS=3 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_gpuutil.sh

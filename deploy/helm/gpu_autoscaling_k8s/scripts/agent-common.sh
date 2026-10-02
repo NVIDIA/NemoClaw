@@ -46,13 +46,88 @@ agent_common_validate_runtime_pairing() {
   fi
 }
 
-# Popular documented defaults used by this recipe (OpenClaw+Ollama, Hermes+NIM, Deep Agents+vLLM).
+# E2E defaults by inference runtime (Quick start 6a/6b/6c).
 agent_common_default_inference_model() {
   case "${1:-ollama}" in
     vllm) printf '%s' "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" ;;
     nim) printf '%s' "nvidia/nemotron-3-nano" ;;
     *) printf '%s' "llama3.2:3b" ;;
   esac
+}
+
+# Pick INFERENCE_MODEL for a runtime. Uses that runtime's default when unset
+# or when the value is another pairing's leftover default (same shell after 6a/6b).
+# Any other value is kept as an explicit override.
+agent_common_resolve_inference_model() {
+  local runtime="${1:?runtime}"
+  local current="${INFERENCE_MODEL:-}"
+  local want ollama_default vllm_default nim_default
+  want="$(agent_common_default_inference_model "${runtime}")"
+  ollama_default="$(agent_common_default_inference_model ollama)"
+  vllm_default="$(agent_common_default_inference_model vllm)"
+  nim_default="$(agent_common_default_inference_model nim)"
+  case "${current}" in
+    ""|"${ollama_default}"|"${vllm_default}"|"${nim_default}")
+      if [[ -z "${current}" || \
+            ("${current}" == "${ollama_default}" && "${runtime}" != "ollama") || \
+            ("${current}" == "${vllm_default}" && "${runtime}" != "vllm") || \
+            ("${current}" == "${nim_default}" && "${runtime}" != "nim") ]]; then
+        printf '%s' "${want}"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s' "${current}"
+}
+
+# Published GHCR digests used by Quick start 6a/6b/6c e2e scripts.
+agent_common_default_sandbox_image() {
+  case "${1:-}" in
+    hermes) printf '%s' "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54" ;;
+    deepagents) printf '%s' "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:f7ad7ddc95cea260cff02d26b873903805806ccfef5d27436cbec4eba3455eff" ;;
+    *) printf '%s' "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba" ;;
+  esac
+}
+
+# Which official agent repo an image string belongs to, if any.
+# Deep Agents is langchain-deepagents-code-sandbox, never hermes-sandbox.
+agent_common_sandbox_image_owner() {
+  case "${1:-}" in
+    *langchain-deepagents* | *nemoclaw-deepagents*) printf '%s' deepagents ;;
+    *hermes-sandbox* | *nemoclaw-hermes*) printf '%s' hermes ;;
+    *openclaw-sandbox* | *nemoclaw-openclaw*) printf '%s' openclaw ;;
+  esac
+}
+
+# Use this agent's published image when AGENT_SANDBOX_IMAGE is unset or is
+# another pairing's leftover (Hermes/OpenClaw image in a Deep Agents shell).
+# A custom image is kept only if it does not look like a different agent.
+agent_common_resolve_sandbox_image() {
+  local agent="${1:?agent}"
+  local current="${AGENT_SANDBOX_IMAGE:-}"
+  local want owner
+  want="$(agent_common_default_sandbox_image "${agent}")"
+  if [[ -z "${current}" ]]; then
+    printf '%s' "${want}"
+    return 0
+  fi
+  owner="$(agent_common_sandbox_image_owner "${current}")"
+  if [[ -n "${owner}" && "${owner}" != "${agent}" ]]; then
+    printf '%s' "${want}"
+    return 0
+  fi
+  printf '%s' "${current}"
+}
+
+agent_common_require_sandbox_image_for_agent() {
+  local agent="${1:?agent}"
+  local image="${2:?image}"
+  local owner
+  owner="$(agent_common_sandbox_image_owner "${image}")"
+  if [[ -n "${owner}" && "${owner}" != "${agent}" ]]; then
+    echo "ERROR: AGENT_NAME=${agent} cannot use ${owner} image ${image}" >&2
+    exit 1
+  fi
 }
 
 # README Quick start 6a/6b/6c pairings. TAB-separated: agent runtime model
@@ -252,23 +327,33 @@ agent_common_pin_hermes_model() {
     hermes config set model.default "${model}" >/dev/null
 }
 
-# GHCR Deep Agents images bake NEMOCLAW_MODEL at build time (often vLLM Nemotron).
-# Point dcode -n at the chart NIM model so requests match nvidia/nemotron-3-nano.
+# GHCR Deep Agents images bake NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b.
+# Point dcode -n at the chart NIM model and drop leftover openai.params for
+# that baked id (Deep Agents errors if params name a model not in models[]).
 agent_common_pin_deepagents_model() {
   local sandbox_name="${1:?sandbox}" model="${2:?model}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-    python3 -c "
-import pathlib, re, sys
-model = sys.argv[1].removeprefix('openai:')
-path = pathlib.Path('/sandbox/.deepagents/config.toml')
+    env -u VIRTUAL_ENV PIN_MODEL="${model}" python3 -c '
+import os, pathlib, re
+model = os.environ["PIN_MODEL"].removeprefix("openai:")
+path = pathlib.Path("/sandbox/.deepagents/config.toml")
 text = path.read_text()
-text, n = re.subn(r'(?m)^default = \".*\"\$', f'default = \"openai:{model}\"', text, count=1)
+text, n = re.subn(r"(?m)^default = \".*\"$", "default = \"openai:" + model + "\"", text, count=1)
 if n != 1:
-    raise SystemExit('failed to set models.default')
-text, n = re.subn(r'(?m)^models = \\[.*\\]\$', f'models = [\"{model}\"]', text, count=1)
+    raise SystemExit("failed to set models.default")
+text, n = re.subn(r"(?m)^models = \[.*\]$", "models = [\"" + model + "\"]", text, count=1)
 if n != 1:
-    raise SystemExit('failed to set provider models')
+    raise SystemExit("failed to set provider models")
+kept = []
+for chunk in re.split(r"(?m)(?=^\[)", text):
+    match = re.match(r"^\[models\.providers\.openai\.params\.\"([^\"]+)\"\]", chunk)
+    if match and match.group(1) != model:
+        continue
+    kept.append(chunk)
+text = "".join(kept)
+if "[models.providers.openai.params.\"nvidia/nemotron-3-ultra-550b-a55b\"]" in text:
+    raise SystemExit("leftover ultra-550b params still present")
 path.write_text(text)
-print('NEMOCLAW_DEEPAGENTS_MODEL_OK')
-" "${model}" >/dev/null
+print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
+' >/dev/null
 }

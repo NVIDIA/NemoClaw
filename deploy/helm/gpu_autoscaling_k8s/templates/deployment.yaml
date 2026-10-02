@@ -8,6 +8,13 @@ metadata:
   labels:
     {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
 spec:
+  {{- $runtime := include "nemoclaw-gpu.runtime" . }}
+  {{- $startupSec := int .Values.probes.startupProbeSeconds }}
+  {{- if and (eq $runtime "nim") .Values.nim.startupProbeSeconds }}
+  {{- $startupSec = int .Values.nim.startupProbeSeconds }}
+  {{- end }}
+  {{- /* Default progressDeadlineSeconds is 600s; NIM profile download exceeds that. */}}
+  progressDeadlineSeconds: {{ add $startupSec 60 }}
   {{- if .Values.autoscaling.enabled }}
   replicas: {{ include "nemoclaw-gpu.hpaMinReplicas" . }}
   {{- else }}
@@ -26,11 +33,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      {{- $runtime := include "nemoclaw-gpu.runtime" . }}
-      {{- $startupSec := int .Values.probes.startupProbeSeconds }}
-      {{- if and (eq $runtime "nim") .Values.nim.startupProbeSeconds }}
-      {{- $startupSec = int .Values.nim.startupProbeSeconds }}
-      {{- end }}
       {{- $vllmTP := int (.Values.vllm.tensorParallelSize | default 1) }}
       {{- if eq $runtime "nim" }}
       {{- if and (not .Values.nim.ngcApiKey.value) (not .Values.nim.ngcApiKey.existingSecret) }}
@@ -72,6 +74,23 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $runtime "nim" }}
+      initContainers:
+        - name: nim-cache-perms
+          image: {{ include "nemoclaw-gpu.imageRef" .Values.metricsProxy.image | quote }}
+          imagePullPolicy: {{ .Values.metricsProxy.image.pullPolicy }}
+          command: ["/bin/sh", "-c", "chgrp -R 0 /opt/nim/.cache && chmod -R g+rwX /opt/nim/.cache"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          volumeMounts:
+            - name: inference-data
+              mountPath: {{ include "nemoclaw-gpu.runtimeMountPath" . }}
       {{- end }}
       containers:
         {{- $rt := index .Values $runtime }}
@@ -206,6 +225,12 @@ spec:
           {{- with $securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.nim.extraArgs }}
+          args:
+            {{- range . }}
+            - {{ . | quote }}
+            {{- end }}
           {{- end }}
           ports:
             - name: inference

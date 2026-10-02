@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # End-user client for the Deep Agents Code + NIM e2e. One simulated user per
-# sandbox (1:1). user-i sends dcode -n into sandbox deepagents-e2e-00i.
+# sandbox (1:1). user-i sends dcode -n into sandbox deepagent-nim-e2e-00i.
 # Clients do not build images, create sandboxes, start gateways, or set
 # the HPA metric. dcode -n does not need :8642.
 #
@@ -21,6 +21,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -29,9 +31,9 @@ fail() {
 
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-3}"
-export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagents-e2e-}"
+export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-nvidia/nemotron-3-nano}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"

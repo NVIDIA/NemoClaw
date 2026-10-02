@@ -23,10 +23,8 @@ agentscaling_deepagents_common_pin() {
   export AGENT_NAME="deepagents"
   export INFERENCE_RUNTIME="nim"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
-  if [[ "${INFERENCE_MODEL}" != "nvidia/nemotron-3-nano" ]]; then
-    agentscaling_deepagents_common_fail "Deep Agents + NIM uses nvidia/nemotron-3-nano (got INFERENCE_MODEL=${INFERENCE_MODEL})"
-  fi
+  # Default nvidia/nemotron-3-nano. Ignore leftover 6a/6b models in this shell.
+  export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -42,8 +40,9 @@ agentscaling_deepagents_common_pin() {
   export USE_EXISTING_PROMETHEUS="${USE_EXISTING_PROMETHEUS:-1}"
   export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
   export E2E_USERS="${E2E_USERS:-3}"
-  export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagents-e2e-}"
-  export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:f7ad7ddc95cea260cff02d26b873903805806ccfef5d27436cbec4eba3455eff}"
+  export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
+  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image deepagents)"
+  agent_common_require_sandbox_image_for_agent deepagents "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
   if [[ "${MIN_REPLICAS}" != "1" ]]; then
@@ -162,5 +161,5 @@ agentscaling_deepagents_common_main() {
   esac
   echo "HPA metric=${HPA_METRIC}. Client ./scripts/client_deepagents.sh does not set this."
   echo "After sandboxes are Ready, run the client in another terminal. Deep Agents has no gateway to start."
-  exec "${SCRIPT_DIR}/setup-deepagents-e2e-sandboxes.sh" "${cmd}"
+  exec "${SCRIPT_DIR}/setup-deepagent-nim-e2e-sandboxes.sh" "${cmd}"
 }

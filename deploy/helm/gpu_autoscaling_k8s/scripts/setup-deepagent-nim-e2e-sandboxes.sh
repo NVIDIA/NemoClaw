@@ -14,18 +14,18 @@
 #
 # Does not run openshell gateway start, nemohermes launch, or the
 # metrics-proxy chat-completions Job. Does not destroy sandboxes outside
-# SANDBOX_PREFIX (default deepagents-e2e-). Does not touch openclaw-ollama-e2e-*
+# SANDBOX_PREFIX (default deepagent-nim-e2e-). Does not touch openclaw-ollama-e2e-*
 # or deepagents-onprem.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   ./scripts/agentscaling_deepagents_gpuutil.sh                      # default E2E_USERS=3, GPU util HPA
 #   E2E_USERS=3 ./scripts/agentscaling_deepagents_latency.sh bringup   # LLM latency HPA
-#   ./scripts/setup-deepagents-e2e-sandboxes.sh 3
-#   ./scripts/setup-deepagents-e2e-sandboxes.sh start
-#   ./scripts/setup-deepagents-e2e-sandboxes.sh refresh-inference
-#   ./scripts/setup-deepagents-e2e-sandboxes.sh stop
-#   ./scripts/setup-deepagents-e2e-sandboxes.sh cleanup
+#   ./scripts/setup-deepagent-nim-e2e-sandboxes.sh 3
+#   ./scripts/setup-deepagent-nim-e2e-sandboxes.sh start
+#   ./scripts/setup-deepagent-nim-e2e-sandboxes.sh refresh-inference
+#   ./scripts/setup-deepagent-nim-e2e-sandboxes.sh stop
+#   ./scripts/setup-deepagent-nim-e2e-sandboxes.sh cleanup
 #
 # Run ./scripts/uninstall-e2e.sh first if OpenClaw sandboxes or client.sh are still up.
 
@@ -64,20 +64,20 @@ if [[ -z "${ACTION}" ]]; then
 fi
 export AGENT_NAME="${AGENT_NAME:-deepagents}"
 [[ "${AGENT_NAME}" == "deepagents" ]] \
-  || fail "setup-deepagents-e2e-sandboxes.sh is Deep Agents-only (got AGENT_NAME=${AGENT_NAME})"
+  || fail "setup-deepagent-nim-e2e-sandboxes.sh is Deep Agents-only (got AGENT_NAME=${AGENT_NAME})"
 if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "nim" ]]; then
   fail "this e2e is Deep Agents Code + NIM (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Pairing without HPA is test-deepagents-vllm.sh."
 fi
 agent_common_validate "${AGENT_NAME}"
 export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-nim}"
 agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model nim)"
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
-SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagents-e2e-}"
+SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
 [[ "${SANDBOX_PREFIX}" =~ ^[a-z][a-z0-9-]{0,40}$ ]] \
   || fail "SANDBOX_PREFIX must be a lowercase Kubernetes-style prefix"
-[[ "${SANDBOX_PREFIX}" == deepagents-e2e-* || "${SANDBOX_PREFIX}" == "deepagents-e2e-" ]] \
-  || fail "SANDBOX_PREFIX must stay under deepagents-e2e- so OpenClaw e2e / deepagents-onprem are not destroyed"
+[[ "${SANDBOX_PREFIX}" == deepagent-nim-e2e-* || "${SANDBOX_PREFIX}" == "deepagent-nim-e2e-" ]] \
+  || fail "SANDBOX_PREFIX must stay under deepagent-nim-e2e- so OpenClaw e2e / deepagents-onprem are not destroyed"
 
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export RELEASE="${RELEASE:-nemoclaw-gpu}"
@@ -86,7 +86,8 @@ if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; the
 fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:f7ad7ddc95cea260cff02d26b873903805806ccfef5d27436cbec4eba3455eff}"
+export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image deepagents)"
+agent_common_require_sandbox_image_for_agent deepagents "${AGENT_SANDBOX_IMAGE}"
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # 2Gi + inflight 2 OOMed dgx-19. 4Gi with inflight 1. 8Gi is OpenClaw-only.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
@@ -425,6 +426,7 @@ bringup_sandboxes() {
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
   echo "E2E test: Deep Agents Code + NIM — ${count} end users send dcode -n to ${count} CPU sandboxes (LLM on GPUs)"
+  echo "  image ${AGENT_SANDBOX_IMAGE}"
   echo "  ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY} per sandbox. Do not start the Deep Agents gateway."
   echo "  One OpenShell gateway for all sandboxes. Do not destroy extras."
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"

@@ -11,7 +11,7 @@ The client does not set the HPA metric.
 Each user talks only to its sandbox (hermes -z). 1:1 mapping.
 hermes -z does not need the Hermes gateway on :8642.
 
-    openshell sandbox exec -n hermes-e2e-NNNN -- hermes -z "..."
+    openshell sandbox exec -n hermes-vllm-e2e-NNNN -- hermes -z "..."
 
 The agent inside the sandbox then calls https://inference.local (Envoy → vLLM HPA).
 This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs).
@@ -361,7 +361,7 @@ def main() -> int:
         description="Hermes + vLLM client: N users send hermes -z into N sandboxes; default E2E_USERS=3"
     )
     parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "3")))
-    parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "hermes-e2e-"))
+    parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "hermes-vllm-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/hermes"))
     parser.add_argument(
         "--model",

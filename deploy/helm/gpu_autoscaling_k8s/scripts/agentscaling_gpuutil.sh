@@ -13,6 +13,12 @@
 # The client does not know this metric. Use ./scripts/client.sh after
 # :18789 is up. For LLM-latency HPA use ./scripts/agentscaling_latency.sh.
 #
+# Defaults in this script: AGENT_NAME=openclaw INFERENCE_RUNTIME=ollama
+# INFERENCE_MODEL=llama3.2:3b. Other Ollama tag:
+#   INFERENCE_MODEL=llama3.1:8b E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh
+# Other agent: agentscaling_hermes_gpuutil.sh or agentscaling_deepagents_gpuutil.sh
+# (uninstall-e2e.sh first). Do not set AGENT_NAME=hermes here.
+#
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   E2E_USERS=5 ./scripts/agentscaling_gpuutil.sh

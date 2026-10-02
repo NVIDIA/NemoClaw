@@ -19,10 +19,10 @@ agentscaling_common_pin_openclaw_ollama() {
   if [[ -n "${AGENT_NAME:-}" && "${AGENT_NAME}" != "openclaw" ]]; then
     agentscaling_common_fail "OpenClaw + Ollama e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
-  agent_common_pin_example_pairing openclaw ollama
-  if [[ "${INFERENCE_MODEL}" != "llama3.2:3b" ]]; then
-    agentscaling_common_fail "OpenClaw + Ollama llama3.2:3b (got INFERENCE_MODEL=${INFERENCE_MODEL})"
-  fi
+  export AGENT_NAME="openclaw"
+  export INFERENCE_RUNTIME="ollama"
+  agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
+  export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -39,7 +39,8 @@ agentscaling_common_pin_openclaw_ollama() {
   export INGRESS_SERVICE_TYPE="${INGRESS_SERVICE_TYPE:-ClusterIP}"
   export E2E_USERS="${E2E_USERS:-5}"
   export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
-  export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba}"
+  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image openclaw)"
+  agent_common_require_sandbox_image_for_agent openclaw "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
   export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"

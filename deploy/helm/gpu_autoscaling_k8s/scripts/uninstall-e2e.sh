@@ -45,7 +45,13 @@ list_e2e_sandboxes() {
 import json, subprocess, sys
 
 ns = sys.argv[1]
-prefixes = ("openclaw-ollama-e2e-", "hermes-e2e-", "deepagents-e2e-")
+prefixes = (
+    "openclaw-ollama-e2e-",
+    "hermes-vllm-e2e-",
+    "deepagent-nim-e2e-",
+    "hermes-e2e-",
+    "deepagents-e2e-",
+)
 exact = {"nemoclaw-onprem", "hermes-onprem", "deepagents-onprem"}
 
 

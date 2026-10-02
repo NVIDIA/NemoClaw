@@ -54,11 +54,18 @@ HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values.yaml}"
 MIN_REPLICAS="${MIN_REPLICAS:-1}"
 # Empty → resolve to allocatable GPU count after GPU nodes are verified (MAX_REPLICAS=N).
 MAX_REPLICAS="${MAX_REPLICAS:-}"
-ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900}"
 # ollama | vllm | nim — see README runtime comparison table. Switching runtimes usually also
 # means changing INFERENCE_MODEL to match (e.g. an HF repo id for vllm, a NIM catalog id for nim).
 INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-ollama}"
 INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
+# NIM first-profile download can exceed the 900s Ollama/vLLM wait.
+if [[ -z "${ROLLOUT_TIMEOUT:-}" ]]; then
+  if [[ "${INFERENCE_RUNTIME}" == "nim" ]]; then
+    ROLLOUT_TIMEOUT=2100
+  else
+    ROLLOUT_TIMEOUT=900
+  fi
+fi
 GPU_TARGET="${GPU_TARGET:-40}"
 PROM_HELM_TIMEOUT="${PROM_HELM_TIMEOUT:-25m}"
 PROM_VALUES="${PROM_VALUES:-${CHART_DIR}/monitoring/kube-prometheus-microk8s.yaml}"

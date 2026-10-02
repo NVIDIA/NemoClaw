@@ -24,6 +24,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -34,7 +36,7 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-5}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"

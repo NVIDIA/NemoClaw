@@ -11,7 +11,7 @@ The client does not set the HPA metric.
 Each user talks only to its sandbox (dcode -n). 1:1 mapping.
 dcode -n does not need the Deep Agents gateway on :8642.
 
-    openshell sandbox exec -n deepagents-e2e-NNNN -- dcode -n "..."
+    openshell sandbox exec -n deepagent-nim-e2e-NNNN -- dcode -n "..."
 
 The agent inside the sandbox then calls https://inference.local (Envoy → NIM HPA).
 This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs).
@@ -361,7 +361,7 @@ def main() -> int:
         description="Deep Agents Code + NIM client: N users send dcode -n into N sandboxes; default E2E_USERS=3"
     )
     parser.add_argument("--users", type=int, default=int(os.environ.get("E2E_USERS", "3")))
-    parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "deepagents-e2e-"))
+    parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", "deepagent-nim-e2e-"))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/deepagents"))
     parser.add_argument(
         "--model",

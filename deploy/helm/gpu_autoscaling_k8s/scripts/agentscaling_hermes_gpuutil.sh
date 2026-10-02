@@ -16,6 +16,11 @@
 # sandboxes are Ready. For LLM-latency HPA use
 # ./scripts/agentscaling_hermes_latency.sh.
 #
+# Defaults in this script: AGENT_NAME=hermes INFERENCE_RUNTIME=vllm
+# INFERENCE_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Other vLLM id:
+#   INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct ./scripts/agentscaling_hermes_gpuutil.sh
+# Other agent: agentscaling_gpuutil.sh or agentscaling_deepagents_gpuutil.sh
+#
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   E2E_USERS=3 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh

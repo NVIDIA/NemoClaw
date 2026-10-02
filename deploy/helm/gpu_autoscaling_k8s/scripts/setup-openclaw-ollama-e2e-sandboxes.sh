@@ -18,7 +18,7 @@
 # Does not run openshell gateway start, nemoclaw launch, or the metrics-proxy
 # chat-completions Job (hpa-load-test-*.sh). Keep that Job as the fast HPA-only
 # test. Does not destroy sandboxes outside SANDBOX_PREFIX (default
-# openclaw-ollama-e2e-). Does not touch hermes-onprem or hermes-e2e-*.
+# openclaw-ollama-e2e-). Does not touch hermes-onprem or hermes-vllm-e2e-*.
 # Hermes + vLLM is a later e2e.
 #
 # Usage:
@@ -74,10 +74,10 @@ fi
 if [[ -n "${INFERENCE_RUNTIME:-}" && "${INFERENCE_RUNTIME}" != "ollama" ]]; then
   fail "this e2e is OpenClaw + Ollama (got INFERENCE_RUNTIME=${INFERENCE_RUNTIME}). Hermes + vLLM is later and is not started here."
 fi
-agent_common_pin_example_pairing openclaw ollama
-if [[ "${INFERENCE_MODEL}" != "llama3.2:3b" ]]; then
-  fail "this e2e is OpenClaw + Ollama llama3.2:3b (got INFERENCE_MODEL=${INFERENCE_MODEL}). Do not point it at Hermes/vLLM/NIM models."
-fi
+export AGENT_NAME="openclaw"
+export INFERENCE_RUNTIME="ollama"
+agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model ollama)"
 AGENT_DISPLAY_NAME="$(agent_common_display_name "${AGENT_NAME}")"
 PIN_OPENCLAW_MODEL_PY="${CHART_DIR}/files/pin-openclaw-ollama-model.py"
 SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
@@ -93,17 +93,8 @@ if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; the
 fi
 export ENABLE_ENVOY_LB="${ENABLE_ENVOY_LB:-1}"
 export INFERENCE_SERVICE="${INFERENCE_SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_service)}"
-if [[ -z "${AGENT_SANDBOX_IMAGE:-}" ]]; then
-  case "${AGENT_NAME}" in
-    openclaw)
-      AGENT_SANDBOX_IMAGE="ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:bd935f0198b99889d9479fea123b62a59e3797da13e392dcc2160f114216c1ba"
-      ;;
-    *)
-      fail "set AGENT_SANDBOX_IMAGE for AGENT_NAME=${AGENT_NAME} (Hermes / Deep Agents e2e reuse this layout later)"
-      ;;
-  esac
-fi
-export AGENT_SANDBOX_IMAGE
+export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image "${AGENT_NAME}")"
+agent_common_require_sandbox_image_for_agent "${AGENT_NAME}" "${AGENT_SANDBOX_IMAGE}"
 # E2E sandboxes only proxy prompts. Keep requests small so N pods schedule
 # quickly; pairing/create-agent-sandbox.sh still defaults to 2 CPU / 4Gi.
 export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"

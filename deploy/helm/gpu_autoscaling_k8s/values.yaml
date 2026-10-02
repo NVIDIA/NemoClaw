@@ -142,9 +142,20 @@ nim:
     registry: nvcr.io
   # Extra env vars (list of {name, value}) for NIM-specific tuning, e.g. NIM_MODEL_PROFILE.
   extraEnv: []
+  # Passed as container args (nim-serve). NIM_ENABLE_AUTO_TOOL_CHOICE env is
+  # ignored by this model-specific image — vLLM still starts without the flags
+  # and dcode's tool_choice=auto gets HTTP 400. Same qwen3_coder parser as
+  # vllm.extraArgs for Nano.
+  extraArgs:
+    - --enable-auto-tool-choice
+    - --tool-call-parser
+    - qwen3_coder
   # First NGC model-profile download for nvcr.io/nim/nvidia/nemotron-3-nano can take
   # well past the default 10-minute metrics-proxy startup window.
   startupProbeSeconds: 1800
+  # NIM runs as UID 1000 / GID 0. hostPath DirectoryOrCreate is root:root 0755,
+  # so the chart init container chgrp/chmod the mount (same as NVIDIA's
+  # `chgrp 0 && chmod g+rwX` cache advice).
   persistence:
     enabled: true
     size: 40Gi

@@ -23,10 +23,7 @@ agentscaling_hermes_common_pin() {
   export AGENT_NAME="hermes"
   export INFERENCE_RUNTIME="vllm"
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
-  export INFERENCE_MODEL="${INFERENCE_MODEL:-$(agent_common_default_inference_model "${INFERENCE_RUNTIME}")}"
-  if [[ "${INFERENCE_MODEL}" != "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" ]]; then
-    agentscaling_hermes_common_fail "Hermes + vLLM uses nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8 (got INFERENCE_MODEL=${INFERENCE_MODEL})"
-  fi
+  export INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -44,8 +41,9 @@ agentscaling_hermes_common_pin() {
   # 2Gi + inflight 2 OOMed dgx-19. Use 4Gi with inflight 1. 8Gi is OpenClaw's
   # gateway floor (Node workers); hermes -z does not need that.
   export E2E_USERS="${E2E_USERS:-3}"
-  export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
-  export AGENT_SANDBOX_IMAGE="${AGENT_SANDBOX_IMAGE:-ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:28b9578ab9676ef046de37fa6feb9b7b61824b87d77fd08978758bd01c03cb54}"
+  export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-vllm-e2e-}"
+  export AGENT_SANDBOX_IMAGE="$(agent_common_resolve_sandbox_image hermes)"
+  agent_common_require_sandbox_image_for_agent hermes "${AGENT_SANDBOX_IMAGE}"
   export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
   export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-4Gi}"
   if [[ "${MIN_REPLICAS}" != "1" ]]; then
@@ -162,5 +160,5 @@ agentscaling_hermes_common_main() {
   esac
   echo "HPA metric=${HPA_METRIC}. Client ./scripts/client_hermes.sh does not set this."
   echo "After sandboxes are Ready, run the client in another terminal. Do not start Hermes gateways for this load path."
-  exec "${SCRIPT_DIR}/setup-hermes-e2e-sandboxes.sh" "${cmd}"
+  exec "${SCRIPT_DIR}/setup-hermes-vllm-e2e-sandboxes.sh" "${cmd}"
 }

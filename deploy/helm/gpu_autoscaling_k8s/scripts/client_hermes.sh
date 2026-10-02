@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # End-user client for the Hermes + vLLM e2e. One simulated user per
-# sandbox (1:1). user-i sends hermes -z into sandbox hermes-e2e-00i.
+# sandbox (1:1). user-i sends hermes -z into sandbox hermes-vllm-e2e-00i.
 # Clients do not build images, create sandboxes, start gateways, or set
 # the HPA metric. hermes -z does not need :8642.
 #
@@ -21,6 +21,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -29,9 +31,9 @@ fail() {
 
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-3}"
-export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-e2e-}"
+export SANDBOX_PREFIX="${SANDBOX_PREFIX:-hermes-vllm-e2e-}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
-export INFERENCE_MODEL="${INFERENCE_MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8}"
+export INFERENCE_MODEL="$(agent_common_resolve_inference_model vllm)"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
