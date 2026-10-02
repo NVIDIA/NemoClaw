@@ -269,6 +269,41 @@ describe("showStatus", () => {
     logSpy.mockRestore();
   });
 
+  it("withholds a legacy quick-tunnel URL when its live target differs from the selected dashboard", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com");
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel --url http://localhost:12345",
+      signal: vi.fn(),
+    };
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({ pidDir, dashboardPort: 18_791, processControl });
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).not.toContain("Public URL: https://legacy.trycloudflare.com");
+    expect(output).toContain("Public URL withheld");
+    expect(output).toContain("dashboard port 18791");
+    logSpy.mockRestore();
+  });
+
+  it("shows a legacy quick-tunnel URL when its live target confirms the selected dashboard", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com");
+    const processControl: ProcessControl = {
+      isAlive: () => true,
+      commandLine: () => "cloudflared tunnel --url http://localhost:18791",
+      signal: vi.fn(),
+    };
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({ pidDir, dashboardPort: 18_791, processControl });
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).toContain("Public URL: https://legacy.trycloudflare.com");
+    expect(output).not.toContain("Public URL withheld");
+    logSpy.mockRestore();
+  });
+
   // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
   // asked for a "no cloudflared process; restart with ..." shape — a cause
   // phrase plus a single-command recovery. All three failure modes surface

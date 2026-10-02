@@ -352,6 +352,37 @@ function readCloudflaredDashboardPort(pidDir: string): number | null {
   }
 }
 
+function quickTunnelTargetsDashboard(
+  pidDir: string,
+  pid: number,
+  dashboardPort: number,
+  processControl: ProcessControl,
+): boolean {
+  const commandLine = processControl.commandLine(pid);
+  if (commandLine === null) return readCloudflaredDashboardPort(pidDir) === dashboardPort;
+
+  const commandArgs = commandLine.split(/\0|\s+/).filter(Boolean);
+  const urlFlagIndex = commandArgs.indexOf("--url");
+  const target =
+    urlFlagIndex >= 0
+      ? commandArgs[urlFlagIndex + 1]
+      : commandArgs.find((argument) => argument.startsWith("--url="))?.slice("--url=".length);
+  if (urlFlagIndex < 0 && !commandArgs.some((argument) => argument.startsWith("--url="))) {
+    return false;
+  }
+
+  try {
+    const url = new URL(target ?? "");
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      url.port === String(dashboardPort)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function writeCloudflaredDashboardPort(pidDir: string, dashboardPort: number): void {
   const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
   const flags =
@@ -569,10 +600,12 @@ function resolvePidDir(opts: ServiceOptions): string {
 
 export function showStatus(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
+  const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+  const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
   ensurePidDir(pidDir);
 
   console.log("");
-  const state = readCloudflaredState(pidDir);
+  const state = readCloudflaredState(pidDir, processControl);
   // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
   // surface the matching remediation. The previous "(stopped)" line was
   // emitted in all three failure modes with no recovery hint.
@@ -602,9 +635,20 @@ export function showStatus(opts: ServiceOptions = {}): void {
   // Only show tunnel URL if cloudflared is actually running
   const logFile = join(pidDir, "cloudflared.log");
   if (state.kind === "running" && existsSync(logFile)) {
-    const publicUrl = getTunnelUrl(pidDir, opts.dashboardPort ?? DASHBOARD_PORT);
+    const log = readFileSync(logFile, "utf-8");
+    const namedUrl = extractNamedCloudflareUrl(log, dashboardPort);
+    const quickUrl = extractTryCloudflareUrl(log);
+    const publicUrl =
+      namedUrl ??
+      (quickUrl && quickTunnelTargetsDashboard(pidDir, state.pid, dashboardPort, processControl)
+        ? quickUrl
+        : "");
     if (publicUrl) {
       info(`Public URL: ${publicUrl}`);
+    } else if (quickUrl) {
+      info(
+        `Public URL withheld: the quick tunnel target could not be confirmed for dashboard port ${String(dashboardPort)}; run \`${CLI_NAME} tunnel start\` to retarget it.`,
+      );
     }
   }
 }
