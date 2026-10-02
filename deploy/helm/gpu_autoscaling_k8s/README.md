@@ -340,7 +340,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-Deep Agents has no long-running gateway. 
+Deep Agents has no long-running gateway. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -374,6 +374,8 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_gpuutil.sh
 # Terminal C — same client for either HPA metric (inflight 1 is the script default)
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
+
+
 
 **LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms).
 
