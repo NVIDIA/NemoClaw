@@ -686,6 +686,7 @@ async function enrichFromPolicy(
 
   const policyConflict =
     !denyToolInspection.ok ||
+    !legacyDeniedToolInspection.ok ||
     (allowRules.length > 0 ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool)) : false)
       ? "Live policy contains invalid tool selectors."
       : endpointConflict;
