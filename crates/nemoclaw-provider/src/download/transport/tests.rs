@@ -78,6 +78,31 @@ async fn concurrent_providers_deliver_independent_updates() {
 }
 
 #[tokio::test]
+async fn forward_returns_only_after_the_listener_delivers_every_event() {
+    // A provider exits as soon as forward() returns. Delivery must be confirmed
+    // by then rather than left to a fixed drain period, which loses events
+    // whenever the listener is slow to read, as on loaded Windows runners.
+    let (callback, mut events) = collect();
+    let listener = Listener::start(callback).unwrap();
+    for round in 0..20 {
+        let resource = format!("gateway.{round}");
+        forward(listener.endpoint.clone(), resource.clone(), async {
+            Reporter::new("image:tag").complete();
+        })
+        .await;
+        for phase in [DownloadPhase::Starting, DownloadPhase::Complete] {
+            let event = events
+                .try_recv()
+                .unwrap_or_else(|_| panic!("round {round}: {phase:?} not delivered on return"));
+            assert_eq!(
+                (event.resource.as_str(), event.phase),
+                (resource.as_str(), phase)
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn absent_or_disconnected_listener_cannot_fail_the_operation() {
     let (callback, _) = collect();
     let listener = Listener::start(callback).unwrap();

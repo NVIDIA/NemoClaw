@@ -15,9 +15,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-#[cfg(windows)]
-use tokio::io::AsyncReadExt;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 use tokio_util::task::AbortOnDropHandle;
 pub(crate) const ENV: &str = "NEMOCLAW_INTERNAL_PROGRESS_ENDPOINT";
 const LIMIT: usize = 8192;
@@ -38,9 +39,9 @@ pub(super) async fn forward<T>(
         }
     });
     let result = with_download_progress(resource, callback, operation).await;
-    // Best effort final delivery, bounded even if the reader is stuck. Dropping
-    // this future during cancellation aborts the writer immediately.
-    let _ = tokio::time::timeout(Duration::from_millis(100), &mut writer).await;
+    // Wait until the listener confirms delivery, bounded even if it is stuck.
+    // Dropping this future during cancellation aborts the writer immediately.
+    let _ = tokio::time::timeout(IO_TIMEOUT, &mut writer).await;
     result
 }
 // Windows normally flushes dropped named pipes in background threads. Progress
@@ -84,10 +85,13 @@ async fn write(endpoint: OsString, mut receiver: mpsc::Receiver<DownloadProgress
         }
         next = receiver.recv().await;
     }
-    // A pipe can discard unread bytes on close. Keep it open for the bounded
-    // drain period in forward(); cancellation still drops the handle immediately.
-    #[cfg(windows)]
-    {
+    // Closing at once could discard unread bytes, notably on Windows pipes. End
+    // with a blank line and wait for the listener to close after delivering
+    // every event. forward() bounds this wait, and cancellation drops the handle.
+    if matches!(
+        tokio::time::timeout(IO_TIMEOUT, stream.0.write_all(b"\n")).await,
+        Ok(Ok(()))
+    ) {
         let _ = stream.0.read_u8().await;
     }
 }
