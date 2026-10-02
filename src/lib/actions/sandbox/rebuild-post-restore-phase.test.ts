@@ -174,8 +174,8 @@ describe("rebuild post-restore phase", () => {
     expect(order).toEqual([
       "maintenance-begin",
       "messaging",
-      "mcp",
       "native-start",
+      "mcp",
       "host-forward",
     ]);
     expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
@@ -305,7 +305,7 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       window,
     );
-    expect(order).toEqual(["messaging", "mcp", "native-start", "host-forward"]);
+    expect(order).toEqual(["messaging", "native-start", "mcp", "host-forward"]);
   });
 
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
@@ -371,7 +371,7 @@ describe("rebuild post-restore phase", () => {
     expect(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).toHaveBeenCalledOnce();
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
-    expect(rebuildMcp.restoreMcpAfterRebuild).toHaveBeenCalledOnce();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith("OpenClaw native final start failed during rebuild.");
     expect(
@@ -432,24 +432,19 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
-  it("aborts the maintenance gate when MCP restoration throws", async () => {
+  it("releases the maintenance gate before MCP restoration", async () => {
     vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockRejectedValue(
       new Error("MCP restoration failed"),
     );
 
     await expect(runRebuildPostRestorePhase(input())).rejects.toThrow("MCP restoration failed");
 
-    expect(
-      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
-    ).toHaveBeenCalledExactlyOnceWith({
-      sandboxName: "alpha",
-      kind: "backup",
-    });
-    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+    expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
-  it("does not mask the restoration failure when the maintenance abort itself throws", async () => {
-    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockRejectedValue(
+  it("does not mask a native start failure when the maintenance abort itself throws", async () => {
+    vi.mocked(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).mockRejectedValue(
       new Error("original restoration failure"),
     );
     vi.mocked(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).mockRejectedValue(
@@ -476,6 +471,34 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+  });
+
+  it("rebinds ordinary Hermes to restored state before MCP restoration", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockImplementation(
+      async () => {
+        order.push("restart");
+        return "restarted";
+      },
+    );
+    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockImplementation(
+      async () => {
+        order.push("verify");
+        return "healthy";
+      },
+    );
+
+    const args = input();
+    await runRebuildPostRestorePhase(args);
+
+    expect(order).toEqual(["restart", "mcp", "verify", "host-forward"]);
+    expect(
+      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
+    ).not.toHaveBeenCalled();
+    expect(
+      rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+    ).not.toHaveBeenCalled();
+    expect(args.bail).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("rejects a version mismatch during recovery=%s", async (recovery) => {

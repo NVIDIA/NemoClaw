@@ -70,6 +70,7 @@ import type {
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
+import { inspectExtractedDcodeSessionsDatabase } from "./snapshot/dcode-session-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing, type TarArchiveSource, type TarListingSource } from "./tar-listing.js";
@@ -1496,6 +1497,10 @@ function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
   return isDependencyLockfile(fileName);
 }
 
+function isDcodeSessionsDatabaseEntry(entry: string): boolean {
+  return path.posix.normalize(entry.replace(/^\.\//u, "")) === ".deepagents/.state/sessions.db";
+}
+
 function isBundledProviderProfileSchema(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   return /^\.nemoclaw\/blueprints\/[^/]+\/provider-profiles\/[^/]+\.(?:json|ya?ml)$/u.test(
@@ -1620,7 +1625,10 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
-          if (!shouldSkipNativeRawCredentialScan(fileName)) {
+          if (
+            !shouldSkipNativeRawCredentialScan(fileName) &&
+            !isDcodeSessionsDatabaseEntry(entry)
+          ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
             // manifests still receive a structure-aware scan below.
@@ -1661,6 +1669,7 @@ function nativeArchiveCredentialViolation(
     entry: string;
     fileName: string;
     isDependencyPackage: boolean;
+    isDcodeSessionsDatabase: boolean;
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
@@ -1670,15 +1679,17 @@ function nativeArchiveCredentialViolation(
     const isLockfile = isDependencyLockfile(fileName);
     const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
+    const isDcodeSessionsDatabase = isDcodeSessionsDatabaseEntry(entry);
     const isSensitive = isSensitiveFile(fileName);
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
-    if (!isLockfile && !isDependencyPackage && !isEnv && !isSensitive) {
+    if (!isLockfile && !isDependencyPackage && !isDcodeSessionsDatabase && !isEnv && !isSensitive) {
       continue;
     }
     candidates.push({
       entry,
       fileName,
       isDependencyPackage,
+      isDcodeSessionsDatabase,
       isEnv,
       isLockfile,
     });
@@ -1710,6 +1721,11 @@ function nativeArchiveCredentialViolation(
       return candidates[0]?.entry ?? "native state credential scan";
     }
     for (const candidate of candidates) {
+      if (candidate.isDcodeSessionsDatabase) {
+        const containsCredential = inspectExtractedDcodeSessionsDatabase(scanRoot, candidate.entry);
+        if (containsCredential !== false) return candidate.entry;
+        continue;
+      }
       const extractedCandidate = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
       if (!extractedCandidate) {
         return candidate.entry;

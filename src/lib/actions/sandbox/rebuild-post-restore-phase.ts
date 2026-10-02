@@ -25,6 +25,7 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
@@ -342,21 +343,17 @@ export async function runRebuildPostRestorePhase(
       return;
     }
 
-    // The managed image owns the ordinary Hermes process lifecycle. Only an
-    // active cron-restore gate requires the bounded replacement transaction that
-    // keeps dispatch drained across a process identity change.
-    hermesGatewayRestartState = hermesCronRestoreIdentity
-      ? await restartHermesGatewayAfterStateRestore(
-          sandboxName,
-          targetAgentName,
-          hermesPostRestoreGatewayDeps,
-        )
-      : "not-applicable";
-    mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
-      sandboxName,
-      mcpEntries,
-      mcpRuntimeSelection,
-    ));
+    // Recreation starts Hermes before restore replaces its durable home. Rebind
+    // every Hermes gateway to that restored state before MCP restoration; the
+    // cron-gated path additionally proves the replacement process identity.
+    hermesGatewayRestartState =
+      targetAgentName === "hermes"
+        ? await restartHermesGatewayAfterStateRestore(
+            sandboxName,
+            targetAgentName,
+            hermesPostRestoreGatewayDeps,
+          )
+        : "not-applicable";
     if (targetAgentName === "openclaw") {
       if (!openClawDoctorWindow) {
         bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
@@ -374,6 +371,14 @@ export async function runRebuildPostRestorePhase(
       openClawDoctorWindow = null;
       console.log(`  ${G}\u2713${R} OpenClaw native final start passed`);
     }
+    // OpenClaw's final start regenerates the local gateway auth removed from
+    // the archive before MCP restoration performs its acknowledged reload.
+    // Hermes has already rebound its process to restored state above.
+    mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+      sandboxName,
+      mcpEntries,
+      mcpRuntimeSelection,
+    ));
   } finally {
     if (openClawDoctorWindow) {
       await abortOpenClawPostRestoreWindowAfterFailure(openClawDoctorWindow, log);
@@ -387,7 +392,17 @@ export async function runRebuildPostRestorePhase(
         hermesCronRestoreIdentity,
         hermesPostRestoreGatewayDeps,
       )
-    : { state: "not-applicable" as const, replacementIdentity: undefined };
+    : targetAgentName === "hermes"
+      ? {
+          state: await verifyHermesGatewayAfterStateRestore(
+            sandboxName,
+            targetAgentName,
+            hermesGatewayRestartState,
+            hermesPostRestoreGatewayDeps,
+          ),
+          replacementIdentity: undefined,
+        }
+      : { state: "not-applicable" as const, replacementIdentity: undefined };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   const reportMcpRestoreFailure = mcpBridgeRestoreUnverified
