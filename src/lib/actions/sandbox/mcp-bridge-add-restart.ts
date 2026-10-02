@@ -101,6 +101,10 @@ import {
 } from "./mcp-bridge-supply-chain";
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
+/**
+ * Check whether an existing MCP registration matches the intent of a requested add/update.
+ * Compares identity, endpoints, credentials, tool policies, and trust settings.
+ */
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
   // When comparing transport, use the stored transport if present; otherwise
   // infer it from the stored URL so that a missing transport field doesn't
@@ -721,6 +725,9 @@ export async function refreshMcpBridgePublicPins(
   });
 }
 
+/**
+ * Update MCP denied tools without locking the lifecycle mutex (internal path).
+ */
 async function updateMcpBridgeDenyToolsUnlocked(
   sandboxName: string,
   server: string,
@@ -1280,6 +1287,9 @@ export async function updateMcpBridgeAllowTools(
   });
 }
 
+/**
+ * Update MCP allowlist tools without locking the lifecycle mutex (internal path).
+ */
 async function updateMcpBridgeAllowToolsUnlocked(
   sandboxName: string,
   server: string,
@@ -1355,6 +1365,9 @@ export async function clearMcpBridgeAllowTools(sandboxName: string, server: stri
   });
 }
 
+/**
+ * Clear MCP allowlist tools without locking the lifecycle mutex (internal path).
+ */
 async function clearMcpBridgeAllowToolsUnlocked(
   sandboxName: string,
   server: string,

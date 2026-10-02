@@ -16,6 +16,7 @@ export class McpBridgeError extends Error {
   }
 }
 
+/** Supported MCP transport protocols. */
 export type McpTransport = "sse" | "stdio";
 
 export interface McpServerIdentity {
@@ -37,11 +38,13 @@ export interface McpServerIdentity {
   provenanceRef?: string;
 }
 
+/** Parsed environment reference for MCP credentials. */
 export interface ParsedEnvReference {
   name: string;
   value?: string;
 }
 
+/** Parsed arguments for MCP add operations. */
 export interface ParsedMcpAddArgs {
   server: string;
   url: string;
