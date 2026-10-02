@@ -701,16 +701,11 @@ async function enrichFromPolicy(
   const allowTools =
     allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)) : undefined;
 
-  // Read serverIdentity from mcp config (stored in mcpExtras.serverIdentity)
-  let serverIdentity: McpSourceEntry["serverIdentity"] | undefined;
-  const mcpConfig = isObjectRecord(endpoint.mcp) ? endpoint.mcp : undefined;
-  if (
-    mcpConfig &&
-    typeof mcpConfig.serverIdentity === "object" &&
-    mcpConfig.serverIdentity !== null
-  ) {
-    serverIdentity = mcpConfig.serverIdentity as McpSourceEntry["serverIdentity"];
-  }
+  // serverIdentity, transport, and requireOAuth are persisted in the authoritative
+  // durable registration state (agent native config). They are NOT read from the
+  // live OpenShell policy. The entry parameter already carries these values from
+  // the durable state via inspectAgentMcpSources -> entryFromRecord.
+  // Do not read from endpoint.mcp or add a transient-only copy here.
 
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&
@@ -725,7 +720,6 @@ async function enrichFromPolicy(
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
     ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
     ...(allowTools ? { allowTools } : {}),
-    ...(serverIdentity ? { serverIdentity } : {}),
     ...(policyConflict ? { policyConflict } : {}),
   };
 }
