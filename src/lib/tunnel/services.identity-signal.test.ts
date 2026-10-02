@@ -49,10 +49,14 @@ describe("cloudflared identity-bound signaling", () => {
 
   it("uses identity-bound platform signaling and refuses unsupported platforms", () => {
     const signal = vi.fn(() => "signaled" as const);
+    const windowsSignal = vi.fn(() => "signaled" as const);
 
     expect(signalCloudflaredForPlatform(4242, "SIGTERM", "darwin", signal)).toBe("signaled");
     expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
-    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32")).toBe("unavailable");
+    expect(signalCloudflaredForPlatform(4242, "SIGTERM", "win32", undefined, windowsSignal)).toBe(
+      "signaled",
+    );
+    expect(windowsSignal).toHaveBeenCalledWith(4242, "SIGTERM");
   });
 
   it.skipIf(process.platform !== "darwin")(
@@ -120,6 +124,33 @@ describe("cloudflared identity-bound signaling", () => {
           process.kill(pid, "SIGKILL");
         } catch {
           // The identity-bound signal already stopped the test-owned process.
+        }
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "terminates only the confirmed cloudflared process through its Windows process handle",
+    async () => {
+      const executable = join(pidDir, "cloudflared.exe");
+      copyFileSync(process.execPath, executable);
+      const subprocess = childProcess.spawn(executable, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      const pid = subprocess.pid as number;
+      const exited = new Promise<void>((resolveExit) =>
+        subprocess.once("exit", () => resolveExit()),
+      );
+
+      try {
+        expect(signalCloudflaredForPlatform(pid, "SIGTERM")).toBe("signaled");
+        await exited;
+        expect(signalCloudflaredForPlatform(process.pid, "SIGTERM")).toBe("not-cloudflared");
+      } finally {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The identity-bound process handle already stopped the test process.
         }
       }
     },

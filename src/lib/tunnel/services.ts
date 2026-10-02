@@ -318,6 +318,59 @@ function run(argv) {
 }
 `;
 
+const WINDOWS_PROCESS_HANDLE_SIGNAL_SCRIPT = String.raw`
+param([uint32]$targetPid)
+$ErrorActionPreference = 'Stop'
+$native = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class NemoClawProcessHandle {
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder path, ref int size);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool TerminateProcess(IntPtr process, uint exitCode);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll")]
+  public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+$handle = [IntPtr]::Zero
+$result = 'unavailable'
+try {
+  Add-Type -TypeDefinition $native -ErrorAction Stop
+  $access = [uint32](0x0001 -bor 0x1000 -bor 0x100000)
+  $handle = [NemoClawProcessHandle]::OpenProcess($access, $false, $targetPid)
+  if ($handle -eq [IntPtr]::Zero) {
+    if ([Runtime.InteropServices.Marshal]::GetLastWin32Error() -eq 87) { $result = 'not-running' }
+  } else {
+    $path = New-Object System.Text.StringBuilder 32768
+    $size = $path.Capacity
+    if ([NemoClawProcessHandle]::QueryFullProcessImageName($handle, 0, $path, [ref]$size)) {
+      if ([IO.Path]::GetFileName($path.ToString()).Equals('cloudflared.exe', [StringComparison]::OrdinalIgnoreCase)) {
+        if ([NemoClawProcessHandle]::TerminateProcess($handle, 1)) {
+          if ([NemoClawProcessHandle]::WaitForSingleObject($handle, 5000) -eq 0) { $result = 'signaled' }
+        } elseif ([NemoClawProcessHandle]::WaitForSingleObject($handle, 0) -eq 0) {
+          $result = 'not-running'
+        }
+      } else {
+        $result = 'not-cloudflared'
+      }
+    } elseif ([NemoClawProcessHandle]::WaitForSingleObject($handle, 0) -eq 0) {
+      $result = 'not-running'
+    }
+  }
+} catch {
+  $result = 'unavailable'
+} finally {
+  if ($handle -ne [IntPtr]::Zero) { [void][NemoClawProcessHandle]::CloseHandle($handle) }
+}
+Write-Output $result
+`;
+
 function signalCloudflaredWithPidfd(
   pid: number,
   sig: "SIGTERM" | "SIGKILL",
@@ -372,6 +425,48 @@ function signalCloudflaredWithAuditToken(
   return "unavailable";
 }
 
+function signalCloudflaredWithWindowsHandle(
+  pid: number,
+  _sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  // Windows has no POSIX signal API; terminate only the verified process object
+  // held by this handle, never a PID after a separate identity check.
+  if (process.platform !== "win32") return "unavailable";
+  const windowsRoot = process.env.SystemRoot ?? process.env.windir;
+  if (!windowsRoot || !win32.isAbsolute(windowsRoot)) return "unavailable";
+  const powershell = win32.join(
+    windowsRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  try {
+    const result = execFileSync(
+      powershell,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `& { ${WINDOWS_PROCESS_HANDLE_SIGNAL_SCRIPT} } ${String(pid)}`,
+      ],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 7000 },
+    ).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
 /** Signal cloudflared only through an OS primitive bound to process identity. */
 export function signalCloudflaredForPlatform(
   pid: number,
@@ -381,9 +476,14 @@ export function signalCloudflaredForPlatform(
     pid: number,
     sig: "SIGTERM" | "SIGKILL",
   ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
+  windowsSignal: (
+    pid: number,
+    sig: "SIGTERM" | "SIGKILL",
+  ) => IdentityBoundSignalOutcome = signalCloudflaredWithWindowsHandle,
 ): IdentityBoundSignalOutcome {
   if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
   if (platform === "darwin") return macSignal(pid, sig);
+  if (platform === "win32") return windowsSignal(pid, sig);
   return "unavailable";
 }
 
@@ -499,6 +599,14 @@ function namedTunnelTargetsDashboard(pidDir: string, dashboardPort: number): boo
   const logFile = join(pidDir, "cloudflared.log");
   if (!existsSync(logFile)) return false;
   return extractNamedCloudflareUrl(readFileSync(logFile, "utf-8"), dashboardPort) !== null;
+}
+
+function hasQuickTunnelUrl(pidDir: string): boolean {
+  try {
+    return extractTryCloudflareUrl(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")) !== null;
+  } catch {
+    return false;
+  }
 }
 
 function hasNamedTunnelConfiguration(pidDir: string): boolean {
@@ -1235,7 +1343,21 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
         if (runningState.kind === "running" && !runningNamedTunnel) {
           const runningPort = readCloudflaredDashboardPort(pidDir);
           const recordedQuickTunnel = commandArgs === undefined && runningPort !== null;
-          if (!runningQuickTunnel && !recordedQuickTunnel) {
+          const legacyWindowsQuickTunnel =
+            commandArgs === undefined &&
+            windowsExecutableOnlyCommandLine(commandLine ?? "") &&
+            runningPort === null &&
+            hasQuickTunnelUrl(pidDir);
+          if (legacyWindowsQuickTunnel) {
+            info(
+              `Replacing the legacy Windows quick tunnel without a dashboard-port record for port ${String(dashboardPort)}.`,
+            );
+            targetReady = stopService(pidDir, "cloudflared", processControl);
+            if (!targetReady) {
+              targetFailure =
+                "The legacy Windows quick tunnel could not be stopped safely. Verify the process command line identifies cloudflared, stop it manually, then run `nemoclaw tunnel start` again to record the selected dashboard port.";
+            }
+          } else if (!runningQuickTunnel && !recordedQuickTunnel) {
             targetReady = false;
           } else if (
             runningQuickTunnel

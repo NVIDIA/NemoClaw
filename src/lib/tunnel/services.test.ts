@@ -562,6 +562,48 @@ describe("startAll", () => {
     expect(signal).not.toHaveBeenCalled();
   });
 
+  it("replaces a legacy Windows quick tunnel that predates dashboard-port tracking", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      "#!/usr/bin/env sh\necho 'https://replacement.trycloudflare.com'\nsleep 20\n",
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const legacyPid = 42_424;
+    let legacyAlive = true;
+    mkdirSync(pidDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(legacyPid), { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.log"), "https://legacy.trycloudflare.com");
+    const processControl: ProcessControl = {
+      isAlive: (pid) => (pid === legacyPid ? legacyAlive : true),
+      commandLine: (pid) =>
+        pid === legacyPid
+          ? JSON.stringify("C:\\Program Files\\cloudflared\\cloudflared.exe")
+          : "cloudflared tunnel --url http://localhost:18791",
+      signal: (pid) => {
+        expect(pid).toBe(legacyPid);
+        legacyAlive = false;
+        return "signaled";
+      },
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 18_791, processControl });
+
+    const replacementPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    expect(replacementPid).not.toBe(legacyPid);
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("18791");
+    expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain(
+      "https://replacement.trycloudflare.com",
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "Replacing the legacy Windows quick tunnel without a dashboard-port record",
+    );
+  });
+
   it("restarts a quick tunnel when its recorded dashboard port is missing", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
