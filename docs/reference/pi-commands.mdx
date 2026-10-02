@@ -71,18 +71,7 @@ Pi supports a positive `NEMOCLAW_CONTEXT_WINDOW` no larger than `4194304`, a `NE
 
 ## Preserve and Replace State
 
-Finish active Pi work before snapshot creation.
-
-```bash
-nemoclaw <name> snapshot create --name before-change
-nemoclaw <name> snapshot list
-```
-
-Review the selected version, name, or timestamp before restore replaces sandbox state.
-
-```bash
-nemoclaw <name> snapshot restore <version-or-name-or-timestamp>
-```
+OpenShell preserves Pi's complete native home and workspace through stop, start, and reconnect. Finish active Pi work before rebuilding; an unavoidable rebuild transfers the complete native state to the replacement sandbox.
 
 Rebuild validates recorded authority and selects the immutable Pi image authorised by the protected qualification receipt.
 
@@ -111,10 +100,9 @@ nemoclaw <name> stop
 nemoclaw <name> start
 ```
 
-Create a snapshot before destroy when user state must survive. Destroy does not remove a provider credential from the OpenShell gateway.
+Copy any state you need before destroy. Destroy removes the OpenShell sandbox storage, but does not remove a provider credential from the OpenShell gateway.
 
 ```bash
-nemoclaw <name> snapshot create --name before-destroy
 nemoclaw <name> destroy --yes
 ```
 

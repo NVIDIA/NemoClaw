@@ -813,6 +813,16 @@ export function buildE2eWorkflowPlan(
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
       (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
     );
+    const unresolvedRiskJobIds = riskJobIds.filter((id) => {
+      const workflowJob = inventory.targetToJob.get(id) ?? id;
+      if (inventory.workflowJobs.includes(workflowJob)) return false;
+      return !selectedCatalogueTargets.some((target) => target.id === id || target.targetId === id);
+    });
+    if (unresolvedRiskJobIds.length > 0) {
+      throw new Error(
+        `PR risk plan requires E2E identifiers that do not resolve to selected work: ${unresolvedRiskJobIds.join(",")}`,
+      );
+    }
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
       ...registryTargetsForChangedFiles(changedFiles, gatewayRuntimes),
