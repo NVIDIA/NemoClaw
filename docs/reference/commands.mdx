@@ -1802,7 +1802,15 @@ Expected output:
 ...
 ```
 
-If the sandbox is running an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line pointing at `nemohermes <name> rebuild` to pick up the newer version. The rebuild reuses the existing sandbox name and persisted credentials, so messaging tokens and provider keys carry over.
+If a non-Portable sandbox runs an older Hermes version than this NemoClaw release expects, `status` and `connect` add an `Update` line that points to `nemohermes <name> rebuild`.
+The rebuild reuses the existing sandbox name and persisted credentials, so messaging tokens and provider keys carry over.
+
+Portable Hermes does not support `rebuild`.
+Replace an older Portable Hermes image through a fresh Portable onboarding run:
+
+```bash
+nemohermes onboard --experimental-profile portable --fresh --name <sandbox-name> --recreate-sandbox
+```
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
