@@ -3697,6 +3697,9 @@ If the in-sandbox config write or integrity hash update fails, the OpenShell rou
 
 Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
+Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
+For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
+NemoClaw preserves an unrecognized underscore spelling for normal provider validation.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
