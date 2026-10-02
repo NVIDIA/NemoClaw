@@ -65,8 +65,7 @@ export function buildLifecycleRegistrationCheck(
       group: "Sandbox",
       label: "Lifecycle registration",
       status: "ok",
-      detail:
-        "registry entry has lifecycle metadata for snapshot, rebuild, upgrade, recovery, and reboot",
+      detail: "registry entry has lifecycle metadata for rebuild, upgrade, recovery, and reboot",
     };
   }
 
@@ -83,6 +82,6 @@ export function buildLifecycleRegistrationCheck(
     label: "Lifecycle registration",
     status: "warn",
     detail: `registry entry incomplete for lifecycle operations (${fieldParts.join("; ")}; affected: ${affectedOperations.join(", ")})`,
-    hint: `re-register or re-onboard '${sandboxName}' before running lifecycle commands such as \`${cliName} ${sandboxName} snapshot create\` or \`${cliName} ${sandboxName} rebuild\``,
+    hint: `re-register or re-onboard '${sandboxName}' before running lifecycle commands such as \`${cliName} ${sandboxName} rebuild\``,
   };
 }

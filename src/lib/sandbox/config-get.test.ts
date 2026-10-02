@@ -188,7 +188,7 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
 
     const error = captureError(() => loadConfigGet()("alpha"));
 
-    expect(error.message).toContain("Invalid JSON5 configuration syntax.");
+    expect(error.message).toContain("Invalid JSON configuration syntax.");
     expect(error.message).not.toContain(secret);
     expect(error.message).not.toContain(sourceLine);
   });

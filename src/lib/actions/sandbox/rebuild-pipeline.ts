@@ -26,7 +26,6 @@ import {
   captureRebuildPolicyDocument,
   bindRebuildSnapshotGpuAuthority,
   clearRebuildMcpHandoff,
-  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
@@ -36,19 +35,13 @@ import {
   retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import {
-  captureHermesOperatorConfigSnapshot,
-  REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-  serializeHermesOperatorConfigSnapshot,
-} from "./rebuild-durable-config";
+import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
-  prepareRebuildStoppedAgentState,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
@@ -69,7 +62,6 @@ import {
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
 import {
-  finalizePreparedRebuildImageMessagingPlan,
   runHermesCronRestoreBackupPreflight,
   runRebuildPreflightPhase,
 } from "./rebuild-preflight-phase";
@@ -226,6 +218,7 @@ async function rebuildSandboxUnlocked(
     dcodePreflight,
     preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
+    stoppedSource,
     releaseOnboardLock,
     log,
     bail,
@@ -249,18 +242,13 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedAgentState>> =
-    preflight.stoppedSource ?? null;
+  // A stopped source has no live DCode route to probe. Keep the replacement,
+  // registry, image, and gateway-schema checks, but use the same route-probe
+  // exemption at every destructive-boundary revalidation that preflight used.
+  const skipLiveDcodeRouteProbe = recoveryRecreate || stoppedSource != null;
   try {
-    stoppedSource ??= await prepareRebuildStoppedAgentState(
-      sandboxEntry,
-      liveState,
-      recoveryManifest !== null,
-      registry.getSandbox,
-    );
     if (stoppedSource)
       log("Captured the identified stopped agent source without starting its container.");
-    const skipLiveDcodeRoute = recoveryRecreate || stoppedSource !== null;
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
@@ -300,8 +288,7 @@ async function rebuildSandboxUnlocked(
             backupManifest: recoveryManifest,
           }) ||
           recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.rebuildMcpHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+          recoveryManifest.rebuildMcpHandoff?.retired === true
         : false;
       const activeRecoverySession = onboardSession.loadSession();
       const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
@@ -494,16 +481,6 @@ async function rebuildSandboxUnlocked(
             "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
           );
         }
-        if (
-          cleanupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(cleanupManifest)
-        ) {
-          reportIncompletePolicyHandoffCleanup(
-            cleanupManifest,
-            "The retired Hermes operator config handoff artifact or metadata could not be removed.",
-          );
-          return;
-        }
         if (!completePolicyHandoffCleanup(cleanupJournal.id, cleanupManifest)) return;
         if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
         cleanupJournal.completeAcceptedTarget();
@@ -515,7 +492,7 @@ async function rebuildSandboxUnlocked(
       }
 
       const backup = await runRebuildBackupPhase({
-        ...(stoppedSource ? { capturedAgentState: stoppedSource } : {}),
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -584,66 +561,17 @@ async function rebuildSandboxUnlocked(
         );
       };
 
-      if (
-        rebuildAgent === "hermes" &&
-        backup.backupManifest?.agentType === "hermes" &&
-        !backup.backupManifest.hermesOperatorConfigHandoff &&
-        !preparedBackupRecovery &&
-        !staleRecovery
-      ) {
-        try {
-          const operatorConfig = captureHermesOperatorConfigSnapshot(sandboxName);
-          backup.backupManifest = writeHermesOperatorConfigHandoff(
-            backup.backupManifest,
-            serializeHermesOperatorConfigSnapshot(operatorConfig),
-            [...operatorConfig.entries.map((entry) => entry.key), ...operatorConfig.droppedKeys],
-          );
-          rebuildPolicyHandoffManifest = backup.backupManifest;
-          log(
-            `Captured Hermes operator config: restorable=${operatorConfig.entries.map((entry) => entry.key).join(",") || "none"}; managed=${operatorConfig.droppedKeys.join(",") || "none"}`,
-          );
-        } catch (error) {
-          return bail(
-            `Hermes operator configuration could not be captured before rebuild: ${rebuildFailureDetail(error)}`,
-          );
-        }
-      }
-
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
       // destructive rebuild phase.
       const hermesCronRestorePreflight = runHermesCronRestoreBackupPreflight({
         rebuildAgent,
-        backupPath: backup.backupManifest?.backupPath ?? null,
-        backedUpDirs: backup.backupManifest?.backedUpDirs ?? [],
+        backupManifest: backup.backupManifest,
         log,
         bail,
       });
       if (!hermesCronRestorePreflight) return;
       const hermesCronRestorePlan = hermesCronRestorePreflight.plan;
-
-      const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
-      if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
-        const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
-          preparedImage,
-          messagingPlan,
-          preservedEnv,
-        );
-        if (!finalizedImage.ok) {
-          printRebuildPreflightFailure(
-            `the retained replacement image could not include preserved Hermes messaging state: ${finalizedImage.detail}`,
-            "The existing sandbox is untouched. Retry the rebuild after checking the replacement image inputs.",
-            "Replacement sandbox image finalization failed",
-            bail,
-          );
-          return;
-        }
-        preparedImage = finalizedImage.prepared;
-        recreateOptions.preparedImageRebuild = {
-          buildContext: preparedImage,
-          gatewayName: recreateOptions.targetGatewayName,
-        };
-      }
 
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the
@@ -661,13 +589,12 @@ async function rebuildSandboxUnlocked(
       // DCode's retained replacement and live inference route must still match at
       // the last safe point. This check intentionally precedes MCP adapter scrub,
       // provider detach, NIM stop, and sandbox deletion in the destroy phase.
-      stoppedSource?.assertCurrent();
       if (
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
           durableConfig.toolDisclosure,
           durableConfig.dcodeAutoApprovalMode,
-          skipLiveDcodeRoute,
+          skipLiveDcodeRouteProbe,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
         ))
@@ -720,15 +647,6 @@ async function rebuildSandboxUnlocked(
           );
         }
         if (
-          backup.backupManifest?.hermesOperatorConfigHandoff &&
-          backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail(
-            "The unused current-run Hermes operator config handoff could not be retired during recovery.",
-          );
-        }
-        if (
           (backup.backupManifest?.rebuildPolicyHandoff ||
             backup.backupManifest?.rebuildMcpHandoff) &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
@@ -749,7 +667,6 @@ async function rebuildSandboxUnlocked(
         const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: recoveryBackup,
           ...(recreateJournal.runtimeSelection
             ? { runtimeSelection: recreateJournal.runtimeSelection }
@@ -768,7 +685,6 @@ async function rebuildSandboxUnlocked(
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
           openClawDoctorWindow: restored.openClawDoctorWindow,
-          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           preparedBackupRecovery: true,
           versionCheck,
           log,
@@ -810,12 +726,6 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
-        if (
-          recoveryBackup.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(recoveryBackup)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after recovery.");
-        }
         if (retireRemovedImmutabilityState) {
           if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
             return bail(
@@ -839,7 +749,7 @@ async function rebuildSandboxUnlocked(
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
-        ...(stoppedSource ? { capturedAgentState: stoppedSource } : {}),
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         sandboxEntry,
         recheckMessagingConflicts,
@@ -909,12 +819,11 @@ async function rebuildSandboxUnlocked(
                   : `Gateway provider '${providerReconfigure.provider}' could not be verified before sandbox deletion.`,
             };
           }
-          stoppedSource?.assertCurrent();
           return dcodePreflight.checkAtDeleteEdge(
             resumeConfig,
             durableConfig.toolDisclosure,
             durableConfig.dcodeAutoApprovalMode,
-            skipLiveDcodeRoute,
+            skipLiveDcodeRouteProbe,
             recreateOptions.targetGatewayPort,
             preparation.runtimeSelection,
           );
@@ -1054,7 +963,6 @@ async function rebuildSandboxUnlocked(
         runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: backup.backupManifest,
           ...(mcpPreparation.runtimeSelection
             ? { runtimeSelection: mcpPreparation.runtimeSelection }
@@ -1099,7 +1007,6 @@ async function rebuildSandboxUnlocked(
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         openClawDoctorWindow: restored.openClawDoctorWindow,
-        hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         preparedBackupRecovery,
         versionCheck,
@@ -1115,12 +1022,6 @@ async function rebuildSandboxUnlocked(
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
       }
       if (backup.backupManifest) {
-        if (
-          backup.backupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after rebuild.");
-        }
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
       }
