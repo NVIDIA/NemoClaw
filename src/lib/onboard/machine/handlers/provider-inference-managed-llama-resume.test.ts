@@ -142,9 +142,13 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     });
   });
 
-  it.each([false, true])(
-    "rejects an unreachable operator llama.cpp route before inference completes (resume=%s)",
-    async (resume) => {
+  it.each([
+    { resume: false, reachable: false, result: "exit 1" },
+    { resume: true, reachable: false, result: "exit 1" },
+    { resume: false, reachable: true, result: "complete" },
+  ])(
+    "requires a reachable operator llama.cpp route (resume=$resume, reachable=$reachable)",
+    async ({ resume, reachable, result }) => {
       const route = {
         provider: "llama-cpp-local",
         model: "team/model-alias",
@@ -164,8 +168,8 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       });
       session.steps.provider_selection.status = resume ? "complete" : "pending";
       const probeLlamaCppSandboxReachability = vi.fn(async () => ({
-        ok: false as const,
-        reason: "tcp_failed" as const,
+        ok: reachable,
+        reason: reachable ? ("ok" as const) : ("tcp_failed" as const),
         networkName: "openshell",
         gatewayIp: "172.18.0.1",
       }));
@@ -176,20 +180,24 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
         probeLlamaCppSandboxReachability,
       });
 
-      await expect(
-        handleProviderInferenceState({
-          ...baseOptions(deps, session),
-          resume,
-          sandboxName: "operator-agent",
-        }),
-      ).rejects.toThrow("exit 1");
+      const outcome = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume,
+        sandboxName: "operator-agent",
+      }).then(
+        () => "complete",
+        (error: Error) => error.message,
+      );
+      expect(outcome).toBe(result);
+      expect(calls.setupInference).toHaveBeenCalledTimes(reachable ? 1 : 0);
+      expect(calls.complete.mock.calls.some(([step]) => step === "inference")).toBe(reachable);
+      expect(
+        calls.error.mock.calls.some(([message]) =>
+          message.includes("host.openshell.internal:8081"),
+        ),
+      ).toBe(!reachable);
       expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
       expect(setupNim).toHaveBeenCalledTimes(resume ? 0 : 1);
-      expect(calls.setupInference).not.toHaveBeenCalled();
-      expect(calls.complete.mock.calls.map(([step]) => step)).not.toContain("inference");
-      expect(calls.error).toHaveBeenCalledWith(
-        expect.stringContaining("host.openshell.internal:8081"),
-      );
     },
   );
 
