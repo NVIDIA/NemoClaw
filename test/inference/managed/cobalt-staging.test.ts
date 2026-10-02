@@ -15,7 +15,15 @@ import {
   getManagedInferenceServingCatalogRegistries,
   isHostLocalInferenceServingRecipe,
 } from "../../../src/lib/inference/serving/adapter-registry.js";
-import { materializeHostLocalVllmModel } from "../../../src/lib/inference/serving/host-local-vllm-selection.js";
+import {
+  materializeHostLocalVllmModel,
+  materializeHostLocalVllmSelection,
+} from "../../../src/lib/inference/serving/host-local-vllm-selection.js";
+import { detectVllmProfile } from "../../../src/lib/inference/vllm.js";
+import {
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+  persistHostLocalVllmRuntimeReceipt,
+} from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.js";
 import {
   buildVllmServeCommand,
   VLLM_EXTRA_ARGS_ENV,
@@ -42,6 +50,7 @@ const SCHEMAS = {
   recipe: recipeSchema,
 };
 
+/** Compile the inactive documents through the production catalog consumer without promoting them. */
 function stagingCatalog() {
   return managedInferenceCatalogFromServingCatalog(
     compileTrustedServingCatalog({
@@ -113,6 +122,10 @@ describe("inactive Cobalt staging", () => {
     expect(model.runtime?.dockerRunArgs).toContain("34359738368b");
     expect(command).toContain("--max-model-len 16384");
     expect(command).toContain("--dtype bfloat16");
+    expect(command).toContain("--trust-remote-code");
+    expect(command).toContain("--async-scheduling");
+    expect(command).toContain("--gpu-memory-utilization 0.95");
+    expect(command).toContain("--max-num-seqs 2");
     expect(command).toContain("--enable-auto-tool-choice");
     expect(command).toContain("--tool-call-parser qwen3_coder");
     expect(command).toContain("--reasoning-parser nemotron_v3");
@@ -146,7 +159,7 @@ describe("inactive Cobalt staging", () => {
     });
   });
 
-  it("does not select staging automatically or through its model alias", () => {
+  it("rejects inactive selection and materializes an enabled test copy with its receipt", () => {
     const catalog = stagingCatalog();
     const input = {
       readinessReports: [
@@ -173,5 +186,51 @@ describe("inactive Cobalt staging", () => {
       })),
     };
     expect(resolveManagedInferenceServing(input, enabled)).toMatchObject({ outcome: "selected" });
+
+    const selection = resolveManagedInferenceServing(
+      { ...input, intent: { preset: PRESET_ID } },
+      enabled,
+    );
+    assert.ok(selection.outcome === "selected", "Expected the enabled test preset to resolve");
+    assert.ok(isHostLocalInferenceServingRecipe(selection.recipe));
+    const baseProfile = detectVllmProfile({ platform: "station" });
+    assert.ok(baseProfile);
+    const materialized = materializeHostLocalVllmSelection(
+      { ...selection, recipe: selection.recipe },
+      baseProfile,
+    );
+    const serving = materialized.profile.servingCatalog;
+    expect(serving).toEqual({
+      catalogDigest: selection.catalogDigest,
+      presetId: PRESET_ID,
+      presetDigest: selection.presetDigest,
+      recipeId: selection.recipe.metadata.id,
+      recipeDigest: selection.recipeDigest,
+    });
+    expect(materialized.profile.defaultModel).toEqual(materialized.model);
+    expect(materialized.model).toMatchObject({
+      servedModelId: "cobalt",
+      managedBearerAuth: true,
+      fixedServeCommand: true,
+      maxModelLen: 16384,
+    });
+    expect(buildVllmServeCommand(materialized.model)).toContain("--dtype bfloat16");
+    expect(detectVllmProfile({ platform: "station" })?.defaultModel.envValue).not.toBe("cobalt");
+
+    assert.ok(serving, "Expected catalog provenance for the runtime receipt");
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-cobalt-receipt-"));
+    try {
+      persistHostLocalVllmRuntimeReceipt(
+        { containerId: "a".repeat(64), authFingerprint: "b".repeat(64), serving },
+        directory,
+      );
+      expect(
+        JSON.parse(
+          readFileSync(path.join(directory, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE), "utf8"),
+        ),
+      ).toMatchObject({ serving });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
