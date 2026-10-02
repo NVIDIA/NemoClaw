@@ -94,9 +94,11 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
+  "--exclude='./.openclaw/state/openclaw.sqlite'",
   "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
   "--exclude='./.openclaw/state/openclaw.sqlite-shm'",
   "--exclude='./.openclaw/state/openclaw.sqlite-wal'",
+  "--exclude='./.openclaw-data/state/openclaw.sqlite'",
   "--exclude='./.openclaw-data/state/openclaw.sqlite-journal'",
   "--exclude='./.openclaw-data/state/openclaw.sqlite-shm'",
   "--exclude='./.openclaw-data/state/openclaw.sqlite-wal'",
@@ -104,6 +106,57 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.hermes/runtime/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.lock'",
 ].join(" ");
+const OPENCLAW_SQLITE_COPY_SCRIPT = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const root = process.argv[1];
+const relative = process.argv[2];
+const output = process.argv[3];
+const parts = relative.split("/");
+let cursor = root;
+for (let index = 0; index < parts.length; index += 1) {
+  cursor = path.join(cursor, parts[index]);
+  let stat;
+  try {
+    stat = fs.lstatSync(cursor);
+  } catch (error) {
+    if (error && error.code === "ENOENT") process.exit(0);
+    throw error;
+  }
+  const final = index === parts.length - 1;
+  if (stat.isSymbolicLink() || (final ? !stat.isFile() : !stat.isDirectory())) {
+    throw new Error("unsafe OpenClaw database path");
+  }
+}
+const sourceStat = fs.lstatSync(cursor);
+for (const suffix of ["-journal", "-shm", "-wal"]) {
+  try {
+    const companion = fs.lstatSync(cursor + suffix);
+    if (companion.isSymbolicLink() || !companion.isFile()) {
+      throw new Error("unsafe OpenClaw database companion");
+    }
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+}
+const database = new DatabaseSync(cursor, {
+  allowExtension: false,
+  readOnly: true,
+  timeout: 2_000,
+});
+try {
+  database.prepare("VACUUM INTO ?").run(output);
+} finally {
+  database.close();
+}
+fs.chmodSync(output, sourceStat.mode & 0o777);
+fs.utimesSync(output, sourceStat.atime, sourceStat.mtime);
+`;
+const OPENCLAW_SQLITE_CAPTURE_TARGETS = [
+  { archivePath: ".openclaw/state/openclaw.sqlite", stageName: "modern" },
+  { archivePath: ".openclaw-data/state/openclaw.sqlite", stageName: "legacy" },
+] as const;
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
 export const HOST_LOCAL_INFERENCE_REBUILD_RESTORE_AUTHORITY_ERROR =
@@ -1945,53 +1998,83 @@ function capturePreparedNativeState(
   if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
     throw new Error("Prepared stopped native state root is not a directory");
   }
-  // GNU tar can emit each hard-linked file as independent archive content
-  // without following symbolic links (`--hard-dereference` is hard-link-only).
-  // BSD tar cannot, so stage a metadata-preserving private copy there; cp does
-  // not preserve hard-link identity unless explicitly requested to do so.
-  return spawnSync(
-    "bash",
-    [
-      "-o",
-      "pipefail",
-      "-c",
+  const sqliteStage = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-sqlite-copy-"));
+  try {
+    const materializationStartedAt = Date.now();
+    for (const target of OPENCLAW_SQLITE_CAPTURE_TARGETS) {
+      const remainingMs = timeoutMs - (Date.now() - materializationStartedAt);
+      if (remainingMs <= 0) throw new Error("Prepared native-state SQLite capture timed out");
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--no-warnings",
+          "-e",
+          OPENCLAW_SQLITE_COPY_SCRIPT,
+          source.directory,
+          target.archivePath,
+          path.join(sqliteStage, target.stageName),
+        ],
+        { stdio: "ignore", timeout: remainingMs },
+      );
+      if (result.status !== 0 || result.error || result.signal) {
+        throw new Error("Could not materialize a consistent private OpenClaw database copy");
+      }
+    }
+    const remainingMs = timeoutMs - (Date.now() - materializationStartedAt);
+    if (remainingMs <= 0) throw new Error("Prepared native-state SQLite capture timed out");
+    // GNU tar can emit each hard-linked file as independent archive content
+    // without following symbolic links (`--hard-dereference` is hard-link-only).
+    // BSD tar cannot, so stage a metadata-preserving private copy there; cp does
+    // not preserve hard-link identity unless explicitly requested to do so.
+    return spawnSync(
+      "bash",
       [
-        "source=$1",
-        "if tar --hard-dereference -cf - --files-from /dev/null >/dev/null 2>&1; then",
-        `  tar -C "$source" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
-        "else",
-        '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
-        "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
-        '  cp -RpP "$source/." "$stage/"',
-        '  rm -f -- "$stage/.nemoclaw/config.json"',
-        '  rm -rf -- "$stage/.nemoclaw/blueprints"',
-        '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
-        '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
-        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-journal"',
-        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-shm"',
-        '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite-wal"',
-        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-journal"',
-        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-shm"',
-        '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite-wal"',
-        '  rm -f -- "$stage/.hermes/gateway.pid"',
-        '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
-        '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
-        '  tar -C "$stage" -cf - -- .',
-        "fi",
-      ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
-      "nemoclaw-stopped-native-capture",
-      source.directory,
-    ],
-    {
-      env: {
-        ...process.env,
-        NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+        "-o",
+        "pipefail",
+        "-c",
+        [
+          "source=$1",
+          "sqlite_stage=$2",
+          "if tar --hard-dereference -cf - --files-from /dev/null >/dev/null 2>&1; then",
+          `  set -- tar -C "$source" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} '--transform=s|^modern$|./.openclaw/state/openclaw.sqlite|' '--transform=s|^legacy$|./.openclaw-data/state/openclaw.sqlite|' -cf - .`,
+          '  [ ! -f "$sqlite_stage/modern" ] || set -- "$@" -C "$sqlite_stage" modern',
+          '  [ ! -f "$sqlite_stage/legacy" ] || set -- "$@" -C "$sqlite_stage" legacy',
+          '  "$@"',
+          "else",
+          '  stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-stopped-native-capture.XXXXXX")',
+          "  trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
+          '  cp -RpP "$source/." "$stage/"',
+          '  rm -f -- "$stage/.nemoclaw/config.json"',
+          '  rm -rf -- "$stage/.nemoclaw/blueprints"',
+          '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
+          '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
+          '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite"*',
+          '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite"*',
+          '  if [ -f "$sqlite_stage/modern" ]; then mkdir -p "$stage/.openclaw/state"; cp -p "$sqlite_stage/modern" "$stage/.openclaw/state/openclaw.sqlite"; fi',
+          '  if [ -f "$sqlite_stage/legacy" ]; then mkdir -p "$stage/.openclaw-data/state"; cp -p "$sqlite_stage/legacy" "$stage/.openclaw-data/state/openclaw.sqlite"; fi',
+          '  rm -f -- "$stage/.hermes/gateway.pid"',
+          '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
+          '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
+          '  tar -C "$stage" -cf - -- .',
+          "fi",
+        ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
+        "nemoclaw-stopped-native-capture",
+        source.directory,
+        sqliteStage,
+      ],
+      {
+        env: {
+          ...process.env,
+          NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+        },
+        stdio: ["ignore", archiveDescriptor, "pipe"],
+        timeout: remainingMs,
+        maxBuffer: 1024 * 1024,
       },
-      stdio: ["ignore", archiveDescriptor, "pipe"],
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-    },
-  );
+    );
+  } finally {
+    rmSync(sqliteStage, { recursive: true, force: true });
+  }
 }
 
 function remainingBackupTimeoutMs(
@@ -2107,14 +2190,16 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       } else {
         if (!temporary) throw new Error("Native state SSH configuration is unavailable");
         // The SSH command runs as the sandbox user. Freeze every other process
-        // owned by that user before reading the complete native tree so SQLite,
-        // WAL, and ordinary files are captured at one process-quiescent point.
+        // owned by that user before reading the complete native tree. Materialize
+        // any OpenClaw database plus committed WAL state into a private standalone
+        // copy, then stream that copy with the other process-quiescent files.
         // Keep the SSH ancestry live so the archive can stream, and always resume
         // processes through the EXIT trap, including tar failures and signals.
         const command = [
           "set -eu",
           `root=${shellQuote(rootResult.root)}`,
           '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
+          'db_stage=$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-openclaw-sqlite-copy.XXXXXX")',
           "uid=$(id -u)",
           "self=$$",
           'ancestors=" $self "',
@@ -2122,16 +2207,24 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
           'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
           'stopped=""',
-          'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
+          'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
           "trap resume EXIT HUP INT TERM",
           "quiesce_pass=0",
           'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
           'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$pid/status" || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
+          'if [ -e "$root/.openclaw/state/openclaw.sqlite" ] || [ -L "$root/.openclaw/state/openclaw.sqlite" ] || [ -e "$root/.openclaw-data/state/openclaw.sqlite" ] || [ -L "$root/.openclaw-data/state/openclaw.sqlite" ]; then command -v node >/dev/null 2>&1 || exit 22; node --no-warnings -e ' +
+            shellQuote(OPENCLAW_SQLITE_COPY_SCRIPT) +
+            ' "$root" .openclaw/state/openclaw.sqlite "$db_stage/modern" || exit 22; node --no-warnings -e ' +
+            shellQuote(OPENCLAW_SQLITE_COPY_SCRIPT) +
+            ' "$root" .openclaw-data/state/openclaw.sqlite "$db_stage/legacy" || exit 22; fi',
           // Expand hard links into independent file content without following
           // symbolic links; GNU tar's --hard-dereference is hard-link-only.
-          `tar -C "$root" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} -cf - -- .`,
+          `set -- tar -C "$root" --hard-dereference ${NATIVE_STATE_CAPTURE_TAR_EXCLUDES} '--transform=s|^modern$|./.openclaw/state/openclaw.sqlite|' '--transform=s|^legacy$|./.openclaw-data/state/openclaw.sqlite|' -cf - .`,
+          '[ ! -f "$db_stage/modern" ] || set -- "$@" -C "$db_stage" modern',
+          '[ ! -f "$db_stage/legacy" ] || set -- "$@" -C "$db_stage" legacy',
+          '"$@"',
         ].join("; ");
         result = spawnSync(
           "bash",

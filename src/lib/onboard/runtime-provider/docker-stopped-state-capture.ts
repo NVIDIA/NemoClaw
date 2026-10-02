@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { writeSync } from "node:fs";
+import { write } from "node:fs";
 import path from "node:path";
-import { Transform, type TransformCallback } from "node:stream";
+import { Transform, type TransformCallback, Writable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 
 import { dockerSpawn, dockerSpawnSync } from "../../adapters/docker/exec";
@@ -23,6 +23,30 @@ const INSPECT_FORMAT =
 
 function rejectStoppedCapture(message: string): never {
   throw new Error(message);
+}
+
+function createArchiveWriteStream(archiveFd: number): Writable {
+  return new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      let offset = 0;
+      const writeRemaining = (): void => {
+        write(archiveFd, chunk, offset, chunk.byteLength - offset, (error, written) => {
+          if (error) {
+            callback(error);
+            return;
+          }
+          if (written <= 0) {
+            callback(new Error("short archive write"));
+            return;
+          }
+          offset += written;
+          if (offset === chunk.byteLength) callback();
+          else writeRemaining();
+        });
+      };
+      writeRemaining();
+    },
+  });
 }
 
 function tarString(header: Buffer, start: number, length: number): string {
@@ -430,6 +454,8 @@ export function prepareStoppedDockerStateCapture(
   dependencies: {
     inspect?: typeof dockerSpawnSync;
     spawn?: typeof dockerSpawn;
+    createArchiveWriteStream?: (archiveFd: number) => Writable;
+    captureTimeoutMs?: number;
   } = {},
 ): RuntimeProviderStoppedStateCapture {
   const agentName = sandbox.agent ?? "openclaw";
@@ -455,6 +481,8 @@ export function prepareStoppedDockerStateCapture(
   const containerId = runtime.runtime.runtime.handle;
   const inspect = dependencies.inspect ?? dockerSpawnSync;
   const spawn = dependencies.spawn ?? dockerSpawn;
+  const createArchiveWriter = dependencies.createArchiveWriteStream ?? createArchiveWriteStream;
+  const captureTimeoutMs = dependencies.captureTimeoutMs ?? NATIVE_STATE_CAPTURE_TIMEOUT_MS;
   const readDocker = (args: readonly string[]): string | null => {
     const result = inspect(args, {
       encoding: "utf8",
@@ -556,10 +584,11 @@ export function prepareStoppedDockerStateCapture(
           stdio: ["ignore", "pipe", "pipe"],
         });
         const filter = new CompleteNativeStateArchiveTransform(nativeRootName);
+        const writer = createArchiveWriter(archiveFd);
         let inputBytes = 0;
         let outputBytes = 0;
         let childComplete = false;
-        let filterComplete = false;
+        let writerComplete = false;
         let settled = false;
         let failure: Error | undefined;
         const fail = (message: string): void => {
@@ -567,16 +596,14 @@ export function prepareStoppedDockerStateCapture(
           failure ??= new Error(message);
           child.kill("SIGKILL");
           filter.destroy();
+          writer.destroy();
           settled = true;
           clearTimeout(timer);
           reject(failure);
         };
         const failRead = (): void =>
           fail("Could not read and filter the stopped source container.");
-        const timer = setTimeout(
-          () => fail("Stopped state capture timed out."),
-          NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-        );
+        const timer = setTimeout(() => fail("Stopped state capture timed out."), captureTimeoutMs);
         child.stdout?.on("data", (chunk: Buffer) => {
           inputBytes += chunk.length;
           if (inputBytes > maxBytes)
@@ -589,21 +616,12 @@ export function prepareStoppedDockerStateCapture(
           outputBytes += chunk.length;
           if (outputBytes > maxBytes) {
             fail(`Stopped state exceeds the ${maxBytes}-byte backup-space limit.`);
-            return;
-          }
-          try {
-            let offset = 0;
-            while (offset < chunk.length) {
-              const written = writeSync(archiveFd, chunk, offset, chunk.length - offset);
-              if (written <= 0) rejectStoppedCapture("short write");
-              offset += written;
-            }
-          } catch {
-            fail("Could not write the private stopped-state archive.");
           }
         });
+        filter.pipe(writer);
+        writer.on("error", () => fail("Could not write the private stopped-state archive."));
         const finish = (): void => {
-          if (settled || !childComplete || !filterComplete) return;
+          if (settled || !childComplete || !writerComplete) return;
           settled = true;
           clearTimeout(timer);
           if (inputBytes === 0 || outputBytes === 0)
@@ -621,8 +639,8 @@ export function prepareStoppedDockerStateCapture(
           childComplete = true;
           finish();
         });
-        filter.once("end", () => {
-          filterComplete = true;
+        writer.once("finish", () => {
+          writerComplete = true;
           finish();
         });
       });

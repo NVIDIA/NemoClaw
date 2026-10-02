@@ -5,6 +5,7 @@ import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -345,6 +346,48 @@ describe("stopped Docker recovery capture", () => {
         "Could not read and filter the stopped source container.",
       );
     } finally {
+      fs.closeSync(descriptor);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("times out a pending archive write, kills the copy process, and publishes no bytes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-write-timeout-"));
+    const archive = path.join(root, "archive");
+    const descriptor = fs.openSync(archive, "wx+", 0o600);
+    const payload = Buffer.concat([tarHeader("sandbox", "5"), Buffer.alloc(1024)]);
+    let child: ReturnType<typeof spawn> | undefined;
+    const writer = new Writable({
+      write(_chunk, _encoding, _callback) {
+        // Intentionally retain the callback past the capture deadline.
+      },
+    });
+    try {
+      const capture = prepareStoppedDockerStateCapture(sandbox, runtime, projection, {
+        inspect: () => inspectResult(observation()),
+        spawn: () => {
+          child = spawn(
+            process.execPath,
+            [
+              "-e",
+              "process.stdout.write(Buffer.from(process.argv[1], 'base64')); setInterval(() => {}, 1000)",
+              payload.toString("base64"),
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          );
+          return child;
+        },
+        createArchiveWriteStream: () => writer,
+        captureTimeoutMs: 25,
+      });
+
+      await expect(capture.capture(descriptor, captureMaxBytes)).rejects.toThrow(
+        "Stopped state capture timed out.",
+      );
+      expect(child?.killed).toBe(true);
+      expect(fs.fstatSync(descriptor).size).toBe(0);
+    } finally {
+      child?.kill("SIGKILL");
       fs.closeSync(descriptor);
       fs.rmSync(root, { recursive: true, force: true });
     }

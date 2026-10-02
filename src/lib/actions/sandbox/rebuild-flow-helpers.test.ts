@@ -22,6 +22,7 @@ import {
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
+  prepareRebuildStoppedAgentState,
 } from "./rebuild-flow-helpers";
 
 function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> {
@@ -64,6 +65,24 @@ function makeBail(): (msg: string, code?: number) => never {
     throw new Error(`bail: ${msg}`);
   };
 }
+
+describe("stopped rebuild capture selection", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("leaves stopped Hermes on the bounded start, capture, and restop fallback", async () => {
+    const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+
+    await expect(
+      prepareRebuildStoppedAgentState(
+        { name: "alpha", agent: "hermes" },
+        { terminalPhase: true, staleRecovery: false, staleRegistrySnapshot: null },
+        false,
+        vi.fn(),
+      ),
+    ).resolves.toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+});
 
 describe("rebuild target gateway preflight", () => {
   const priorOpenShellEnv = {
