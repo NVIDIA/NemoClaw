@@ -54,6 +54,7 @@ _TOOL_GATEWAY_URL_ENV = {
 }
 _TOOL_GATEWAY_REFRESH_TOKEN_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"
 _LEGACY_TOOL_GATEWAY_USER_TOKEN_ENV = "TOOL_GATEWAY_USER_TOKEN"
+_MANAGED_INFERENCE_HOST = "inference.local"
 
 _NEMOCLAW_CONTEXT_KEYWORDS = (
     "browser",
@@ -1009,18 +1010,6 @@ def _install_nous_tool_broker_patch():
     return patched
 
 
-def _load_nemoclaw_config():
-    """Load NemoClaw onboard config from ~/.nemoclaw/config.json."""
-    config_path = os.path.expanduser("~/.nemoclaw/config.json")
-    if not os.path.exists(config_path):
-        return None
-    try:
-        with open(config_path) as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
 def _load_hermes_config():
     """Load Hermes config.yaml from the sandbox."""
     for path in [
@@ -1060,24 +1049,86 @@ def _hermes_api_port():
     return port if 8642 <= port <= 8652 else 8642
 
 
+def _config_text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _provider_alias(name):
+    """Normalize a provider name the way Hermes matches model.provider.
+
+    Hermes ignores case and an optional custom: prefix, and treats spaces as hyphens.
+    """
+    alias = _config_text(name).lower().replace(" ", "-")
+    return alias[len("custom:"):] if alias.startswith("custom:") else alias
+
+
+def _named_provider_url(hermes_cfg, provider):
+    """Return the endpoint of the providers or custom_providers entry named by provider."""
+    wanted = _provider_alias(provider)
+    providers = hermes_cfg.get("providers")
+    if wanted and isinstance(providers, dict):
+        for key, entry in providers.items():
+            if isinstance(entry, dict) and wanted in (
+                _provider_alias(str(key)),
+                _provider_alias(entry.get("name")),
+            ):
+                return entry.get("api") or entry.get("url") or entry.get("base_url")
+    custom_providers = hermes_cfg.get("custom_providers")
+    if wanted and isinstance(custom_providers, list):
+        for entry in custom_providers:
+            if isinstance(entry, dict) and wanted in (
+                _provider_alias(entry.get("name")),
+                _provider_alias(entry.get("provider_key")),
+            ):
+                return entry.get("base_url")
+    return None
+
+
+def _display_endpoint(value):
+    """Return only the scheme, host, port, and path of a configured endpoint.
+
+    User-defined endpoints can carry credentials in user info or query parameters.
+    """
+    try:
+        parsed = urlparse(_config_text(value))
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "unknown"
+    if not parsed.scheme or not host:
+        return "unknown"
+    netloc = f"[{host}]" if ":" in host else host
+    netloc = netloc if port is None else f"{netloc}:{port}"
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+
 def _get_sandbox_info():
-    """Gather sandbox status information."""
+    """Describe the Hermes chat route and the NemoClaw managed inference route."""
     hermes_cfg = _load_hermes_config()
-    nemoclaw_cfg = _load_nemoclaw_config()
+    hermes_cfg = hermes_cfg if isinstance(hermes_cfg, dict) else {}
+    model_cfg = hermes_cfg.get("model")
+    model_cfg = model_cfg if isinstance(model_cfg, dict) else {}
+    upstream = hermes_cfg.get("_nemoclaw_upstream")
+    upstream = upstream if isinstance(upstream, dict) else {}
 
-    model = "unknown"
-    provider = "custom"
-    base_url = "unknown"
-
-    if hermes_cfg:
-        model_cfg = hermes_cfg.get("model", {})
-        model = model_cfg.get("default", "unknown")
-        provider = model_cfg.get("provider", "custom")
-        base_url = model_cfg.get("base_url", "unknown")
-
-    if nemoclaw_cfg:
-        model = nemoclaw_cfg.get("model", model)
-        provider = nemoclaw_cfg.get("provider", provider)
+    provider = _config_text(model_cfg.get("provider")) or "custom"
+    base_url = _display_endpoint(
+        _named_provider_url(hermes_cfg, provider) or model_cfg.get("base_url")
+    )
+    chat_uses_managed_route = urlparse(base_url).hostname == _MANAGED_INFERENCE_HOST
+    managed_route = None
+    if _config_text(upstream.get("provider")):
+        managed_route = {
+            "model": _config_text(upstream.get("model")) or "unknown",
+            "provider": _config_text(upstream.get("provider")),
+            "base_url": _display_endpoint(
+                _named_provider_url(
+                    hermes_cfg, upstream.get("provider_key") or upstream.get("provider")
+                )
+            ),
+        }
+        if chat_uses_managed_route:
+            provider = managed_route["provider"]
 
     # Check gateway health
     api_port = _hermes_api_port()
@@ -1097,12 +1148,19 @@ def _get_sandbox_info():
 
     return {
         "agent": "hermes",
-        "model": model,
+        "model": _config_text(model_cfg.get("default")) or "unknown",
         "provider": provider,
         "base_url": base_url,
+        "chat_uses_managed_route": chat_uses_managed_route,
+        "managed_route": managed_route,
         "gateway": "running" if gateway_ok else "stopped",
         "port": api_port,
     }
+
+
+def _unused_managed_route(info):
+    """Return the NemoClaw managed route when the Hermes chat route does not use it."""
+    return None if info.get("chat_uses_managed_route") else info.get("managed_route")
 
 
 def _active_managed_gateway_services():
@@ -1237,9 +1295,11 @@ def _should_inject_nemoclaw_context(user_message=None, is_first_turn=False):
     return any(keyword in text for keyword in _NEMOCLAW_CONTEXT_KEYWORDS)
 
 
-def _build_nemoclaw_agent_context(platform=None):
+def _build_nemoclaw_agent_context(platform=None, model=None):
     """Build quiet, ephemeral context for Hermes' pre_llm_call hook."""
     info = _get_sandbox_info()
+    chat_model = _config_text(model) or info["model"]
+    managed_route = _unused_managed_route(info)
     hermes_home = (
         os.getenv("HERMES_HOME")
         or _get_env_value("HERMES_HOME", "")
@@ -1284,15 +1344,26 @@ def _build_nemoclaw_agent_context(platform=None):
     tools_line = (
         "- NemoClaw tools available: nemoclaw_status, nemoclaw_info, transcribe_audio."
     )
+    route_lines = [
+        f"- NemoClaw provider state: model={chat_model}, "
+        f"provider={info['provider']}, endpoint={info['base_url']}, "
+        f"gateway={info['gateway']}.",
+    ]
+    if managed_route:
+        route_lines = [
+            f"- Hermes chat route: model={chat_model}, provider={info['provider']}, "
+            f"endpoint={info['base_url']}, gateway={info['gateway']}.",
+            "- NemoClaw-managed inference route (this chat does not use it): "
+            f"model={managed_route['model']}, provider={managed_route['provider']}, "
+            f"endpoint={managed_route['base_url']}.",
+        ]
 
     lines = [
         "NemoClaw runtime context:",
         agent_identity_line,
         child_tool_line,
         config_line,
-        f"- NemoClaw provider state: model={info['model']}, "
-        f"provider={info['provider']}, endpoint={info['base_url']}, "
-        f"gateway={info['gateway']}.",
+        *route_lines,
         tools_line,
         f"- Managed Nous tool broker: {broker_state}; configured services: "
         f"{service_text}. Raw Nous OAuth tokens are host-managed by NemoClaw "
@@ -1317,12 +1388,18 @@ def _pre_llm_call(**kwargs):
         return None
     _install_nous_tool_broker_patch()
     _install_messaging_response_patch()
-    return {"context": _build_nemoclaw_agent_context(platform=kwargs.get("platform"))}
+    return {
+        "context": _build_nemoclaw_agent_context(
+            platform=kwargs.get("platform"),
+            model=kwargs.get("model"),
+        )
+    }
 
 
 def _handle_status(tool_input=None, context=None, **_kwargs):
     """Handle the nemoclaw_status tool call."""
     info = _get_sandbox_info()
+    managed_route = _unused_managed_route(info)
     lines = [
         "NemoClaw Sandbox Status (Hermes)",
         "\u2500" * 40,
@@ -1331,8 +1408,14 @@ def _handle_status(tool_input=None, context=None, **_kwargs):
         f"  Model:    {info['model']}",
         f"  Provider: {info['provider']}",
         f"  Endpoint: {info['base_url']}",
-        f"  API:      http://localhost:{info['port']}/v1",
     ]
+    if managed_route:
+        lines.append(
+            f"  Managed:  model={managed_route['model']}, "
+            f"provider={managed_route['provider']}, endpoint={managed_route['base_url']} "
+            "(NemoClaw-managed inference route; this chat does not use it)"
+        )
+    lines.append(f"  API:      http://localhost:{info['port']}/v1")
     return "\n".join(lines)
 
 
