@@ -32,6 +32,8 @@ const { backupSandboxStateWithManagedAuthority } = await import(
 );
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 const TOKEN_SHAPED_GENERATED_BYTES = ["AKIA", "SITQQJHDQELIAYQX"].join("");
+const PUBLIC_AWS_EXAMPLE_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+const BOTO3_DOC = ".hermes/lazy-packages/boto3/examples/cloudfront.rst";
 const OPENCLAW_SQLITE_WAL = ".openclaw/state/openclaw.sqlite-wal";
 
 afterAll(() => {
@@ -1009,7 +1011,7 @@ describe("complete native home persistence", () => {
       "node_modules/jsonwebtoken/package.json",
       '{"description":"JSON Web Token implementation","repository":"https://jimmywarting@github.com/example/repo.git"}',
     ],
-    ["Hermes lazy docs", ".hermes/lazy-packages/boto3/examples/cloudfront.rst", "Example docs"],
+    ["Hermes lazy docs", BOTO3_DOC, PUBLIC_AWS_EXAMPLE_KEY],
     [
       "Hermes lazy dependency data",
       ".hermes/lazy-packages/botocore/data/sts/2011-06-15/examples-1.json",

@@ -20,6 +20,11 @@ const PUBLIC_JWT_DOCUMENTATION_VECTOR = [
   "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
 ].join(".");
 
+// Canonical public AWS documentation access-key fixture, also shipped in
+// boto3's examples. Keep the pieces separate so repository secret scanners do
+// not mistake the reviewed fixture itself for a credential.
+const PUBLIC_AWS_DOCUMENTATION_ACCESS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+
 export {
   CREDENTIAL_PLACEHOLDER,
   CREDENTIAL_SENSITIVE_BASENAMES,
@@ -78,7 +83,13 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // Preserve those examples without accepting placeholder-shaped values
       // that contain any other token material.
       .replace(/(?<![A-Za-z0-9_-])(?:gh[pousr]_|sk-)[xX]{10,}(?![A-Za-z0-9_-])/gu, "unused")
+      .replace(/(?<![A-Z0-9])A(?:K|S)IA[A-Z0-9]{16}(?![A-Z0-9])/gu, (candidate) =>
+        candidate === PUBLIC_AWS_DOCUMENTATION_ACCESS_KEY ? "unused" : candidate,
+      )
       .replaceAll(PUBLIC_JWT_DOCUMENTATION_VECTOR, "unused")
+      // OpenClaw's public Microsoft Teams QA bundle uses this fixed marker for
+      // its private test transport. Exempt only the exact bearer value.
+      .replace(/\bBearer[ \t]+private-qa(?![A-Za-z0-9_-])/giu, "unused")
       .replaceAll("[STRIPPED_BY_MIGRATION]", "unused")
   );
 }

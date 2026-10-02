@@ -230,6 +230,14 @@ describe("textContainsHighConfidenceCredential", () => {
     expect(textContainsHighConfidenceCredential(makeJwtFixture())).toBe(true);
   });
 
+  it("allows only the canonical public AWS documentation access key", () => {
+    const publicAwsAccessKey = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+
+    expect(textContainsHighConfidenceCredential(publicAwsAccessKey)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey.slice(0, -1)}1`)).toBe(true);
+    expect(textContainsHighConfidenceCredential(`${publicAwsAccessKey}1`)).toBe(true);
+  });
+
   it("continues to flag real Slack credentials", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);
@@ -264,9 +272,14 @@ describe("textContainsCredential", () => {
   it.each([
     "exports.valueLooksLikeSecret = valueLooksLikeSecret;",
     "Authorization: Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
+    ["Authorization: Bearer", "private-qa"].join(" "),
     "sessionToken=[STRIPPED_BY_MIGRATION]",
   ])("preserves non-secret source or placeholder text: %s", (value) => {
     expect(textContainsCredential(value)).toBe(false);
+  });
+
+  it("does not exempt values that merely extend the Microsoft Teams QA marker", () => {
+    expect(textContainsCredential("Authorization: Bearer private-qa-live")).toBe(true);
   });
 });
 
