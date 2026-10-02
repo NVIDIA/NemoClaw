@@ -155,28 +155,3 @@ export function buildToolPolicyYaml(
   }));
   return { rules, mode: "denylist" };
 }
-
-/**
- * Compute a stable server identity hash from the server URL and configuration.
- * This can be used to detect when a server's identity changes unexpectedly.
- */
-export function computeServerIdentityHash(entry: McpSourceEntry): string {
-  const identitySource = [
-    entry.url,
-    entry.transport ?? "sse",
-    entry.adapter ?? "unknown",
-    [...entry.env].sort().join(","),
-  ].join("|");
-  return createHash("sha256").update(identitySource).digest("hex");
-}
-
-/**
- * Check if a server's recorded identity matches the current configuration.
- * Returns true if the identity is stable, false if it has drifted.
- */
-export function isServerIdentityStable(entry: McpSourceEntry): boolean {
-  if (!entry.serverIdentity) return true; // No pinning configured
-  const currentHash = computeServerIdentityHash(entry);
-  // The recorded digest should match either the explicit pin or the computed hash
-  return entry.serverIdentity.digest === `sha256:${currentHash}`;
-}

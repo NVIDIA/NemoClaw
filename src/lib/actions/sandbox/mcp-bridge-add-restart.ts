@@ -102,6 +102,11 @@ import {
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
+  // When comparing transport, use the stored transport if present; otherwise
+  // infer it from the stored URL so that a missing transport field doesn't
+  // cause a false mismatch on retry.
+  const existingTransport = existing.transport ?? inferTransportFromUrl(existing.url);
+  const requestedTransport = requested.transport ?? inferTransportFromUrl(requested.url);
   return (
     existing.server === requested.server &&
     existing.agent === requested.agent &&
@@ -120,7 +125,7 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     ) &&
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index]) &&
-    existing.transport === requested.transport &&
+    existingTransport === requestedTransport &&
     existing.requireOAuth === requested.requireOAuth &&
     existing.serverIdentity?.digest === requested.serverIdentity?.digest
   );

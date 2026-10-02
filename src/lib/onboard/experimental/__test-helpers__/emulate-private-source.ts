@@ -37,6 +37,7 @@ export function emulatePrivateSourceAncestor(): void {
     });
   vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
     const stat = originalLstat(target, options as never);
+    if (stat === undefined) return undefined;
     return emulateOwnerOnlyMode(target) ? wrapStat(stat) : stat;
   }) as typeof fs.lstatSync);
   vi.spyOn(fs, "openSync").mockImplementation(((path_, flags, mode) => {

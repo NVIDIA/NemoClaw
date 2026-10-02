@@ -636,17 +636,10 @@ async function enrichFromPolicy(
     : [];
 
   // Read deny rules from legacy format (for backward compatibility)
-  const legacyRawDenyTools = Array.isArray(endpoint.deny_rules)
-    ? endpoint.deny_rules.flatMap((rule): string[] =>
-        isObjectRecord(rule) && rule.method === "tools/call" && typeof rule.tool === "string"
-          ? [rule.tool]
-          : [],
-      )
-    : [];
-  const legacyDeniedToolInspection = inspectMcpDeniedToolSelectors(legacyRawDenyTools);
+  // Reuse rawDenyTools to avoid rebuilding the same list.
+  const legacyDeniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
   const legacyDenyTools = legacyDeniedToolInspection.ok ? legacyDeniedToolInspection.selectors : [];
 
-  const deniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
   // Read allow rules from the new schema (rules[].allow.params.name)
   // Only include rules whose allow.method is "tools/call" to avoid
   // granting unintended tool-call permissions from non-tool methods.

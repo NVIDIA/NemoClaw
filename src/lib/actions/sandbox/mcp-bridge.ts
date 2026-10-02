@@ -330,10 +330,10 @@ FLAGS
   --url URL                 MCP Streamable HTTP endpoint
   --env KEY                 Required host credential reference registered with OpenShell
   --deny-tool TOOL          Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
-  --allow-tool TOOL         Allow only this tool name or glob (deny-by-default mode); repeatable
+  --allow-tool TOOL         Allow only this exact tool name (deny-by-default mode); repeatable
   --trusted-private-host HOST
                             Trust the exact URL host when it resolves only to routed private addresses
-  --server-identity DIGEST  Pin the server binary digest for supply-chain verification (format: sha256:...)
+  --server-identity DIGEST  Operator-supplied pin for supply-chain tracking (format: sha256:...)
   --transport sse|stdio     Transport protocol (default: sse for HTTPS URLs)
   --require-oauth           Require OAuth authentication for the MCP endpoint
   --no-probe                Skip the post-add wire-level credential-resolution probe
