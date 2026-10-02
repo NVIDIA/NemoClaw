@@ -92,9 +92,14 @@ function nativeNvidiaFixture() {
 }
 
 describe("OpenShell provider evidence", () => {
-  it.each(["openclaw", "hermes"] as const)(
-    "qualifies the %s Tavily rules without an access preset or credential reads (#12138)",
-    async (agent) => {
+  it.each([
+    ["openclaw", undefined],
+    ["openclaw", false],
+    ["hermes", undefined],
+    ["hermes", false],
+  ] as const)(
+    "qualifies %s Tavily with allowUninspectedCredentials=%s without credential reads (#12138)",
+    async (agent, allowUninspectedCredentials) => {
       const { raw, connect } = fixture();
       const profile = managedTavilyProfile(agent);
       const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
@@ -114,7 +119,15 @@ describe("OpenShell provider evidence", () => {
           config: {},
         },
       });
-      raw.getProviderProfile.mockResolvedValue({ profile });
+      raw.getProviderProfile.mockResolvedValue({
+        profile: {
+          ...profile,
+          endpoints: profile.endpoints.map((endpoint) => ({
+            ...endpoint,
+            ...(allowUninspectedCredentials === undefined ? {} : { allowUninspectedCredentials }),
+          })),
+        },
+      });
       const input = { ...request(), configKeys: [], profileContract } as const;
       const result = await createProviders(connect).get(input);
       expect(result).toMatchObject({
@@ -165,6 +178,10 @@ describe("OpenShell provider evidence", () => {
       ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
       ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
       ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+      [
+        "uninspected credentials",
+        { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
+      ],
       [
         "disabled body rewriting",
         { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
@@ -393,6 +410,7 @@ describe("OpenShell provider evidence", () => {
     { credentialBinding: { provider: "foreign", credential: "OTHER_KEY" } },
     { websocketCredentialRewrite: true },
     { allowEncodedSlash: true },
+    { allowUninspectedCredentials: true },
     { path: "/other" },
   ])("rejects managed Brave endpoint drift %j (#10904)", async (change) => {
     const { connect, raw } = fixture();

@@ -222,6 +222,18 @@ describe("live export snapshot reader", () => {
         },
       ],
       [
+        "the profile allows uninspected credentials",
+        () => {
+          const profile = managedTavilyProfile(agent);
+          raw.getProviderProfile.mockResolvedValue({
+            profile: {
+              ...profile,
+              endpoints: [{ ...profile.endpoints[0], allowUninspectedCredentials: true }],
+            },
+          });
+        },
+      ],
+      [
         "the profile never stabilizes",
         () => {
           let version = 4n;

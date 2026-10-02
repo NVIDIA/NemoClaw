@@ -73,6 +73,7 @@ const ManagedRestEndpointFields = {
   allowedIps: Type.Tuple([]),
   denyRules: Type.Tuple([]),
   allowEncodedSlash: Type.Literal(false),
+  allowUninspectedCredentials: Type.Optional(Type.Literal(false)),
   persistedQueries: Type.Literal(""),
   graphqlPersistedQueries: Type.Object({}, { additionalProperties: false }),
   graphqlMaxBodyBytes: Type.Literal(0),
