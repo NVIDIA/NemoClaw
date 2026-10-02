@@ -201,6 +201,42 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(mocks.applyGeneratedPolicy.mock.calls[0]?.[1]).not.toHaveProperty("denyTools");
   });
 
+  it("switches an allowlist-mode server to denied-tool mode on a non-empty update", async () => {
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, allowTools: ["read_issue"] } },
+      sources: { native: { github: { ...entry, allowTools: ["read_issue"] } }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: { ...entry, allowTools: ["read_issue"] } },
+      legacy: {},
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+
+    // A stale allowlist would make the renderer choose allowlist mode and drop
+    // the requested deny rules, so the replacement must not carry one.
+    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
+    expect(updated.denyTools).toEqual(["delete_repo"]);
+    expect(updated).not.toHaveProperty("allowTools");
+  });
+
+  it("preserves the allowlist when the denylist is cleared on an allowlist-mode server", async () => {
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, allowTools: ["read_issue"] } },
+      sources: { native: { github: { ...entry, allowTools: ["read_issue"] } }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: { ...entry, allowTools: ["read_issue"] } },
+      legacy: {},
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", []);
+
+    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
+    expect(updated.allowTools).toEqual(["read_issue"]);
+    expect(updated).not.toHaveProperty("denyTools");
+  });
+
   it("leaves the route blocked with an exact retry command after activation failure (#11115)", async () => {
     mocks.applyGeneratedPolicy.mockRejectedValueOnce(new Error("activation failed"));
 

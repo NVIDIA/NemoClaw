@@ -119,39 +119,4 @@ export function computeToolPolicy(
  * Validate that the tool policy is compatible with the server's capabilities.
  * This is a placeholder for future live tool discovery integration.
  */
-export async function validateToolPolicyAgainstServer(
-  _entry: McpSourceEntry,
-  _allowTools: readonly string[],
-  _denyTools: readonly string[],
-): Promise<void> {
-  // TODO: Integrate with live tool discovery (mcp-bridge-tool-discovery.ts)
-  // to verify that allowed/denied tools actually exist on the server.
-}
 
-/**
- * Build the OpenShell policy YAML for tool allow/deny rules.
- * In allowlist mode, we generate explicit allow rules for each tool.
- * In denylist mode, we generate deny rules (existing behavior).
- */
-export function buildToolPolicyYaml(
-  server: string,
-  allowTools: readonly string[],
-  denyTools: readonly string[],
-): { rules: object[]; mode: "allowlist" | "denylist" } {
-  if (allowTools.length > 0) {
-    // Allowlist mode: explicit allow for each tool, implicit deny for all others
-    const rules = allowTools.map((tool) => ({
-      method: "tools/call",
-      tool,
-      action: "allow" as const,
-    }));
-    return { rules, mode: "allowlist" };
-  }
-  // Denylist mode: explicit deny for each tool (existing behavior)
-  const rules = denyTools.map((tool) => ({
-    method: "tools/call",
-    tool,
-    action: "deny" as const,
-  }));
-  return { rules, mode: "denylist" };
-}

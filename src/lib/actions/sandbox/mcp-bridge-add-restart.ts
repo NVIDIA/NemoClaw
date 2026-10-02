@@ -752,14 +752,18 @@ async function updateMcpBridgeDenyToolsUnlocked(
   }
   // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
+  // Drop both prior tool-policy fields. A non-empty denylist means the operator
+  // asked for denied-tool mode, which the renderer selects ahead of the
+  // allowlist; keeping a stale allowTools would silence the requested denials.
   const {
     denyTools: _previousDenyTools,
-    ...entryWithoutDenyTools
+    allowTools: _previousAllowTools,
+    ...entryWithoutToolPolicy
   } = storedEntry;
   const updatedEntry: McpSourceEntry = {
-    ...entryWithoutDenyTools,
-    // Clearing the denylist preserves allowTools (allowlist mode).
-    // A non-empty denylist removes allowTools (denylist mode takes precedence).
+    ...entryWithoutToolPolicy,
+    // A non-empty denylist takes precedence and activates denied-tool mode.
+    // Only a cleared denylist preserves the existing allowlist.
     ...(normalizedDenyTools.length > 0
       ? { denyTools: normalizedDenyTools }
       : { ...(storedEntry.allowTools ? { allowTools: storedEntry.allowTools } : {}) }),

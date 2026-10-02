@@ -357,8 +357,8 @@ FLAGS
   nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins | --allow-tool TOOL [...] | --clear-allow-tools)
 
 FLAGS
-  --deny-tool TOOL         Replace the denied-tool list with exact names or globs; repeatable
-  --allow-tool TOOL        Replace the allowlist with exact tool names (deny-by-default mode); repeatable
+  --deny-tool TOOL         Replace the denied-tool list with exact names or OpenShell glob selectors; repeatable
+  --allow-tool TOOL        Replace the allowlist with this exact tool name (deny-by-default mode); repeatable
   --clear-deny-tools       Remove every denied-tool rule
   --clear-allow-tools      Remove the allowlist and return to denylist mode
   --refresh-public-pins    Refresh existing public address pins in live OpenShell policy`);
