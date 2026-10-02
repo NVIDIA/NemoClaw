@@ -8,6 +8,7 @@ import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
 import { resolveLegacyModelRouterPort } from "../core/model-router-port";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { isValidDashboardExternalUrl } from "../dashboard/url";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
@@ -32,6 +33,7 @@ const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
 export interface GatewayRegistryEntry extends Record<string, unknown> {
   name: string;
   dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
   hermesApiPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
@@ -127,6 +129,16 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
       ) {
         throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
       }
+    }
+    const externalUrl = value.dashboardExternalUrl;
+    if (
+      externalUrl !== undefined &&
+      externalUrl !== null &&
+      (typeof externalUrl !== "string" || !isValidDashboardExternalUrl(externalUrl))
+    ) {
+      throw stateError(
+        `${filePath} has an invalid dashboardExternalUrl for sandbox ${JSON.stringify(name)}`,
+      );
     }
     const gatewayStateDir = value.openshellGatewayStateDir;
     if (

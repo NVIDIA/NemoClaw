@@ -30,6 +30,7 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
   // Passthrough of the durable registry reservation marker so list and status
   // hide registrations that have not committed their lifecycle yet.
   pendingRouteReservation?: true;
@@ -106,6 +107,7 @@ export interface SandboxInventoryRow {
   policies: string[];
   agent: string;
   dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
   isDefault: boolean;
   activeSessionCount: number | null;
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
@@ -202,6 +204,7 @@ export interface StatusSandboxRow {
   };
   phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
+  dashboardExternalUrl?: string | null;
   isDefault: boolean;
 }
 
@@ -308,6 +311,7 @@ async function projectPublicSandboxFields(
     typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
       ? sandbox.dashboardPort
       : null;
+  const dashboardExternalUrl = safeStatusString(sandbox.dashboardExternalUrl);
   return {
     name: safeStatusString(sandbox.name) ?? sandbox.name,
     model: safeStatusString(inference.model),
@@ -324,6 +328,7 @@ async function projectPublicSandboxFields(
     ),
     agent: safeStatusString(resolveDisplayAgent(sandbox)) ?? "unknown",
     ...(dashboardPort != null ? { dashboardPort } : {}),
+    ...(dashboardExternalUrl != null ? { dashboardExternalUrl } : {}),
   };
 }
 
@@ -497,7 +502,9 @@ export function renderSandboxInventoryText(
       if (providerDrifted) parts.push(`provider=${sandbox.provider || "unknown"}`);
       log(`      (live OpenShell gateway differs from onboarded: ${parts.join(", ")})`);
     }
-    if (sandbox.dashboardPort != null) {
+    if (sandbox.dashboardExternalUrl != null) {
+      log(`      dashboard: ${sandbox.dashboardExternalUrl}`);
+    } else if (sandbox.dashboardPort != null) {
       log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/`);
     }
   }
@@ -728,6 +735,10 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       const name = safeStatusString(sb.name) ?? "unknown";
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      const externalDashboardUrl = safeStatusString(sb.dashboardExternalUrl);
+      if (externalDashboardUrl) {
+        log(`      Dashboard URL: ${externalDashboardUrl}`);
+      }
       const portablePhase = portablePhases.get(sb.name);
       if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
       if (isDefault && live?.model && live.model !== inference.model) {

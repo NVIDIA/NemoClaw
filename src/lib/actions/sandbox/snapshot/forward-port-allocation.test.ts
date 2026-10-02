@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dashboardPortMocks = vi.hoisted(() => ({
+  isWsl: vi.fn(() => false),
   createOpenShellForwardPortObserver: vi.fn(
     ({ forwardForPort }: { forwardForPort(port: number): object }) =>
       async (ports: readonly number[]) =>
@@ -19,6 +20,8 @@ const dashboardPortMocks = vi.hoisted(() => ({
   getRegistryOccupiedDashboardPorts: vi.fn(() => new Map<string, string>()),
   getRegistryOccupiedHermesApiPorts: vi.fn(() => new Map<string, string>()),
 }));
+
+vi.mock("../../../platform", () => ({ isWsl: dashboardPortMocks.isWsl }));
 
 const hermesApiPortMocks = vi.hoisted(() => ({
   findAvailableHermesApiPortFromObserver: vi.fn(
@@ -86,6 +89,8 @@ import { allocateSnapshotCloneForwardPorts } from "./forward-port-allocation";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dashboardPortMocks.isWsl.mockReturnValue(false);
+  vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", undefined);
   dashboardPortMocks.getRegistryOccupiedDashboardPorts.mockReturnValue(new Map());
   dashboardPortMocks.getRegistryOccupiedHermesApiPorts.mockReturnValue(new Map());
 });
@@ -93,11 +98,13 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("allocateSnapshotCloneForwardPorts", () => {
   it.each([
-    [false, "127.0.0.1"],
-    [true, "0.0.0.0"],
+    [false, false, "127.0.0.1"],
+    [true, false, "0.0.0.0"],
+    [false, true, "0.0.0.0"],
   ] as const)(
-    "observes clone dashboard ownership with persisted remote bind %s",
-    async (dashboardRemoteBindPrepared, expectedBind) => {
+    "observes clone dashboard ownership with persisted remote bind %s and WSL %s",
+    async (dashboardRemoteBindPrepared, wsl, expectedBind) => {
+      dashboardPortMocks.isWsl.mockReturnValue(wsl);
       await allocateSnapshotCloneForwardPorts({
         destinationName: "beta",
         executable: "/usr/local/bin/openshell",

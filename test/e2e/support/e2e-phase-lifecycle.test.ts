@@ -336,6 +336,43 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(discovery?.args).toEqual(["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]);
   });
 
+  it("falls back to scoped PID and container cleanup when no user manager is available", async () => {
+    const runner = new FakeRunner();
+    const environment = { ...process.env, HOME: "/private/export-home" };
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(75)); // no user manager
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "")); // no gateway container
+
+    await fixture(runner, new FakeCleanup()).stopGatewayRuntime({
+      env: environment,
+      userServiceMode: "permanent",
+    });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+      "lifecycle-gateway-pid-stop",
+      "lifecycle-gateway-runtime-discover",
+    ]);
+    expect(runner.calls.every((call) => call.options?.env?.HOME === environment.HOME)).toBe(true);
+  });
+
+  it("permanently stops a supported user service without scheduling restart", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+
+    await fixture(runner, cleanup).stopGatewayRuntime({ userServiceMode: "permanent" });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+    ]);
+    expect(cleanup.calls).toEqual([]);
+  });
+
   it("stops a supported user service without invoking legacy runtime controls (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop

@@ -17,6 +17,7 @@ import {
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
+import { resolveExternalDashboardUrl } from "../dashboard/url";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
@@ -104,6 +105,7 @@ type RegistrationSeed = Omit<
   | "workload"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardExternalUrl"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -128,6 +130,13 @@ export interface CreatedSandboxCompletionOptions {
     readonly provider: string;
     readonly dockerDriverGateway: boolean;
     readonly verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+    readonly resolveOpenShellGpuDiagnostics: () =>
+      | NonNullable<
+          Parameters<
+            typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+          >[2]["openShellGpuDiagnostics"]
+        >
+      | undefined;
     readonly runCaptureOpenshell: NonNullable<
       Parameters<
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
@@ -357,6 +366,7 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -367,6 +377,7 @@ export function createCreatedSandboxCompletionActions(
         dockerDriverGateway: options.gpu.dockerDriverGateway,
         selectedRoute: created.route,
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+        openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
         log: console.log,
       },
@@ -379,10 +390,16 @@ export function createCreatedSandboxCompletionActions(
       () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
-  function recordHermesGpuProof(): void {
-    options.gpu.config.sandboxGpuProof = options.gpu.verifyDirectSandboxGpu(
-      options.finalization.sandboxName,
-    );
+  async function recordHermesGpuProof(): Promise<void> {
+    await dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(options.gpu.config, {
+      sandboxName: options.finalization.sandboxName,
+      dockerDriverGateway: options.gpu.dockerDriverGateway,
+      selectedRoute: "native",
+      verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+      selectedMode: () => null,
+      openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
+      runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+    });
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
@@ -396,6 +413,7 @@ export function createCreatedSandboxCompletionActions(
       );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
+    dashboardExternalUrl = resolveExternalDashboardUrl(chatUiUrl);
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
@@ -434,7 +452,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
-        recordHermesGpuProof();
+        await recordHermesGpuProof();
       }
       if (manageDashboard) {
         deps.revalidateSandboxIdentity?.(
@@ -500,6 +518,7 @@ export function createCreatedSandboxCompletionActions(
           workload: resolved.workloadReceipt,
           hermesDashboardState,
           dashboardPort,
+          dashboardExternalUrl,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,
@@ -699,6 +718,7 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  resolveOpenShellGpuDiagnostics: CreatedSandboxCompletionOptions["gpu"]["resolveOpenShellGpuDiagnostics"],
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -770,6 +790,7 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         dockerDriverGateway,
         verifyDirectSandboxGpu,
+        resolveOpenShellGpuDiagnostics,
         runCaptureOpenshell,
         persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
         persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,

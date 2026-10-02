@@ -101,7 +101,7 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback, systemdProo
     }
     const directSudoOffset = argv[5] === "-n" ? 6 : 5;
     if (
-      argv[0] === "/usr/bin/timeout" &&
+      (argv[0] === "/usr/bin/timeout" || argv[0] === "/usr/bin/gnutimeout") &&
       argv[1] === "--signal=TERM" &&
       argv[2] === "--kill-after=0.25s" &&
       argv[3] === "15s" &&
