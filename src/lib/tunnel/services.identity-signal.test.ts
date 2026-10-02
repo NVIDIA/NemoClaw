@@ -167,6 +167,7 @@ describe("cloudflared identity-bound signaling", () => {
         } catch {
           // The identity-bound process handle already stopped the test process.
         }
+        await exited;
       }
     },
   );

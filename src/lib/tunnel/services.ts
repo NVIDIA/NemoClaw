@@ -130,7 +130,7 @@ const captureCommandLine: CommandLineCapture = (command, args) =>
   execFileSync(command, [...args], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1000,
+    timeout: 5000,
   });
 
 /** Read a Windows process identity through the built-in CIM provider. */
