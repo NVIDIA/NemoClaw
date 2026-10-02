@@ -291,7 +291,10 @@ function hasNamedTunnelConfiguration(pidDir: string): boolean {
   return existsSync(logFile) && readFileSync(logFile, "utf-8").includes("ingress");
 }
 
-export function readCloudflaredState(pidDir: string): CloudflaredState {
+export function readCloudflaredState(
+  pidDir: string,
+  processControl: ProcessControl = REAL_PROCESS_CONTROL,
+): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
   let raw: string;
@@ -303,12 +306,10 @@ export function readCloudflaredState(pidDir: string): CloudflaredState {
   if (raw.length === 0) return { kind: "stopped" };
   const pid = Number(raw);
   if (!Number.isFinite(pid) || pid <= 0) return { kind: "stale-pid-file" };
-  try {
-    process.kill(pid, 0);
-  } catch {
+  if (!processControl.isAlive(pid)) {
     return { kind: "stale-pid-process", pid };
   }
-  const cmdline = readProcessCommandLine(pid);
+  const cmdline = processControl.commandLine(pid);
   if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
     return { kind: "stale-pid-process", pid };
   }
@@ -829,7 +830,8 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     let dashboardPortBound = false;
     let namedTunnelStarted = false;
     let targetFailure: string | null = null;
-    let runningState = readCloudflaredState(pidDir);
+    const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
+    let runningState = readCloudflaredState(pidDir, processControl);
     // A dead or recycled PID is not a running tunnel. Clear its owned state
     // before startService checks liveness, otherwise a recycled PID can make
     // startService silently retain an unrelated process.
@@ -839,13 +841,12 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       runningState = { kind: "stopped" };
     } else if (runningState.kind === "stale-pid-process") {
       stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
-      runningState = readCloudflaredState(pidDir);
+      runningState = readCloudflaredState(pidDir, processControl);
     }
     if (cloudflaredAvailable) {
       if (tunnelToken) {
         let runningNamedTunnel = false;
         if (runningState.kind === "running") {
-          const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
           const commandLine = processControl.commandLine(runningState.pid);
           const commandArgs = commandLine?.split(/\0|\s+/).filter(Boolean);
           const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
@@ -897,7 +898,9 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
                 .filter(Boolean)
             : undefined;
         const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
-        const runningNamedTunnel = tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run";
+        const runningNamedTunnel =
+          (tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run") ||
+          (commandArgs === undefined && namedTunnelTargetsDashboard(pidDir, dashboardPort));
         const runningQuickTunnel =
           tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
         if (runningNamedTunnel && !namedTunnelTargetsDashboard(pidDir, dashboardPort)) {
@@ -978,6 +981,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     isRunning(pidDir, "cloudflared") &&
     !namedTunnelTargetsDashboard(pidDir, dashboardPort)
   ) {
+    if (!stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)) {
+      throw new Error(
+        "The new named cloudflared tunnel does not confirm the selected dashboard port and could not be confirmed stopped. Its process state was retained; stop it manually, then retry.",
+      );
+    }
     throw new Error(
       "The new named cloudflared tunnel does not confirm the selected dashboard port. Update the tunnel route in Cloudflare or stop the tunnel manually, then retry.",
     );

@@ -731,6 +731,7 @@ describe("startAll", () => {
 
     const namedState = readCloudflaredState(pidDir);
     expect(namedState.kind).toBe("running");
+    const namedPid = "pid" in namedState ? namedState.pid : null;
     const outputBeforeTokenMismatch = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     await expect(startAll({ pidDir, dashboardPort: 18_791 })).rejects.toThrow(
       "logged ingress does not confirm the selected dashboard port",
@@ -742,7 +743,16 @@ describe("startAll", () => {
     );
 
     delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
-    await startAll({ pidDir, dashboardPort: 12345 });
+    const unavailableProcessControl: ProcessControl = {
+      isAlive: (pid) => pid === namedPid,
+      commandLine: () => null,
+      signal: vi.fn(),
+    };
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      processControl: unavailableProcessControl,
+    });
 
     expect(readCloudflaredState(pidDir)).toEqual(namedState);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toBe(log);
@@ -806,22 +816,85 @@ describe("startAll", () => {
       fakeCloudflared,
       [
         "#!/usr/bin/env sh",
-        'echo \'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:9999\\"}]}"\'',
+        `echo 'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:9999\\"}]}"'`,
         "sleep 20",
       ].join("\n"),
     );
     chmodSync(fakeCloudflared, 0o700);
     process.env.PATH = `${binDir}:${originalPath ?? ""}`;
     vi.spyOn(console, "log").mockImplementation(() => {});
+    let startedPid: number | null = null;
+    let stopped = false;
+    const processControl: ProcessControl = {
+      isAlive: () => !stopped,
+      commandLine: () => "cloudflared tunnel run",
+      signal: (pid, signal) => {
+        startedPid = pid;
+        process.kill(pid, signal);
+        stopped = true;
+      },
+    };
 
     await expect(
-      startAll({ pidDir, dashboardPort: 18_791, cloudflareTunnelToken: "named-secret" }),
+      startAll({
+        pidDir,
+        dashboardPort: 18_791,
+        cloudflareTunnelToken: "named-secret",
+        processControl,
+      }),
     ).rejects.toThrow("new named cloudflared tunnel does not confirm the selected dashboard port");
 
-    expect(readCloudflaredState(pidDir).kind).toBe("running");
+    expect(startedPid).toEqual(expect.any(Number));
+    expect(readCloudflaredState(pidDir).kind).toBe("stopped");
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
     expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain("localhost:9999");
     expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
   });
+
+  it(
+    "retains rejected named tunnel state when stopping the mismatched route is unconfirmed",
+    testTimeoutOptions(15_000),
+    async () => {
+      const binDir = join(tmpDir, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const fakeCloudflared = join(binDir, "cloudflared");
+      writeFileSync(
+        fakeCloudflared,
+        [
+          "#!/usr/bin/env sh",
+          'echo \'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:9999\\"}]}"\'',
+          "sleep 20",
+        ].join("\n"),
+      );
+      chmodSync(fakeCloudflared, 0o700);
+      process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      let startedPid: number | null = null;
+      const processControl: ProcessControl = {
+        isAlive: (pid) => {
+          startedPid = pid;
+          return true;
+        },
+        commandLine: () => "cloudflared tunnel run",
+        signal: vi.fn(),
+      };
+
+      await expect(
+        startAll({
+          pidDir,
+          dashboardPort: 18_791,
+          cloudflareTunnelToken: "named-secret",
+          processControl,
+        }),
+      ).rejects.toThrow("could not be confirmed stopped");
+
+      expect(startedPid).toEqual(expect.any(Number));
+      expect(readCloudflaredState(pidDir, processControl).kind).toBe("running");
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(true);
+      expect(readFileSync(join(pidDir, "cloudflared.log"), "utf-8")).toContain("localhost:9999");
+      expect(existsSync(join(pidDir, "cloudflared.dashboard-port"))).toBe(false);
+    },
+  );
 });
 
 // #2604: readCloudflaredState is the shared source of truth used by both
