@@ -387,6 +387,12 @@ function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarge
  * as a string literal.
  */
 function parseCliConfigValue(rawValue: string): ConfigValue {
+  if (/^-?(?:0|[1-9]\d*)$/u.test(rawValue)) {
+    const integer = BigInt(rawValue);
+    if (integer < BigInt(Number.MIN_SAFE_INTEGER) || integer > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return rawValue;
+    }
+  }
   try {
     const parsed = parseJson<ConfigValue>(rawValue);
     return isConfigValue(parsed) ? parsed : rawValue;
