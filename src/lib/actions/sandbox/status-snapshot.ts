@@ -604,8 +604,11 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
+  const nativeNvidia = Boolean(
+    normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
+  );
   const routeDriftPlan =
-    sb && sb.provider && sb.model
+    !nativeNvidia && sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
       : null;
   const routeDrift =
@@ -639,8 +642,8 @@ export async function collectSandboxStatusSnapshot(
     providerHealth = maybeGetSandboxStatusInferenceHealth(
       suppressInferenceProbe,
       lookup.state === "present",
-      (live && live.provider) || currentProvider,
-      (live && live.model) || currentModel,
+      nativeNvidia ? currentProvider : (live && live.provider) || currentProvider,
+      nativeNvidia ? currentModel : (live && live.model) || currentModel,
       opts.deps?.probeProviderHealthImpl,
       sb?.endpointUrl,
     );
@@ -655,16 +658,15 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   let inferenceHealth = providerHealth;
-  // `inference.local` is authoritative because it is the route the agent uses.
-  // Probe it independently of direct/upstream provider diagnostics, including
-  // providers without a registered host-side health probe (#6192).
+  // Probe the same route the agent uses: the recorded attached provider for
+  // native NVIDIA, otherwise the shared `inference.local` route.
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
     // describes.
     const invocationRoute =
-      live?.provider && live.model
+      !nativeNvidia && live?.provider && live.model
         ? {
             provider: live.provider,
             model: live.model,
@@ -684,9 +686,6 @@ export async function collectSandboxStatusSnapshot(
           };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
-    const nativeNvidia = Boolean(
-      normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
-    );
     const canProbeInvocation = Boolean(invocationModel && invocationProvider);
     let invocation: Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>> | null = null;
     try {
