@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, execSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -14,7 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
@@ -26,6 +27,10 @@ import {
 } from "../inference/ollama/proxy";
 import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
 import { buildSubprocessEnv } from "../subprocess-env";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../state/mcp-lifecycle-lock-acquisition";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
@@ -320,6 +325,10 @@ function removePid(pidDir: string, name: string): void {
 }
 
 const CLOUDFLARED_DASHBOARD_PORT_FILE = "cloudflared.dashboard-port";
+
+function cloudflaredLifecycleLockName(pidDir: string): string {
+  return `cloudflared-${createHash("sha256").update(resolve(pidDir)).digest("hex")}`;
+}
 
 function readCloudflaredDashboardPort(pidDir: string): number | null {
   const targetFile = join(pidDir, CLOUDFLARED_DASHBOARD_PORT_FILE);
@@ -647,10 +656,8 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
   if (pidDir) {
-    hostServicesStopped = stopService(
-      pidDir,
-      "cloudflared",
-      opts.processControl ?? REAL_PROCESS_CONTROL,
+    hostServicesStopped = withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
+      stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL),
     );
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
@@ -722,7 +729,10 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
 export function stopCloudflared(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  if (!stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL)) {
+  const stopped = withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
+    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL),
+  );
+  if (!stopped) {
     throw new Error(
       "cloudflared could not be stopped; its process and state were retained. Stop it manually, then retry.",
     );
@@ -766,7 +776,6 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     process.env.CLOUDFLARE_TUNNEL_TOKEN ??
     ""
   ).trim();
-  let tunnelTargetReady = true;
   let cloudflaredAvailable = true;
   try {
     execSync("command -v cloudflared", {
@@ -776,63 +785,85 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     cloudflaredAvailable = false;
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
-  if (cloudflaredAvailable) {
-    if (tunnelToken) {
-      const wasRunning = isRunning(pidDir, "cloudflared");
-      startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
-        TUNNEL_TOKEN: tunnelToken,
-      });
-      if (!wasRunning && isRunning(pidDir, "cloudflared")) {
-        removeCloudflaredDashboardPort(pidDir);
-      }
-    } else {
-      const runningState = readCloudflaredState(pidDir);
-      const commandArgs =
-        runningState.kind === "running"
-          ? (opts.processControl ?? REAL_PROCESS_CONTROL)
-              .commandLine(runningState.pid)
-              ?.split(/\0|\s+/)
-              .filter(Boolean)
-          : undefined;
-      const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
-      const runningNamedTunnel = tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run";
-      const runningQuickTunnel =
-        tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
-      // A later shell need not retain the token for an already running named tunnel.
-      if (runningState.kind === "running" && !runningNamedTunnel) {
-        const runningPort = readCloudflaredDashboardPort(pidDir);
-        if (!runningQuickTunnel) {
-          tunnelTargetReady = false;
-        } else if (runningPort !== dashboardPort) {
-          tunnelTargetReady = stopService(
-            pidDir,
-            "cloudflared",
-            opts.processControl ?? REAL_PROCESS_CONTROL,
-          );
+  const tunnelTransition = await withMcpLifecycleLock(cloudflaredLifecycleLockName(pidDir), () => {
+    let targetReady = true;
+    let dashboardPortBound = false;
+    if (cloudflaredAvailable) {
+      if (tunnelToken) {
+        const wasRunning = isRunning(pidDir, "cloudflared");
+        startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
+          TUNNEL_TOKEN: tunnelToken,
+        });
+        if (!wasRunning && isRunning(pidDir, "cloudflared")) {
+          removeCloudflaredDashboardPort(pidDir);
+        }
+      } else {
+        const runningState = readCloudflaredState(pidDir);
+        const commandArgs =
+          runningState.kind === "running"
+            ? (opts.processControl ?? REAL_PROCESS_CONTROL)
+                .commandLine(runningState.pid)
+                ?.split(/\0|\s+/)
+                .filter(Boolean)
+            : undefined;
+        const tunnelIndex = commandArgs?.indexOf("tunnel") ?? -1;
+        const runningNamedTunnel = tunnelIndex >= 0 && commandArgs?.[tunnelIndex + 1] === "run";
+        const runningQuickTunnel =
+          tunnelIndex >= 0 && commandArgs?.slice(tunnelIndex + 1).includes("--url");
+        // On platforms where the command line is unavailable, the private
+        // dashboard-port record is the only durable evidence that this PID
+        // was started as our quick tunnel. Require it to be valid before
+        // reusing the process; a missing or malformed record remains closed.
+        if (runningState.kind === "running" && !runningNamedTunnel) {
+          const runningPort = readCloudflaredDashboardPort(pidDir);
+          const recordedQuickTunnel = commandArgs === undefined && runningPort !== null;
+          if (!runningQuickTunnel && !recordedQuickTunnel) {
+            targetReady = false;
+          } else if (runningPort !== dashboardPort) {
+            targetReady = stopService(
+              pidDir,
+              "cloudflared",
+              opts.processControl ?? REAL_PROCESS_CONTROL,
+            );
+          }
+        }
+        if (targetReady && !runningNamedTunnel) {
+          // Persist the target before launching a process that depends on this state.
+          writeCloudflaredDashboardPort(pidDir, dashboardPort);
+          startService(pidDir, "cloudflared", "cloudflared", [
+            "tunnel",
+            "--url",
+            `http://localhost:${String(dashboardPort)}`,
+          ]);
+          dashboardPortBound = true;
+        } else if (runningQuickTunnel && readCloudflaredDashboardPort(pidDir) === dashboardPort) {
+          dashboardPortBound = true;
         }
       }
-      if (tunnelTargetReady && !runningNamedTunnel) {
-        // Persist the target before launching a process that depends on this state.
-        writeCloudflaredDashboardPort(pidDir, dashboardPort);
-        startService(pidDir, "cloudflared", "cloudflared", [
-          "tunnel",
-          "--url",
-          `http://localhost:${String(dashboardPort)}`,
-        ]);
-      }
     }
-  }
+    return {
+      targetReady,
+      pid: readPid(pidDir, "cloudflared"),
+      dashboardPortBound,
+    };
+  });
 
-  if (!tunnelTargetReady) {
+  if (!tunnelTransition.targetReady) {
     throw new Error(
       "cloudflared could not be retargeted because the existing tunnel is still running. Stop it manually, then retry.",
     );
   }
 
   // Wait for cloudflared URL
-  if (isRunning(pidDir, "cloudflared")) {
+  const stillOwnsTunnel = () =>
+    tunnelTransition.pid !== null &&
+    readPid(pidDir, "cloudflared") === tunnelTransition.pid &&
+    (!tunnelTransition.dashboardPortBound ||
+      readCloudflaredDashboardPort(pidDir) === dashboardPort);
+  if (stillOwnsTunnel() && isRunning(pidDir, "cloudflared")) {
     info("Waiting for tunnel URL...");
     for (let i = 0; i < 15; i++) {
+      if (!stillOwnsTunnel()) break;
       if (getTunnelUrl(pidDir, dashboardPort)) {
         break;
       }
@@ -843,7 +874,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   let tunnelUrl = "";
-  if (isRunning(pidDir, "cloudflared")) {
+  if (stillOwnsTunnel() && isRunning(pidDir, "cloudflared")) {
     tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
   }
 

@@ -409,6 +409,41 @@ describe("startAll", () => {
     );
   });
 
+  it("reuses a quick tunnel with a recorded dashboard port when process arguments are unavailable", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      ["#!/usr/bin/env sh", "echo 'https://windows-retry.trycloudflare.com'", "sleep 20"].join(
+        "\n",
+      ),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12_345 });
+    const originalPid = Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"));
+    const signal = vi.fn();
+
+    await expect(
+      startAll({
+        pidDir,
+        dashboardPort: 12_345,
+        processControl: {
+          isAlive: (pid) => pid === originalPid,
+          commandLine: () => null,
+          signal,
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(Number(readFileSync(join(pidDir, "cloudflared.pid"), "utf-8"))).toBe(originalPid);
+    expect(readFileSync(join(pidDir, "cloudflared.dashboard-port"), "utf-8")).toBe("12345");
+    expect(signal).not.toHaveBeenCalled();
+  });
+
   it("restarts a quick tunnel when its recorded dashboard port is missing", async () => {
     const binDir = join(tmpDir, "bin");
     mkdirSync(binDir, { recursive: true });
