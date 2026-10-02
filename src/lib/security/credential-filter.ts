@@ -22,6 +22,9 @@ const PUBLIC_JWT_DOCUMENTATION_VECTOR = [
 const PRIVATE_KEY_BEGIN = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 const PRIVATE_KEY_END = ["-----END", "PRIVATE KEY-----"].join(" ");
 const MSAL_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${PRIVATE_KEY_BEGIN} ... ${PRIVATE_KEY_END}`;
+const DSA_PRIVATE_KEY_BEGIN = ["-----BEGIN", "DSA PRIVATE KEY-----"].join(" ");
+const DSA_PRIVATE_KEY_END = ["-----END", "DSA PRIVATE KEY-----"].join(" ");
+const BOTOCORE_DSA_PRIVATE_KEY_DOCUMENTATION_SHAPE = `${DSA_PRIVATE_KEY_BEGIN}<a very long private key string>${DSA_PRIVATE_KEY_END}`;
 
 export {
   CREDENTIAL_PLACEHOLDER,
@@ -88,6 +91,9 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // MSAL's shipped TypeScript source documents the PEM shape with a
       // literal ellipsis between its delimiters; it is not key material.
       .replaceAll(MSAL_PRIVATE_KEY_DOCUMENTATION_SHAPE, "unused")
+      // Botocore's public IAM examples use this literal prose placeholder
+      // between DSA delimiters. Preserve only that exact published shape.
+      .replaceAll(BOTOCORE_DSA_PRIVATE_KEY_DOCUMENTATION_SHAPE, "unused")
       // OpenClaw's public Microsoft Teams QA bundle uses this fixed marker for
       // its private test transport. Exempt only the exact bearer value.
       .replace(/\bBearer[ \t]+private-qa(?![A-Za-z0-9_-])/giu, "unused")

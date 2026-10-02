@@ -251,6 +251,18 @@ describe("textContainsHighConfidenceCredential", () => {
     expect(textContainsHighConfidenceCredential(actualBlock)).toBe(true);
   });
 
+  it("allows only botocore's synthetic DSA private-key documentation block", () => {
+    const begin = ["-----BEGIN", "DSA PRIVATE KEY-----"].join(" ");
+    const end = ["-----END", "DSA PRIVATE KEY-----"].join(" ");
+
+    expect(
+      textContainsHighConfidenceCredential(`${begin}<a very long private key string>${end}`),
+    ).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${begin}\nprivate-key-material\n${end}`)).toBe(
+      true,
+    );
+  });
+
   it("continues to flag real Slack credentials", () => {
     expect(textContainsHighConfidenceCredential("xoxb-123456789-abcdefghij")).toBe(true);
     expect(textContainsHighConfidenceCredential("xapp-1-A1234567890-abcdef123456")).toBe(true);

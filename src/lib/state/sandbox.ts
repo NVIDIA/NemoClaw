@@ -70,6 +70,7 @@ import type {
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
+import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing, type TarArchiveSource, type TarListingSource } from "./tar-listing.js";
 
@@ -1325,8 +1326,9 @@ function sanitizedStructuredAuthority(
  * Keeping each tar member at its original byte length makes this a bounded,
  * single-copy operation. Replacement startup creates fresh local authority.
  */
-function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
+export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
   const hermesTarget = ".hermes/.env";
+  const openClawDatabaseTarget = ".openclaw/state/openclaw.sqlite";
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
@@ -1367,7 +1369,11 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
         const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
         const fileName = path.posix.basename(normalized).toLowerCase();
         const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
-        if (structuredKind || normalized === hermesTarget) {
+        if (
+          structuredKind ||
+          normalized === hermesTarget ||
+          normalized === openClawDatabaseTarget
+        ) {
           if (found.has(normalized)) {
             return `the native archive contains duplicate machine-local configuration at '${normalized}'`;
           }
@@ -1383,6 +1389,10 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
           let replacement: Buffer;
           if (normalized === hermesTarget) {
             replacement = withoutHermesMachineLocalApiKey(payload);
+          } else if (normalized === openClawDatabaseTarget) {
+            const sanitized = withoutOpenClawSqliteMachineAuthority(payload);
+            if (typeof sanitized === "string") return sanitized;
+            replacement = sanitized;
           } else {
             const sanitized = sanitizedStructuredAuthority(
               payload,
