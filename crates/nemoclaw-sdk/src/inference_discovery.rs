@@ -6,7 +6,7 @@
 //! https://platform.claude.com/docs/en/api/models/list.
 use crate::{
     Error, ObservationError, Secrets,
-    config::{Credential, Document, InferenceApi},
+    config::{Credential, Document, InferenceApi, InferenceProvider, InferenceTarget},
     discovery::ObservationStatus,
 };
 use futures_util::StreamExt;
@@ -24,6 +24,31 @@ pub struct EndpointRequest {
     pub credential_env: Option<String>,
 }
 impl EndpointRequest {
+    /// The catalog read for a provider with an external endpoint.
+    /// A service-backed provider returns `None`: its owner checks readiness.
+    /// An omitted API takes the provider's protocol default. The result is not
+    /// validated, so callers choose whether an unusable endpoint is an error.
+    pub fn for_external_provider(
+        provider: &InferenceProvider,
+    ) -> Result<Option<Self>, crate::config::ConfigError> {
+        if provider.service_ref.is_some() {
+            return Ok(None);
+        }
+        let InferenceTarget::External {
+            endpoint,
+            credential,
+        } = provider.target()?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            endpoint: endpoint.into(),
+            api: provider
+                .api
+                .unwrap_or(InferenceApi::for_provider(provider.provider)),
+            credential_env: credential.map(|credential| credential.env.clone()),
+        }))
+    }
     pub fn validate(&self) -> Result<(), Error> {
         crate::config::validate_endpoint(&self.endpoint, false)?;
         if let Some(reference) = &self.credential_env {
@@ -117,17 +142,8 @@ pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Er
     let mut requests = Vec::new();
     for sandbox in &document.spec.sandboxes {
         for provider in document.sandbox_inference_providers(sandbox)? {
-            if provider.definition.service_ref.is_some() {
+            let Some(request) = EndpointRequest::for_external_provider(provider.definition)? else {
                 continue;
-            }
-            let connection = document.provider_connection(provider.definition)?;
-            let request = EndpointRequest {
-                endpoint: connection.endpoint,
-                api: provider
-                    .definition
-                    .api
-                    .unwrap_or(InferenceApi::for_provider(provider.definition.provider)),
-                credential_env: connection.credential.map(|credential| credential.env),
             };
             request.validate()?;
             if !requests.contains(&request) {
