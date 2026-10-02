@@ -7,6 +7,7 @@ import path from "node:path";
 
 import type { AgentDefinition } from "../../../agent/definition-types";
 
+/** Copy an agent's manifest into an owner-only temp directory and re-point the definition. */
 function copyHermesManifestAgent(source: AgentDefinition): AgentDefinition {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-manifest-"));
   const manifestPath = path.join(directory, "manifest.yaml");

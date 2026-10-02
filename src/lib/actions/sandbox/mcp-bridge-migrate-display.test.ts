@@ -20,6 +20,7 @@ const SECRET_URL =
   "https://legacy-user:legacy-pass@mcp.example.test/bot123456:AAAAsecretpath/?access_token=querysecret#hashsecret";
 const SECRET_FREE_URL = "https://mcp.example.test/mcp";
 
+/** Build a minimal single-item migration plan fixture around the given URL. */
 function migrationPlan(url: string, applied = false): McpMigrationPlan {
   return {
     sandbox: "alpha",
@@ -44,6 +45,7 @@ function migrationPlan(url: string, applied = false): McpMigrationPlan {
   };
 }
 
+/** Run `mcp migrate` and return the captured console preview text. */
 async function renderMigratePreview(): Promise<string> {
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   try {
@@ -54,6 +56,7 @@ async function renderMigratePreview(): Promise<string> {
   }
 }
 
+/** Run `mcp migrate --json` and return the captured stdout JSON text. */
 async function renderMigrateJson(): Promise<string> {
   const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   try {

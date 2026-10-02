@@ -236,6 +236,10 @@ export async function addSandboxPolicy(
   );
 }
 
+/**
+ * Apply a policy preset to a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function addSandboxPolicyUnlocked(
   sandboxName: string,
   options: PolicyAddOptions,
@@ -1398,6 +1402,10 @@ export async function addSandboxChannel(
   );
 }
 
+/**
+ * Enable a messaging channel on a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function addSandboxChannelUnlocked(
   sandboxName: string,
   options: ChannelMutationOptions,
@@ -2190,6 +2198,10 @@ export async function removeSandboxPolicy(
   );
 }
 
+/**
+ * Remove a policy preset from a sandbox without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function removeSandboxPolicyUnlocked(
   sandboxName: string,
   options: PolicyRemoveOptions,
@@ -2272,6 +2284,10 @@ function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObjec
   }
 }
 
+/**
+ * Exclude a sandbox from the baseline policy, serializing through the
+ * mutation lock unless this is a dry-run preview.
+ */
 export async function excludeSandboxBaseline(
   sandboxName: string,
   options: PolicyBaselineOptions = {},
@@ -2281,6 +2297,10 @@ export async function excludeSandboxBaseline(
   );
 }
 
+/**
+ * Exclude a sandbox from the baseline policy without holding the mutation lock
+ * (internal path; callers serialize through the locked wrapper).
+ */
 async function excludeSandboxBaselineUnlocked(
   sandboxName: string,
   options: PolicyBaselineOptions,

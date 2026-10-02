@@ -223,6 +223,7 @@ function matchingRegistryEntry(
   };
 }
 
+/** Build a minimal Hermes portable onboarding input for tests. */
 export function createHermesPortableTestInput(
   stateDir: string,
   policyPath: string,

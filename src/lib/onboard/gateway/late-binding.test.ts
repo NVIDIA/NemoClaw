@@ -49,6 +49,7 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
+/** Capture the recovery evidence produced by a failed gateway start attempt. */
   async function captureFailedStartRecovery(
     ownsSelectedState: boolean,
     runtimeSelection?: OpenShellRuntimeSelection,

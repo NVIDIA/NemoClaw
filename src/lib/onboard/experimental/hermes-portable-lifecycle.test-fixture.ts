@@ -107,6 +107,7 @@ export function testPodmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDe
   };
 }
 
+/** Build a fully-populated active Hermes portable lifecycle receipt for tests. */
 export function createHermesPortableLifecycleTestReceipt({
   agent,
   stateDir,

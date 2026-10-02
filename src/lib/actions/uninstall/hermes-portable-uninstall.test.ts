@@ -38,6 +38,7 @@ vi.mock("../../agent/defs", async (importOriginal) => {
     await import("../../onboard/experimental/__test-helpers__/hermes-manifest-agent");
   return {
     ...original,
+    /** Resolve Hermes through the owner-only manifest copy; pass others through. */
     loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
       name === "hermes"
         ? privateHermesManifestAgent(original.loadAgent(name, env))

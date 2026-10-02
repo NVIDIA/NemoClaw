@@ -163,6 +163,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
+/** Publish a Hermes portable lifecycle receipt into the given state directory. */
 function publishLifecycleReceipt(
   stateDir: string,
   runtime: ReturnType<typeof runtimeAuthority>,

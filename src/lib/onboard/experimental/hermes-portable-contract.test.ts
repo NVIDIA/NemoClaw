@@ -24,6 +24,7 @@ vi.mock("../../agent/defs", async (importOriginal) => {
   const { privateHermesManifestAgent } = await import("./__test-helpers__/hermes-manifest-agent");
   return {
     ...original,
+    /** Resolve Hermes through the owner-only manifest copy; pass others through. */
     loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
       name === "hermes"
         ? privateHermesManifestAgent(original.loadAgent(name, env))
@@ -261,6 +262,24 @@ describe("Hermes portable startup contract", () => {
           startupArgv: startupArgv(),
         }),
       ).toThrow("current Hermes manifest does not match the accepted lifecycle contract");
+    },
+  );
+
+  it.each(["group", "other"] as const)(
+    "rejects a manifest copy that is %s-writable (#9203)",
+    (target) => {
+      const agent = copyAgent();
+      // copyAgent materializes owner-only 0o600 manifests; add a group/other
+      // write bit so the startup-contract safety check must reject the source.
+      fs.chmodSync(agent.manifestPath, target === "group" ? 0o620 : 0o602);
+
+      expect(() =>
+        resolveHermesPortableStartupContract({
+          agent,
+          sandboxName: SANDBOX,
+          startupArgv: startupArgv(),
+        }),
+      ).toThrow("manifest source is unsafe");
     },
   );
 
