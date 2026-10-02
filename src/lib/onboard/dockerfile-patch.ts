@@ -78,7 +78,8 @@ function replaceExactHermesPortableDockerArg(source: string, name: string, value
   if (sanitized !== value || /[\p{Cc}\p{Cf}]/u.test(value)) {
     throw new Error(`Hermes portable ${name} build setting is invalid.`);
   }
-  const pattern = new RegExp(`^ARG ${name}=.*$`, "gmu");
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pattern = new RegExp(`^ARG ${escapedName}=.*$`, "gmu");
   if ((source.match(pattern) ?? []).length !== 1) {
     throw new Error(`Hermes Dockerfile must declare exactly one ${name} build argument.`);
   }
