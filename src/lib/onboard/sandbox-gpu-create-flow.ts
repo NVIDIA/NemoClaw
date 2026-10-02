@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import {
   type CreateOpenShellSandboxRequest,
   type OpenShellSandboxLifecycle,
@@ -31,6 +32,7 @@ import {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -69,6 +71,7 @@ export {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -224,6 +227,8 @@ export interface SandboxGpuCreateFlowInput {
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
   managedImage?: boolean;
+  /** Publisher-owned exact-digest image; readiness failures include compatibility guidance. */
+  externalImage?: boolean;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Verify the exact sandbox created by each attempt before runtime activation,
@@ -262,6 +267,7 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 
 export interface SandboxGpuCreateFlowDeps {
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
+  openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;
@@ -405,7 +411,10 @@ export async function runSandboxGpuCreateFlow(
               error: failure.error,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
             },
-            { runCaptureOpenshell: deps.runCaptureOpenshell },
+            {
+              runCaptureOpenshell: deps.runCaptureOpenshell,
+              openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
+            },
           );
           if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
         },

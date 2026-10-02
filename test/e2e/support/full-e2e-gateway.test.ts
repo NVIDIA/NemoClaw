@@ -161,7 +161,10 @@ describe("full E2E gateway ownership", () => {
         OPENSHELL_GATEWAY: preinstalled ? "nemoclaw-18080" : "nemoclaw",
         NEMOCLAW_GATEWAY_PORT: preinstalled ? "18080" : "8080",
         ...(preinstalled
-          ? { NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT }
+          ? {
+              NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT,
+              NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/var/lib/brev/openshell-gateway",
+            }
           : {}),
       });
       expect(cleanup.trackGateway).toHaveBeenCalledTimes(preinstalled ? 0 : 1);
@@ -197,11 +200,21 @@ describe("full E2E gateway ownership", () => {
         env: {
           ...env,
           NEMOCLAW_GATEWAY_PORT: "18080",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/var/lib/brev/openshell-gateway",
           OPENSHELL_GATEWAY: "nemoclaw-18080",
         },
       });
     },
   );
+  it("uses the declared state root even when the shell has a different override (#12389)", () => {
+    const configured = fullE2eGateway(true, {
+      ...declaration(),
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/ubuntu/.local/state/nemoclaw",
+    });
+    expect(configured.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(
+      "/var/lib/brev/openshell-gateway",
+    );
+  });
   it.each(["https://127.0.0.1", "http://127.0.0.1", "https://127.0.0.1:1023"])(
     "preserves the CLI port restriction for the declared endpoint %s (#9851)",
     (endpoint) => {

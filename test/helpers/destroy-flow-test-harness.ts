@@ -92,7 +92,7 @@ export type DestroyHarness = {
 
 type DestroyHarnessOptions = {
   callThroughGatewaySelection?: boolean;
-  agent?: "openclaw" | "hermes";
+  agent?: "openclaw" | "hermes" | "langchain-deepagents-code";
   deleteError?: Error;
   deleteConvergenceAttempts?: number;
   deleteOutput?: string;
@@ -154,8 +154,6 @@ type DestroyHarnessOptions = {
   stopInferenceError?: string;
   runtimeProviderIdentityProof?: RuntimeProviderDestroyIdentityReceipt;
   workload?: SandboxWorkloadReceipt;
-  wipeError?: Error;
-  wipeStatus?: number | null;
 };
 
 const sandboxEntry = {
@@ -520,14 +518,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
-      case "sandbox:exec":
-        events.push("wipe");
-        return {
-          status: options.wipeStatus === undefined ? 0 : options.wipeStatus,
-          stdout: "",
-          stderr: "",
-          ...(options.wipeError ? { error: options.wipeError } : {}),
-        };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return (
