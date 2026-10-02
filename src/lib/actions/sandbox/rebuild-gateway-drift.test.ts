@@ -398,9 +398,37 @@ describe("rebuild owning registry routing", () => {
     ).resolves.toBeUndefined();
 
     expect(runWorker).toHaveBeenCalledWith({ operation: "rebuild", ...input }, 9000, {
+      baseImageOverrideEnvName: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
       credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
     });
     expect(readBaseRegistry).not.toHaveBeenCalled();
+  });
+
+  it("forwards the sandbox agent's base-image override name to the sibling-root worker", async () => {
+    const entry = { ...makeSandboxEntry("nemoclaw-9000", 9000), agent: "hermes" };
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    const runWorker = vi
+      .spyOn(rebuildOwningRegistryDependencies, "runWorker")
+      .mockResolvedValue(undefined);
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(true);
+
+    expect(runWorker).toHaveBeenCalledWith(expect.anything(), 9000, {
+      baseImageOverrideEnvName: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      credentialEnvNames: [],
+    });
   });
 
   it("keeps the rebuild in-process when the selected root owns the sandbox", async () => {
@@ -500,7 +528,7 @@ describe("rebuild owning registry routing", () => {
         executionOptions: {},
       },
       9000,
-      { credentialEnvNames: [] },
+      { baseImageOverrideEnvName: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF", credentialEnvNames: [] },
     );
   });
 
