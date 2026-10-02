@@ -674,9 +674,6 @@ describe("GPU E2E helpers", () => {
     const cleanup = new CleanupRegistry();
     const cleanupOrder: string[] = [];
     const cleanupEnv = { HOME: "/private/export-home" };
-    cleanup.trackDisposable("remove private export state", () => {
-      cleanupOrder.push("remove private state");
-    });
     const host = {
       cleanupGatewayRegistration: vi.fn(async () => {
         cleanupOrder.push("remove gateway registration");
@@ -689,7 +686,9 @@ describe("GPU E2E helpers", () => {
       }),
     } as unknown as LifecyclePhaseFixture;
 
-    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "export-cleanup-gateway");
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "export-cleanup-gateway", () => {
+      cleanupOrder.push("remove private state");
+    });
     const result = await cleanup.runAll();
 
     expect(result.failures).toEqual([]);
@@ -706,6 +705,35 @@ describe("GPU E2E helpers", () => {
       "nemoclaw",
       expect.objectContaining({ artifactName: "export-cleanup-gateway", env: cleanupEnv }),
     );
+  });
+
+  it("preserves retryable GPU gateway state when runtime cleanup fails", async () => {
+    const cleanup = new CleanupRegistry();
+    const cleanupEnv = { HOME: "/private/export-home" };
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const removePrivateState = vi.fn(() => undefined);
+    const host = { cleanupGatewayRegistration } as unknown as HostCliClient;
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        throw new Error("gateway runtime stop failed");
+      }),
+    } as unknown as LifecyclePhaseFixture;
+
+    trackGpuGatewayCleanup(
+      cleanup,
+      host,
+      lifecycle,
+      cleanupEnv,
+      "export-cleanup-gateway",
+      removePrivateState,
+    );
+    const result = await cleanup.runAll();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({ message: "gateway runtime stop failed" }),
+    ]);
+    expect(cleanupGatewayRegistration).not.toHaveBeenCalled();
+    expect(removePrivateState).not.toHaveBeenCalled();
   });
 
   it("forwards the workflow-owned Ollama model pull timeout", () => {

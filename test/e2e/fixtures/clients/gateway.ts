@@ -188,7 +188,7 @@ export class GatewayClient {
   }
 
   async expectHostRuntimeStopped(options: ShellProbeRunOptions = {}): Promise<void> {
-    const runtime = await this.resolveHostRuntime();
+    const runtime = await this.resolveHostRuntime(options);
     if (runtime) {
       throw new Error(
         `gateway runtime still appears to be running after stop: ${runtime.kind}:${runtime.id}`,
@@ -197,7 +197,7 @@ export class GatewayClient {
     if (options.artifactName) {
       await this.host.command("true", [], {
         artifactName: options.artifactName,
-        env: probeEnv(),
+        env: probeEnv(options.env),
         timeoutMs: 5_000,
       });
     }

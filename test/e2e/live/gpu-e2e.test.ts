@@ -434,9 +434,6 @@ test(
     });
     // The SDK rejects gateway state below a world-writable ancestor such as /tmp.
     const directory = createGpuPrivateHome(os.homedir());
-    cleanup.trackDisposable("remove private Ollama export state and documents", () =>
-      fs.rmSync(directory, { recursive: true, force: true }),
-    );
     const exportEnv = env({
       HOME: directory,
       NEMOCLAW_AGENT: "openclaw",
@@ -448,6 +445,9 @@ test(
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
     });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "export-cleanup-gateway", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
     let daemonOwner: ReturnType<typeof startAttachedOllama> | undefined;
     cleanup.trackDisposable("stop Ollama processes after export qualification", async () => {
       const result = await cleanupOllama(host, "export-cleanup-ollama-processes");
@@ -477,7 +477,6 @@ exec ollama pull qwen2.5:0.5b`,
       },
     );
     expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
-    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "export-cleanup-gateway");
     cleanup.trackDisposable("delete the export sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "export-cleanup-openshell",

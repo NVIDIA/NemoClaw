@@ -251,19 +251,21 @@ export async function cleanupGpu(
 }
 
 export function trackGpuGatewayCleanup(
-  cleanup: Pick<CleanupRegistry, "trackDisposable" | "trackGateway">,
+  cleanup: Pick<CleanupRegistry, "trackDisposable">,
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   environment: NodeJS.ProcessEnv,
   artifactName: string,
+  dependentCleanup?: () => Promise<void> | void,
 ): void {
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName,
-    env: environment,
-    timeoutMs: 60_000,
-  });
-  cleanup.trackDisposable("stop GPU gateway runtime before registration removal", async () => {
+  cleanup.trackDisposable("stop GPU gateway runtime before removing its state", async () => {
     await lifecycle.stopGatewayRuntime({ env: environment, userServiceMode: "permanent" });
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      artifactName,
+      env: environment,
+      timeoutMs: 60_000,
+    });
+    await dependentCleanup?.();
   });
 }
 
