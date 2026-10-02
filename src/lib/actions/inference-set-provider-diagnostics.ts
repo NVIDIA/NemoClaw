@@ -78,7 +78,10 @@ export async function buildInferenceSetFailure(
     ? `\nInspect gateway '${gatewayName}', then rerun the same \`${CLI_NAME} inference set\` command.`
     : "";
   return {
-    exitCode: error.kind === "command" ? (error.exitCode ?? 1) : 1,
+    exitCode:
+      error.kind === "command" && error.exitCode !== null && error.exitCode !== 0
+        ? error.exitCode
+        : 1,
     message: `${error.message}${providerLine}${tip}${recovery}`,
   };
 }

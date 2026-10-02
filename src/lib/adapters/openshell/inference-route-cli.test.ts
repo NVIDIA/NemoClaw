@@ -619,6 +619,23 @@ describe("CLI inference route mutation", () => {
     },
   );
 
+  it("does not expose a successful exit code for an ambiguous required-verification failure", async () => {
+    const result = await createCliOpenShellInferenceRouteMutator(
+      vi.fn().mockResolvedValue({ status: 0, output: "Error: authentication failed" }),
+      { redactDiagnostic: (value) => value },
+    ).setInferenceRoute({
+      ...mutationRequest,
+      verification: "required",
+      timeoutMs: 45_000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ambiguous: true,
+      error: { kind: "command", reason: "indeterminate", exitCode: null },
+    });
+  });
+
   it("allows verified mutations enough outer-process grace without extending no-verify calls", async () => {
     const verifiedCapture = vi
       .fn()

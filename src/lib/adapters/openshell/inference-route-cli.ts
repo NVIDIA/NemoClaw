@@ -580,7 +580,7 @@ function mutationError(
         {
           kind: "command",
           reason: "indeterminate",
-          exitCode: result.status,
+          exitCode: result.status === 0 ? null : result.status,
           message: withMutationDetail(
             "OpenShell inference route verification reported an authorization failure; the route state is unknown.",
             detail,
