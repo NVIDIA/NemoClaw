@@ -7,9 +7,9 @@
 # nemoclaw-gpu. Traffic: sandbox → inference.local → Envoy → NIM HPA.
 #
 # Sandboxes are light CPU front ends (default 1 CPU / 4Gi). They do not run
-# inference; GPUs do. bringup does not start the Deep Agents gateway: the client
-# uses dcode -n, which does not need :8642, and a long-running gateway
-# would spend CPU RAM. Prefer ./scripts/agentscaling_deepagents_gpuutil.sh or
+# inference; GPUs do. All sandboxes share one OpenShell gateway. bringup does
+# not start a per-sandbox Deep Agents listener: the client uses dcode -n
+# (no :8642). Prefer ./scripts/agentscaling_deepagents_gpuutil.sh or
 # ./scripts/agentscaling_deepagents_latency.sh over calling this file directly.
 #
 # Does not run openshell gateway start, nemohermes launch, or the
@@ -202,8 +202,8 @@ print_e2e_layout() {
   done
   echo "------------------------------------------------------------------------"
   echo "  HPA: NIM ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
-  echo "  One OpenShell gateway. One Envoy load balancer."
-  echo "  Users send dcode -n into each sandbox. The Deep Agents gateway is not required."
+  echo "  One OpenShell gateway for all sandboxes. One Envoy load balancer."
+  echo "  Users send dcode -n into each sandbox. Do not start a per-sandbox Deep Agents listener."
   echo "  Client (other terminal; same for GPU util or latency HPA):"
   echo "    E2E_USERS=${count} ./scripts/client_deepagents.sh"
   echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
@@ -427,7 +427,7 @@ bringup_sandboxes() {
   hpa_common_verify_target_node 1 || exit 1
   echo "E2E test: Deep Agents Code + NIM — ${count} end users send dcode -n to ${count} CPU sandboxes (LLM on GPUs)"
   echo "  image ${AGENT_SANDBOX_IMAGE}"
-  echo "  ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY} per sandbox. Do not start the Deep Agents gateway."
+  echo "  ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY} per sandbox. Do not start a per-sandbox Deep Agents listener."
   echo "  One OpenShell gateway for all sandboxes. Do not destroy extras."
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
   echo "  pointing OpenShell inference backend at Envoy/metrics-proxy dataplane pod IP (not ClusterIP)"

@@ -161,6 +161,6 @@ agentscaling_deepagents_common_main() {
       ;;
   esac
   echo "HPA metric=${HPA_METRIC}. Client ./scripts/client_deepagents.sh does not set this."
-  echo "After sandboxes are Ready, run the client in another terminal. Deep Agents has no gateway to start."
+  echo "After sandboxes are Ready, run the client in another terminal. Keep the one OpenShell gateway; do not start a per-sandbox Deep Agents listener."
   exec "${SCRIPT_DIR}/setup-deepagent-nim-e2e-sandboxes.sh" "${cmd}"
 }

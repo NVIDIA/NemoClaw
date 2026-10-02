@@ -357,7 +357,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-Deep Agents has no long-running gateway. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes.
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes.
 
 ```text
 E2E test: Deep Agents Code + NIM

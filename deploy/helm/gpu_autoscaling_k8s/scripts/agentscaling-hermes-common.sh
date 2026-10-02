@@ -159,6 +159,6 @@ agentscaling_hermes_common_main() {
       ;;
   esac
   echo "HPA metric=${HPA_METRIC}. Client ./scripts/client_hermes.sh does not set this."
-  echo "After sandboxes are Ready, run the client in another terminal. Do not start Hermes gateways for this load path."
+  echo "After sandboxes are Ready, run the client in another terminal. Keep the one OpenShell gateway; do not start a per-sandbox Hermes listener."
   exec "${SCRIPT_DIR}/setup-hermes-vllm-e2e-sandboxes.sh" "${cmd}"
 }
