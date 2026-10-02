@@ -25,6 +25,12 @@ const RESTART_REFUSED = {
   detail: "native Hermes restart failed",
 } as const;
 
+const RESTART_HEALTH_TIMEOUT = {
+  ok: false,
+  failureLayer: "health timeout",
+  detail: "gateway process restarted but health did not pass before timeout",
+} as const;
+
 describe("binding the Hermes gateway to restored state", () => {
   it("keeps native restart and health operations pinned to the selected OpenShell runtime", async () => {
     const runtimeSelection = {
@@ -77,6 +83,40 @@ describe("binding the Hermes gateway to restored state", () => {
       }),
     ).toBe("unverified");
   });
+
+  it("accepts a restarted Hermes gateway that becomes healthy just after the restart wait", async () => {
+    const restartState = await restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: async () => RESTART_HEALTH_TIMEOUT,
+    });
+
+    expect(restartState).toBe("restart-health-timeout");
+    expect(
+      await verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: async () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toBe("healthy");
+  });
+
+  it("does not accept a timed-out Hermes restart without a healthy replacement", async () => {
+    const restartState = await restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: async () => RESTART_HEALTH_TIMEOUT,
+    });
+
+    expect(
+      await verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: async () => ({
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+        }),
+      }),
+    ).toBe("unverified");
+  });
+
   it("verifies the final cron-bound gateway without restarting after MCP restoration (#8472)", async () => {
     const original = { pid: 41, start_time: 902, drain_token: "restore-token" };
     const replacement = {
