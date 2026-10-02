@@ -1497,8 +1497,18 @@ function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
   return isDependencyLockfile(fileName);
 }
 
-function isDcodeSessionsDatabaseEntry(entry: string): boolean {
-  return path.posix.normalize(entry.replace(/^\.\//u, "")) === ".deepagents/.state/sessions.db";
+type DcodeSessionsDatabaseEntryRole = "database" | "sidecar" | null;
+
+const DCODE_SESSIONS_DATABASE_ENTRY = ".deepagents/.state/sessions.db";
+const DCODE_SESSIONS_DATABASE_SIDECARS = new Set(["-journal", "-shm", "-wal"]);
+
+function dcodeSessionsDatabaseEntryRole(entry: string): DcodeSessionsDatabaseEntryRole {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  if (normalized === DCODE_SESSIONS_DATABASE_ENTRY) return "database";
+  for (const suffix of DCODE_SESSIONS_DATABASE_SIDECARS) {
+    if (normalized === `${DCODE_SESSIONS_DATABASE_ENTRY}${suffix}`) return "sidecar";
+  }
+  return null;
 }
 
 function isBundledProviderProfileSchema(entry: string): boolean {
@@ -1627,7 +1637,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
           const fileName = path.posix.basename(entry).toLowerCase();
           if (
             !shouldSkipNativeRawCredentialScan(fileName) &&
-            !isDcodeSessionsDatabaseEntry(entry)
+            dcodeSessionsDatabaseEntryRole(entry) === null
           ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
@@ -1669,7 +1679,7 @@ function nativeArchiveCredentialViolation(
     entry: string;
     fileName: string;
     isDependencyPackage: boolean;
-    isDcodeSessionsDatabase: boolean;
+    dcodeSessionsDatabaseRole: DcodeSessionsDatabaseEntryRole;
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
@@ -1679,22 +1689,37 @@ function nativeArchiveCredentialViolation(
     const isLockfile = isDependencyLockfile(fileName);
     const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
-    const isDcodeSessionsDatabase = isDcodeSessionsDatabaseEntry(entry);
+    const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
     const isSensitive = isSensitiveFile(fileName);
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
-    if (!isLockfile && !isDependencyPackage && !isDcodeSessionsDatabase && !isEnv && !isSensitive) {
+    if (
+      !isLockfile &&
+      !isDependencyPackage &&
+      dcodeSessionsDatabaseRole === null &&
+      !isEnv &&
+      !isSensitive
+    ) {
       continue;
     }
     candidates.push({
       entry,
       fileName,
       isDependencyPackage,
-      isDcodeSessionsDatabase,
+      dcodeSessionsDatabaseRole,
       isEnv,
       isLockfile,
     });
   }
   if (candidates.length === 0) return null;
+  const dcodeSessionsDatabase = candidates.find(
+    ({ dcodeSessionsDatabaseRole }) => dcodeSessionsDatabaseRole === "database",
+  );
+  const orphanedDcodeSessionsDatabaseSidecar = candidates.find(
+    ({ dcodeSessionsDatabaseRole }) => dcodeSessionsDatabaseRole === "sidecar",
+  );
+  if (!dcodeSessionsDatabase && orphanedDcodeSessionsDatabaseSidecar) {
+    return orphanedDcodeSessionsDatabaseSidecar.entry;
+  }
 
   const temporary = mkdtempSync(path.join(path.dirname(archivePath), ".native-scan-"));
   const scanRoot = path.join(temporary, "root");
@@ -1721,7 +1746,8 @@ function nativeArchiveCredentialViolation(
       return candidates[0]?.entry ?? "native state credential scan";
     }
     for (const candidate of candidates) {
-      if (candidate.isDcodeSessionsDatabase) {
+      if (candidate.dcodeSessionsDatabaseRole === "sidecar") continue;
+      if (candidate.dcodeSessionsDatabaseRole === "database") {
         const containsCredential = inspectExtractedDcodeSessionsDatabase(scanRoot, candidate.entry);
         if (containsCredential !== false) return candidate.entry;
         continue;

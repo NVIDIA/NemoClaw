@@ -53,6 +53,22 @@ describe("DCode session database credential scan", () => {
     ).toBe(true);
   });
 
+  it("rejects a credential stored in an active WAL frame", () => {
+    const fixture = createDatabase();
+    try {
+      fixture.database.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;");
+      fixture.database.exec("CREATE TABLE sessions (content TEXT)");
+      fixture.database.prepare("INSERT INTO sessions VALUES (?)").run(`ghp_${"fedcba9876543210"}`);
+      expect(fs.statSync(`${fixture.path}-wal`).size).toBeGreaterThan(0);
+
+      expect(
+        inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+      ).toBe(true);
+    } finally {
+      fixture.database.close();
+    }
+  });
+
   it("preserves assignment-shaped text stored in a session transcript", () => {
     const fixture = createDatabase();
     fixture.database.exec("CREATE TABLE sessions (content TEXT)");
