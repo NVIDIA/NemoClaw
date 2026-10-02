@@ -29,7 +29,10 @@ V1alpha1 configuration export omits corporate CA material and its digest. An oth
 managed sandbox with an imported CA remains exportable after its retained bundle and startup-profile
 digest pass workload authority validation. CA state still participates in stable observation.
 Missing, malformed, or mismatched CA state must prevent publication. Export does not change sandbox trust or transfer
-source-host trust to another deployment; configure that deployment's CA through onboarding.
+source-host trust to another deployment; review destination trust separately.
+Verification carries only the CA omission flag to the CLI, outside the exported source values.
+After successful export, the CLI reports that omission on stderr, including with `--json`.
+The notice leaves YAML and the version 1 JSON result unchanged.
 
 Managed OpenClaw exports `agents[].tools.disclosure: direct` only when the registry selection agrees with
 the validated startup profile. Absent or explicit `progressive` selection keeps
