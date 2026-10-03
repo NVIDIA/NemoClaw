@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ipro
     && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
-    && python3 -m venv /opt/fabric \
+    && python3 -m venv --without-pip /opt/fabric \
     && install -d -m 0700 -o 1000 -g 1000 /sandbox
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
@@ -123,7 +123,8 @@ FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 # Hermes resolves bundled assets relative to its source checkout.
-RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
 COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 RUN printf '%s\n' '{"nvidia.fabric.hermes": ["/opt/hermes"]}' > /opt/nemoclaw/runtime-files.json
@@ -179,7 +180,7 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 # A small executable specification with no native agent or model dependencies.
 FROM ${PYTHON_IMAGE} AS dummy
 RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
-    && python3 -m venv /opt/fabric \
+    && python3 -m venv --without-pip /opt/fabric \
     && install -d -m 0700 -o 1000 -g 1000 /sandbox
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py

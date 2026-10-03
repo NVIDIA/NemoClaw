@@ -4,16 +4,44 @@
 
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+
+
+def satisfies(version, specifier):
+    """Check a version against the comparison clauses Fabric's adapters use.
+
+    The image has no pip, so this replaces its vendored packaging module. It
+    rejects any clause it does not understand rather than accept it.
+    """
+
+    def parse(text):
+        return tuple(int(part) for part in text.split("."))
+
+    current = parse(version)
+    checks = {
+        ">=": lambda bound: current >= bound,
+        "<": lambda bound: current < bound,
+        "==": lambda bound: current[: len(bound)] == bound,
+    }
+    for clause in specifier.split(","):
+        clause = clause.strip()
+        operator = next((op for op in (">=", "==", "<") if clause.startswith(op)), None)
+        if operator is None or not clause[len(operator) :].strip().replace(".", "").isdigit():
+            raise ValueError(f"unsupported requires-python clause: {clause!r}")
+        if not checks[operator](parse(clause[len(operator) :].strip())):
+            return False
+    return True
 
 
 class AgentImage(unittest.TestCase):
@@ -37,7 +65,6 @@ class AgentImage(unittest.TestCase):
         self.assertEqual(response["error"]["effects"], "none")
 
     def test_shared_python_satisfies_every_pinned_fabric_adapter(self):
-        from pip._vendor.packaging.specifiers import SpecifierSet
 
         # Every harness uses the same base, including adapters not in this image.
         with tarfile.open("/opt/nemoclaw/source/fabric.tar.gz") as source:
@@ -52,9 +79,16 @@ class AgentImage(unittest.TestCase):
             for item in projects:
                 project = tomllib.loads(source.extractfile(item).read().decode())["project"]
                 with self.subTest(adapter=project["name"]):
-                    self.assertIn(
-                        platform.python_version(), SpecifierSet(project["requires-python"])
+                    self.assertTrue(
+                        satisfies(platform.python_version(), project["requires-python"]),
+                        project["requires-python"],
                     )
+
+    def test_fabric_environment_carries_no_package_installer(self):
+        # Images install everything at build time; an installer only adds size.
+        prefix = Path(sys.prefix)
+        self.assertIsNone(importlib.util.find_spec("pip"))
+        self.assertEqual(sorted(path.name for path in (prefix / "bin").glob("pip*")), [])
 
     def test_catalog_carries_installed_runtime_directories(self):
         catalog = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])
