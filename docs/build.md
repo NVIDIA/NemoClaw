@@ -82,7 +82,7 @@ Digest-based sandbox use requires a Docker image store that retains repository d
 On a native Linux ARM64 host, run from the repository root:
 
 ```sh
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
@@ -108,16 +108,16 @@ Keep the original bundle and state to operate or destroy deployments created bef
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
 ```sh
-python3 image/build_fabric.py --platform linux/amd64 deepagents
+cargo images build --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
 Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `python3 image/build_fabric.py --platform linux/amd64 agents` to build both.
+Run `cargo images build --platform linux/amd64 agents` to build both.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
-On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `python3 image/build_fabric.py --platform linux/arm64 agents`.
+On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
 `AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
 The proxy and its `proxy-tests` target use the same explicit platform selector.
 The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary from [its crate](../crates/nemoclaw-ollama-proxy) and its license, with no shell or interpreter.
@@ -141,8 +141,8 @@ It is a test fixture, excluded from the production `agents` target and SDK harne
 On Linux ARM64, run from the repository root:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 dummy
-python3 image/qualify_contract.py nc-contract:dummy
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
+cargo images qualify nc-contract:dummy
 ```
 
 Use `linux/amd64` on a native AMD64 host.
@@ -154,16 +154,16 @@ The [contract description](design/fabric-management.md#image-contract-and-refere
 To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 agents
-python3 image/qualify_contract.py nc-contract:openclaw nc-contract:hermes nc-contract:pi
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
+cargo images qualify nc-contract:openclaw nc-contract:hermes nc-contract:pi
 ```
 
 Pass each remaining built image to the same qualifier; CI runs it for every selected target.
 On a native Linux AMD64 host, build and qualify its two production targets instead:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/amd64 agents
-python3 image/qualify_contract.py nc-contract:deepagents nc-contract:openclaw
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/amd64 agents
+cargo images qualify nc-contract:deepagents nc-contract:openclaw
 ```
 
 The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.

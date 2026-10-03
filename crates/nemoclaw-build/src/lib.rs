@@ -6,6 +6,7 @@ pub mod ci;
 pub mod docker_provider;
 #[cfg(feature = "sdk")]
 pub mod docs;
+pub mod images;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;

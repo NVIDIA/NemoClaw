@@ -58,6 +58,27 @@ enum Action {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle.
         step: Option<String>,
     },
+    /// Build agent images with their installed Fabric metadata, or qualify them.
+    Images {
+        #[command(subcommand)]
+        action: ImageAction,
+    },
+}
+#[derive(Subcommand)]
+enum ImageAction {
+    /// Build Bake targets (for example `agents`, `dummy`, or `openclaw`) and label them.
+    Build {
+        /// linux/arm64 or linux/amd64; must match the Docker host.
+        #[arg(long)]
+        platform: String,
+        #[arg(required = true)]
+        targets: Vec<String>,
+    },
+    /// Run the command contract inside each labeled local image.
+    Qualify {
+        #[arg(required = true)]
+        images: Vec<String>,
+    },
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -291,6 +312,19 @@ async fn main() -> Result<()> {
     {
         return Err("build tool source inputs changed; rebuild with cargo run --locked -p nemoclaw-build -- bundle".into());
     }
+    if let Action::Images { action } = cli.command {
+        let root = Path::new(".");
+        return match action {
+            ImageAction::Build { platform, targets } => {
+                nemoclaw_build::images::build(root, &platform, &targets)
+            }
+            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
+                eprintln!("Qualifying {image}");
+                nemoclaw_build::images::qualify(root, image)
+            }),
+        }
+        .map_err(Into::into);
+    }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
     if let Action::Ci { step } = cli.command {
         return run_ci::run_steps(&pins, step.as_deref()).await;
@@ -306,7 +340,9 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. } => unreachable!("CI steps returned before build tool checks"),
+        Action::Ci { .. } | Action::Images { .. } => {
+            unreachable!("CI and image commands returned before build tool checks")
+        }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {
             if !run_ci::protoc_matches(&run_ci::protoc_command(&pins.protobuf), &pins.protobuf) {

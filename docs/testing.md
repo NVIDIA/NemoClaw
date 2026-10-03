@@ -74,11 +74,11 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](build.md#build-agent-images) and host Python 3.12 or newer for the target-selection test.
+Use the [agent image build prerequisites](build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
-python3 -B -m unittest discover -s image -p test_builds.py
+cargo test -p nemoclaw-build --test bake
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```

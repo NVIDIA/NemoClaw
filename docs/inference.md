@@ -146,11 +146,11 @@ Follow the [agent image build prerequisites](build.md#build-agent-images), then 
 
 ```sh
 # On Linux ARM64:
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 # For Hermes:
-python3 image/build_fabric.py --platform linux/arm64 hermes
+cargo images build --platform linux/arm64 hermes
 # On Linux AMD64:
-python3 image/build_fabric.py --platform linux/amd64 deepagents
+cargo images build --platform linux/amd64 deepagents
 ```
 
 These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally and attach catalog metadata obtained through the installed Fabric discovery API.
