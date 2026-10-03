@@ -64,12 +64,14 @@ export function makeWrapperFixture(
 ): {
   wrapperPath: string;
   ranMarker: string;
+  argsFile: string;
   envFile: string;
   authFile: string;
   codexAuthFile: string;
   autoApprovalPath: string;
 } {
   const ranMarker = path.join(tempDir, "dcode-ran");
+  const argsFile = path.join(tempDir, "dcode-args");
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
@@ -99,11 +101,11 @@ export function makeWrapperFixture(
       ['/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"'],
       [
         DEEPAGENTS_CODE_EXEC,
-        `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s approval-mode=%s startup-mode=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}" "\${DEEPAGENTS_CODE_APPROVAL_MODE-__unset__}" "\${DEEPAGENTS_CODE_STARTUP_MODE-__unset__}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
+        `printf '%s\\0' "$@" > "${argsFile}"; touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s approval-mode=%s startup-mode=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}" "\${DEEPAGENTS_CODE_APPROVAL_MODE-__unset__}" "\${DEEPAGENTS_CODE_STARTUP_MODE-__unset__}"; echo dcode-stub-ran; exit 0; : ${DEEPAGENTS_CODE_EXEC}`,
       ],
     ]),
   );
-  return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile, autoApprovalPath };
+  return { wrapperPath, ranMarker, argsFile, envFile, authFile, codexAuthFile, autoApprovalPath };
 }
 
 export function makeNetworkSimulatingFixture(tempDir: string): {

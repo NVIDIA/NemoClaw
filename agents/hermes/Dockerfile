@@ -360,7 +360,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=3ae895cb7cc5d70b3afe53e2c8042cad079a78eee92c9d71991e825cb9eeb74a
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=621c096401b68f95a0955000447045781bddb386d2581e5234733c7f7f702dfb
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -386,7 +386,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=3ae895cb7cc5d70b3afe53e2c8042cad079a78eee92c9d71991e825cb9eeb74a
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=621c096401b68f95a0955000447045781bddb386d2581e5234733c7f7f702dfb
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -570,11 +570,8 @@ RUN /usr/bin/python3 -I \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_PATCHED_SHA256" /opt/hermes/tools/mcp_tool_transport.py \
     | sha256sum -c - \
-    && env -u SSL_CERT_FILE -u all_proxy -u http_proxy -u https_proxy -u no_proxy \
-        ALL_PROXY= HTTP_PROXY= HTTPS_PROXY=http://10.200.0.1:3128 \
-        NO_PROXY=direct.example \
-        /opt/hermes/.venv/bin/python -I -c \
-        'import asyncio; from tools.mcp_tool import sdk_httpx; from tools.mcp_tool_transport import _body_capped_httpx_client; h = sdk_httpx(); c = _body_capped_httpx_client(h); remote = c._transport_for_url(h.URL("https://remote.example/mcp")); direct = c._transport_for_url(h.URL("https://direct.example/mcp")); assert type(remote).__name__ == "_BodyCapTransport" and type(remote._inner._pool).__name__ == "AsyncHTTPProxy"; assert type(direct).__name__ == "_BodyCapTransport" and type(direct._inner._pool).__name__ == "AsyncConnectionPool"; asyncio.run(c.aclose())'
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py mcp-http-proxy
 
 # NemoClaw installs its wrapper as `hermes` and moves the real entrypoint to
 # `hermes.real`, so every managed gateway command line carries that basename.

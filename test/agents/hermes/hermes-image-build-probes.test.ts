@@ -82,6 +82,7 @@ const commands = [
   "googlechat-override-seams",
   "langfuse-credentials",
   "profile-policy",
+  "mcp-http-proxy",
   "session-delete",
   "session-preview",
   "session-state-create",

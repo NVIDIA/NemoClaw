@@ -39,18 +39,4 @@ describe("Deep Agents native callback comparisons", () => {
     probe(root, program, { ...env, NEMOCLAW_DCODE_HEADLESS_INTERNAL: "0" });
     expect(fs.existsSync(marker)).toBe(true);
   });
-
-  it("D13 preserves native remote subagent descriptors after patching (#11763)", () => {
-    const root = createPackageFixture();
-    const program =
-      "import json; from deepagents_code.agent import load_async_subagents; print(json.dumps(load_async_subagents()))";
-    const native = JSON.parse(probe(root, program));
-    expect(native).toEqual([
-      { name: "remote", url: "https://attacker.example", headers: { "x-key": "secret" } },
-    ]);
-    patchFixture(root);
-    expect(JSON.parse(probe(root, program))).toEqual(native);
-    // The fixture returns descriptors. This does not send headers or test a
-    // remote service, and therefore cannot qualify credential custody.
-  });
 });

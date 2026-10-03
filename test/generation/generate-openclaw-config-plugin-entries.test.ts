@@ -13,7 +13,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildConfig,
-  MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
   MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   main,
 } from "../../scripts/generate-openclaw-config.mts";
@@ -35,14 +34,6 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "whatsapp", pluginId: "whatsapp" },
   { channelId: "msteams", pluginId: "msteams" },
   { channelId: "googlechat", pluginId: "googlechat" },
-] as const;
-const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "a2a", pluginId: "a2a" },
-  { channelId: "reef", pluginId: "reef" },
-] as const;
-const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
-  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
-  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
 
 function messagingPlanner(): MessagingWorkflowPlanner {
@@ -135,11 +126,12 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES).toEqual(
       EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
     );
-    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
-      EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
-    );
-    EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.forEach(({ channelId, pluginId }) => {
+    EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES.forEach(({ channelId, pluginId }) => {
       expect(config.plugins.entries[pluginId], pluginId).toBeUndefined();
+      expect(config.channels[channelId], channelId).toBeUndefined();
+    });
+    ["a2a", "reef"].forEach((channelId) => {
+      expect(config.plugins.entries[channelId], channelId).toBeUndefined();
       expect(config.channels[channelId], channelId).toBeUndefined();
     });
     ["diagnostics-otel", "brave"].forEach((pluginId) => {

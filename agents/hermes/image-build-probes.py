@@ -103,6 +103,118 @@ def verify_profile_policy() -> None:
     _verify_profile_config_policy(load_config_readonly(), expected)
     assert _allow_unsafe_browser_evaluate() == expected["browser.allow_unsafe_evaluate"]
     assert _restrict_browser_evaluate() == expected["browser.restrict_evaluate"]
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    try:
+        assert db._conn.execute("PRAGMA temp_store").fetchone()[0] == 2
+    finally:
+        db.close()
+
+
+def verify_mcp_http_proxy() -> None:
+    """Exercise HTTPS proxy selection, NO_PROXY, and response caps on real sockets."""
+    import asyncio
+    import ssl
+    import tempfile
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from tools.mcp_tool import sdk_httpx
+    from tools.mcp_tool_transport import (
+        _body_capped_httpx_client,
+        _make_mcp_body_cap_transport,
+    )
+
+    httpx = sdk_httpx()
+    with tempfile.TemporaryDirectory(prefix="hermes-mcp-proxy-") as directory:
+        certificate = str(Path(directory) / "certificate.pem")
+        key = str(Path(directory) / "key.pem")
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", key, "-out", certificate, "-days", "1", "-subj", "/CN=localhost"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, key)
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_CONNECT(self):
+                # This local fixture terminates the tunnel and serves its response.
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.flush()
+                self.connection = context.wrap_socket(self.connection, server_side=True)
+                self.rfile = self.connection.makefile("rb")
+                self.wfile = self.connection.makefile("wb")
+                self.handle_one_request()
+
+            def do_GET(self):
+                body = self.server.route.encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(1 << 40) if self.path == "/large" else str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if self.path != "/large":
+                    self.wfile.write(body)
+                self.wfile.flush()
+
+        direct = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        direct.route = "direct"
+        direct.socket = context.wrap_socket(direct.socket, server_side=True)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        proxy.route = "proxy"
+        servers = (direct, proxy)
+        threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+        proxy_keys = ("http_proxy", "https_proxy", "all_proxy", "no_proxy",
+                      "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+        saved = {key: os.environ.get(key) for key in proxy_keys}
+        for key in proxy_keys:
+            os.environ.pop(key, None)
+        os.environ["HTTPS_PROXY"] = f"http://127.0.0.1:{proxy.server_port}"
+        os.environ["NO_PROXY"] = "127.0.0.1"
+        for thread in threads:
+            thread.start()
+        remote_url = f"https://localhost:{direct.server_port}"
+        excluded_url = f"https://127.0.0.1:{direct.server_port}"
+
+        async def probe():
+            # Match upstream's caller-owned body-capped transport for the control.
+            native = httpx.AsyncClient(
+                transport=_make_mcp_body_cap_transport(httpx, httpx.AsyncHTTPTransport(verify=False)),
+                timeout=5,
+            )
+            managed = _body_capped_httpx_client(httpx, verify=False, timeout=5)
+            async with native, managed:
+                assert (await native.get(remote_url)).text == "direct"
+                assert (await managed.get(remote_url)).text == "proxy"
+                assert (await managed.get(excluded_url)).text == "direct"
+                for client, url in ((native, remote_url), (managed, remote_url), (managed, excluded_url)):
+                    try:
+                        await client.get(url + "/large")
+                    except httpx.ReadError as error:
+                        assert "Content-Length" in str(error) and "bytes cap" in str(error), error
+                    else:
+                        raise AssertionError("MCP response body cap was not enforced")
+
+        try:
+            asyncio.run(probe())
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join(timeout=5)
+                assert not thread.is_alive(), "MCP proxy fixture did not stop"
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def verify_gateway_runtime_metadata() -> None:
@@ -749,6 +861,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "managed-runtime-capability": verify_managed_runtime_capability,
+    "mcp-http-proxy": verify_mcp_http_proxy,
     "profile-policy": verify_profile_policy,
     "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,

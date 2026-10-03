@@ -61,6 +61,39 @@ DEFAULT_MAX_ENTRIES = 100_000
 DEFAULT_MAX_DEPTH = 64
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
+# Historical schema-v3 generator output, before the #11763 restriction cleanup.
+# This is a migration identity, not a source of defaults for new configurations.
+RETIRED_GENERATED_DEFAULTS_V3 = {
+    "display": {
+        "compact": False, "tool_progress": "all", "interim_assistant_messages": True,
+        "show_reasoning": False, "show_commentary": False,
+    },
+    "session_reset": {
+        "mode": "both", "at_hour": 4, "idle_minutes": 1440, "notify": True,
+        "notify_exclude_platforms": ["api_server", "webhook"], "bg_process_max_age_hours": 24,
+    },
+    "updates": {"pre_update_backup": False, "refresh_cua_driver": False},
+    "memory": {"memory_enabled": True, "user_profile_enabled": True},
+    "curator": {
+        "enabled": True, "interval_hours": 168, "min_idle_hours": 2,
+        "stale_after_days": 30, "archive_after_days": 90, "consolidate": False,
+        "prune_builtins": True, "backup": {"enabled": True, "keep": 5},
+    },
+    "auxiliary": {
+        "curator": {
+            "provider": "auto", "model": "", "base_url": "", "api_key": "",
+            "timeout": 600, "extra_body": {},
+        },
+    },
+}
+RETIRED_DISABLED_PLATFORMS_V3 = (
+    "a2a", "bluebubbles", "buzz", "dingtalk", "discord", "email", "feishu",
+    "google_chat", "homeassistant", "irc", "line", "matrix", "mattermost",
+    "msgraph_webhook", "ntfy", "photon", "qqbot", "raft", "relay", "signal",
+    "simplex", "slack", "sms", "teams", "telegram", "wecom", "wecom_callback",
+    "weixin", "whatsapp", "whatsapp_cloud", "webhook", "yuanbao",
+)
+
 
 class MigrationError(Exception):
     """A legacy tree cannot be migrated without guessing or following links."""
@@ -273,6 +306,33 @@ def _is_subset_equal(candidate: object, reference: object) -> bool:
     return candidate == reference
 
 
+def _remove_retired_generated_defaults(source: dict, target: dict) -> None:
+    """Ignore only exact retired output absent from the destination configuration.
+
+    Unknown fields, customized values, and conflicting destination preferences
+    remain in the comparison and therefore require manual reconciliation.
+    JSON comparison distinguishes booleans from numbers in the YAML input.
+    """
+    if source.get("_config_version") != 33:
+        return
+    for key, expected in RETIRED_GENERATED_DEFAULTS_V3.items():
+        if key in source and key not in target:
+            try:
+                matches = json.dumps(source[key], sort_keys=True) == json.dumps(expected, sort_keys=True)
+            except (TypeError, ValueError):
+                matches = False
+            if matches:
+                source.pop(key)
+    source_platforms = source.get("platforms")
+    target_platforms = target.get("platforms")
+    if isinstance(source_platforms, dict) and isinstance(target_platforms, dict):
+        for platform in RETIRED_DISABLED_PLATFORMS_V3:
+            value = source_platforms.get(platform)
+            if platform not in target_platforms and isinstance(value, dict):
+                if set(value) == {"enabled"} and value["enabled"] is False:
+                    source_platforms.pop(platform)
+
+
 def _load_unique_yaml(text: str) -> object:
     import yaml
 
@@ -359,6 +419,7 @@ def _verified_generated_config(
 
     source_residual = copy.deepcopy(source)
     target_residual = copy.deepcopy(target)
+    _remove_retired_generated_defaults(source_residual, target_residual)
     for document in (source_residual, target_residual):
         document.pop("_config_version", None)
         for key in policy.routing_keys:

@@ -116,13 +116,6 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "msteams", pluginId: "msteams" },
   { channelId: "googlechat", pluginId: "googlechat" },
 ] as const;
-// OpenClaw also ships channel plugins outside NemoClaw's currently supported
-// messaging manifests. Keep those bundled entrypoints explicitly inert without
-// representing them as activatable managed-image capabilities.
-export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "a2a", pluginId: "a2a" },
-  { channelId: "reef", pluginId: "reef" },
-] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 

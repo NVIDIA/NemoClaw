@@ -129,30 +129,6 @@ ${body}
 }
 
 describe("Hermes profile policy defaults", () => {
-  it.each([
-    { managed: true, expected: "2" },
-    { managed: false, expected: "0" },
-  ])(
-    "H10 resolves SQLite temporary storage with managed=$managed (#11763)",
-    ({ managed, expected }) => {
-      const patched = patchSource("config", configFixture);
-      expect(patched.status, patched.stderr).toBe(0);
-      const probe = runPatchedPython(
-        managed ? patched.stdout : configFixture,
-        [
-          "import sqlite3",
-          "connection = sqlite3.connect(':memory:')",
-          'value = namespace["DEFAULT_CONFIG"]["database"].get("temp_store", 0)',
-          'connection.execute(f"PRAGMA temp_store={value}")',
-          'print(connection.execute("PRAGMA temp_store").fetchone()[0])',
-          "connection.close()",
-        ].join("\n"),
-      );
-      expect(probe.status, probe.stderr).toBe(0);
-      expect(probe.stdout.trim()).toBe(expected);
-    },
-  );
-
   it("pins every config default that fresh profile homes otherwise inherit", () => {
     const result = patchSource("config", configFixture);
 

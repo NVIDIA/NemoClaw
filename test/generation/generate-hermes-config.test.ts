@@ -734,8 +734,8 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it.each(["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"])(
-    "leaves native tool discovery unpinned for each platform [%s]",
-    async (_platform) => {
+    "preserves managed tools for each enabled remote platform [%s]",
+    async (platform) => {
       const { config } = await runConfigScriptWithMessaging({
         NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
           "discord",
@@ -751,7 +751,7 @@ describe("agents/hermes/generate-config.ts", () => {
         }),
       });
 
-      expectRemotePlatformToolsets(config.platform_toolsets.api_server);
+      expectRemotePlatformToolsets(config.platform_toolsets[platform]);
 
       // The local Hermes CLI keeps upstream defaults.
       expect(config.platform_toolsets?.cli).toBeUndefined();

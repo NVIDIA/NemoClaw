@@ -18,7 +18,7 @@ afterEach(cleanupPackageFixtures);
 // These comparisons stop at the wrapper's downstream process boundary. The fixture
 // records dispatch; it does not run native tools, inference, updates, or an ACP server.
 const cases = [
-  { id: "D01", args: ["-n", "hello", "--interpreter"] },
+  { id: "D01", args: ["-n", "hello from the native harness", "--interpreter"] },
   { id: "D03", args: ["tools", "configure"] },
   { id: "D05", args: ["--rubric-model", "openai:fixture"] },
   { id: "D08", args: ["--acp"] },
@@ -61,9 +61,15 @@ describe("Deep Agents native command forwarding", () => {
     ({ args }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-removal-"));
       try {
-        const { wrapperPath, ranMarker } = makeWrapperFixture(directory);
+        const { wrapperPath, ranMarker, argsFile } = makeWrapperFixture(directory);
         const candidate = runWrapper(wrapperPath, args);
         expect(candidate.status, candidate.stderr).toBe(0);
+        expect(fs.readFileSync(argsFile, "utf8").split("\0").slice(0, -1)).toEqual([
+          "--sandbox",
+          "none",
+          "--no-mcp",
+          ...args,
+        ]);
         expect(fs.existsSync(ranMarker)).toBe(true);
 
         // A passing dispatch comparison must not hide an accidentally removed

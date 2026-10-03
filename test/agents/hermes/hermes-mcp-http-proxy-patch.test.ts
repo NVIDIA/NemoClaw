@@ -56,54 +56,6 @@ function runPatcher(fixture: string) {
 }
 
 describe("Hermes MCP managed proxy transport patch", () => {
-  it("H16 restores a caller-owned transport when the MCP proxy patch is omitted (#11763)", () => {
-    const { result, transportPath, tmp } = runPatcher(UPSTREAM_FIXTURE);
-    try {
-      expect(result.status, result.stderr).toBe(0);
-      const program = `
-import json, runpy, sys
-namespace = runpy.run_path(sys.argv[1])
-class Client:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self._transport = object()
-        self._mounts = {"proxy": "proxy-transport", "excluded": None}
-class Httpx:
-    AsyncClient = Client
-    @staticmethod
-    def AsyncHTTPTransport(**kwargs): return kwargs
-    @staticmethod
-    def Timeout(*args, **kwargs): return (args, kwargs)
-client = namespace['Transport']().sse(None, True, None, Httpx)['httpx_client_factory']()
-print(json.dumps({'custom_transport': 'transport' in client.kwargs, 'explicit_trust_env': client.kwargs.get('trust_env'), 'proxy_transport': client._mounts['proxy'], 'excluded': client._mounts['excluded']}))
-`;
-      const probe = () =>
-        spawnSync("python3", ["-I", "-c", program, transportPath], {
-          encoding: "utf8",
-          timeout: 5000,
-        });
-      const managed = probe();
-      expect(managed.status, managed.stderr).toBe(0);
-      expect(JSON.parse(managed.stdout)).toEqual({
-        custom_transport: false,
-        explicit_trust_env: true,
-        proxy_transport: ["capped", "proxy-transport"],
-        excluded: null,
-      });
-      fs.writeFileSync(transportPath, UPSTREAM_FIXTURE);
-      const native = probe();
-      expect(native.status, native.stderr).toBe(0);
-      expect(JSON.parse(native.stdout)).toEqual({
-        custom_transport: true,
-        explicit_trust_env: null,
-        proxy_transport: "proxy-transport",
-        excluded: null,
-      });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("routes both body-capped HTTP transports through the selected environment proxy", () => {
     const { result, transportPath, tmp } = runPatcher(UPSTREAM_FIXTURE);
     try {
