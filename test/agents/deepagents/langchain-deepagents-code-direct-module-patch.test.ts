@@ -44,7 +44,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     'getattr(args, "auto_approve", False)',
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
-  ])("patches every 0.1.55 mutation and credential boundary idempotently [case %#]", (expected) => {
+  ])("patches every 0.1.71 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPatchedPackageFixture();
     patchFixture(tempDir);
 
@@ -729,7 +729,7 @@ assert _server_config._normalize_path(snapshot_path, None, "MCP config") == snap
 assert app.DeepAgentsApp._absolutize_launch_relative_path(
     snapshot_path, Path.cwd()
 ) == snapshot_path
-assert mcp_tools.discover_mcp_configs() == []
+assert mcp_tools.discover_mcp_config_sources() == []
 expected_config = json.loads(managed.managed_mcp_config_bytes(snapshot_path))
 
 class RejectingProjectContext:
@@ -1351,7 +1351,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.55");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.71");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

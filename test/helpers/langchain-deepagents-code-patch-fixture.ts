@@ -54,7 +54,7 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
 
-export function createPackageFixture(version = "0.1.55"): string {
+export function createPackageFixture(version = "0.1.71"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
@@ -193,7 +193,7 @@ class InternalServerError(APIStatusError):
     `
 """Allow running the test package as a module."""
 
-from deepagents_code.main import cli_main
+from deepagents_code import cli_main
 
 
 if __name__ == "__main__":
@@ -826,6 +826,10 @@ async def _caller_four():
 
 async def _caller_five():
     return await _run_install_subprocess("five", progress=None, log_path=None)
+
+
+async def _caller_six():
+    return await _run_install_subprocess("six", progress=None, log_path=None)
 `,
   );
   writeFixtureFile(packageDir, "integrations/__init__.py", '"""Test integrations."""');
