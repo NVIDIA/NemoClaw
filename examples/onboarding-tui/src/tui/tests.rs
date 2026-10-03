@@ -379,8 +379,8 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     );
 }
 
-#[test]
-fn single_sandbox_examples_reach_review_through_sparse_journey() {
+/// Repository examples (relative to `examples/`) that define exactly one sandbox.
+fn single_sandbox_examples() -> std::collections::BTreeSet<String> {
     fn visit(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
@@ -394,49 +394,108 @@ fn single_sandbox_examples_reach_review_through_sparse_journey() {
             }
         }
     }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
-    visit(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."),
-        &mut files,
-    );
-    files.sort();
+    visit(&root, &mut files);
+    files
+        .into_iter()
+        .filter(|path| {
+            Document::parse(std::fs::read(path).unwrap().as_slice())
+                .is_ok_and(|document| document.spec.sandboxes.len() == 1)
+        })
+        .map(|path| {
+            let relative = path.strip_prefix(&root).unwrap().to_string_lossy();
+            relative.replace('\\', "/")
+        })
+        .collect()
+}
+
+/// Walk one example's sparse journey to review, requiring friendly text for every question.
+fn example_reaches_review(relative: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(relative);
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities)
+        .unwrap_or_else(|error| panic!("{relative}: {error}"));
+    let mut wizard = JourneyWizard::new(capabilities, state);
     let mut missing_text = std::collections::BTreeSet::new();
-    for path in files {
-        let bytes = std::fs::read(&path).unwrap();
-        let Ok(document) = Document::parse(bytes.as_slice()) else {
-            continue;
-        };
-        if document.spec.sandboxes.len() != 1 {
-            continue;
+    for _ in 0..100 {
+        if let Ok(Some(question)) = wizard.question()
+            && let Some(missing) = super::labels::missing_text(&question)
+        {
+            missing_text.insert(format!("{} has no {missing}", question.id()));
         }
-        let capabilities = Capabilities::available();
-        let state = load_journey(Source::Template(&path), &capabilities)
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let mut wizard = JourneyWizard::new(capabilities, state);
-        for _ in 0..100 {
-            if let Ok(Some(question)) = wizard.question()
-                && let Some(missing) = super::labels::missing_text(&question)
-            {
-                missing_text.insert(format!("{} has no {missing}", question.id()));
-            }
-            wizard.advance();
-            if wizard.accepted || wizard.error.is_some() {
-                break;
-            }
+        wizard.advance();
+        if wizard.accepted || wizard.error.is_some() {
+            break;
         }
-        assert!(
-            wizard.accepted,
-            "{}: question={:?} error={:?}",
-            path.display(),
-            wizard
-                .question()
-                .unwrap()
-                .map(|question| question.id().to_owned()),
-            wizard.error
-        );
     }
+    assert!(
+        wizard.accepted,
+        "{relative}: question={:?} error={:?}",
+        wizard
+            .question()
+            .unwrap()
+            .map(|question| question.id().to_owned()),
+        wizard.error
+    );
     // Add friendly text in text.json for NemoClaw-owned questions.
-    assert!(missing_text.is_empty(), "{missing_text:#?}");
+    assert!(missing_text.is_empty(), "{relative}: {missing_text:#?}");
+}
+
+// One test per example, so examples run in parallel with separate time limits.
+macro_rules! example_journeys {
+    ($($name:ident => $path:literal,)*) => {
+        mod example_journeys {
+            $(
+                #[test]
+                fn $name() {
+                    super::example_reaches_review($path);
+                }
+            )*
+        }
+
+        #[test]
+        fn every_single_sandbox_example_has_a_journey_test() {
+            let listed: std::collections::BTreeSet<String> =
+                [$($path),*].into_iter().map(str::to_owned).collect();
+            assert_eq!(single_sandbox_examples(), listed);
+        }
+    };
+}
+
+example_journeys! {
+    explicit_policy => "explicit-policy.yaml",
+    fabric_claude => "fabric-claude.yaml",
+    fabric_codex => "fabric-codex.yaml",
+    fabric_hermes => "fabric-hermes.yaml",
+    fabric_mini_swe_agent => "fabric-mini-swe-agent.yaml",
+    fabric_nooa_bench => "fabric-nooa-bench.yaml",
+    fabric_nooa => "fabric-nooa.yaml",
+    fabric_openclaw => "fabric-openclaw.yaml",
+    fabric_pi => "fabric-pi.yaml",
+    fabric_remote_agent => "fabric-remote-agent.yaml",
+    fabric => "fabric.yaml",
+    hermes_auth => "hermes-auth.yaml",
+    hermes_interfaces => "hermes-interfaces.yaml",
+    inference_tuning => "inference-tuning.yaml",
+    inline_inference => "inline-inference.yaml",
+    local => "local.yaml",
+    managed_hermes => "managed-hermes.yaml",
+    managed_ollama_gpu => "managed-ollama-gpu.yaml",
+    managed_ollama => "managed-ollama.yaml",
+    managed_podman => "managed-podman.yaml",
+    nemotron_amd64 => "nemotron-amd64.yaml",
+    onboarding_openclaw => "onboarding/openclaw.yaml",
+    openclaw_dashboard => "openclaw-dashboard.yaml",
+    spark_local_and_hosted => "spark/local-and-hosted.yaml",
+    spark_pi_small => "spark/pi-small.yaml",
+    spark_remote_vllm => "spark/remote-vllm.yaml",
+    spark_spark_inline => "spark/spark-inline.yaml",
+    spark_two_models => "spark/two-models.yaml",
+    spark_vllm => "spark/vllm.yaml",
+    station_vllm => "station/vllm.yaml",
 }
 
 #[test]
