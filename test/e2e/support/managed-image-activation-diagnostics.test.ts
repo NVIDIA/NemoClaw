@@ -16,6 +16,9 @@ import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
+  externalImageActivationAgents,
+  externalImageActivationMatches,
+  externalImageActivationOnboardArgs,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
@@ -176,6 +179,63 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it("adopts public OpenClaw and Hermes digests only through Docker", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);
+    expect(externalImageActivationAgents("podman")).toEqual([]);
+    expect(externalImageActivationOnboardArgs(reference, "openclaw", "ext-img-openclaw")).toEqual([
+      "onboard",
+      "--from-image",
+      reference,
+      "--fresh",
+      "--recreate-sandbox",
+      "--non-interactive",
+      "--yes",
+      "--no-gpu",
+      "--agent",
+      "openclaw",
+      "--name",
+      "ext-img-openclaw",
+    ]);
+  });
+
+  it("binds external-image success to disclosure, receipt, Docker identity, and cleanup", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    const imageId = `sha256:${"b".repeat(64)}`;
+    const evidence = {
+      agent: "hermes" as const,
+      reference,
+      platform: "linux/amd64" as const,
+      onboardExitCode: 0,
+      destroyExitCode: 0,
+      beforeInspectExitCode: 0,
+      afterInspectExitCode: 0,
+      beforeImageId: imageId,
+      afterImageId: imageId,
+      toolDisclosure: "progressive",
+      receipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId: imageId,
+        shared: true,
+      },
+    };
+
+    expect(externalImageActivationMatches(evidence)).toBe(true);
+    expect(
+      externalImageActivationMatches({
+        ...evidence,
+        receipt: { ...evidence.receipt, runtimeImageContentId: `sha256:${"c".repeat(64)}` },
+      }),
+    ).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, toolDisclosure: "direct" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterInspectExitCode: 1 })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterImageId: "" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, destroyExitCode: 1 })).toBe(false);
+  });
+
   it("binds explicit admin approval to the exact request from the failed agent turn", () => {
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const result = {
@@ -254,6 +314,45 @@ describe("managed image activation failure diagnostics", () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it("re-approves the replacement OpenClaw authority after an external-image rebuild", async () => {
+    const requestIds = [
+      "4edc8df0-20d0-4308-b0e8-850843ae0cf4",
+      "ad592d20-6f2a-4db3-a966-bc7cb96b8543",
+    ];
+    const sandboxExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: `scope upgrade pending approval (requestId: ${requestIds[0]})`,
+        stdout: "",
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: `scope upgrade pending approval (requestId: ${requestIds[1]})`,
+        stdout: "",
+        timedOut: false,
+      });
+    const hostCommand = vi.fn(async (_command: string, _args: string[]) => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
+      timedOut: false,
+    }));
+    const host = { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never;
+    const sandbox = { exec: sandboxExec } as never;
+
+    await approveOpenClawAdminScope(host, sandbox, "fixture-sandbox", {});
+    await approveOpenClawAdminScope(host, sandbox, "fixture-sandbox", {});
+
+    expect(sandboxExec).toHaveBeenCalledTimes(2);
+    expect(hostCommand).toHaveBeenCalledTimes(2);
+    expect(hostCommand.mock.calls[0]![0]).toBe("bash");
+    expect(hostCommand.mock.calls[0]![1][1]).toContain(`expected_request_id='${requestIds[0]}'`);
+    expect(hostCommand.mock.calls[1]![0]).toBe("bash");
+    expect(hostCommand.mock.calls[1]![1][1]).toContain(`expected_request_id='${requestIds[1]}'`);
   });
 
   it("preserves feature approval success without running host logout hooks or creating a cron job", async () => {
@@ -623,9 +722,14 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
   });
   it("gates only the post-restart OpenClaw turn on inner gateway readiness (#7744)", () => {
     const command = ["openclaw", "agent", "--session-id", "quoted session"];
-    const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+    const script = managedActivationPostRestartAgentTurnScript(
+      "openclaw",
+      "after",
+      command,
+      "http://127.0.0.1:18791/health",
+    );
 
-    expect(script).toContain("http://127.0.0.1:18789/health");
+    expect(script).toContain("http://127.0.0.1:18791/health");
     expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
     expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
     expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();

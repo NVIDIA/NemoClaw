@@ -56,6 +56,12 @@ export type RecorderOverrides = {
   setupOpenclaw?: Parameters<
     typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
   >[0]["agentSetupDeps"]["setupOpenclaw"];
+  waitForStartedOpenclawGatewayProcess?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["waitForStartedOpenclawGatewayProcess"];
+  settleStartedOpenclawGatewayForConfiguration?: Parameters<
+    typeof createFinalOnboardFlowPhases<OnboardFlowContext<Agent | null>>
+  >[0]["agentSetupDeps"]["settleStartedOpenclawGatewayForConfiguration"];
   mergePolicyMessagingChannels?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
@@ -220,6 +226,10 @@ export function createPhases(
       recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
       isOpenclawReady: async () => false,
       waitForSandboxControlPlaneReady: async () => true,
+      waitForStartedOpenclawGatewayProcess:
+        recorders.waitForStartedOpenclawGatewayProcess ?? (async () => true),
+      settleStartedOpenclawGatewayForConfiguration:
+        recorders.settleStartedOpenclawGatewayForConfiguration ?? (async () => true),
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),

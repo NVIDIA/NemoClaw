@@ -642,7 +642,7 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
       ).toEqual([
-        { name: "brew", provenance: "user-added" },
+        { name: "brew-balanced", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
@@ -660,7 +660,7 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
       ).toEqual([
-        { name: "brew", provenance: "user-added" },
+        { name: "brew-balanced", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },

@@ -152,6 +152,13 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    */
   hermesApiPort?: number | null;
   dashboardPort?: number | null;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL` at
+   * onboard time (host + scheme with the effective dashboard port). Persisted
+   * only when an external origin was configured; a plain loopback dashboard is
+   * left unset and reported as `http://127.0.0.1:<dashboardPort>/` (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
   /** Generation proving which durable same-name recreate registered this row. */
@@ -197,6 +204,18 @@ export type SandboxWorkloadReceipt =
       readonly credentialProxyReplayRequired: boolean;
       /** Optional canonical standard-base64 public CA bundle bound by the profile digest. */
       readonly corporateCaB64?: string;
+      readonly shared: true;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly kind: "external-image";
+      /** Exact publisher-owned OCI image digest requested by the operator. */
+      readonly reference: string;
+      /** Platform selected by the local runtime when the digest was inspected. */
+      readonly platform: "linux/amd64" | "linux/arm64";
+      /** Immutable host-local content identity returned by the container runtime. */
+      readonly runtimeImageContentId: string;
+      /** Publisher-owned images are never removed by NemoClaw cleanup. */
       readonly shared: true;
     }
   | {

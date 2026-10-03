@@ -507,7 +507,8 @@ describe("managed Podman runtime provider", () => {
         paths: ["/sandbox/.openclaw/openclaw-weixin"],
       }),
     ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
-    expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      1,
       [
         "image",
         "inspect",
@@ -516,6 +517,11 @@ describe("managed Podman runtime provider", () => {
         expect.stringContaining("node:24.18.1-trixie-slim"),
       ],
       30_000,
+    );
+    expect(cleanupCapture).toHaveBeenNthCalledWith(
+      2,
+      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      120_000,
     );
   });
 
@@ -620,6 +626,16 @@ describe("managed Podman runtime provider", () => {
         kind: "legacy-dockerfile",
         reference: null,
         shared: false,
+      }),
+    ).toBe(false);
+    expect(
+      runtime.providers.podman?.workload.acceptsReceipt({
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: `ghcr.io/example/downstream-openclaw@sha256:${"d".repeat(64)}`,
+        platform: "linux/amd64",
+        runtimeImageContentId: `sha256:${"e".repeat(64)}`,
+        shared: true,
       }),
     ).toBe(false);
   });
