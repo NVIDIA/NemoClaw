@@ -56,7 +56,16 @@ export async function verifyMcpServerIdentity(
  * enforceTransportTrust.
  */
 export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boolean): void {
-  const transport = entry.transport ?? inferTransportFromUrl(entry.url);
+  const inferred = inferTransportFromUrl(entry.url);
+  const transport = entry.transport ?? inferred;
+
+  if (entry.transport !== undefined && entry.transport !== inferred) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' transport mismatch: explicit '${entry.transport}' does not match URL-inferred '${inferred}'. Managed HTTPS MCP URLs cannot be registered with an explicit STDIO transport.`,
+      2,
+      "supply-chain",
+    );
+  }
 
   if (transport === "stdio") {
     if (requireOAuth) {
