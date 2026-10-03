@@ -35,7 +35,19 @@ vi.mock("../../src/lib/state/registry/persistence", () => ({
   REGISTRY_FILE: "/unused-export-registry.json",
 }));
 vi.mock("../../src/lib/state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
-vi.mock("../../src/lib/adapters/openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
+vi.mock("../../src/lib/adapters/openshell/sdk", () => ({
+  connectManagedOpenShellSdk: vi.fn(),
+  connectExternalHttpOpenShellSdk: vi.fn(),
+}));
+vi.mock("../../src/lib/onboard/gateway-management", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/onboard/gateway-management")>()),
+  loadGatewayManagementDeclaration: vi.fn(() => ({ ok: true, declaration: null, source: null })),
+}));
+vi.mock("../../src/lib/adapters/fs/regular-file", () => ({
+  openRegularFileNoFollow: vi.fn(() => {
+    throw Object.assign(new Error("no checkpoint"), { code: "ENOENT" });
+  }),
+}));
 vi.mock("../../src/lib/adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
   captureSanitizedResolvedOpenshellAsync: vi.fn(),
@@ -45,8 +57,8 @@ vi.mock("../../src/lib/adapters/openshell/sandbox-config", async (importOriginal
     await importOriginal<typeof import("../../src/lib/adapters/openshell/sandbox-config")>();
   return {
     ...actual,
-    createSandboxConfig: () =>
-      actual.createSandboxConfig(undefined, async (policy) => YAML.stringify(policy)),
+    createSandboxConfig: (connect?: Parameters<typeof actual.createSandboxConfig>[0]) =>
+      actual.createSandboxConfig(connect, async (policy) => YAML.stringify(policy)),
   };
 });
 vi.mock("../../src/lib/onboard/gateway/state-dir", () => ({

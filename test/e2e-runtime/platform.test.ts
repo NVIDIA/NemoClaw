@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { isWsl as coreIsWsl } from "../../src/lib/core/wsl";
+
 import {
   classifyDockerVersionIdentity,
   containerCanReachHostLoopback,
@@ -26,6 +28,11 @@ const reachableDockerFallback = (dockerHost: string | undefined) => ({
 
 describe("platform helpers", () => {
   describe("isWsl", () => {
+    it("preserves the platform export of the shared WSL detector (#11861)", () => {
+      expect(isWsl).toBe(coreIsWsl);
+      expect(isWsl({ isWsl: false, platform: "linux", env: { WSL_INTEROP: "set" } })).toBe(false);
+    });
+
     it("detects WSL from environment", () => {
       expect(
         isWsl({

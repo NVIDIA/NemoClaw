@@ -308,6 +308,60 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
+  it.each([
+    { name: "pull request", workflow: prWorkflow, exitStatus: 0 },
+    { name: "pull request", workflow: prWorkflow, exitStatus: 7 },
+    { name: "main", workflow: mainWorkflow, exitStatus: 0 },
+    { name: "main", workflow: mainWorkflow, exitStatus: 7 },
+  ])(
+    "runs $name external export compatibility with v1 enabled and preserves exit status $exitStatus (#11861)",
+    ({ workflow, exitStatus }) => {
+      const steps = workflow.jobs["static-checks"].steps?.filter(
+        (step) => step.env?.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1",
+      );
+      expect(steps).toHaveLength(1);
+      const step = steps![0]!;
+      const temp = mkdtempSync(join(tmpdir(), "nemoclaw-export-compatibility-workflow-"));
+      try {
+        const bin = join(temp, "node_modules", ".bin");
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(
+          join(bin, "vitest"),
+          [
+            "#!/usr/bin/env node",
+            "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), enabled: process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY, toolchain: process.env.RUSTUP_TOOLCHAIN }));",
+            "process.exit(Number(process.env.COMPATIBILITY_TEST_EXIT));",
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+
+        const result = runWorkflowShellStep(
+          step,
+          { COMPATIBILITY_TEST_EXIT: String(exitStatus) },
+          temp,
+        );
+
+        expect(result.status).toBe(exitStatus);
+        expect(result.stdout).toBe(
+          JSON.stringify({
+            args: [
+              "run",
+              "--project",
+              "cli",
+              "src/lib/domain/config/verify-export-defaults.test.ts",
+              "src/lib/domain/config/verify-export-observability.test.ts",
+              "src/lib/domain/config/verify-external-gateway-export.test.ts",
+            ],
+            enabled: "1",
+            toolchain: "1.98.1",
+          }),
+        );
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    },
+  );
+
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
