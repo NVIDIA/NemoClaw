@@ -132,7 +132,12 @@ async fn standalone_readiness(proxy: bool) {
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
     status("ready");
     control(json!({"transport_failure":true}));
-    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":1,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
+    // Each check makes several SSH fixture round trips, so a 1-second wait
+    // timed out on a slow macOS runner. A managed service that is still loading
+    // fails only when the wait expires, so its wait stays short; every expected
+    // proxy failure is immediate, so the proxy wait can be generous.
+    let wait = if proxy { 30 } else { 3 };
+    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
         let output = directory
