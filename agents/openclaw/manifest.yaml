@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.9.1"
+expected_version: "2026.9.2"
 version_scheme: calendar
 gateway_command: "openclaw gateway run"
 # Interactive entry point a user types inside the sandbox. OpenClaw stays a
@@ -42,7 +42,7 @@ forward_ports:
 config:
   dir: /sandbox/.openclaw
   config_file: openclaw.json
-  format: json5
+  format: json
 
 # Static integration metadata only. OpenClaw remains the authority on which
 # skills are visible or active.
@@ -51,55 +51,6 @@ skills:
   list_command: [skills, list, --agent, main]
   add_command: [skills, install, "{source}", --agent, main, --force]
 
-# ── State directories ──────────────────────────────────────────
-state_dirs:
-  - agents
-  # OpenClaw owns native plugin lifecycle. Restore a captured extensions tree,
-  # but do not erase target-only native installs when an older snapshot had no
-  # extensions directory.
-  - path: extensions
-    clear_when_absent: false
-  # Legacy layouts can still contain this pre-extensions directory. Keep it
-  # outside portable state.
-  - path: plugins
-    backup: false
-  # OpenClaw may create profile-scoped runtime state. Keep it outside portable
-  # state until profile-specific backup semantics are defined.
-  - path: profiles
-    backup: false
-  - workspace
-  # Multi-agent OpenClaw deployments create workspace-<agent> siblings.
-  - prefix: workspace-
-  - skills
-  - hooks
-  # Machine-local gateway auth state is wiped on destroy but never captured.
-  # Sanitization removes the identity key and paired-device tokens, so a
-  # restored copy cannot authenticate (#6852).
-  - path: identity
-    backup: false
-  - path: devices
-    backup: false
-  # Canonical SQLite pairing and gateway authentication state is machine-local.
-  # Wipe it on destroy, but never include it in portable backups.
-  - path: state
-    backup: false
-  - canvas
-  - cron
-  - memory
-  - telegram
-  - wechat
-  - whatsapp
-  - credentials
-
-# ── Top-level durable state files ───────────────────────────────
-# openclaw.json holds the core OpenClaw settings the state dirs above do not
-# cover: model/provider config, MCP servers, custom agents, and channel
-# account blocks. Without this entry `nemoclaw backup-all` snapshotted the
-# data directories but dropped these settings, so they were lost on rebuild
-# (issue #5027). The credential-sanitized backup restores the complete native
-# file because OpenClaw owns its configuration after first launch.
-state_files:
-  - path: openclaw.json
 user_managed_files:
   - .env
   - .mcp.json

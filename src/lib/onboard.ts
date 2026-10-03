@@ -1438,7 +1438,6 @@ const sandboxCreateOrchestrationRuntime = {
   assessHost,
   baseImageResolutionFlow,
   cliDisplayName,
-  cliName,
   completeOrdinaryOnboardSandboxCreation,
   confirmRecreateForSelectionDrift,
   createOnboardCreatedSandboxCompletion,
@@ -1447,6 +1446,7 @@ const sandboxCreateOrchestrationRuntime = {
   dashboardRuntime,
   dcodeAutoApprovalFlow,
   detectMessagingCredentialRotation,
+  openShellGpuDiagnostics: dockerGpuSandboxCreate.cliOpenShellGpuDiagnostics,
   get ensureAgentFixedForward() {
     return ensureAgentFixedForward;
   },
@@ -3050,7 +3050,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          rebuildPreservedEnv: opts.rebuildPreservedEnv,
           hostMounts: effectiveHostMounts,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
