@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
+import type {
+  OpenShellGpuDiagnosticArtifact,
+  OpenShellGpuDiagnostics,
+} from "../adapters/openshell/gpu-diagnostics";
 import type { SandboxGpuProofResult } from "../state/registry";
 
 export interface SandboxCreateRuntimePatch {
@@ -216,6 +219,14 @@ export type DockerGpuPatchSandboxSnapshot = {
   sandboxPhase: string | null;
   sandboxListLine: string | null;
   patchedContainerState: DockerContainerState | null;
+  /**
+   * The typed OpenShell observations used to derive the phase. Keeping the
+   * observations with the snapshot lets the diagnostics writer persist the
+   * same evidence without invoking the external collector a second time.
+   * Presence records an attempted collection; an empty array records a failed
+   * or empty attempt that must not be retried by the writer.
+   */
+  openShellDiagnosticArtifacts?: readonly OpenShellGpuDiagnosticArtifact[];
 };
 
 export type DockerGpuPatchFailureKind =

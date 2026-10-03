@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
   waitUntilAsync: vi.fn(),
-  warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
       _args: string[],
@@ -65,10 +64,6 @@ vi.mock("../../state/registry", async (importOriginal) => ({
 
 vi.mock("./destroy", () => ({
   removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
-}));
-
-vi.mock("./rebuild-flow-helpers", () => ({
-  warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
 }));
 
 vi.mock("./forward-recovery", () => ({
@@ -357,7 +352,7 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("pins deletion and the delete-edge user-file probe when ambient selection changes (#10514)", async () => {
+  it("pins deletion when ambient selection changes without probing a file allowlist (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
@@ -411,11 +406,6 @@ describe("rebuild destroy phase", () => {
           OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
         }),
       }),
-    );
-    expect(mocks.warnUnpreservedUserManagedFiles).toHaveBeenCalledWith(
-      "alpha",
-      expect.any(Function),
-      runtimeSelection,
     );
     const deleteOptions = mocks.runOpenshell.mock.calls.find(
       ([args]) => args[0] === "sandbox" && args[1] === "delete",

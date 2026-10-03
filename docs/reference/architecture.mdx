@@ -40,7 +40,7 @@ graph LR
             direction TB
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
-            STATE["State Management<br/><small>Rebuild backups<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+            STATE["State Management<br/><small>Whole-home rebuild transfer<br/>Fail-closed credential checks<br/>Integrity verification</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]
@@ -220,11 +220,7 @@ The concrete files differ by agent because each runtime has its own plugin syste
 The OpenClaw integration is a thin TypeScript plugin that runs in-process with the OpenClaw gateway inside the sandbox.
 Its durable entry points are `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-context.ts`, and `nemoclaw/openclaw.plugin.json`.
 The `nemoclaw/src/commands/` directory contains in-sandbox `/nemoclaw` command handlers and migration helpers.
-The `nemoclaw/src/blueprint/` directory contains runner, state, snapshot, SSRF, and private-network validation code.
-
-NemoClaw writes the initial managed inference route and OpenShell credential placeholders to `openclaw.json` during onboarding.
-After first launch, OpenClaw owns the complete file.
-NemoClaw snapshots and restores its credential-sanitized contents without maintaining a second config authority.
+The `nemoclaw/src/blueprint/` directory contains runner, persistent-state, internal rollback-capture, SSRF, and private-network validation code.
 
 Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
 This guidance stays out of the visible chat transcript.
@@ -234,14 +230,14 @@ The context tells the agent to try allowed network and filesystem operations bef
 
 <AgentOnly variant="hermes">
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
-The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
+The manifest declares Hermes' binary, health probe, config directory, and OpenAI-compatible API endpoint.
 Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
 Managed startup materializes Hermes YAML and environment state from the recorded onboarding choices.
 The runtime configuration guard validates that state before the supervised Hermes gateway starts.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 The Deep Agents integration follows the generic agent-manifest path for terminal runtimes.
-The manifest declares the `dcode` binary, smoke checks, config directory, state directories, and OpenAI-compatible inference route.
+The manifest declares the `dcode` binary, smoke checks, config directory, and OpenAI-compatible inference route.
 The configuration generator turns NemoClaw onboarding choices into `config.toml`, and the managed launchers enforce the supported credential, MCP, tracing, and sandbox boundaries before `dcode` starts.
 </AgentOnly>
 
@@ -392,7 +388,10 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 | Path | Purpose |
 |---|---|
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata for the default gateway port, including the default sandbox selection. |
-| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
+| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, rebuild backups, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
+<AgentOnly variant="openclaw">
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw backs up or restores during migration flows. |
+</AgentOnly>
 
 The following environment variables configure optional services and local access.
 

@@ -136,22 +136,16 @@ describe("agent definitions", () => {
       expected_version: string;
       runtime: { kind: string };
       config: { dir: string };
-      state_dirs: { path: string; backup?: boolean }[];
-      state_files: { path: string; restore?: Record<string, unknown> }[];
+      state_dirs?: unknown;
+      state_files?: unknown;
     };
 
     expect(manifest.name).toBe("pi");
     expect(manifest.expected_version).toBe("0.84.1");
     expect(manifest.runtime.kind).toBe("terminal");
     expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
-    expect(
-      manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path),
-    ).toEqual(["sessions", "prompts", "themes"]);
-    expect(
-      manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path),
-    ).toEqual(["tools", "bin"]);
-    expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
-    expect(manifest.state_files[0]?.restore).toBeUndefined();
+    expect(manifest.state_dirs).toBeUndefined();
+    expect(manifest.state_files).toBeUndefined();
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -249,22 +243,23 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/YAML object/);
   });
 
-  it("rejects the superseded runtime auth directory inventory (#8006)", () => {
-    const agentName = `runtime-auth-inventory-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Runtime Auth Inventory",
-        "state_dirs:",
-        "  - identity",
-        "runtime_auth_state_dirs:",
-        "  - identity",
-      ].join("\n"),
-    );
+  it.each(["state_dirs", "state_files", "runtime_auth_state_dirs"])(
+    "rejects the retired %s inventory",
+    (field) => {
+      const agentName = `retired-state-inventory-${String(Date.now())}`;
+      writeTempAgentManifest(
+        agentName,
+        [
+          `name: ${agentName}`,
+          "display_name: Retired State Inventory",
+          `${field}:`,
+          "  - identity",
+        ].join("\n"),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/replaced.*backup: false/);
-  });
+      expect(() => loadAgent(agentName)).toThrow(new RegExp(`${field}.*retired`));
+    },
+  );
 
   it.each([1023, 70000])("rejects invalid forward_ports value %s in manifests", (port) => {
     const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
