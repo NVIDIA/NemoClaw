@@ -18,8 +18,10 @@ import {
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
   findMissingDirectLegacyReleaseNotesRedirects,
+  publishedSourcePages,
   renderPublishedPageBodies,
   resolvePublishedRoute,
+  withoutPendingLinkFixes,
 } from "../../scripts/check-docs-published-routes.mts";
 
 const navYaml = `
@@ -726,5 +728,34 @@ describe("gateway lifecycle authority routes", () => {
 describe("native changelog legacy routes", () => {
   it("redirects every retired Release Notes route directly to the changelog", () => {
     expect(findMissingDirectLegacyReleaseNotesRedirects()).toEqual([]);
+  });
+});
+
+describe("published page coverage (#12328)", () => {
+  const index = buildPublishedRouteIndex();
+  const sources = publishedSourcePages(index);
+
+  it("checks every source docs/index.yml actually publishes, not a fixed allowlist", () => {
+    // A page outside the old hand-maintained allowlist must still be covered,
+    // so a page can never silently drop out of route checking again.
+    expect(sources).toContain("get-started/quickstart.mdx");
+    expect(sources).toContain("about/overview.mdx");
+    expect(sources.length).toBeGreaterThan(100);
+  });
+
+  it("has no unresolved internal link on any published page", () => {
+    const violations = withoutPendingLinkFixes(
+      sources.flatMap((source) => findBrokenPublishedRoutes(source, index)),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it("checks every other link on a page with a pending link fix (#12326)", () => {
+    const violations = findBrokenPublishedRoutes("get-started/quickstart-hermes.mdx", index);
+    expect(violations).toEqual([
+      expect.objectContaining({
+        target: "../inference/set-up-ollama#use-portable-ollama-with-hermes",
+      }),
+    ]);
   });
 });
