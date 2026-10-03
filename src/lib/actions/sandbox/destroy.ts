@@ -93,7 +93,6 @@ import {
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
-import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
@@ -640,11 +639,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
     );
   }
 }
-
-export type { WipeSandboxStateDeps };
-// Re-export so existing callers (tests, downstream code) keep working after
-// the wipe was extracted out of the destroy monolith (#5455 PRA-2).
-export { wipeSandboxState };
 
 class SandboxDestroyExitRequest extends Error {
   constructor(readonly exitCode: number) {

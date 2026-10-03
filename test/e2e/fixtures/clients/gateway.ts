@@ -26,10 +26,10 @@ import type { SandboxClient } from "./sandbox.ts";
  * src/lib/actions/sandbox/connect.ts:NEMOCLAW_GATEWAY_NAME) on top of the
  * framework's allowlisted env.
  */
-function probeEnv(): NodeJS.ProcessEnv {
+function probeEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
-    ...buildAvailabilityProbeEnv(),
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    ...buildAvailabilityProbeEnv(base),
+    OPENSHELL_GATEWAY: base.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
 }
 
@@ -144,7 +144,8 @@ export class GatewayClient {
     return result;
   }
 
-  async resolveHostRuntime(): Promise<HostGatewayRuntime | null> {
+  async resolveHostRuntime(options: ShellProbeRunOptions = {}): Promise<HostGatewayRuntime | null> {
+    const env = probeEnv(options.env);
     const pid = await this.host.command(
       "sh",
       [
@@ -156,8 +157,9 @@ export class GatewayClient {
           `fi; exit 1`,
       ],
       {
+        ...options,
         artifactName: "gateway-runtime-pid-probe",
-        env: probeEnv(),
+        env,
         timeoutMs: 15_000,
       },
     );
@@ -168,8 +170,9 @@ export class GatewayClient {
     const container = await this.runtimeProvider.command(
       ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"],
       {
+        ...options,
         artifactName: "gateway-runtime-container-probe",
-        env: probeEnv(),
+        env,
         timeoutMs: 15_000,
       },
     );
@@ -185,7 +188,7 @@ export class GatewayClient {
   }
 
   async expectHostRuntimeStopped(options: ShellProbeRunOptions = {}): Promise<void> {
-    const runtime = await this.resolveHostRuntime();
+    const runtime = await this.resolveHostRuntime(options);
     if (runtime) {
       throw new Error(
         `gateway runtime still appears to be running after stop: ${runtime.kind}:${runtime.id}`,
@@ -194,7 +197,7 @@ export class GatewayClient {
     if (options.artifactName) {
       await this.host.command("true", [], {
         artifactName: options.artifactName,
-        env: probeEnv(),
+        env: probeEnv(options.env),
         timeoutMs: 5_000,
       });
     }

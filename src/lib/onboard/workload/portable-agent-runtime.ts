@@ -280,8 +280,6 @@ export function portableAgentDefinitionSha256(agent: AgentDefinition): string {
             envFile: agent.configPaths.envFile,
             format: agent.configPaths.format,
           },
-          stateDirectories: agent.stateDirectories,
-          stateFiles: agent.stateFiles,
           userManagedFiles: agent.userManagedFiles,
           webAuth: agent.webAuth,
           devicePairing: agent.hasDevicePairing,
