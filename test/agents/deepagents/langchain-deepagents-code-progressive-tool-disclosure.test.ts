@@ -321,6 +321,8 @@ class HooksManager:
 `,
   "client/non_interactive.py": `from __future__ import annotations
 
+def _resolve_shell_allow_list(): return ["bash"]
+
 async def run_non_interactive(*args, **kwargs):
     try:
         return kwargs
