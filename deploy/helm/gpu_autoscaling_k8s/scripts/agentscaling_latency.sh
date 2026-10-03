@@ -8,8 +8,8 @@
 #
 # Switches the cluster HPA metric, then creates/starts sandboxes.
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
-# Provision holds HPA at 1 replica. Run ./scripts/client.sh in another
-# terminal after :18789 is up; the client arms maxReplicas=8 and sends chats.
+# Provision keeps current replicas at 1 (maxReplicas stays 8). Run
+# ./scripts/client.sh after :18789 is up (laptop: E2E_CLIENT_HOST=dgx-ip).
 # The client does not set HPA_METRIC. For GPU-util HPA use
 # ./scripts/agentscaling_gpuutil.sh.
 #

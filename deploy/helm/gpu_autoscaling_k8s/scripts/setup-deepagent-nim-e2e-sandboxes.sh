@@ -203,7 +203,7 @@ print_e2e_layout() {
   echo "  HPA: NIM ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
   echo "  One OpenShell gateway for all sandboxes. One Envoy load balancer."
   echo "  Users send dcode -n into each sandbox. Do not start a per-sandbox Deep Agents listener."
-  echo "  Client (other terminal; same for GPU util or latency HPA):"
+  echo "  Client (Deep Agents has no HTTP UI; same for GPU util or latency HPA):"
   echo "    E2E_USERS=${count} ./scripts/client_deepagents.sh"
   echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"

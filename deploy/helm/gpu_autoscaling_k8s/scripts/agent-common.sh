@@ -16,6 +16,20 @@ agent_common_validate() {
   esac
 }
 
+# Laptop clients talk HTTP to dgx-ip (published host ports). See
+# ../README.md#how-clients-work-6a--6b--6c
+agent_common_print_laptop_client_usage() {
+  local script_name="${1:?client script}"
+  echo "Default — remote terminal such as your laptop: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
+  echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
+}
+
+agent_common_fail_openshell_for_client() {
+  echo "ERROR: $*. From a laptop use HTTP, not SSH:" >&2
+  echo "  E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/client.sh" >&2
+  exit 1
+}
+
 # Local-runtime ids this recipe's Helm chart can render (ollama | vllm | nim).
 # Which pairings are documented for each agent is official NemoClaw guidance —
 # see ../README.md#6-e2e-test-with-multiple-end-users-and-sandboxes and

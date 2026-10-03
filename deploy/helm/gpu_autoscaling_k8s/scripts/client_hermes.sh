@@ -13,9 +13,8 @@
 #
 # Default: 3 users, inflight 1, 4Gi sandboxes. 2Gi + inflight 2 OOMed dgx-19.
 #
-# Usage:
-#   cd deploy/helm/gpu_autoscaling_k8s
-#   E2E_USERS=3 ./scripts/client_hermes.sh
+# Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
+#   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 
 set -euo pipefail
 
@@ -47,18 +46,79 @@ export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
+E2E_CLIENT_HOST="${E2E_CLIENT_HOST:-}"
 
-command -v openshell >/dev/null 2>&1 || fail "missing command: openshell"
+command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
+[[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
+
+if [[ -n "${E2E_CLIENT_HOST}" ]]; then
+  agent_common_print_laptop_client_usage "client_hermes.sh"
+  echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
+  echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" <<'PY'
+import json, sys, time, urllib.error, urllib.request
+host, users, duration, timeout = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+prompt = "Explain Kubernetes HPA and GPU autoscaling in detail with examples."
+deadline = time.monotonic() + duration
+failed = 0
+for i in range(users):
+    url = f"http://{host}:{8642 + i}/health"
+    try:
+        code = urllib.request.urlopen(url, timeout=3).status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    except Exception as exc:
+        print(f"ERROR: user {i} {url}: {exc}", file=sys.stderr)
+        failed = 1
+        continue
+    if code not in (200, 401):
+        print(f"ERROR: user {i} {url} HTTP {code}", file=sys.stderr)
+        failed = 1
+        continue
+    print(f"  user {i} → http://{host}:{8642 + i}/v1")
+if failed:
+    raise SystemExit("client will not send chat until every http://dgx-ip:8642+i/health answers")
+ok = err = 0
+while time.monotonic() < deadline:
+    for i in range(users):
+        req = urllib.request.Request(
+            f"http://{host}:{8642 + i}/v1/chat/completions",
+            data=json.dumps({
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 256,
+                "stream": False,
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                json.loads(resp.read().decode())
+            ok += 1
+            print(f"[user {i}] ok={ok} err={err}", flush=True)
+        except Exception as exc:
+            err += 1
+            print(f"[user {i}] {exc}", flush=True)
+print(f"[load] done ok={ok} err={err}", flush=True)
+raise SystemExit(0 if ok else 1)
+PY
+  exit $?
+fi
+
+command -v openshell >/dev/null 2>&1 \
+  || agent_common_fail_openshell_for_client "missing command: openshell"
 command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
 openshell status >/dev/null \
-  || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+  || agent_common_fail_openshell_for_client "OpenShell is not connected on this host"
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "client_hermes.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_hermes_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z). No sandbox create. HPA metric is not set here."
+export E2E_CLIENT_QUIET_HPA=1
+agent_common_print_laptop_client_usage "client_hermes.sh"
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z)."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
@@ -88,8 +148,8 @@ done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
-hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
-  || fail "HPA is not 1 replica; leftover load would scale before chats start"
+hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
+  || fail "HPA is not 1 current replica; leftover load would scale before chats start"
 hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 exec python3 "${SCRIPT_DIR}/e2e-hermes-load-test.py" \
   --users "${E2E_USERS}" \

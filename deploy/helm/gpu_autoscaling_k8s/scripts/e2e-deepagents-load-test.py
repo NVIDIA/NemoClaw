@@ -19,8 +19,8 @@ This is not in-sandbox curl to inference.local.
 This is not the OpenClaw e2e (chat.send on :18789).
 
 Usage:
-    E2E_USERS=3 python3 scripts/e2e-deepagents-load-test.py
-    python3 scripts/e2e-deepagents-load-test.py --users 3
+    E2E_USERS=5 ./scripts/client_deepagents.sh
+Deep Agents has no HTTP dashboard.
 """
 
 from __future__ import annotations
@@ -130,29 +130,47 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
             continue
 
 
+def estimate_tokens(text: str) -> int:
+    """Reply-length estimate (~4 chars/token). dcode -n does not report usage."""
+    if not text or not str(text).strip():
+        return 0
+    return max(1, len(str(text)) // 4)
+
+
 def print_chat_table(
     results: list[dict[str, object]],
     duration_sec: int,
     inflight_start: int,
     inflight_per_user: int,
 ) -> None:
-    rows: list[tuple[int, int, int]] = []
+    rows: list[tuple[int, int, int, int]] = []
     for item in results:
         user_id = int(item.get("user_id") or 0)
         chats_ok = int(item.get("ok") or 0)
         chats_err = int(item.get("err") or 0)
-        rows.append((user_id, chats_ok, chats_err))
+        tokens = int(item.get("tokens") or 0)
+        rows.append((user_id, chats_ok, chats_err, tokens))
     rows.sort(key=lambda row: row[0])
-    all_err_zero = all(err == 0 for _, _, err in rows)
-    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-sandbox chat counts"
+    all_err_zero = all(err == 0 for _, _, err, _tok in rows)
+    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-user chat counts"
     print(
-        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}:"
+        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}."
     )
+    print("est. tokens ≈ reply length / 4 (dcode -n does not report usage).")
     print("")
-    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6}")
-    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6}")
-    for user_id, chats_ok, chats_err in rows:
-        print(f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} {chats_ok:>16} {chats_err:>6}")
+    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6} {'est. tokens':>12}")
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6} {'-' * 12}")
+    total_ok = total_err = total_tok = 0
+    for user_id, chats_ok, chats_err, tokens in rows:
+        total_ok += chats_ok
+        total_err += chats_err
+        total_tok += tokens
+        print(
+            f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} "
+            f"{chats_ok:>16} {chats_err:>6} {tokens:>12}"
+        )
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6} {'-' * 12}")
+    print(f"{'total':<8} {'':<12} {total_ok:>16} {total_err:>6} {total_tok:>12}")
     print("")
     print(
         "Path in use: user → OpenShell sandbox (dcode -n) → inference.local → "
@@ -228,23 +246,34 @@ async def simulate_user(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ok = 0
     err = 0
+    tokens = 0
     started = time.monotonic()
     end = started + duration_sec
     escalate_at = started + 15
     turn = 0
+    last_log = started
     log_handle = log_path.open("w")
 
     async def one_turn(turn_id: int) -> None:
-        nonlocal ok, err
+        nonlocal ok, err, tokens, last_log
         prompt = PROMPTS[(user_id + turn_id) % len(PROMPTS)]
         success, detail = await send_user_query(sandbox, prompt, timeout_sec)
         if success:
             ok += 1
-            log_handle.write(f"ok turn={turn_id}\n")
+            ntok = estimate_tokens(detail)
+            tokens += ntok
+            log_handle.write(f"ok turn={turn_id} tokens={ntok}\n")
         else:
             err += 1
             log_handle.write(f"err turn={turn_id} {detail}\n")
             print(f"[user {user_id} sandbox {user_id}] turn {turn_id} error: {detail}", file=sys.stderr)
+        now = time.monotonic()
+        if now - last_log >= 15:
+            print(
+                f"[user {user_id} sandbox {user_id}] ok={ok} err={err} tokens={tokens}",
+                flush=True,
+            )
+            last_log = now
         log_handle.flush()
 
     pending: set[asyncio.Task[None]] = set()
@@ -265,13 +294,14 @@ async def simulate_user(
                     task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
     finally:
-        log_handle.write(f"ok={ok} err={err}\n")
+        log_handle.write(f"ok={ok} err={err} tokens={tokens}\n")
         log_handle.close()
     return {
         "user_id": user_id,
         "sandbox": sandbox,
         "ok": ok,
         "err": err,
+        "tokens": tokens,
         "turns": turn,
         "duration": time.monotonic() - started,
         "log": str(log_path),
@@ -289,19 +319,9 @@ async def run_test(args: argparse.Namespace) -> int:
     hold_started: float | None = None
 
     print("=" * 70)
-    print(f"  {args.users} end users → {args.users} OpenShell sandboxes → Envoy → NIM HPA")
-    print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
-    print("  Query: openshell sandbox exec -- dcode -n")
-    print("  Not: load-generator.ts pod-IP Job, not in-sandbox curl to Envoy")
-    print(
-        f"  Concurrent prompts per user: {args.inflight_start}→{args.inflight_per_user} "
-        "(default 1; inflight 2 OOMed a CPU node)"
-    )
-    print(
-        f"  max_tokens={os.environ.get('MAX_TOKENS', '2048')}  "
-        f"HPA {args.hpa_namespace}/{args.hpa_name} (model already pinned in each sandbox)"
-    )
-    print(f"  duration≤{args.duration}s  target replicas={args.target_pods}")
+    print(f"  {args.users} end users → {args.users} Deep Agents (1:1)")
+    print("  Each user sends chats to that user's sandbox.")
+    print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
 
     async def poll_hpa() -> None:
@@ -316,14 +336,9 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
             if current >= args.target_pods:
                 if hold_started is None:
                     hold_started = time.monotonic()
-                    print(
-                        f"[hpa] reached {args.target_pods} replicas; "
-                        f"holding {args.hold_sec}s then stopping user queries"
-                    )
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     stop_load.set()
@@ -385,7 +400,6 @@ async def run_test(args: argparse.Namespace) -> int:
                 "desired_replicas": desired,
             }
         )
-        print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
         if current <= 1:
             scale_down_ok = True
             break
@@ -399,6 +413,7 @@ async def run_test(args: argparse.Namespace) -> int:
 
     successful = sum(int(r.get("ok") or 0) for r in results)
     failed = sum(int(r.get("err") or 0) for r in results)
+    tokens = sum(int(r.get("tokens") or 0) for r in results)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "path": "user -> sandbox dcode -n -> inference.local -> Envoy -> NIM HPA",
@@ -409,19 +424,13 @@ async def run_test(args: argparse.Namespace) -> int:
         "scale_down_ok": scale_down_ok,
         "successful_queries": successful,
         "failed_queries": failed,
+        "estimated_tokens": tokens,
         "results": results,
     }
     summary_path = output_dir / f"summary_{args.users}users.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
-    print(f"Wrote {csv_path}")
-    print(f"Wrote {summary_path}")
     print_chat_table(results, args.duration, args.inflight_start, args.inflight_per_user)
-    print(
-        f"HPA max={max_replicas} target={args.target_pods} "
-        f"scale_up={'ok' if summary['reached_target'] else 'FAIL'} "
-        f"scale_down={'ok' if scale_down_ok else 'FAIL'} "
-        f"user→sandbox chats ok={successful} err={failed}"
-    )
+    print(f"Wrote {summary_path}")
     if successful < 1:
         print("No successful user→sandbox Deep Agents queries.", file=sys.stderr)
         return 1

@@ -14,9 +14,9 @@
 # same release to INFERENCE_RUNTIME (default vllm).
 #
 # The client does not know this metric. Use ./scripts/client_hermes.sh after
-# sandboxes are Ready. Provision holds HPA at 1 replica; the client arms
-# maxReplicas=8 and sends hermes -z. For LLM-latency HPA use
-# ./scripts/agentscaling_hermes_latency.sh.
+# sandboxes are Ready (laptop: E2E_CLIENT_HOST=dgx-ip; do not install OpenShell
+# there). Provision keeps current replicas at 1; maxReplicas stays 8.
+# For LLM-latency HPA use ./scripts/agentscaling_hermes_latency.sh.
 #
 # Defaults in this script: AGENT_NAME=hermes INFERENCE_RUNTIME=vllm
 # INFERENCE_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Override GPU backend:

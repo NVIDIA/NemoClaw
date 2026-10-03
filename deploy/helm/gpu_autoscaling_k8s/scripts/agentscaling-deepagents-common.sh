@@ -100,12 +100,11 @@ agentscaling_deepagents_common_apply_hpa() {
   elif [[ "${current_runtime}" == "${INFERENCE_RUNTIME}" && "${current_mode}" == "${wanted}" ]]; then
     echo "HPA ${NAMESPACE}/${HPA_NAME} already uses ${INFERENCE_RUNTIME} and ${wanted}"
   else
-    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1, maxReplicas held at 1 until the client)"
+    echo "Setting ${NAMESPACE}/${RELEASE} to INFERENCE_RUNTIME=${INFERENCE_RUNTIME} + HPA ${wanted} (minReplicas=1 maxReplicas=${MAX_REPLICAS})"
     SKIP_MONITORING=1 USE_EXISTING_PROMETHEUS=1 \
       INFERENCE_RUNTIME="${INFERENCE_RUNTIME}" \
       INFERENCE_MODEL="${INFERENCE_MODEL}" \
       HPA_METRIC="${wanted}" \
-      HPA_APPLY_MAX_REPLICAS=1 \
       ALLOW_INSECURE_HTTP="${ALLOW_INSECURE_HTTP}" \
       "${SCRIPT_DIR}/install-hpa.sh"
   fi
@@ -119,8 +118,8 @@ agentscaling_deepagents_common_apply_hpa() {
       || agentscaling_deepagents_common_fail "custom.metrics.k8s.io is not ready; latency HPA cannot run"
     echo "Latency HPA is armed after client_deepagents.sh; not waiting for chats during provision"
   fi
-  hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
-    || agentscaling_deepagents_common_fail "HPA is not 1/1; leftover load would scale before client_deepagents.sh"
+  hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${MAX_REPLICAS}" \
+    || agentscaling_deepagents_common_fail "HPA is not 1 current replica; leftover load would scale before client_deepagents.sh"
   hpa_common_print_hpa "${NAMESPACE}" || true
   agentscaling_deepagents_common_wait_baseline
 }
@@ -150,14 +149,14 @@ agentscaling_deepagents_common_main() {
       agentscaling_deepagents_common_apply_hpa
       ;;
   esac
-  echo "HPA metric=${HPA_METRIC}. Provision holds GPUs at 1 replica. Client ./scripts/client_deepagents.sh arms maxReplicas=8 and sends chats."
-  echo "After sandboxes are Ready, run the client in another terminal. Keep the one OpenShell gateway; do not start a per-sandbox Deep Agents listener."
+  echo "HPA metric=${HPA_METRIC}. maxReplicas=${MAX_REPLICAS}. Current replicas stay 1 until ./scripts/client_deepagents.sh sends chats."
+  echo "After sandboxes are Ready: E2E_USERS=${E2E_USERS} ./scripts/client_deepagents.sh (Deep Agents has no HTTP UI)."
   "${SCRIPT_DIR}/setup-deepagent-nim-e2e-sandboxes.sh" "${cmd}"
   case "${cmd}" in
     stop | cleanup | layout | refresh-inference) ;;
     *)
-      hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
-        || agentscaling_deepagents_common_fail "HPA is not 1/1 after sandbox bringup; leftover load would scale before client_deepagents.sh"
+      hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${MAX_REPLICAS}" \
+        || agentscaling_deepagents_common_fail "HPA is not 1 current replica after sandbox bringup; leftover load would scale before client_deepagents.sh"
       ;;
   esac
 }

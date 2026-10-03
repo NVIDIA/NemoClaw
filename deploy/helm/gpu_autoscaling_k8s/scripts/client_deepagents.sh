@@ -13,9 +13,8 @@
 #
 # Default: 3 users, inflight 1, 4Gi sandboxes. 2Gi + inflight 2 OOMed dgx-19.
 #
-# Usage:
-#   cd deploy/helm/gpu_autoscaling_k8s
-#   E2E_USERS=3 ./scripts/client_deepagents.sh
+# Deep Agents has no HTTP dashboard. Run after agentscaling_deepagents_*.
+#   E2E_USERS=5 ./scripts/client_deepagents.sh
 
 set -euo pipefail
 
@@ -50,17 +49,20 @@ export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}"
 
-command -v openshell >/dev/null 2>&1 || fail "missing command: openshell"
+command -v openshell >/dev/null 2>&1 \
+  || agent_common_fail_openshell_for_client "missing command: openshell"
 command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
 openshell status >/dev/null \
-  || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+  || agent_common_fail_openshell_for_client "OpenShell is not connected on this host"
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "client_deepagents.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_deepagents_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n). No sandbox create. HPA metric is not set here."
+export E2E_CLIENT_QUIET_HPA=1
+agent_common_print_laptop_client_usage "client_deepagents.sh"
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n)."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
@@ -97,8 +99,8 @@ done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
-hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
-  || fail "HPA is not 1 replica; leftover load would scale before chats start"
+hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
+  || fail "HPA is not 1 current replica; leftover load would scale before chats start"
 hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 exec python3 "${SCRIPT_DIR}/e2e-deepagents-load-test.py" \
   --users "${E2E_USERS}" \

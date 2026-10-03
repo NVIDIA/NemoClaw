@@ -39,6 +39,8 @@ source "${CHART_DIR}/versions.env"
 source "${SCRIPT_DIR}/hpa-common.sh"
 # shellcheck source=agent-common.sh
 source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=remote-http-clients.sh
+source "${SCRIPT_DIR}/remote-http-clients.sh"
 hpa_common_load_local_env "${CHART_DIR}"
 
 fail() {
@@ -202,9 +204,8 @@ print_e2e_layout() {
   echo "------------------------------------------------------------------------"
   echo "  HPA: vLLM ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
   echo "  One OpenShell gateway for all sandboxes. One Envoy load balancer."
-  echo "  Users send hermes -z into each sandbox. Do not start a per-sandbox Hermes listener."
-  echo "  Client (other terminal; same for GPU util or latency HPA):"
-  echo "    E2E_USERS=${count} ./scripts/client_hermes.sh"
+  echo "  UI: one Hermes dashboard → sandbox 0. CLI: ${count} users → ${count} agents (HTTP /v1)."
+  echo "  Laptop UI: http://dgx-ip:18789/   CLI: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${count} ./scripts/client_hermes.sh"
   echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"
 }
@@ -331,7 +332,7 @@ start_gateways() {
   local count="${1:?count}"
   local i name
   echo "Starting Hermes gateways in ${count} sandboxes (${SANDBOX_PREFIX}0000…)"
-  echo "  Optional: the HPA client uses hermes -z and does not need :8642."
+  echo "  Laptop UI uses the sandbox 0 dashboard; CLI uses HTTP :8642 (M users → M agents)."
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
     openshell sandbox get "${name}" >/dev/null 2>&1 \
@@ -448,6 +449,10 @@ bringup_sandboxes() {
   fi
   wait_inference_local_parallel "${names[@]}" \
     || fail "Envoy inference check failed after parallel sandbox create"
+  start_gateways "${count}"
+  remote_http_publish_hermes "${count}" "${SANDBOX_PREFIX}" \
+    "${CHART_DIR}/e2e-results/hermes/remote-endpoints.json" \
+    || fail "could not publish Hermes HTTP for the laptop UI/CLI"
   echo "Ready: ${count} end users → ${count} Hermes agents in ${count} OpenShell sandboxes; LLM on GPUs ($((SECONDS - started_at))s)"
   print_e2e_layout "${count}"
 }

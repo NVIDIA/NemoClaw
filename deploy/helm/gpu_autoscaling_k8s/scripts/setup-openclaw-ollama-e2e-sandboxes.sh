@@ -45,6 +45,8 @@ source "${CHART_DIR}/versions.env"
 source "${SCRIPT_DIR}/hpa-common.sh"
 # shellcheck source=agent-common.sh
 source "${SCRIPT_DIR}/agent-common.sh"
+# shellcheck source=remote-http-clients.sh
+source "${SCRIPT_DIR}/remote-http-clients.sh"
 hpa_common_load_local_env "${CHART_DIR}"
 
 fail() {
@@ -223,9 +225,9 @@ print_e2e_layout() {
   echo "------------------------------------------------------------------------"
   echo "  HPA: Ollama ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
   echo "  One OpenShell gateway. One Envoy load balancer."
-  echo "  Users talk to sandbox :18789."
-  echo "  Client (other terminal; same for GPU util or latency HPA):"
-  echo "    E2E_USERS=${count} ./scripts/client.sh"
+  echo "  Users talk to sandbox :18789 over HTTP (laptop UI + CLI)."
+  echo "  UI: one dashboard → sandbox 0. CLI: ${count} users → ${count} agents."
+  echo "  Laptop UI: http://dgx-ip:18789/   CLI: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${count} ./scripts/client.sh"
   echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"
 }
@@ -476,6 +478,9 @@ start_agents() {
   wait_inference_local_parallel "${names[@]}" \
     || fail "Envoy inference check failed after parallel agent start"
   echo "Ready: ${count}/${count} OpenClaw agents in $((SECONDS - started_at))s (parallel)."
+  remote_http_publish_openclaw "${count}" "${SANDBOX_PREFIX}" \
+    "${CHART_DIR}/e2e-results/openclaw-ollama/remote-endpoints.json" \
+    || fail "could not publish OpenClaw HTTP for the laptop UI/CLI"
   print_e2e_layout "${count}"
 }
 
@@ -559,6 +564,9 @@ bringup_sandboxes() {
   wait_inference_local_parallel "${names[@]}" \
     || fail "Envoy inference check failed after parallel agent start"
   echo "Ready: ${count} end users → ${count} OpenClaw agents in ${count} OpenShell sandboxes; LLM on GPUs ($((SECONDS - started_at))s)"
+  remote_http_publish_openclaw "${count}" "${SANDBOX_PREFIX}" \
+    "${CHART_DIR}/e2e-results/openclaw-ollama/remote-endpoints.json" \
+    || fail "could not publish OpenClaw HTTP for the laptop UI/CLI"
   print_e2e_layout "${count}"
 }
 

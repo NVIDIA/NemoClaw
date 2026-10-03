@@ -510,7 +510,7 @@ if [[ ! "${HPA_APPLY_MAX_REPLICAS}" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 if [[ "${ENABLE_AUTOSCALING}" == "1" ]]; then
-  echo "HPA maxReplicas=${HPA_APPLY_MAX_REPLICAS} (client will arm ${MAX_REPLICAS})"
+  echo "HPA maxReplicas=${HPA_APPLY_MAX_REPLICAS}"
   kubectl get pods -n "${DCGM_NAMESPACE}" -l app=nvidia-dcgm-exporter 2>/dev/null | grep -q Running || {
     echo "nvidia-dcgm-exporter not running in namespace ${DCGM_NAMESPACE} — GPU HPA metric unavailable" >&2
     exit 1

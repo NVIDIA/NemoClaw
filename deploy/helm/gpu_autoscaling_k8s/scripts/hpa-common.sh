@@ -579,9 +579,9 @@ hpa_common_require_live_runtime() {
   echo "Live GPU runtime is ${expected}"
 }
 
-# agentscaling_* holds HPA at 1 replica so provision / OpenClaw start cannot
-# scale GPUs. Restart the GPU Deployment so leftover latency_avg / GPU-util
-# samples die with the old pods. Clients arm maxReplicas only after this is 1/1.
+# Keep current/desired replicas at 1 while idle. Do not clamp maxReplicas
+# to 1 — HPA max stays the installed value (8 on this DGX). Restart GPU
+# pods so leftover latency_avg / GPU-util samples cannot scale before chats.
 hpa_common_wait_hpa_replicas() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
@@ -607,10 +607,17 @@ hpa_common_hold_hpa_until_client() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
   local deploy="${3:?deployment}"
-  echo "Holding HPA ${ns}/${hpa} at 1 replica until the client sends chats"
-  echo "Restarting GPU pods so leftover latency/util cannot scale before the client"
+  local max="${4:-}"
+  if [[ -z "${max}" ]]; then
+    max="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)"
+  fi
+  max="${max:-8}"
+  if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+    echo "Holding ${ns}/${hpa} at 1 current replica (maxReplicas=${max})"
+    echo "Restarting GPU pods so leftover latency/util cannot scale before the client"
+  fi
   kubectl patch hpa "${hpa}" -n "${ns}" --type merge --field-manager=helm \
-    -p '{"spec":{"minReplicas":1,"maxReplicas":1}}' >/dev/null
+    -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${max}}}" >/dev/null
   kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
   kubectl rollout restart "deployment/${deploy}" -n "${ns}" >/dev/null
   hpa_common_wait_rollout "${deploy}" "${ns}" 300 || true
@@ -622,7 +629,9 @@ hpa_common_arm_hpa_for_client() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
   local max="${3:?maxReplicas}"
-  echo "Client starting: arming HPA ${ns}/${hpa} maxReplicas=${max}"
+  if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+    echo "Client starting: HPA ${ns}/${hpa} maxReplicas=${max}"
+  fi
   kubectl patch hpa "${hpa}" -n "${ns}" --type merge --field-manager=helm \
     -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${max}}}" >/dev/null
 }

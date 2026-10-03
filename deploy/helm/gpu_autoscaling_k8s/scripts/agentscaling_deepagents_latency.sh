@@ -9,8 +9,8 @@
 # Switches the cluster HPA metric, then creates sandboxes.
 # Isolated eval without TLS must set ALLOW_INSECURE_HTTP=1 explicitly.
 # NIM needs NGC Secrets (apply-local-secrets.sh or create-nim-ngc-secrets.sh).
-# Provision holds HPA at 1 replica. Run ./scripts/client_deepagents.sh after
-# sandboxes are Ready; the client arms maxReplicas=8 and sends dcode -n.
+# Provision keeps current replicas at 1 (maxReplicas stays 8). Run
+# ./scripts/client_deepagents.sh after sandboxes are Ready (no HTTP UI).
 # The client does not set HPA_METRIC. For GPU-util HPA use
 # ./scripts/agentscaling_deepagents_gpuutil.sh.
 #

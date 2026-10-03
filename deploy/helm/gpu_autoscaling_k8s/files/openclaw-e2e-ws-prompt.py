@@ -99,9 +99,16 @@ def _gateway_token() -> str:
     return os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
 
 
-def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool) -> int:
+def estimate_tokens(text: str) -> int:
+    """Reply-length estimate (~4 chars/token). OpenClaw chat.send has no usage field."""
+    if not text or not str(text).strip():
+        return 0
+    return max(1, len(str(text)) // 4)
+
+
+def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool) -> tuple[int, int]:
     port = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
-    host = "127.0.0.1"
+    host = os.environ.get("OPENCLAW_GATEWAY_HOST", "127.0.0.1")
     origin = f"http://{host}:{port}"
     deadline = time.monotonic() + timeout
     sock = socket.create_connection((host, port), timeout=timeout)
@@ -126,20 +133,20 @@ def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool)
             if not chunk:
                 if not quiet:
                     print("websocket handshake closed", file=sys.stderr)
-                return 1
+                return 1, 0
             header += chunk
         head, extra = header.split(b"\r\n\r\n", 1)
         if b"101" not in head.split(b"\r\n", 1)[0]:
             if not quiet:
                 print(head.decode("utf-8", "replace"), file=sys.stderr)
-            return 1
+            return 1, 0
         expect = base64.b64encode(
             hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
         ).decode()
         if expect.encode() not in head:
             if not quiet:
                 print("bad websocket accept", file=sys.stderr)
-            return 1
+            return 1, 0
 
         buf = bytearray(extra)
         pending: dict[str, dict] = {}
@@ -199,7 +206,7 @@ def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool)
                     if frame.get("ok") is False or frame.get("error"):
                         if not quiet:
                             print(json.dumps(frame.get("error") or frame), file=sys.stderr)
-                        return 1
+                        return 1, 0
                     rid = frame["id"]
                     pending.pop(rid, None)
                     if rid == "r1" and send_id is None:
@@ -226,18 +233,18 @@ def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool)
                     if event_payload.get("state") == "final" and answer:
                         if not quiet:
                             print(answer)
-                        return 0
+                        return 0, estimate_tokens(answer)
             if answer and send_id and send_id not in pending:
                 if not quiet:
                     print(answer)
-                return 0
+                return 0, estimate_tokens(answer)
         if answer:
             if not quiet:
                 print(answer)
-            return 0
+            return 0, estimate_tokens(answer)
         if not quiet:
             print("no reply from running OpenClaw agent", file=sys.stderr)
-        return 1
+        return 1, 0
     finally:
         try:
             sock.close()
@@ -273,35 +280,37 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     stop = threading.Event()
     ok = 0
     err = 0
+    tokens = 0
     lock = threading.Lock()
     workers: list[threading.Thread] = []
 
-    def send_or_retry(text: str, session: str) -> int:
+    def send_or_retry(text: str, session: str) -> tuple[int, int]:
         # One retry covers Envoy/Ollama blips while HPA adds or removes pods.
         # Do not start a retry after SIGTERM / duration stop.
         for attempt in (0, 1):
             if stop.is_set() and attempt > 0:
-                return 1
+                return 1, 0
             try:
-                rc = send_one(text, session, timeout, token, quiet=True)
+                rc, ntok = send_one(text, session, timeout, token, quiet=True)
             except (TimeoutError, OSError, ConnectionError):
-                rc = 1
+                rc, ntok = 1, 0
             if rc == 0:
-                return 0
+                return 0, ntok
             if attempt == 0 and not stop.is_set():
                 time.sleep(2)
-        return 1
+        return 1, 0
 
     def worker(wid: int) -> None:
-        nonlocal ok, err
+        nonlocal ok, err, tokens
         turn = 0
         while not stop.is_set():
             text = prompts[(wid + turn) % len(prompts)]
             session = f"{session_base}:w{wid}:t{turn}"
-            rc = send_or_retry(text, session)
+            rc, ntok = send_or_retry(text, session)
             with lock:
                 if rc == 0:
                     ok += 1
+                    tokens += ntok
                 elif stop.is_set():
                     # SIGTERM / duration: in-flight turn was cancelled, not a failed chat.
                     pass
@@ -335,9 +344,9 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             current = min(max_n, current + add)
             spawn_upto(current)
             last = now
-            print(f"[load] escalate inflight={current} ok={ok} err={err}", flush=True)
+            print(f"[load] escalate inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)
         if now - last_log >= 15:
-            print(f"[load] inflight={current} ok={ok} err={err}", flush=True)
+            print(f"[load] inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)
             last_log = now
         time.sleep(0.5)
     stop.set()
@@ -350,7 +359,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
         if remaining <= 0:
             break
         worker_thread.join(timeout=remaining)
-    print(f"[load] done inflight={current} ok={ok} err={err}", flush=True)
+    print(f"[load] done inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)
     return 0 if ok > 0 else 1
 
 
@@ -365,7 +374,8 @@ def main() -> int:
     if duration > 0:
         return run_load(prompt, timeout, token)
     session = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
-    return send_one(prompt, session, timeout, token, quiet=False)
+    rc, _tokens = send_one(prompt, session, timeout, token, quiet=False)
+    return rc
 
 
 if __name__ == "__main__":

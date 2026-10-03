@@ -17,9 +17,10 @@ This is not files/load-generator.ts (that Job POSTs chat/completions at pod IPs)
 This is not in-sandbox curl to inference.local.
 Hermes + vLLM is a later e2e and is not this script.
 
-Usage:
-    E2E_USERS=5 python3 scripts/e2e-openclaw-ollama-load-test.py
-    python3 scripts/e2e-openclaw-ollama-load-test.py --users 5
+Usage (laptop HTTP):
+    E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+    python3 scripts/e2e-openclaw-ollama-load-test.py --host dgx-ip --chat-only
+Do not install OpenShell on the laptop.
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,7 +45,7 @@ FALLBACK_RE = re.compile(
     r"EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[\": ]+gateway|transport[\": ]+embedded",
     re.IGNORECASE,
 )
-LOAD_COUNTS_RE = re.compile(r"\[load\].*\bok=(\d+)\s+err=(\d+)\b")
+LOAD_COUNTS_RE = re.compile(r"\[load\].*\bok=(\d+)\s+err=(\d+)(?:\s+tokens=(\d+))?")
 LISTENER_HEALTH_SCRIPT = r"""
 for ns in /run/netns/*; do
   [ -e "$ns" ] || continue
@@ -68,6 +71,47 @@ SANDBOX_NS = os.environ.get("OPENSHELL_NAMESPACE", "nemoclaw-sandboxes")
 
 def sandbox_name(prefix: str, user_id: int) -> str:
     return f"{prefix}{user_id:04d}"
+
+
+def load_endpoints(path: Path) -> list[dict[str, object]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    users = data.get("users") if isinstance(data, dict) else None
+    if not isinstance(users, list) or not users:
+        raise ValueError(f"{path} has no users[]")
+    return users
+
+
+def users_from_http_host(host: str, users: int, discovery_port: int) -> list[dict[str, object]]:
+    """Resolve M agents at host:18789+i. Auth is fetched over HTTP; not a user file."""
+    url = f"http://{host}:{discovery_port}/clients"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        rows = data.get("users") if isinstance(data, dict) else None
+        if isinstance(rows, list) and rows:
+            return rows
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
+        pass
+    return [
+        {
+            "user_id": i,
+            "sandbox": sandbox_name("openclaw-ollama-e2e-", i),
+            "ws_host": host,
+            "ws_port": 18789 + i,
+            "host": host,
+            "token": os.environ.get("OPENCLAW_GATEWAY_TOKEN", ""),
+        }
+        for i in range(users)
+    ]
+
+
+def endpoint_for_user(users: list[dict[str, object]], user_id: int) -> dict[str, object]:
+    for item in users:
+        if int(item.get("user_id") or -1) == user_id:
+            return item
+    if user_id < len(users):
+        return users[user_id]
+    raise KeyError(f"no endpoint for user {user_id}")
 
 
 def helper_b64() -> str:
@@ -171,16 +215,17 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
             continue
 
 
-def parse_load_counts(log_path: Path) -> tuple[int, int]:
-    """Last [load] ok/err in the sandbox log is the chat count, not process exit."""
-    ok = err = 0
+def parse_load_counts(log_path: Path) -> tuple[int, int, int]:
+    """Last [load] ok/err/tokens in the sandbox log is the chat count, not process exit."""
+    ok = err = tokens = 0
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return 0, 0
+        return 0, 0, 0
     for match in LOAD_COUNTS_RE.finditer(text):
         ok, err = int(match.group(1)), int(match.group(2))
-    return ok, err
+        tokens = int(match.group(3) or 0)
+    return ok, err, tokens
 
 
 def listener_http_code(sandbox: str) -> str:
@@ -220,13 +265,14 @@ def results_from_logs(output_dir: Path, prefix: str) -> list[dict[str, object]]:
         path = logs_dir / f"{sandbox_name(prefix, user_id)}.log"
         if not path.is_file():
             break
-        chats_ok, chats_err = parse_load_counts(path)
+        chats_ok, chats_err, tokens = parse_load_counts(path)
         results.append(
             {
                 "user_id": user_id,
                 "sandbox": sandbox_name(prefix, user_id),
                 "chats_ok": chats_ok,
                 "chats_err": chats_err,
+                "tokens": tokens,
                 "log": str(path),
             }
         )
@@ -241,32 +287,43 @@ def print_chat_table(
     inflight_per_user: int,
     check_listeners: bool = True,
 ) -> None:
-    rows: list[tuple[int, int, int, str]] = []
+    rows: list[tuple[int, int, int, int, str]] = []
     for item in results:
         user_id = int(item.get("user_id") or 0)
         log = item.get("log")
         chats_ok = int(item.get("chats_ok") or 0)
         chats_err = int(item.get("chats_err") or 0)
-        if log and (chats_ok == 0 and chats_err == 0):
-            chats_ok, chats_err = parse_load_counts(Path(str(log)))
+        tokens = int(item.get("tokens") or 0)
+        if log and (chats_ok == 0 and chats_err == 0 and tokens == 0):
+            chats_ok, chats_err, tokens = parse_load_counts(Path(str(log)))
         sandbox = str(item.get("sandbox") or sandbox_name("openclaw-ollama-e2e-", user_id))
         code = listener_http_code(sandbox) if check_listeners else "skip"
-        rows.append((user_id, chats_ok, chats_err, code))
-    all_err_zero = all(err == 0 for _, _, err, _ in rows)
-    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-sandbox chat counts"
+        rows.append((user_id, chats_ok, chats_err, tokens, code))
+    all_err_zero = all(err == 0 for _, _, err, _tok, _ in rows)
+    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-user chat counts"
     print(
-        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}:"
+        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}."
     )
+    print("est. tokens ≈ reply length / 4 (OpenClaw chat.send does not report usage).")
     print("")
-    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6}")
-    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6}")
-    for user_id, chats_ok, chats_err, _code in rows:
-        print(f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} {chats_ok:>16} {chats_err:>6}")
+    print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6} {'est. tokens':>12}")
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6} {'-' * 12}")
+    total_ok = total_err = total_tok = 0
+    for user_id, chats_ok, chats_err, tokens, _code in rows:
+        total_ok += chats_ok
+        total_err += chats_err
+        total_tok += tokens
+        print(
+            f"{'user ' + str(user_id):<8} {'sandbox ' + str(user_id):<12} "
+            f"{chats_ok:>16} {chats_err:>6} {tokens:>12}"
+        )
+    print(f"{'-' * 8} {'-' * 12} {'-' * 16} {'-' * 6} {'-' * 12}")
+    print(f"{'total':<8} {'':<12} {total_ok:>16} {total_err:>6} {total_tok:>12}")
     path_line = (
         "Path in use: user → OpenShell sandbox :18789 → inference.local → "
         "Envoy load balancer → Ollama."
     )
-    healthy = [code for _u, _ok, _err, code in rows]
+    healthy = [code for _u, _ok, _err, _tok, code in rows]
     print("")
     if not check_listeners or all(code == "skip" for code in healthy):
         print(path_line)
@@ -275,7 +332,7 @@ def print_chat_table(
     elif all(code in {"200", "401"} for code in healthy):
         print(f"All {len(rows)} listeners still answer /health. {path_line}")
     else:
-        down = [f"sandbox {user_id}" for user_id, _ok, _err, code in rows if code not in {"200", "401"}]
+        down = [f"sandbox {user_id}" for user_id, _ok, _err, _tok, code in rows if code not in {"200", "401"}]
         print(f"Listeners not 200 after load: {', '.join(down) if down else 'unknown'}")
 
 
@@ -288,6 +345,94 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
+
+
+async def simulate_user_http(
+    user_id: int,
+    endpoint: dict[str, object],
+    inflight: int,
+    inflight_start: int,
+    duration_sec: int,
+    timeout_sec: int,
+    stop_event: asyncio.Event,
+    log_path: Path,
+) -> dict[str, object]:
+    """One local helper process per user. Talks WebSocket to the published host port."""
+    sandbox = str(endpoint.get("sandbox") or sandbox_name("openclaw-ollama-e2e-", user_id))
+    host = str(endpoint.get("ws_host") or endpoint.get("host") or "")
+    port = int(endpoint.get("ws_port") or 0)
+    token = str(endpoint.get("token") or "")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if not HELPER_PATH.is_file():
+        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": f"missing {HELPER_PATH}"}
+    if not host or port < 1 or not token:
+        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "endpoint missing host/port/token"}
+    env = os.environ.copy()
+    env["OPENCLAW_GATEWAY_HOST"] = host
+    env["OPENCLAW_GATEWAY_PORT"] = str(port)
+    env["OPENCLAW_GATEWAY_TOKEN"] = token
+    env["NEMOCLAW_E2E_LOAD"] = "1"
+    env["E2E_DURATION_SEC"] = str(duration_sec)
+    env["E2E_INFLIGHT"] = str(inflight_start)
+    env["E2E_INFLIGHT_MAX"] = str(inflight)
+    env["E2E_PROMPT_TIMEOUT_SEC"] = str(timeout_sec)
+    env["E2E_SESSION_KEY"] = f"agent:main:{sandbox}"
+    env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
+    env["E2E_ESCALATE_FACTOR"] = "0.35"
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(HELPER_PATH),
+        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+    )
+    log_handle = log_path.open("w")
+    started = time.monotonic()
+
+    async def pump() -> None:
+        assert proc.stdout is not None
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace")
+            log_handle.write(text)
+            log_handle.flush()
+            print(f"[user {user_id} sandbox {user_id} {host}:{port}] {text.rstrip()}", flush=True)
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        while proc.returncode is None and not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+        if stop_event.is_set() and proc.returncode is None:
+            await terminate_proc(proc)
+        else:
+            await proc.wait()
+    finally:
+        await pump_task
+        log_handle.close()
+    rc = proc.returncode if proc.returncode is not None else 1
+    chats_ok, chats_err, tokens = parse_load_counts(log_path)
+    ok = 1 if chats_ok > 0 and (rc == 0 or stop_event.is_set()) else 0
+    err = 0 if ok else 1
+    return {
+        "user_id": user_id,
+        "sandbox": sandbox,
+        "ok": ok,
+        "err": err,
+        "chats_ok": chats_ok,
+        "chats_err": chats_err,
+        "tokens": tokens,
+        "turns": inflight,
+        "duration": time.monotonic() - started,
+        "log": str(log_path),
+        "exit": rc,
+        "cli_url": f"http://{host}:{port}",
+    }
 
 
 async def simulate_user(
@@ -379,7 +524,7 @@ async def simulate_user(
         await pump_task
         log_handle.close()
     rc = proc.returncode if proc.returncode is not None else 1
-    chats_ok, chats_err = parse_load_counts(log_path)
+    chats_ok, chats_err, tokens = parse_load_counts(log_path)
     # run_test stops load early (HPA target or deadline) and SIGTERM the exec.
     # Count the user from chat.send results, not from the killed process exit code.
     if chats_ok > 0 and (rc == 0 or stop_event.is_set()):
@@ -393,6 +538,7 @@ async def simulate_user(
         "err": err,
         "chats_ok": chats_ok,
         "chats_err": chats_err,
+        "tokens": tokens,
         "turns": inflight,
         "duration": time.monotonic() - started,
         "log": str(log_path),
@@ -410,25 +556,31 @@ async def run_test(args: argparse.Namespace) -> int:
     reached_target = False
     hold_started: float | None = None
 
+    endpoints: list[dict[str, object]] = []
+    if args.host:
+        endpoints = users_from_http_host(args.host, args.users, args.discovery_port)
+    elif args.endpoints:
+        endpoints = load_endpoints(Path(args.endpoints))
+    if endpoints and args.users > len(endpoints):
+        print(
+            f"--users {args.users} but HTTP at {args.host or args.endpoints} has {len(endpoints)} users",
+            file=sys.stderr,
+        )
+        return 2
+
     print("=" * 70)
-    print("  E2E test: OpenClaw + Ollama")
-    print(f"  {args.users} end users send requests to {args.users} OpenClaw agents (1:1)")
-    print(f"  {args.users} OpenClaw agents run in {args.users} OpenShell sandboxes")
-    print("  LLM runs on GPUs (model already pinned in each sandbox)")
-    print("  When end-user demand increases, GPU HPA scales Ollama from 1 to 8 GPUs")
-    print(f"  Labels: user 0 sandbox 0 … user {args.users - 1} sandbox {args.users - 1}")
-    print("  Each user prompts that user's sandbox on :18789")
-    print("  Path: end user → OpenShell sandbox → https://inference.local → Envoy load balancer → GPU Ollama HPA")
-    print("  One kubectl exec per sandbox (in-process inflight). Not N execs, not load-generator.ts.")
-    print(
-        f"  Concurrent prompts per user: start={args.inflight_start} max={args.inflight_per_user} "
-        "(1:1 user→sandbox :18789; default inflight 1 so CPU sandboxes do not OOM)"
-    )
-    print(
-        f"  max_tokens={os.environ.get('MAX_TOKENS', '1024')}  "
-        f"HPA {args.hpa_namespace}/{args.hpa_name} (model already pinned in each sandbox)"
-    )
-    print(f"  duration cap {args.duration}s; load stops when HPA current replicas reach {args.target_pods} (not when user count is {args.users})")
+    print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
+    if endpoints:
+        print("  Path: laptop HTTP / WebSocket to published host ports (no SSH, no kubectl exec).")
+        for i in range(args.users):
+            ep = endpoint_for_user(endpoints, i)
+            print(
+                f"  user {i} → {ep.get('sandbox')} "
+                f"http://{ep.get('ws_host') or ep.get('host')}:{ep.get('ws_port')}"
+            )
+    else:
+        print("  Each user sends chats to that user's sandbox.")
+    print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
 
     async def poll_hpa() -> None:
@@ -443,17 +595,9 @@ async def run_test(args: argparse.Namespace) -> int:
                     "desired_replicas": desired,
                 }
             )
-            print(
-                format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired),
-                flush=True,
-            )
             if current >= args.target_pods:
                 if hold_started is None:
                     hold_started = time.monotonic()
-                    print(
-                        f"[hpa] end-user demand scaled GPUs to {args.target_pods}; "
-                        f"holding {args.hold_sec}s then dropping user queries"
-                    )
                 if time.monotonic() - hold_started >= args.hold_sec:
                     reached_target = True
                     stop_load.set()
@@ -465,21 +609,38 @@ async def run_test(args: argparse.Namespace) -> int:
                 continue
 
     poll_task = asyncio.create_task(poll_hpa())
-    user_tasks = [
-        asyncio.create_task(
-            simulate_user(
-                user_id=i,
-                prefix=args.prefix,
-                inflight=args.inflight_per_user,
-                inflight_start=args.inflight_start,
-                duration_sec=args.duration,
-                timeout_sec=args.timeout,
-                stop_event=stop_load,
-                log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
+    if endpoints:
+        user_tasks = [
+            asyncio.create_task(
+                simulate_user_http(
+                    user_id=i,
+                    endpoint=endpoint_for_user(endpoints, i),
+                    inflight=args.inflight_per_user,
+                    inflight_start=args.inflight_start,
+                    duration_sec=args.duration,
+                    timeout_sec=args.timeout,
+                    stop_event=stop_load,
+                    log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
+                )
             )
-        )
-        for i in range(args.users)
-    ]
+            for i in range(args.users)
+        ]
+    else:
+        user_tasks = [
+            asyncio.create_task(
+                simulate_user(
+                    user_id=i,
+                    prefix=args.prefix,
+                    inflight=args.inflight_per_user,
+                    inflight_start=args.inflight_start,
+                    duration_sec=args.duration,
+                    timeout_sec=args.timeout,
+                    stop_event=stop_load,
+                    log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
+                )
+            )
+            for i in range(args.users)
+        ]
 
     deadline = time.monotonic() + args.duration + 30
     results: list[object] = []
@@ -488,10 +649,7 @@ async def run_test(args: argparse.Namespace) -> int:
             if stop_load.is_set() or all(t.done() for t in user_tasks):
                 break
             if time.monotonic() >= deadline and not stop_load.is_set():
-                print(
-                    f"[load] duration elapsed or still below {args.target_pods} GPUs; stopping user queries",
-                    file=sys.stderr,
-                )
+                print("[load] duration elapsed; stopping user queries", file=sys.stderr)
                 stop_load.set()
                 break
             await asyncio.sleep(1)
@@ -499,7 +657,8 @@ async def run_test(args: argparse.Namespace) -> int:
         results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
     finally:
         stop_load.set()
-        stop_sandbox_chats(args.prefix, args.users)
+        if not endpoints:
+            stop_sandbox_chats(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):
@@ -510,6 +669,8 @@ async def run_test(args: argparse.Namespace) -> int:
     await poll_task
 
     scale_down_ok = False
+    if args.chat_only or bool(endpoints):
+        args.scale_down_wait_loops = 0
     for _ in range(args.scale_down_wait_loops):
         current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
         hpa_rows.append(
@@ -519,7 +680,6 @@ async def run_test(args: argparse.Namespace) -> int:
                 "desired_replicas": desired,
             }
         )
-        print(format_hpa_line(args.hpa_namespace, args.hpa_name, current, desired))
         if current <= 1:
             scale_down_ok = True
             break
@@ -535,6 +695,7 @@ async def run_test(args: argparse.Namespace) -> int:
     failed = sum(int(r.get("err") or 0) for r in results)
     chats_ok = sum(int(r.get("chats_ok") or 0) for r in results)
     chats_err = sum(int(r.get("chats_err") or 0) for r in results)
+    tokens = sum(int(r.get("tokens") or 0) for r in results)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "path": "user -> OpenShell sandbox -> inference.local -> Envoy -> Ollama HPA",
@@ -547,22 +708,24 @@ async def run_test(args: argparse.Namespace) -> int:
         "failed_queries": failed,
         "successful_chats": chats_ok,
         "failed_chats": chats_err,
+        "estimated_tokens": tokens,
         "results": results,
     }
     summary_path = output_dir / f"summary_{args.users}users.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
-    print(f"Wrote {csv_path}")
-    print(f"Wrote {summary_path}")
-    print_chat_table(results, args.duration, args.inflight_start, args.inflight_per_user)
-    print(
-        f"HPA max={max_replicas} target={args.target_pods} "
-        f"scale_up={'ok' if summary['reached_target'] else 'FAIL'} "
-        f"scale_down={'ok' if scale_down_ok else 'FAIL'} "
-        f"user→sandbox chats ok={chats_ok} err={chats_err}"
+    print_chat_table(
+        results,
+        args.duration,
+        args.inflight_start,
+        args.inflight_per_user,
+        check_listeners=not (args.chat_only or bool(endpoints)),
     )
+    print(f"Wrote {summary_path}")
     if successful < 1:
         print("No successful user→sandbox OpenClaw queries.", file=sys.stderr)
         return 1
+    if args.chat_only or bool(endpoints):
+        return 0
     if not summary["reached_target"]:
         print(
             f"HPA did not scale to {args.target_pods} replicas under user→sandbox load.",
@@ -607,7 +770,32 @@ def main() -> int:
         action="store_true",
         help="Print the chat table from --output sandbox-logs and exit. Does not send chat.",
     )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("E2E_CLIENT_HOST", ""),
+        help="DGX IP published for laptop HTTP (user i → host:18789+i).",
+    )
+    parser.add_argument(
+        "--discovery-port",
+        type=int,
+        default=int(os.environ.get("E2E_DISCOVERY_PORT", "18788")),
+    )
+    parser.add_argument(
+        "--endpoints",
+        default=os.environ.get("E2E_ENDPOINTS", ""),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--chat-only",
+        action="store_true",
+        help="Send chats only. Do not fail if this machine cannot watch HPA.",
+    )
     args = parser.parse_args()
+    args.chat_only = bool(args.chat_only or os.environ.get("E2E_CHAT_ONLY") == "1")
+    if args.endpoints == "":
+        args.endpoints = None
+    if args.host == "":
+        args.host = None
     if args.users < 1 or args.inflight_per_user < 1 or args.inflight_start < 1:
         print("--users, --inflight-per-user, and --inflight-start must be >= 1", file=sys.stderr)
         return 2

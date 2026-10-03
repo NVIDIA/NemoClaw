@@ -8,21 +8,15 @@
 # start OpenClaw, or set the HPA metric.
 #
 # Provision first (other terminal):
-#   ./scripts/agentscaling_gpuutil.sh   # GPU util HPA (this DGX success path)
-#   ./scripts/agentscaling_latency.sh   # LLM latency HPA (same client)
+#   ./scripts/agentscaling_gpuutil.sh
+#   ./scripts/agentscaling_latency.sh
 #
-# This DGX GPU-util run: 5 users, inflight 1, 8Gi, MAX_TOKENS=1024
-# (same client pin as client_deepagents.sh). 2048 kept latency ~7s even
-# at 8 replicas (target 3000 ms). Inflight 2 OOMed a CPU node (dgx-19).
-# Do not raise inflight without extra sandbox RAM.
-# Users never talk to the Envoy load balancer. OpenShell is only the exec
-# tunnel into each sandbox; it is not the user-facing listener.
+# Default — from a remote terminal such as your laptop (HTTP):
+#   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+#   UI user N: http://dgx-ip:$((18789+N))/u/0
 #
-# Usage (on dgx-20, or from a laptop via: ssh you@dgx-20):
-#   cd deploy/helm/gpu_autoscaling_k8s
+# simpler option — from the same DGX in another terminal:
 #   E2E_USERS=5 ./scripts/client.sh
-# Do not install OpenShell on the laptop. Agent :18789 is inside the sandbox
-# netns on the DGX CPUs.
 
 set -euo pipefail
 
@@ -55,18 +49,67 @@ export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
+E2E_CLIENT_HOST="${E2E_CLIENT_HOST:-}"
 
-command -v openshell >/dev/null 2>&1 || fail "missing command: openshell"
-command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
-
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
+
+if [[ -n "${E2E_CLIENT_HOST}" ]]; then
+  agent_common_print_laptop_client_usage "client.sh"
+  echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:18789 … $((18789 + E2E_USERS - 1))"
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" <<'PY'
+import sys, urllib.error, urllib.request
+host, users = sys.argv[1], int(sys.argv[2])
+failed = 0
+for i in range(users):
+    url = f"http://{host}:{18789 + i}/health"
+    try:
+        code = urllib.request.urlopen(url, timeout=3).status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    except Exception as exc:
+        print(f"ERROR: user {i} {url}: {exc}", file=sys.stderr)
+        failed = 1
+        continue
+    if code not in (200, 401):
+        print(f"ERROR: user {i} {url} HTTP {code}", file=sys.stderr)
+        failed = 1
+        continue
+    print(f"  user {i} → {url}")
+if failed:
+    raise SystemExit("client will not send chat until every http://dgx-ip:18789+i/health answers")
+print(f"UI (one port per user): http://{host}:18789/u/0 … :{18789 + users - 1}/u/0")
+PY
+  mkdir -p "${E2E_OUTPUT_DIR}"
+  cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
+  exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
+    --users "${E2E_USERS}" \
+    --prefix "${SANDBOX_PREFIX}" \
+    --output "${E2E_OUTPUT_DIR}" \
+    --duration "${DURATION_SEC}" \
+    --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
+    --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \
+    --target-pods "${TARGET_PODS}" \
+    --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
+    --hpa-namespace "${NAMESPACE}" \
+    --hpa-name "${HPA_NAME}" \
+    --scale-down-wait-loops 0 \
+    --host "${E2E_CLIENT_HOST}" \
+    --chat-only
+fi
+
+command -v openshell >/dev/null 2>&1 \
+  || agent_common_fail_openshell_for_client "missing command: openshell"
+command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
+
 openshell status >/dev/null \
-  || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
+  || agent_common_fail_openshell_for_client "OpenShell is not connected on this host"
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "client.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1). No sandbox create. HPA metric is not set here."
+export E2E_CLIENT_QUIET_HPA=1
+agent_common_print_laptop_client_usage "client.sh"
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1)."
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
@@ -111,8 +154,8 @@ done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
-hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
-  || fail "HPA is not 1 replica; leftover load would scale before chats start"
+hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
+  || fail "HPA is not 1 current replica; leftover load would scale before chats start"
 hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \

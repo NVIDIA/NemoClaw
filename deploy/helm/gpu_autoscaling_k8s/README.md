@@ -31,7 +31,7 @@ Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`
 Isolated eval uses `ALLOW_INSECURE_HTTP=1` (Envoy with no TLS overlay). HTTPS Envoy uses [TLS values](#tls-values).
 
 ```text
-End users (1 pairing sandbox, or M e2e sandboxes — one per user)
+End users (1 pairing sandbox, or M sandboxes — one per user)
         ↓
 CPU-only OpenShell sandboxes (AGENT_NAME=openclaw | hermes | deepagents)
         ↓
@@ -131,7 +131,7 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`).
+Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). One end user ↔ one sandbox ↔ one agent. End users do not log into the DGX. CLI is `E2E_CLIENT_HOST=dgx-ip` plus the pairing script in 6a / 6b / 6c (or the same script from the same DGX in another terminal). The OpenClaw browser UI is [6a](#6a-openclaw--ollama) only.
 
 | | Agent | Default `INFERENCE_RUNTIME` | Default model | Provision | Client |
 |--|-------|------------------------------|---------------|-----------|--------|
@@ -141,67 +141,12 @@ Queries from end users go **into the sandboxes**, one sandbox per end user. Any 
 
 Each wrapper pins **`AGENT_NAME`**. Do not pass `AGENT_NAME=hermes` into `agentscaling_gpuutil.sh`.
 
-**`INFERENCE_RUNTIME`** selects which GPU backend this run connects to (`ollama` | `vllm` | `nim`). Omit it to use the table default. The live `nemoclaw-gpu` Deployment is helm-upgraded in place. Ollama/vLLM/NIM are **not** uninstalled; you can switch back later with the same flag.
+**`INFERENCE_RUNTIME`** selects which GPU backend this run connects to (`ollama` | `vllm` | `nim`). Example pairings are in the table but you can switch to other inference runtime.
 
-```bash
-# 6a default is Ollama — do not set INFERENCE_RUNTIME
-E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
+**`INFERENCE_MODEL`** is set on provision (Ollama tag, vLLM HF id, or NIM catalog id). 
 
-# same OpenClaw sandboxes, but helm-upgrade GPUs to vLLM
-INFERENCE_RUNTIME=vllm \
-  E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
-```
 
-**`INFERENCE_MODEL`** is set on **provision only** (Ollama tag, vLLM HF id, or NIM catalog id). The client talks to the sandbox; the agent already has the model.
-
-```bash
-INFERENCE_MODEL=llama3.1:8b \
-  E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
-```
-
-Same pattern on 6b / 6c (`INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct` with the Hermes provision script, or `INFERENCE_MODEL=nvidia/<nim-model-id>` with the Deep Agents provision script). Latency e2e: the same flags on `agentscaling_latency.sh` / `agentscaling_hermes_latency.sh` / `agentscaling_deepagents_latency.sh`.
-
-**Switch pairing** (OpenClaw ↔ Hermes ↔ Deep Agents). Stop the client, then:
-
-```bash
-./scripts/uninstall-e2e.sh
-```
-
-That removes CPU sandboxes and OpenShell providers only. GPU inference stays (NIM shows as `VLLM::EngineCore` in `nvidia-smi`). Then run the next pairing’s `agentscaling_*` so Helm points the same release at that wrapper’s `INFERENCE_RUNTIME` (or your override).
-
-Validation is on DGX **8× H100** (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node.
-
-**Laptop client (no OpenShell on the laptop).** OpenShell, the CPU sandboxes, and GPU HPA stay on **dgx-20**. The laptop only opens a shell there and runs the client. Do not install `openshell` or run `openshell-port-forward.sh` on the laptop. Agent ports (`:18789`, Hermes `:8642`) are inside each sandbox netns on the DGX CPUs — a laptop cannot reach them directly.
-
-On **dgx-20** (steps 1–5, `openshell-port-forward.sh` attached):
-
-```bash
-# Terminal A — provision (pick 6a / 6b / 6c)
-E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
-# E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
-# E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_gpuutil.sh
-
-# Terminal B — watch HPA
-./scripts/get-hpa.sh -n nemoclaw-gpu -w
-```
-
-On your **laptop**:
-
-```bash
-ssh you@dgx-20
-cd ~/NemoClaw/deploy/helm/gpu_autoscaling_k8s
-export PATH="${HOME}/.local/bin:${PATH}"
-export KUBECONFIG="${HOME}/.kube/config"
-
-# 6a OpenClaw    6b Hermes    6c Deep Agents
-E2E_USERS=5 ./scripts/client.sh
-# E2E_USERS=5 ./scripts/client_hermes.sh
-# E2E_USERS=5 ./scripts/client_deepagents.sh
-```
-
-That SSH session is **Terminal C** in 6a / 6b / 6c below. Same commands if you already have a terminal on dgx-20. The client still talks to the sandbox agents (`chat.send` / `hermes -z` / `dcode -n`), not to Envoy and not to Telegram. 
-
-<img width="643" height="584" alt="Screenshot 2026-09-11 at 1 26 10 AM" src="https://github.com/user-attachments/assets/2c940d43-c304-4e0a-ac32-55f13da5f722" />
+Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node.
 
 #### 6a. OpenClaw + Ollama
 
@@ -209,7 +154,7 @@ That SSH session is **Terminal C** in 6a / 6b / 6c below. Same commands if you a
 - inflight **1** per sandbox (one agent per sandbox)
 - Long completions (`MAX_TOKENS` default **1024**). `client.sh` re-pins `max_tokens` on each sandbox the same way `client_deepagents.sh` does, and keeps the provisioned model. 2048 kept `latency_avg` ~7s at 8 replicas (target 3000 ms). Inflight stays **1** so 8Gi CPU sandboxes do not OOM.
 
-Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run). 
+Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
 ```text
 E2E test: OpenClaw + Ollama
@@ -228,7 +173,7 @@ E2E test: OpenClaw + Ollama
             1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
 ```
 
-**GPU util** HPA metric `gpu_utilization_percent`, target 40%. Provision holds GPUs at **1** replica. `client.sh` arms `maxReplicas=8`, then users → sandboxes → Envoy → Ollama. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. 
+**GPU util** HPA metric `gpu_utilization_percent`, target 40%. Provision keeps **current** GPUs at **1** replica (`maxReplicas=8`). `client.sh` sends chats; users → sandboxes → Envoy → Ollama. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. On this host the 5-user client run drove GPU-util HPA to **8** replicas, then back to **1** after chats stopped. 
 
 ```bash
 cd deploy/helm/gpu_autoscaling_k8s
@@ -251,12 +196,16 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 ```
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20  (do not install OpenShell on the laptop)
+# Terminal C — from a remote terminal such as your laptop (HTTP)
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+# UI: after Terminals, see OpenClaw UI below
+
+# simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
 
-**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and **holds GPUs at 1 replica**. OpenClaw start must not scale. `client.sh` arms `maxReplicas=8`, then users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
+**LLM latency.** Same sandboxes and the same `client.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps **current** GPUs at **1** replica (`maxReplicas=8`). OpenClaw start must not scale. `client.sh` then sends chats; users → sandboxes → Envoy → Ollama. `get-hpa.sh` prints milliseconds (`46514/3000`). Load keeps running until HPA **current replicas = 8**, then drops so GPUs can scale back to 1. Do not pass `DURATION_SEC=180` — that stopped the last run at 5 GPUs.
 
 ```bash
 # Terminal A 
@@ -268,7 +217,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 ```
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20
+# Terminal C — from a remote terminal such as your laptop (HTTP)
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+# UI: after Terminals, see OpenClaw UI below
+
+# simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
@@ -289,7 +242,15 @@ Check the log to see the end users, sandboxes, and chats:
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 </p>
 
+**OpenClaw UI.** Each user is a **different host port**. You do not type a token. Leave Password empty.
 
+| User | Open this in the browser        |
+|------|---------------------------------|
+| 0    | `http://dgx-ip:18789/u/0`       |
+| 1    | `http://dgx-ip:18790/u/0`       |
+| 2    | `http://dgx-ip:18791/u/0`       |
+| 3    | `http://dgx-ip:18792/u/0`       |
+| 4    | `http://dgx-ip:18793/u/0`       |
 
 
 
@@ -354,11 +315,15 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
 <img width="821" height="383" alt="Screenshot 2026-10-01 at 6 24 21 PM" src="https://github.com/user-attachments/assets/99f9ae4a-8427-4651-a5d8-69118d00f6f3" />
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20  (5 end users; no OpenShell on the laptop)
+# Terminal C — from a remote terminal such as your laptop (HTTP)
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
+# UI: Hermes dashboard on that user's published host port (no #token=)
+
+# simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
-**LLM latency.** Same sandboxes and the same `client_hermes.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and holds GPUs at 1 replica. `client_hermes.sh` arms `maxReplicas=8` and sends `hermes -z`.
+**LLM latency.** Same sandboxes and the same `client_hermes.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps current GPUs at 1 replica (`maxReplicas=8`). `client_hermes.sh` sends `hermes -z`.
 
 ```bash
 # Terminal A
@@ -373,7 +338,11 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 <img width="849" height="521" alt="Screenshot 2026-10-01 at 1 53 17 PM" src="https://github.com/user-attachments/assets/2c0c3b90-761a-4b9b-9a34-0551219d4441" />
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20
+# Terminal C — from a remote terminal such as your laptop (HTTP)
+E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
+# UI: Hermes dashboard on that user's published host port (no #token=)
+
+# simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
@@ -443,13 +412,13 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_gpuutil.sh
 <img width="830" height="443" alt="Screenshot 2026-10-01 at 10 48 31 PM" src="https://github.com/user-attachments/assets/23be5f75-0822-4b39-b6db-31b27f8a2f48" />
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20  (do not install OpenShell on the laptop)
+# Terminal C — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 
 
 
-**LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and holds GPUs at 1 replica. `client_deepagents.sh` arms `maxReplicas=8` and sends `dcode -n`.
+**LLM latency.** Same sandboxes and the same `client_deepagents.sh`. Provision switches HPA to `latency_avg` (target 3000 ms) and keeps current GPUs at 1 replica (`maxReplicas=8`). `client_deepagents.sh` sends `dcode -n`.
 
 ```bash
 # Terminal A 
@@ -465,7 +434,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 
 
 ```bash
-# Terminal C — laptop: ssh you@dgx-20
+# Terminal C — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 
@@ -797,7 +766,7 @@ Shared Prometheus, Adapter, the Envoy load balancer, and Agent Sandbox CRDs are 
 
 ### Can I run the client from my laptop?
 
-Yes. SSH to **dgx-20** and run `client.sh` / `client_hermes.sh` / `client_deepagents.sh` there. Do not install OpenShell on the laptop. Provision (`agentscaling_*`) and `openshell-port-forward.sh` stay on the DGX. See [Laptop client](#6-e2e-test-with-multiple-end-users-and-sandboxes).
+Yes. Terminal C is a **remote terminal such as your laptop** (`E2E_CLIENT_HOST=dgx-ip` plus `client.sh` / `client_hermes.sh` / `client_deepagents.sh`). A simpler option is the same script from the same DGX in another terminal. The OpenClaw browser UI is one port per user (`http://dgx-ip:18789/u/0` … `:18793/u/0`) — see [6a](#6a-openclaw--ollama). End users do not log into the DGX.
 
 ### Agents and sandboxes run on CPU — what limits how many I can run?
 
@@ -828,8 +797,8 @@ The **metrics-proxy** times the in-pod `chat/completions` fetch until the full r
 | Name | Port | Where |
 |------|------|-------|
 | OpenShell CLI | **18080** | Host. `./scripts/openshell-port-forward.sh`. `openshell status` uses `https://127.0.0.1:18080`. |
-| OpenClaw agent | **18789** | Inside each OpenClaw sandbox netns on the DGX CPUs. E2e clients talk here after SSH to dgx-20. Do not port-forward from the laptop. |
-| Hermes gateway | **8642** | Inside each Hermes sandbox. `hermes -z` e2e does not forward it. |
+| OpenClaw agent | **18789** | Inside each OpenClaw sandbox netns. Published on the DGX as `18789+user` (`http://dgx-ip:18789` … `:18793` for five users). |
+| Hermes gateway | **8642** | Inside each Hermes sandbox. Published on the DGX as `8642+user` (`http://dgx-ip:8642` … `:8646`). Hermes UI uses `18789+user`. |
 | Envoy load balancer | **443** / **80** | Cluster. Sandboxes use `https://inference.local`. |
 | Metrics-proxy | **8081** | Cluster `service/nemoclaw-gpu-metrics-proxy`. Optional host forward `8081:8081`. |
 | Ollama | **11434** | Inside each Ollama GPU pod. |

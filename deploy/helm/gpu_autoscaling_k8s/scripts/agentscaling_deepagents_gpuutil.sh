@@ -15,9 +15,9 @@
 # the same release to INFERENCE_RUNTIME (default nim).
 #
 # The client does not know this metric. Use ./scripts/client_deepagents.sh after
-# sandboxes are Ready. Provision holds HPA at 1 replica; the client arms
-# maxReplicas=8 and sends dcode -n. For LLM-latency HPA use
-# ./scripts/agentscaling_deepagents_latency.sh.
+# sandboxes are Ready (./scripts/client_deepagents.sh; Deep Agents has no HTTP UI.
+# there). Provision keeps current replicas at 1; maxReplicas stays 8.
+# For LLM-latency HPA use ./scripts/agentscaling_deepagents_latency.sh.
 #
 # Defaults in this script: AGENT_NAME=deepagents INFERENCE_RUNTIME=nim
 # INFERENCE_MODEL=nvidia/nemotron-3-nano. Override GPU backend:
