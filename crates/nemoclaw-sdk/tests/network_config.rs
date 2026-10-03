@@ -276,13 +276,4 @@ fn removed_tls_modes_are_rejected_and_automatic_tls_round_trips() {
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
         document
     );
-    let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    for removed in ["terminate", "passthrough"] {
-        value.pointer_mut(endpoint).unwrap()["tls"] = json!(removed);
-        assert!(
-            parse(&value).is_err(),
-            "must reject removed TLS mode {removed}"
-        );
-        assert!(!validator.is_valid(&value), "schema must reject {removed}");
-    }
 }

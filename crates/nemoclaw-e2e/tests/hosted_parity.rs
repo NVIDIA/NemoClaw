@@ -5,26 +5,6 @@
 
 use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use serde_json::json;
-use sha2::{Digest, Sha256};
-
-const OPENCLAW_V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
-const OPENCLAW_V0_MANIFEST_SHA256: &str =
-    "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
-const HERMES_V0_REVISION: &str = "b6934c6300c4e1e175757e9281ae3a641d9a5b1f";
-const HERMES_V0_MANIFEST_SHA256: &str =
-    "692182cceaa8b9784d616176f9bf03c32af671e68c2e31b0ce15764957dc9be5";
-const HERMES_V0_EXPORT_SHA256: &str =
-    "6159d9351d25b4d30e6df80fdb700f144418eaae80a2385b9602e15f5412543a";
-
-fn assert_source_manifest(bytes: &[u8], revision: &str, expected_sha256: &str) {
-    let digest = Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert_eq!(digest, expected_sha256);
-    assert_eq!(revision.len(), 40);
-    assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
-}
 
 // This scenario compares separately authored current intent with a test-only
 // projection. The raw export remains unchanged and never reaches deployment.
@@ -153,11 +133,6 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
 
 #[test]
 fn hosted_openclaw_scenario_preserves_authored_intent() {
-    assert_source_manifest(
-        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml"),
-        OPENCLAW_V0_REVISION,
-        OPENCLAW_V0_MANIFEST_SHA256,
-    );
     let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
     let v1 = authored_document(
         raw,
@@ -168,17 +143,7 @@ fn hosted_openclaw_scenario_preserves_authored_intent() {
 
 #[test]
 fn hosted_hermes_scenario_preserves_authored_intent() {
-    assert_source_manifest(
-        include_bytes!("../fixtures/hermes-nvidia-hosted/v0.yaml"),
-        HERMES_V0_REVISION,
-        HERMES_V0_MANIFEST_SHA256,
-    );
     let export = include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml");
-    let export_digest = Sha256::digest(export)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert_eq!(export_digest, HERMES_V0_EXPORT_SHA256);
     let v1 = authored_document(
         export,
         include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),

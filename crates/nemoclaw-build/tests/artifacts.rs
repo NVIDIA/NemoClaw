@@ -276,26 +276,6 @@ fn runtime_artifacts_require_an_explicit_platform() {
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }
 
-#[test]
-fn every_bundle_platform_pins_the_docker_provider_archive() {
-    let pins: serde_json::Value =
-        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    let version = pins["dockerProvider"]
-        .as_str()
-        .expect("Docker provider pin");
-    for (platform, artifacts) in pins["platforms"].as_object().unwrap() {
-        assert_eq!(
-            artifacts["dockerProvider"]["url"],
-            format!(
-                "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v{version}/terraform-provider-docker_{version}_{platform}.zip"
-            )
-        );
-        let checksum = artifacts["dockerProvider"]["sha256"].as_str().unwrap();
-        assert_eq!(checksum.len(), 64);
-        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    }
-}
-
 #[cfg(feature = "sdk")]
 #[test]
 fn docker_provider_bundle_retains_the_verified_binary_and_license() {

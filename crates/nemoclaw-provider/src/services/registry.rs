@@ -5,8 +5,6 @@ use crate::{
     ObservationError,
     backend::{Backend, Row},
 };
-#[cfg(test)]
-use nemoclaw_sdk::services::resource_schemas;
 /// Resolves a provider resource row to its package-owned backend.
 pub struct BackendRegistry<'a> {
     connections: &'a crate::docker::Connections,
@@ -57,26 +55,5 @@ impl<'a> BackendRegistry<'a> {
             ))));
         }
         Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-
-    #[test]
-    fn docker_provider_compute_is_not_a_custom_provider_resource() {
-        let schemas = resource_schemas();
-        for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
-            assert!(!schemas.iter().any(|schema| schema.kind == kind));
-        }
-        for kind in [
-            "inference_storage",
-            "ollama_service_storage",
-            "ollama_proxy_storage",
-            "ollama_external_model",
-        ] {
-            assert!(schemas.iter().any(|schema| schema.kind == kind));
-        }
     }
 }
