@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import * as policies from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
@@ -167,12 +168,14 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 export async function prepareMcpBridgesForStoppedSandboxRebuild(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
-  source: import("../../state/state-directory-restore").CapturedAgentState,
+  source: PreparedStoppedNativeState,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
+  const registeredAgent = getSandboxOrThrow(sandboxName).agent ?? "openclaw";
   if (
     source.sandboxName !== sandboxName ||
-    (getSandboxOrThrow(sandboxName).agent ?? "openclaw") !== source.agentName
+    source.agentName !== registeredAgent ||
+    !["openclaw", "langchain-deepagents-code"].includes(registeredAgent)
   ) {
     throw new McpBridgeError("Stopped MCP preservation does not match the captured agent sandbox.");
   }
@@ -216,7 +219,9 @@ export async function prepareMcpBridgesForRebuild(
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
   const { entries, runtimeSelection: providerRuntimeSelection } =
-    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, { runtimeSelection });
+    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, {
+      runtimeSelection,
+    });
   if (entries.length === 0) {
     return {
       entries: [],

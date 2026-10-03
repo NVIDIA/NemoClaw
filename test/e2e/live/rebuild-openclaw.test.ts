@@ -79,7 +79,7 @@ test(
       boundary: "exact managed OpenClaw rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image instead of constructing a stale base",
-        "workspace state, native configuration, and a native user-installed plugin survive the rebuild",
+        "unknown home, workspace, package, hook, cron, native configuration, and native plugin state survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
         "Docker Error-state recovery preserves workspace and native plugin state",
       ],
@@ -123,7 +123,8 @@ test(
       SANDBOX_NAME,
       trustedSandboxShellScript(
         [
-          `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
+          `umask 077; mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/hooks /sandbox/.openclaw/cron /sandbox/.local/share/e2e-package`,
+          `for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/workspace/.rebuild-state-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do printf '%s\\n' '${marker}' > "$target"; done; sync`,
           "HOME=/sandbox openclaw config set agents.defaults.timeoutSeconds 119",
           "HOME=/sandbox openclaw config validate",
           nativePluginInstallScript(),
@@ -152,7 +153,7 @@ test(
       const read = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
-          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
+          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
         ),
         {
           artifactName: `${artifactPrefix}-read-marker`,

@@ -3050,7 +3050,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          rebuildPreservedEnv: opts.rebuildPreservedEnv,
           hostMounts: effectiveHostMounts,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
