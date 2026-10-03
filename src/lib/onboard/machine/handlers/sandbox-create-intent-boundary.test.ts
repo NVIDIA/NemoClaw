@@ -26,8 +26,8 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 
 describe("sandbox create intent machine boundary", () => {
   it("attaches the internal native NVIDIA provider while retaining the logical selection", async () => {
-    const session = createSession({ sandboxName: "native-nvidia" });
-    const nativeNvidiaProviderAttachment = {
+    const session = createSession({ sandboxName: "native-hosted" });
+    const nativeHostedProviderAttachment = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1" as const,
       providerName: "nemoclaw-nvidia-prod-v1" as const,
@@ -44,26 +44,26 @@ describe("sandbox create intent machine boundary", () => {
         toolDisclosure: "progressive" as const,
         fromDockerfile: null,
         hermesAuthMethod: null,
-        nativeNvidiaProviderAttachment,
+        nativeHostedProviderAttachment,
       }),
     });
 
     await handleSandboxState({
       ...baseOptions(deps, session),
-      sandboxName: "native-nvidia",
+      sandboxName: "native-hosted",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
     });
 
     expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
       expect.objectContaining({
-        sandboxName: "native-nvidia",
+        sandboxName: "native-hosted",
         inferenceProvider: "nemoclaw-nvidia-prod-v1",
-        nativeNvidiaProviderAttachment,
+        nativeHostedProviderAttachment,
       }),
     );
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
-      sandboxName: "native-nvidia",
+      sandboxName: "native-hosted",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
     });

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  ensureNativeHostedProvider,
+  type NativeHostedProviderAttachment,
+} from "./inference/native-hosted";
+import { nativeHostedProfile } from "./inference/native-hosted/profiles";
 /**
  * Hermes Provider credential orchestration.
  *
@@ -88,7 +93,10 @@ function agentKeyExpiresAt(minted: oauth.AgentKeyResponse): string | null {
 }
 
 export function isHermesProviderRegistered(runOpenshell: RunOpenshell): Promise<boolean> {
-  return onboardProviders.providerExistsInGateway(HERMES_PROVIDER_NAME, runOpenshell);
+  return onboardProviders.providerExistsInGateway(
+    nativeHostedProfile(HERMES_PROVIDER_NAME)!.providerName,
+    runOpenshell,
+  );
 }
 
 export type HermesProviderBinding = {
@@ -101,7 +109,7 @@ export async function inspectHermesProviderBinding(
 ): Promise<HermesProviderBinding> {
   const result = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
     target: { kind: "selected" },
-    providerName: HERMES_PROVIDER_NAME,
+    providerName: nativeHostedProfile(HERMES_PROVIDER_NAME)!.providerName,
   });
   if (!result.ok) {
     return result.error.kind === "command" && result.error.reason === "not_found"
@@ -119,22 +127,31 @@ export async function registerHermesInferenceProvider(
   runOpenshell: RunOpenshell,
   credentialEnv = HERMES_INFERENCE_CREDENTIAL_ENV,
   baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
+  expected?: NativeHostedProviderAttachment,
 ): Promise<void> {
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) {
     throw new Error("Hermes Provider credential is empty");
   }
-  const result = await onboardProviders.upsertProvider(
-    HERMES_PROVIDER_NAME,
-    "openai",
-    credentialEnv,
-    baseUrl,
-    { [credentialEnv]: normalizedApiKey },
-    runOpenshell,
-  );
-  if (!result.ok) {
-    throw new Error(result.message || `failed to upsert provider '${HERMES_PROVIDER_NAME}'`);
+  const profile = nativeHostedProfile(HERMES_PROVIDER_NAME)!;
+  if (baseUrl.replace(/\/+$/u, "") !== profile.endpoint) {
+    throw new Error(
+      "Hermes Provider returned a noncanonical inference endpoint; fixed native profiles cannot be repointed.",
+    );
   }
+  if (
+    credentialEnv !== HERMES_INFERENCE_CREDENTIAL_ENV &&
+    credentialEnv !== HERMES_NOUS_API_KEY_CREDENTIAL_ENV
+  ) {
+    throw new Error("Unsupported Hermes Provider credential binding");
+  }
+  await ensureNativeHostedProvider({
+    adapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    target: { kind: "selected" },
+    profile,
+    credentialValue: normalizedApiKey,
+    ...(expected ? { expected } : {}),
+  });
 }
 
 export async function ensureHermesProviderOAuthCredentials(
@@ -145,6 +162,7 @@ export async function ensureHermesProviderOAuthCredentials(
     log = console.error,
     fetch = undefined,
     noBrowser = false,
+    expected,
     baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
     toolGatewayPresets = [],
   }: {
@@ -154,6 +172,7 @@ export async function ensureHermesProviderOAuthCredentials(
     fetch?: typeof globalThis.fetch;
     noBrowser?: boolean;
     baseUrl?: string;
+    expected?: NativeHostedProviderAttachment;
     toolGatewayPresets?: string[];
   } = {},
 ): Promise<HermesProviderCredentialState | null> {
@@ -175,6 +194,7 @@ export async function ensureHermesProviderOAuthCredentials(
     runOpenshell,
     HERMES_INFERENCE_CREDENTIAL_ENV,
     inferenceBaseUrl,
+    expected,
   );
   if (Array.isArray(toolGatewayPresets) && toolGatewayPresets.length > 0) {
     const hermesToolGateway = getHermesToolGatewayBroker();
@@ -201,11 +221,13 @@ export async function ensureHermesProviderApiKeyCredentials(
   {
     apiKey = null,
     runOpenshell = null,
+    expected,
     baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
   }: {
     apiKey?: string | null;
     runOpenshell?: RunOpenshell | null;
     baseUrl?: string;
+    expected?: NativeHostedProviderAttachment;
   } = {},
 ): Promise<HermesProviderCredentialState | null> {
   if (!runOpenshell) {
@@ -219,6 +241,7 @@ export async function ensureHermesProviderApiKeyCredentials(
     runOpenshell,
     HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
     baseUrl,
+    expected,
   );
   return {
     auth_method: "api_key",

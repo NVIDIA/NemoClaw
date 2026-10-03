@@ -3,6 +3,9 @@
 
 import assert from "node:assert/strict";
 import path from "node:path";
+import { vi } from "vitest";
+import type { OpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter";
+import { nativeHostedProfile } from "../../src/lib/inference/native-hosted/profiles";
 
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { createDirectSetupInferenceHarnessFactory } from "../support/setup-inference-test-harness.js";
@@ -100,3 +103,46 @@ export const repoRoot = path.join(import.meta.dirname, "../..");
 export const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+
+/** Stateful native provider transport, isolated from the developer gateway. */
+export function createNativeSetupProviderAdapter(provider: string, initiallyPresent = true) {
+  const profile = nativeHostedProfile(provider)!;
+  let present = initiallyPresent;
+  const unexpected = async (): Promise<never> => {
+    throw new Error("Unexpected provider operation");
+  };
+  const adapter = {
+    importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
+      ok: true,
+    })),
+    getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async ({ providerName }) => {
+      assert.equal(providerName, profile.providerName);
+      return present
+        ? {
+            ok: true,
+            value: {
+              name: profile.providerName,
+              type: profile.profileId,
+              credentialKeys: [profile.credentialEnv],
+              configKeys: [],
+              revision: { id: "fixture-native-id", resourceVersion: 1 },
+            },
+          }
+        : { ok: false, error: { kind: "command", reason: "not_found", message: "not found" } };
+    }),
+    createProvider: vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => {
+      present = true;
+      return { ok: true };
+    }),
+    updateProvider: vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({ ok: true })),
+    listProviders: unexpected,
+    inspectProviderProfile: unexpected,
+    deleteProvider: unexpected,
+    detachProvider: unexpected,
+    attachProvider: unexpected,
+    listProviderAttachments: unexpected,
+    configureProviderRefresh: unexpected,
+    getProviderRefreshStatus: unexpected,
+  } satisfies OpenShellProviderAdapter;
+  return adapter;
+}

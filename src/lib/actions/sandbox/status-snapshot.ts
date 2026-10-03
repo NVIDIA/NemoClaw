@@ -19,7 +19,7 @@ import { retryUntilAsync } from "../../core/retry";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   getLlamaCppRouteDetails,
-  normalizeNativeNvidiaProviderAttachment,
+  normalizeNativeHostedProviderAttachment,
   type GatewayInference,
   type LlamaCppRouteDetails,
   planInferenceRouteReconcile,
@@ -557,16 +557,21 @@ export async function collectSandboxStatusSnapshot(
     opts.suppressInferenceProbe === true;
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
+  const nativeHosted = Boolean(
+    normalizeNativeHostedProviderAttachment(sb?.nativeHostedProviderAttachment),
+  );
   if (lookup.state === "present") {
     try {
       gatewayName = resolveSandboxGatewayName(sb);
       const observer =
         opts.deps?.inferenceRouteObserver ??
         createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
-      liveResult = await observer.observeInferenceRoute({
-        target: { kind: "named", gatewayName },
-        timeoutMs: getStatusProbeTimeoutMs(),
-      });
+      if (!nativeHosted) {
+        liveResult = await observer.observeInferenceRoute({
+          target: { kind: "named", gatewayName },
+          timeoutMs: getStatusProbeTimeoutMs(),
+        });
+      }
     } catch {
       // Invalid persisted gateway bindings and failed reads stay fail-closed:
       // never substitute the selected/default gateway's inference route.
@@ -604,11 +609,8 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
-  const nativeNvidia = Boolean(
-    normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
-  );
   const routeDriftPlan =
-    !nativeNvidia && sb && sb.provider && sb.model
+    !nativeHosted && sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
       : null;
   const routeDrift =
@@ -642,8 +644,8 @@ export async function collectSandboxStatusSnapshot(
     providerHealth = maybeGetSandboxStatusInferenceHealth(
       suppressInferenceProbe,
       lookup.state === "present",
-      nativeNvidia ? currentProvider : (live && live.provider) || currentProvider,
-      nativeNvidia ? currentModel : (live && live.model) || currentModel,
+      nativeHosted ? currentProvider : (live && live.provider) || currentProvider,
+      nativeHosted ? currentModel : (live && live.model) || currentModel,
       opts.deps?.probeProviderHealthImpl,
       sb?.endpointUrl,
     );
@@ -666,7 +668,7 @@ export async function collectSandboxStatusSnapshot(
     // a live model with a recorded provider and request a route neither one
     // describes.
     const invocationRoute =
-      !nativeNvidia && live?.provider && live.model
+      !nativeHosted && live?.provider && live.model
         ? {
             provider: live.provider,
             model: live.model,
@@ -693,13 +695,13 @@ export async function collectSandboxStatusSnapshot(
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
       await retryUntilAsync(
         async () => {
-          gatewayChain = nativeNvidia
+          gatewayChain = nativeHosted
             ? null
             : gatewayName
               ? await probe(sandboxName, { gatewayName })
               : null;
           invocation =
-            (nativeNvidia || gatewayChain?.ok) && canProbeInvocation
+            (nativeHosted || gatewayChain?.ok) && canProbeInvocation
               ? await runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
@@ -708,7 +710,7 @@ export async function collectSandboxStatusSnapshot(
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
-                    ...(nativeNvidia ? { nativeProvider: true } : {}),
+                    ...(nativeHosted ? { nativeProvider: true } : {}),
                   },
                   opts.deps?.probeSandboxInferenceInvocationImpl,
                   (error) =>
@@ -722,7 +724,7 @@ export async function collectSandboxStatusSnapshot(
         },
         {
           accept: ({ gatewayChain: chain, invocation: result }) => {
-            if (nativeNvidia) {
+            if (nativeHosted) {
               return result?.ok === true || !isTransientInferenceInvocationFailure(result);
             }
             if (chain?.ok && (!canProbeInvocation || result?.ok)) return true;
@@ -759,7 +761,7 @@ export async function collectSandboxStatusSnapshot(
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
       agentName: sb?.agent ?? null,
       provider: invocationRoute.provider ?? null,
-      nativeNvidia,
+      nativeHosted,
     });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.

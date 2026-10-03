@@ -21,12 +21,12 @@ import {
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
-  ensureNativeNvidiaProvider,
-  isNativeNvidiaProvider,
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  normalizeNativeNvidiaProviderAttachment,
-  type NativeNvidiaProviderAttachment,
-} from "../inference/native-nvidia";
+  nativeHostedProfile,
+  ensureNativeHostedProvider,
+  isNativeHostedProvider,
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../inference/native-hosted";
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -665,7 +665,7 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        if (!isNativeNvidiaProvider(provider)) {
+        if (!isNativeHostedProvider(provider)) {
           const compatibility = deps.checkGatewayRouteCompatibility({
             gatewayName,
             sandboxName,
@@ -745,7 +745,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
-        let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
+        let nativeHostedProviderAttachment: NativeHostedProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -764,7 +764,7 @@ export function createSetupInference(
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+            ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
               : {}),
@@ -891,8 +891,21 @@ export function createSetupInference(
         }
 
         const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
+          const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
+          const recordedAttachment = normalizeNativeHostedProviderAttachment(
+            recordedSandbox?.nativeHostedProviderAttachment,
+          );
+          if (
+            recordedSandbox &&
+            isNativeHostedProvider(recordedSandbox.provider) &&
+            !recordedAttachment
+          ) {
+            throw new Error(
+              `Sandbox '${sandboxName}' predates native hosted provider attachments. Recreate this beta sandbox before using native hosted inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
+            );
+          }
           if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
-            return inferenceProviders.setupHermesProviderInference(
+            const prepared = await inferenceProviders.setupHermesProviderInference(
               {
                 sandboxName,
                 model,
@@ -901,6 +914,11 @@ export function createSetupInference(
                 credentialEnv,
                 hermesAuthMethod,
                 hermesToolGateways,
+                nativeProvider: true,
+                expectedNativeProviderAttachment:
+                  recordedAttachment?.profileId === nativeHostedProfile(provider)?.profileId
+                    ? recordedAttachment
+                    : undefined,
               },
               {
                 ...commonDeps,
@@ -919,34 +937,29 @@ export function createSetupInference(
                 lookup: deps.lookup,
               },
             );
+            if (!("ok" in prepared) || !prepared.ok) return prepared;
           }
 
-          if (isNativeNvidiaProvider(provider)) {
-            const resolvedCredentialEnv = credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV;
-            const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv) || null;
+          if (isNativeHostedProvider(provider)) {
+            const profile = nativeHostedProfile(provider)!;
+            const resolvedCredentialEnv = credentialEnv || profile.credentialEnv;
+            const credentialValue =
+              provider === "hermes-provider"
+                ? null
+                : deps.hydrateCredentialEnv(resolvedCredentialEnv) || null;
             const providerAdapter = deps.providerAdapter;
             if (!providerAdapter) {
-              throw new Error("Native NVIDIA setup is missing its OpenShell provider adapter.");
+              throw new Error("Native hosted setup is missing its OpenShell provider adapter.");
             }
-            const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
-            const recordedAttachment = normalizeNativeNvidiaProviderAttachment(
-              recordedSandbox?.nativeNvidiaProviderAttachment,
-            );
-            if (
-              recordedSandbox &&
-              isNativeNvidiaProvider(recordedSandbox.provider) &&
-              !recordedAttachment
-            ) {
-              throw new Error(
-                `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
-              );
-            }
-            nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
+            nativeHostedProviderAttachment = await ensureNativeHostedProvider({
+              profile,
               adapter: providerAdapter,
-              target: { kind: "selected" },
+              target: { kind: "named", gatewayName },
               credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
-              ...(recordedAttachment ? { expected: recordedAttachment } : {}),
+              ...(recordedAttachment?.profileId === profile.profileId
+                ? { expected: recordedAttachment }
+                : {}),
             });
             return null;
           }
@@ -1125,7 +1138,7 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          if (!nativeNvidiaProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
+          if (!nativeHostedProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
@@ -1270,8 +1283,8 @@ export function createSetupInference(
       );
       if (shouldLogSuccessfulRoute && "ok" in result) {
         deps.log(
-          isNativeNvidiaProvider(provider)
-            ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
+          isNativeHostedProvider(provider)
+            ? `  ✓ Native hosted provider ready: ${provider} / ${model}`
             : `  ✓ Inference route set: ${provider} / ${model}`,
         );
       }

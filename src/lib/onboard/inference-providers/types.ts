@@ -15,6 +15,7 @@
 // so they accept whatever the orchestrator hands in without needing to
 // duplicate every helper's exact signature.
 
+import type { NativeHostedProviderAttachment } from "../../inference/native-hosted";
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { HermesAuthMethod } from "../hermes-auth";
@@ -173,7 +174,12 @@ export type HermesDeps = CommonDeps & {
     isHermesProviderRegistered(runOpenshell: any): Promise<boolean>;
     ensureHermesProviderApiKeyCredentials(
       sandboxName: string,
-      opts: { apiKey: unknown; runOpenshell: any; baseUrl?: string | undefined },
+      opts: {
+        apiKey: unknown;
+        runOpenshell: any;
+        baseUrl?: string | undefined;
+        expected?: NativeHostedProviderAttachment;
+      },
     ): Promise<unknown>;
     ensureHermesProviderOAuthCredentials(
       sandboxName: string,
@@ -182,6 +188,7 @@ export type HermesDeps = CommonDeps & {
         runOpenshell: any;
         baseUrl?: string | undefined;
         toolGatewayPresets: string[];
+        expected?: NativeHostedProviderAttachment;
       },
     ): Promise<unknown>;
   };

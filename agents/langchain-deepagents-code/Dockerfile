@@ -154,6 +154,7 @@ RUN set -eu; \
 # wrapper, startup script, and shared blueprint files.
 COPY agents/langchain-deepagents-code/generate-config-entrypoint.ts /opt/nemoclaw-deepagents-code/generate-config.ts
 COPY agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts
+COPY --chmod=0444 src/lib/inference/native-hosted/openrouter-headers.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-hosted/openrouter-headers.ts
 COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts
 COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py
 COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py

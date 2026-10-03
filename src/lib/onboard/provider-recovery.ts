@@ -145,6 +145,7 @@ export interface ProviderRecoveryHelpers extends ProviderSelectionRecoveryReader
 }
 
 export interface RecordedInferenceRoute {
+  nativeHostedProviderAttachment?: import("../inference/native-hosted").NativeHostedProviderAttachment;
   provider: string;
   model: string;
   endpointUrl: string | null;
@@ -215,6 +216,7 @@ function completeRecordedInferenceRoute(
     endpointUrl?: unknown;
     endpointSource?: unknown;
     preferredInferenceApi?: unknown;
+    nativeHostedProviderAttachment?: import("../inference/native-hosted").NativeHostedProviderAttachment;
   },
   source: RecordedInferenceRoute["source"],
 ): RecordedInferenceRoute | null {
@@ -232,7 +234,16 @@ function completeRecordedInferenceRoute(
   const endpointSource = endpointUrl
     ? normalizeInferenceEndpointSource(value.endpointSource)
     : null;
-  return { ...inference, endpointUrl, endpointSource, preferredInferenceApi, source };
+  return {
+    ...inference,
+    endpointUrl,
+    endpointSource,
+    preferredInferenceApi,
+    source,
+    ...(source === "registry" && value.nativeHostedProviderAttachment
+      ? { nativeHostedProviderAttachment: value.nativeHostedProviderAttachment }
+      : {}),
+  };
 }
 
 export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {

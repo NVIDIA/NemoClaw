@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../../inference/native-hosted/profiles";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
@@ -18,10 +19,10 @@ import {
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
 import {
-  normalizeNativeNvidiaProviderAttachment,
-  verifyNativeNvidiaProviderAttachment,
-  type NativeNvidiaProviderAttachment,
-} from "../../../inference/native-nvidia";
+  normalizeNativeHostedProviderAttachment,
+  verifyNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../../../inference/native-hosted";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
@@ -79,10 +80,10 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
-  verifyNativeNvidiaAttachment?: (input: {
+  verifyNativeHostedAttachment?: (input: {
     sandboxName: string;
     gatewayName: string;
-    expected: NativeNvidiaProviderAttachment;
+    expected: NativeHostedProviderAttachment;
   }) => Promise<void>;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
   recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
@@ -207,32 +208,36 @@ export function resolveTrustedLaunchAgent(
   return agent;
 }
 
-export function getNativeNvidiaProviderAttachment(
+export function getNativeHostedProviderAttachment(
   entry: SandboxEntry,
-): NativeNvidiaProviderAttachment | null {
-  return normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) ?? null;
+): NativeHostedProviderAttachment | null {
+  const receipt = normalizeNativeHostedProviderAttachment(entry.nativeHostedProviderAttachment);
+  if (receipt && nativeHostedProfile(entry.provider)?.profileId !== receipt.profileId) {
+    throw new LaunchReadinessEvidenceError();
+  }
+  return receipt ?? null;
 }
 
-export async function requireNativeNvidiaInferenceHealth(input: {
+export async function requireNativeHostedInferenceHealth(input: {
   sandboxName: string;
   gatewayName: string;
   agentName?: string;
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
 }): Promise<boolean> {
-  const expected = getNativeNvidiaProviderAttachment(input.entry);
+  const expected = getNativeHostedProviderAttachment(input.entry);
   if (!expected) return false;
   const provider = normalizedString(input.entry.provider);
   const model = normalizedString(input.entry.model);
   if (!provider || !model) throw new LaunchReadinessEvidenceError();
-  if (input.deps.verifyNativeNvidiaAttachment) {
-    await input.deps.verifyNativeNvidiaAttachment({
+  if (input.deps.verifyNativeHostedAttachment) {
+    await input.deps.verifyNativeHostedAttachment({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected,
     });
   } else {
-    await verifyNativeNvidiaProviderAttachment({
+    await verifyNativeHostedProviderAttachment({
       adapter: createCliOpenShellProviderAdapter(),
       target: { kind: "named", gatewayName: input.gatewayName },
       sandboxName: input.sandboxName,
@@ -351,9 +356,9 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeNvidiaProviderAttachment(entry)) {
+    if (getNativeHostedProviderAttachment(entry)) {
       try {
-        await requireNativeNvidiaInferenceHealth({
+        await requireNativeHostedInferenceHealth({
           sandboxName,
           gatewayName,
           agentName,

@@ -13,6 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { nativeHostedProfile } from "./native-hosted/profiles";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -20,18 +21,18 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
-export { isSafeModelId };
+export { isSafeModelId, nativeHostedProfile };
+export { OPENROUTER_DEFAULT_HEADERS } from "./native-hosted/openrouter-headers";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export {
-  detachNativeNvidiaProvider,
-  ensureNativeNvidiaProvider,
-  ensureNativeNvidiaProviderAttached,
-  isNativeNvidiaProvider,
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-  normalizeNativeNvidiaProviderAttachment,
-} from "./native-nvidia";
-export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
+  detachNativeHostedProvider,
+  ensureNativeHostedProvider,
+  ensureNativeHostedProviderAttached,
+  isNativeHostedProvider,
+  normalizeNativeHostedProviderAttachment,
+} from "./native-hosted";
+export { NVIDIA_HOSTED_CREDENTIAL_ENV, NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
+export type { NativeHostedProviderAttachment } from "./native-hosted";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -221,7 +222,7 @@ export function getProviderSelectionConfig(
 ): ProviderSelectionConfig | null {
   const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
     endpointType: "custom",
-    endpointUrl: INFERENCE_ROUTE_URL,
+    endpointUrl: nativeHostedProfile(provider)?.endpoint ?? INFERENCE_ROUTE_URL,
     ncpPartner: null,
     profile: DEFAULT_ROUTE_PROFILE,
     provider,
@@ -416,6 +417,7 @@ export function getSandboxInferenceConfig(
       break;
   }
 
+  inferenceBaseUrl = nativeHostedProfile(provider)?.endpoint ?? inferenceBaseUrl;
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 

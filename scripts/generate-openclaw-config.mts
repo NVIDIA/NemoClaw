@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
 //
 // Generate openclaw.json from environment variables.
 //
@@ -26,6 +27,8 @@
 //   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
+
+import { OPENROUTER_DEFAULT_HEADERS } from "../src/lib/inference/native-hosted/openrouter-headers.ts";
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 
@@ -968,6 +971,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
   }
   const providers = {
     [providerKey]: {
+      ...(upstreamProvider === "openrouter-api"
+        ? { headers: Object.fromEntries(OPENROUTER_DEFAULT_HEADERS) }
+        : {}),
       baseUrl: inferenceBaseUrl,
       apiKey: "unused",
       api: inferenceApi,

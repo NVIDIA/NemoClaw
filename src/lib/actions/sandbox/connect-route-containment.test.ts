@@ -251,7 +251,7 @@ describe("connect route containment", () => {
         gatewayPort: 8080,
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
-        nativeNvidiaProviderAttachment: {
+        nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",
           providerName: "nemoclaw-nvidia-prod-v1",
@@ -262,7 +262,7 @@ describe("connect route containment", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.verifyNativeNvidiaProviderAttachmentSpy).toHaveBeenCalledWith(
+    expect(harness.verifyNativeHostedProviderAttachmentSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw" },

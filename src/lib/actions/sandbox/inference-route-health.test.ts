@@ -131,7 +131,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
       gateway(503, false),
       null,
       { ok: true },
-      { agentName: "openclaw", provider: "nvidia-prod", nativeNvidia: true },
+      { agentName: "openclaw", provider: "nvidia-prod", nativeHosted: true },
     );
 
     expect(result).toMatchObject({
@@ -152,7 +152,7 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
         httpStatus: 401,
         endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
       },
-      { agentName: "openclaw", provider: "nvidia-prod", nativeNvidia: true },
+      { agentName: "openclaw", provider: "nvidia-prod", nativeHosted: true },
     );
 
     expect(result).toMatchObject({

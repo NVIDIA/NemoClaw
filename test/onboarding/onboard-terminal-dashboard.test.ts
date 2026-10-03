@@ -188,7 +188,7 @@ registry.getSandbox = () =>
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
-        nativeNvidiaProviderAttachment: {
+        nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",
           providerName: "nemoclaw-nvidia-prod-v1",

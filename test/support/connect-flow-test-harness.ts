@@ -73,7 +73,7 @@ export type ConnectHarness = {
   requalifyPortableAgentAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
-  verifyNativeNvidiaProviderAttachmentSpy: MockInstance;
+  verifyNativeHostedProviderAttachmentSpy: MockInstance;
   nativeInferenceInvocationSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   registryEntries: SandboxEntry[];
@@ -246,7 +246,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
-  const nativeNvidia = requireDist("../../src/lib/inference/native-nvidia/index.js");
+  const nativeHosted = requireDist("../../src/lib/inference/native-hosted.js");
   const inferenceRouteHealth = requireDist(
     "../../src/lib/actions/sandbox/inference-route-health.js",
   );
@@ -454,8 +454,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const publishLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "publishLaunchReadiness")
     .mockResolvedValue(options.readinessPublicationResult ?? { kind: "published" });
-  const verifyNativeNvidiaProviderAttachmentSpy = vi
-    .spyOn(nativeNvidia, "verifyNativeNvidiaProviderAttachment")
+  const verifyNativeHostedProviderAttachmentSpy = vi
+    .spyOn(nativeHosted, "verifyNativeHostedProviderAttachment")
     .mockImplementation(async (...args: unknown[]) => (args[0] as { expected: unknown }).expected);
   const nativeInferenceInvocationSpy = vi
     .spyOn(inferenceRouteHealth, "runSandboxInferenceInvocationProbe")
@@ -880,7 +880,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     requalifyPortableAgentAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
-    verifyNativeNvidiaProviderAttachmentSpy,
+    verifyNativeHostedProviderAttachmentSpy,
     nativeInferenceInvocationSpy,
     registryUpdateSpy,
     registryEntries,

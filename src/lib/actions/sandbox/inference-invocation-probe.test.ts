@@ -94,6 +94,60 @@ const NVCF_BODY_VARIANTS = [
   ["extra whitespace", `{"status":404,"detail":"Function  'abc-123':   Not found for account"}`],
 ] as const;
 
+describe("native hosted inference protocol requests", () => {
+  it.each<[string, string, string, string[]]>([
+    [
+      "openai-api",
+      "openai-responses",
+      "https://api.openai.com/v1/responses",
+      ["Authorization: Bearer nemoclaw-openshell-provider"],
+    ],
+    [
+      "anthropic-prod",
+      "anthropic-messages",
+      "https://api.anthropic.com/v1/messages",
+      ["x-api-key: nemoclaw-openshell-provider", "anthropic-version: 2023-06-01"],
+    ],
+    [
+      "gemini-api",
+      "openai-completions",
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      ["Authorization: Bearer nemoclaw-openshell-provider"],
+    ],
+    [
+      "openrouter-api",
+      "openai-completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+      ["HTTP-Referer: https://www.nvidia.com/nemoclaw/", "X-OpenRouter-Title: NVIDIA NemoClaw"],
+    ],
+    [
+      "hermes-provider",
+      "openai-responses",
+      "https://inference-api.nousresearch.com/v1/responses",
+      ["Authorization: Bearer nemoclaw-openshell-provider"],
+    ],
+    [
+      "hermes-provider",
+      "openai-completions",
+      "https://inference-api.nousresearch.com/v1/chat/completions",
+      ["Authorization: Bearer nemoclaw-openshell-provider"],
+    ],
+  ])(
+    "sends %s requests to its native protocol endpoint (#12589)",
+    (provider, preferredInferenceApi, endpoint, headers) => {
+      const result = runProbeCommandWithBody("200", "{}", tmpdir(), {
+        ...input,
+        provider,
+        preferredInferenceApi,
+        nativeProvider: true,
+      } as typeof input);
+      expect(result.argv).toContain(endpoint);
+      expect(result.argv).toEqual(expect.arrayContaining(headers));
+      expect(result.argv.join(" ")).not.toContain("inference.local");
+    },
+  );
+});
+
 describe("sandbox inference invocation probe", () => {
   it("ignores personal curl configuration when an inference request fails (#11520)", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-curl-config-"));

@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
+import { createNativeProviderCommandRuntime } from "../../test/support/native-provider-command-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -38,16 +39,22 @@ afterEach(() => {
   clearSourceModule(SOURCE_BROKER);
 });
 
+const NATIVE_PROVIDER = "nemoclaw-hermes-provider-v1";
+const NATIVE_PROFILE = "nemoclaw-hermes-inference-v1";
+
+function nativeRunner(initiallyExists = false) {
+  const runtime = createNativeProviderCommandRuntime("hermes-provider", initiallyExists);
+  return vi.fn(
+    (args: string[], _opts: { env?: Record<string, string> } = {}) =>
+      runtime.run(args) ?? { status: 0, stdout: "", stderr: "" },
+  );
+}
+
 describe("Hermes provider OpenShell credential handoff", () => {
   it("inspects exact OpenShell credential key bindings without exposing values", async () => {
     const auth = loadAuth();
-    const binding = await auth.inspectHermesProviderBinding(() => ({
-      status: 0,
-      stdout:
-        "Name: hermes-provider\nType: openai\nCredential keys: NOUS_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-      stderr: "",
-    }));
-    expect(binding).toEqual({ exists: true, credentialKeys: ["NOUS_API_KEY"] });
+    const binding = await auth.inspectHermesProviderBinding(nativeRunner(true));
+    expect(binding).toEqual({ exists: true, credentialKeys: ["OPENAI_API_KEY"] });
   });
 
   it("fails closed when OpenShell provider details omit credential metadata", async () => {
@@ -57,26 +64,49 @@ describe("Hermes provider OpenShell credential handoff", () => {
     ).resolves.toEqual({ exists: true, credentialKeys: null });
   });
 
-  it("registers the OpenAI provider without a compatibility-profile mutation (#11229)", async () => {
+  it("registers only the owned native profile with a protected credential", async () => {
     const auth = loadAuth();
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider not found" })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const run = nativeRunner();
+    await auth.registerHermesInferenceProvider("nous-key", run);
+    expect(run.mock.calls.some(([args]) => args.includes("profile"))).toBe(true);
+    const create = run.mock.calls.find(([args]) => args[1] === "create")!;
+    expect(create[0]).toEqual(
+      expect.arrayContaining([NATIVE_PROVIDER, NATIVE_PROFILE, "OPENAI_API_KEY"]),
+    );
+    expect(create[1]?.env?.OPENAI_API_KEY).toBe("nous-key");
+    expect(create[0].join(" ")).not.toContain("nous-key");
+  });
 
-    await auth.registerHermesInferenceProvider("nous-key", runOpenshell);
+  it("rejects a noncanonical endpoint before any OpenShell mutation", async () => {
+    const run = nativeRunner();
+    await expect(
+      loadAuth().registerHermesInferenceProvider(
+        "key",
+        run,
+        "OPENAI_API_KEY",
+        "https://other.example/v1",
+      ),
+    ).rejects.toThrow("noncanonical");
+    expect(run).not.toHaveBeenCalled();
+  });
 
-    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "get", "hermes-provider"],
-      expect.arrayContaining([
-        "provider",
-        "create",
-        "--name",
-        "hermes-provider",
-        "--type",
-        "openai",
-      ]),
-    ]);
+  it("refuses credential rotation when the recorded provider identity changed", async () => {
+    const run = nativeRunner(true);
+    await expect(
+      loadAuth().ensureHermesProviderApiKeyCredentials("alpha", {
+        apiKey: "new-key",
+        runOpenshell: run,
+        expected: {
+          schemaVersion: 1,
+          profileId: NATIVE_PROFILE,
+          providerName: NATIVE_PROVIDER,
+          providerId: "replaced-id",
+        },
+      }),
+    ).rejects.toThrow("changed identity");
+    expect(run.mock.calls.some(([args]) => args[1] === "create" || args[1] === "update")).toBe(
+      false,
+    );
   });
 
   it("registers Nous API-key inference in OpenShell without host-side persistence", async () => {
@@ -86,25 +116,20 @@ describe("Hermes provider OpenShell credential handoff", () => {
       process.env.HOME = tmp;
       const auth = loadAuth();
       const calls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+      const run = nativeRunner();
       const state = await auth.ensureHermesProviderApiKeyCredentials("my-assistant", {
         apiKey: "nous-key-1",
         runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
           calls.push({ args, env: opts.env });
-          return args[1] === "get"
-            ? {
-                status: 1,
-                stdout: "",
-                stderr: "provider 'hermes-provider' not found",
-              }
-            : { status: 0, stdout: "", stderr: "" };
+          return run(args, opts);
         },
       });
 
       expect(state.auth_method).toBe("api_key");
       expect(state.credential_env).toBe("NOUS_API_KEY");
-      expect(calls.some((call) => call.args.includes("hermes-provider"))).toBe(true);
-      expect(calls.some((call) => call.args.includes("NOUS_API_KEY"))).toBe(true);
-      expect(calls.some((call) => call.env?.NOUS_API_KEY === "nous-key-1")).toBe(true);
+      expect(calls.some((call) => call.args.includes(NATIVE_PROVIDER))).toBe(true);
+      expect(calls.some((call) => call.args.includes("OPENAI_API_KEY"))).toBe(true);
+      expect(calls.some((call) => call.env?.OPENAI_API_KEY === "nous-key-1")).toBe(true);
       expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
     } finally {
       if (originalHome === undefined) delete process.env.HOME;
@@ -121,6 +146,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       const auth = loadAuth();
       const fetchCalls: Array<{ url: string; auth: string | null; body: string }> = [];
       const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+      const run = nativeRunner();
       const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
         allowInteractiveLogin: true,
         fetch: (async (url, init) => {
@@ -158,7 +184,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
               api_key: "agent-key-1",
               key_id: "agent-key-id",
               expires_in: 1800,
-              inference_base_url: "https://staging.nous.example/v1",
+              inference_base_url: "https://inference-api.nousresearch.com/v1",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
@@ -167,26 +193,20 @@ describe("Hermes provider OpenShell credential handoff", () => {
         noBrowser: true,
         runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
           providerCalls.push({ args, env: opts.env });
-          return args[1] === "get"
-            ? {
-                status: 1,
-                stdout: "",
-                stderr: "provider 'hermes-provider' not found",
-              }
-            : { status: 0, stdout: "", stderr: "" };
+          return run(args, opts);
         },
       });
 
       expect(state.auth_method).toBe("oauth");
       expect(state.credential_env).toBe("OPENAI_API_KEY");
-      expect(state.inference_base_url).toBe("https://staging.nous.example/v1");
+      expect(state.inference_base_url).toBe("https://inference-api.nousresearch.com/v1");
       expect(fetchCalls.some((call) => call.auth === "Bearer access-2")).toBe(true);
       expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1")).toBe(true);
       expect(
         providerCalls.some((call) =>
-          call.args.includes("OPENAI_BASE_URL=https://staging.nous.example/v1"),
+          call.args.includes("OPENAI_BASE_URL=https://inference-api.nousresearch.com/v1"),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
     } finally {
       if (originalHome === undefined) delete process.env.HOME;
@@ -215,6 +235,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
         },
       });
       const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+      const run = nativeRunner();
       const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
         allowInteractiveLogin: true,
         fetch: (async (url, init) => {
@@ -256,13 +277,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
         noBrowser: true,
         runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
           providerCalls.push({ args, env: opts.env });
-          return args[1] === "get"
-            ? {
-                status: 1,
-                stdout: "",
-                stderr: "provider 'hermes-provider' not found",
-              }
-            : { status: 0, stdout: "", stderr: "" };
+          return run(args, opts);
         },
         toolGatewayPresets: ["nous-web", "nous-audio"],
       });

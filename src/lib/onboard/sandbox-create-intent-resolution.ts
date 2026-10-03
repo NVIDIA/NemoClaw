@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
+import type { NativeHostedProviderAttachment } from "../inference/native-hosted";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { NamedMessagingChannel } from "./messaging-prep";
 import {
@@ -27,7 +27,7 @@ import {
 export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
-  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeHostedProviderAttachment?: NativeHostedProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -146,7 +146,7 @@ export function createSandboxCreateIntentResolver<
       basePolicyPath: deps.getAgentPolicyPath(input.agent) || deps.defaultPolicyPath,
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
-      nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
+      nativeHostedProviderAttachment: input.nativeHostedProviderAttachment,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: resolveSelectedChannels(input),

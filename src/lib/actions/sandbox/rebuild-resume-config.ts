@@ -42,6 +42,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly nativeHostedProviderAttachment?: import("../../inference/native-hosted").NativeHostedProviderAttachment;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -251,7 +252,16 @@ export function prepareRebuildResumeConfig(
     compatibleEndpointReasoningEffort,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
-    registryInferenceRoute,
+    registryInferenceRoute:
+      registryInferenceRoute && sb.nativeHostedProviderAttachment
+        ? {
+            ...registryInferenceRoute,
+            nativeHostedProviderAttachment: sb.nativeHostedProviderAttachment,
+          }
+        : registryInferenceRoute,
+    ...(sb.nativeHostedProviderAttachment
+      ? { nativeHostedProviderAttachment: sb.nativeHostedProviderAttachment }
+      : {}),
     ambient,
   };
 }

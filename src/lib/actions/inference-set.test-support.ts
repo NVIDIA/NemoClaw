@@ -4,11 +4,7 @@
 import { vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "../inference/native-nvidia";
+import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -67,77 +63,86 @@ function nativeAwareProviderAdapter(
   base: OpenShellProviderAdapter,
   entries: SandboxEntry[],
 ): OpenShellProviderAdapter {
-  const recordedEntry = entries.find(
-    (entry) => entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
+  const states = new Map(
+    NATIVE_HOSTED_PROFILES.map((profile) => {
+      const entriesForProvider = entries.filter(
+        (entry) => entry.nativeHostedProviderAttachment?.providerName === profile.providerName,
+      );
+      return [
+        profile.providerName,
+        {
+          profile,
+          providerId:
+            entriesForProvider[0]?.nativeHostedProviderAttachment?.providerId ??
+            `id-${profile.providerName}`,
+          present: entriesForProvider.length > 0,
+          attachments: new Set(entriesForProvider.map((entry) => entry.name)),
+        },
+      ];
+    }),
   );
-  const providerId =
-    recordedEntry?.nativeNvidiaProviderAttachment?.providerId ??
-    "11111111-2222-4333-8444-555555555555";
-  let providerPresent = recordedEntry !== undefined;
-  const attachments = new Set(
-    entries
-      .filter(
-        (entry) =>
-          entry.nativeNvidiaProviderAttachment?.providerName === NVIDIA_HOSTED_NATIVE_PROVIDER,
-      )
-      .map((entry) => entry.name),
-  );
-  const isNative = (providerName: string): boolean =>
-    providerName === NVIDIA_HOSTED_NATIVE_PROVIDER;
   return {
     ...base,
     importProviderProfile: async (request) =>
-      request.profilePath.endsWith(`${NVIDIA_HOSTED_NATIVE_PROFILE_ID}.yaml`)
+      NATIVE_HOSTED_PROFILES.some((profile) =>
+        request.profilePath.endsWith(`${profile.profileId}.yaml`),
+      )
         ? ({ ok: true } as const)
         : await base.importProviderProfile(request),
     getProvider: async (request) => {
-      if (!isNative(request.providerName)) return await base.getProvider(request);
-      if (!providerPresent) {
+      const state = states.get(request.providerName);
+      if (!state) return await base.getProvider(request);
+      if (!state.present)
         return {
           ok: false,
           error: { kind: "command", reason: "not_found", message: "provider not found" },
         } as const;
-      }
       return {
         ok: true,
         value: {
-          name: NVIDIA_HOSTED_NATIVE_PROVIDER,
-          type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          credentialKeys: [NVIDIA_HOSTED_CREDENTIAL_ENV],
+          name: state.profile.providerName,
+          type: state.profile.profileId,
+          credentialKeys: [state.profile.credentialEnv],
           configKeys: [],
-          revision: { id: providerId, resourceVersion: 1 },
+          revision: { id: state.providerId, resourceVersion: 1 },
         },
       } as const;
     },
     createProvider: async (request) => {
-      if (!isNative(request.name)) return await base.createProvider(request);
-      providerPresent = true;
+      const state = states.get(request.name);
+      if (!state) return await base.createProvider(request);
+      state.present = true;
       return { ok: true } as const;
     },
     updateProvider: async (request) => {
-      if (!isNative(request.providerName)) return await base.updateProvider(request);
-      providerPresent = true;
+      const state = states.get(request.providerName);
+      if (!state) return await base.updateProvider(request);
+      state.present = true;
       return { ok: true } as const;
     },
     attachProvider: async (request) => {
-      if (!isNative(request.providerName)) return await base.attachProvider(request);
-      attachments.add(request.sandboxName);
+      const state = states.get(request.providerName);
+      if (!state) return await base.attachProvider(request);
+      state.attachments.add(request.sandboxName);
       return { ok: true } as const;
     },
     detachProvider: async (request) => {
-      if (!isNative(request.providerName)) return await base.detachProvider(request);
-      const changed = attachments.delete(request.sandboxName);
-      return { ok: true, value: { changed } } as const;
-    },
-    listProviderAttachments: async (request) => {
-      if (!providerPresent) return await base.listProviderAttachments(request);
+      const state = states.get(request.providerName);
+      if (!state) return await base.detachProvider(request);
       return {
         ok: true,
-        value: {
-          names: attachments.has(request.sandboxName) ? [NVIDIA_HOSTED_NATIVE_PROVIDER] : [],
-        },
+        value: { changed: state.attachments.delete(request.sandboxName) },
       } as const;
     },
+    listProviderAttachments: async (request) =>
+      ({
+        ok: true,
+        value: {
+          names: [...states.values()]
+            .filter((state) => state.present && state.attachments.has(request.sandboxName))
+            .map((state) => state.profile.providerName),
+        },
+      }) as const,
   };
 }
 
@@ -306,7 +311,17 @@ export function createDeps(options: {
     setOpenClawConfigValues: vi.fn(),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
-    updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
+    updateSandbox: vi.fn(
+      options.updateSandbox ??
+        ((name, patch) => {
+          const entry = sandboxes[name];
+          if (!entry) return false;
+          sandboxes[name] = { ...entry, ...patch };
+          const index = entries.findIndex((candidate) => candidate.name === name);
+          if (index >= 0) entries[index] = sandboxes[name];
+          return true;
+        }),
+    ),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();

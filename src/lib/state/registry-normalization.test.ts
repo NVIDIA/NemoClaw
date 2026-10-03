@@ -39,6 +39,66 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  it("reads Slice 1 NVIDIA receipts and persists the generalized field without losing identity (#12589)", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "original-provider-id",
+    };
+    const { home, registry } = await loadRegistryDocument({
+      sandboxes: {
+        alpha: { name: "alpha", provider: "nvidia-prod", nativeNvidiaProviderAttachment: receipt },
+      },
+    });
+    expect(registry.getSandbox("alpha")?.nativeHostedProviderAttachment).toEqual(receipt);
+    registry.updateSandbox("alpha", { model: "next-model" });
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+    );
+    expect(saved.sandboxes.alpha.nativeHostedProviderAttachment).toEqual(receipt);
+    expect(saved.sandboxes.alpha).not.toHaveProperty("nativeNvidiaProviderAttachment");
+    registry.updateSandbox("alpha", { nativeHostedProviderAttachment: undefined });
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("nativeHostedProviderAttachment");
+  });
+
+  it("retains pending native cleanup through reload until confirmed removal (#12589)", async () => {
+    const pending = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "old-provider",
+    };
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        provider: "ollama-local",
+        pendingNativeHostedProviderDetach: pending,
+      },
+    });
+    registry.updateSandbox("alpha", { model: "next-model" });
+    expect(registry.load().sandboxes.alpha.pendingNativeHostedProviderDetach).toEqual(pending);
+    registry.updateSandbox("alpha", { pendingNativeHostedProviderDetach: undefined });
+    expect(registry.load().sandboxes.alpha).not.toHaveProperty("pendingNativeHostedProviderDetach");
+  });
+
+  it("rejects a pending cleanup receipt with a foreign provider name (#12589)", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        pendingNativeHostedProviderDetach: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "foreign",
+          providerId: "old",
+        },
+      },
+    });
+    expect(() => registry.getSandbox("alpha")).toThrow(
+      "Invalid pending native inference detach receipt",
+    );
+  });
+
   it("persists incomplete OpenClaw synchronization until explicit completion", async () => {
     const registry = await loadRegistryWith({
       alpha: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },

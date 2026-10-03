@@ -263,6 +263,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("src", "lib", "providerless-inference.ts"));
+    writeFixture("src/lib/inference/native-hosted/openrouter-headers.ts");
     for (const relativePath of [
       "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),

@@ -90,7 +90,7 @@ describe("runInferenceSet local-provider verification", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not run local validation or force --no-verify for cloud providers", async () => {
+  it("does not run local validation or mutate the shared route for native cloud providers", async () => {
     const deps = createDeps({
       config: localConfig(),
       session: baseSession(),
@@ -100,7 +100,6 @@ describe("runInferenceSet local-provider verification", () => {
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).not.toContain("--no-verify");
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
   });
 });

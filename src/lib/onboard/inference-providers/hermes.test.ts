@@ -355,3 +355,51 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 });
+
+describe("native Hermes inference preparation", () => {
+  it("uses the canonical endpoint without custom DNS rewriting and forwards provider identity", async () => {
+    const lookup = vi.fn(() => {
+      throw new Error("must not resolve");
+    });
+    const deps = makeDeps({ resolveHermesNousApiKey: vi.fn(() => "nous-key"), lookup });
+    const expected = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-hermes-inference-v1",
+      providerName: "nemoclaw-hermes-provider-v1",
+      providerId: "recorded-id",
+    };
+    await expect(
+      setupHermesProviderInference(
+        {
+          ...makeArgs("https://inference-api.nousresearch.com/v1"),
+          nativeProvider: true,
+          expectedNativeProviderAttachment: expected,
+        },
+        deps as any,
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ expected }),
+    );
+    expect(lookup).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a noncanonical native endpoint before credential acquisition", async () => {
+    const deps = makeDeps();
+    await expect(
+      setupHermesProviderInference(
+        {
+          ...makeArgs("https://different.example/v1"),
+          nativeProvider: true,
+        },
+        deps as any,
+      ),
+    ).rejects.toThrow("canonical endpoint");
+    expect(deps.checkHermesProviderStoreReachable).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+  });
+});

@@ -244,7 +244,7 @@ export function openAiProviderProfile() {
   };
 }
 
-export function nativeNvidiaProvider() {
+export function nativeHostedProvider() {
   return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
 }
 

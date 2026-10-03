@@ -8,7 +8,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
-import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
+import { normalizeNativeHostedProviderAttachment } from "../inference/native-hosted";
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
@@ -477,10 +477,10 @@ export function registerSandbox(
         );
       }
     }
-    const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-      entry.nativeNvidiaProviderAttachment,
+    const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(
+      entry.nativeHostedProviderAttachment ?? entry.nativeNvidiaProviderAttachment,
     );
-    if (entry.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    if (entry.nativeHostedProviderAttachment !== undefined && !nativeHostedProviderAttachment) {
       throw new Error(
         "Cannot register a sandbox with an invalid native NVIDIA provider attachment",
       );
@@ -535,7 +535,7 @@ export function registerSandbox(
           : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-      ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -586,7 +586,7 @@ type SandboxInferenceRouteReservation = Pick<
   reservationSessionId?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
@@ -628,10 +628,10 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
-    const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-      route.nativeNvidiaProviderAttachment,
+    const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(
+      route.nativeHostedProviderAttachment,
     );
-    if (route.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    if (route.nativeHostedProviderAttachment !== undefined && !nativeHostedProviderAttachment) {
       throw new Error("Cannot reserve invalid native NVIDIA provider attachment identity");
     }
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
@@ -692,8 +692,8 @@ export function reserveSandboxInferenceRoute(
             route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
           ) &&
           isDeepStrictEqual(
-            existing.nativeNvidiaProviderAttachment,
-            nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
+            existing.nativeHostedProviderAttachment,
+            nativeHostedProviderAttachment ?? existing.nativeHostedProviderAttachment,
           ) &&
           isDeepStrictEqual(
             normalizeInferenceSelection(existing),
@@ -735,7 +735,7 @@ export function reserveSandboxInferenceRoute(
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),
       ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
-      ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
       gatewayName: route.gatewayName,
       gatewayPort:
         route.gatewayPort ??

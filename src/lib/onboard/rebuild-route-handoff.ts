@@ -43,6 +43,13 @@ export function createRebuildRouteHandoff(
     endpointSource: route.endpointSource ?? null,
     preferredInferenceApi: route.preferredInferenceApi,
     source: "registry",
+    ...(route.nativeHostedProviderAttachment
+      ? {
+          nativeHostedProviderAttachment: Object.freeze({
+            ...route.nativeHostedProviderAttachment,
+          }),
+        }
+      : {}),
   });
   return Object.freeze({ sandboxName, route: frozenRoute });
 }
@@ -116,6 +123,13 @@ function freezeRoute(route: RegistryInferenceRoute): RegistryInferenceRoute {
     endpointSource: route.endpointSource ?? null,
     preferredInferenceApi: route.preferredInferenceApi,
     source: "registry",
+    ...(route.nativeHostedProviderAttachment
+      ? {
+          nativeHostedProviderAttachment: Object.freeze({
+            ...route.nativeHostedProviderAttachment,
+          }),
+        }
+      : {}),
   });
 }
 
@@ -125,7 +139,13 @@ function routesMatch(left: RegistryInferenceRoute, right: RegistryInferenceRoute
     left.model === right.model &&
     left.endpointUrl === right.endpointUrl &&
     (left.endpointSource ?? null) === (right.endpointSource ?? null) &&
-    left.preferredInferenceApi === right.preferredInferenceApi
+    left.preferredInferenceApi === right.preferredInferenceApi &&
+    left.nativeHostedProviderAttachment?.profileId ===
+      right.nativeHostedProviderAttachment?.profileId &&
+    left.nativeHostedProviderAttachment?.providerName ===
+      right.nativeHostedProviderAttachment?.providerName &&
+    left.nativeHostedProviderAttachment?.providerId ===
+      right.nativeHostedProviderAttachment?.providerId
   );
 }
 

@@ -2,13 +2,66 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import type { OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
+import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it("retains failed native detach intent and reconciles it before another switch", async () => {
+    const old = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "old-provider",
+    };
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old",
+        nativeHostedProviderAttachment: old,
+      },
+    });
+    const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+    detach.mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "unknown", message: "detach failed", status: 1 },
+    } as any);
+    await expect(
+      runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps),
+    ).rejects.toThrow("detach failed");
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "openai-api",
+        pendingNativeHostedProviderDetach: old,
+        nativeHostedProviderAttachment: expect.objectContaining({
+          providerName: "nemoclaw-openai-api-v1",
+        }),
+      }),
+    );
+    const attach = vi.spyOn(deps.providerAdapter, "attachProvider");
+    await runInferenceSet({ provider: "gemini-api", model: "gemini-test", noVerify: true }, deps);
+    expect(detach.mock.calls[1][0].providerName).toBe(old.providerName);
+    expect(detach.mock.invocationCallOrder[1]).toBeLessThan(attach.mock.invocationCallOrder[0]);
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { names: ["nemoclaw-gemini-api-v1"] },
+    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
+      pendingNativeHostedProviderDetach: undefined,
+    });
+  });
+
   it("requires recreation instead of silently migrating a legacy NVIDIA sandbox", async () => {
     const deps = createDeps({
       config: {},
@@ -28,31 +81,6 @@ describe("runInferenceSet OpenClaw routing", () => {
   });
 
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
-    let attached = true;
-    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
-      attached = false;
-      return { ok: true, value: { changed: true } };
-    });
-    const providerAdapter = {
-      getProvider: vi.fn(async () => ({
-        ok: true,
-        value: {
-          name: "nemoclaw-nvidia-prod-v1",
-          type: "nemoclaw-nvidia-inference-v1",
-          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-          configKeys: [],
-          revision: {
-            id: "11111111-2222-4333-8444-555555555555",
-            resourceVersion: 1,
-          },
-        },
-      })),
-      detachProvider,
-      listProviderAttachments: vi.fn(async () => ({
-        ok: true,
-        value: { names: attached ? ["nemoclaw-nvidia-prod-v1"] : [] },
-      })),
-    } as unknown as OpenShellProviderAdapter;
     const deps = createDeps({
       config: {
         agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
@@ -63,15 +91,16 @@ describe("runInferenceSet OpenClaw routing", () => {
         agent: "openclaw",
         provider: "nvidia-prod",
         model: "nvidia/old-model",
-        nativeNvidiaProviderAttachment: {
+        nativeHostedProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",
           providerName: "nemoclaw-nvidia-prod-v1",
           providerId: "11111111-2222-4333-8444-555555555555",
         },
       },
-      providerAdapter,
     });
+
+    const detachProvider = vi.spyOn(deps.providerAdapter, "detachProvider");
 
     await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
 
@@ -85,9 +114,87 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.restartSandboxGateway.mock.invocationCallOrder[0]).toBeLessThan(
       detachProvider.mock.invocationCallOrder[0],
     );
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      nativeNvidiaProviderAttachment: undefined,
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeHostedProviderAttachment: expect.objectContaining({
+          profileId: "nemoclaw-openai-inference-v1",
+          providerName: "nemoclaw-openai-api-v1",
+        }),
+      }),
+    );
+    expect(
+      deps.calls.updateSandbox.mock.calls.some(
+        ([, patch]) =>
+          Object.hasOwn(patch, "nativeHostedProviderAttachment") &&
+          patch.nativeHostedProviderAttachment === undefined,
+      ),
+    ).toBe(false);
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
+  it.each(
+    NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "hermes-provider"),
+  )("changes only the selected sandbox's native $label attachment (#12589)", async (profile) => {
+    const original = NATIVE_HOSTED_PROFILES.find(
+      (candidate) => candidate.logicalProvider === "nvidia-prod",
+    )!;
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: original.profileId,
+      providerName: original.providerName,
+      providerId: "original-provider",
+    };
+    const deps = createDeps({
+      config: {},
+      entries: [
+        {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "old",
+          nativeHostedProviderAttachment: receipt,
+        },
+        {
+          name: "beta",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "peer-model",
+          nativeHostedProviderAttachment: receipt,
+        },
+      ],
     });
+    await runInferenceSet(
+      {
+        sandboxName: "alpha",
+        provider: profile.logicalProvider,
+        model: "new-model",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+      }),
+    ).toEqual({ ok: true, value: { names: [profile.providerName] } });
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "beta",
+      }),
+    ).toEqual({ ok: true, value: { names: [original.providerName] } });
+    expect(deps.calls.updateSandbox.mock.calls.every(([name]) => name === "alpha")).toBe(true);
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -300,7 +407,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         credentialEnv: null,
         nimContainer: null,
         preferredInferenceApi: null,
-        nativeNvidiaProviderAttachment: expect.objectContaining({
+        nativeHostedProviderAttachment: expect.objectContaining({
           providerName: "nemoclaw-nvidia-prod-v1",
         }),
       }),

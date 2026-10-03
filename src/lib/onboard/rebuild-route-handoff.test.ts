@@ -204,3 +204,19 @@ describe("createProviderRecoveryReceiptLedger", () => {
     ).toBe(false);
   });
 });
+
+it("preserves an immutable native provider identity across destructive rebuild handoff", () => {
+  const attachment = {
+    schemaVersion: 1 as const,
+    profileId: "nemoclaw-openai-inference-v1",
+    providerName: "nemoclaw-openai-api-v1",
+    providerId: "recorded-id",
+  };
+  const handoff = createRebuildRouteHandoff("alpha", {
+    ...registryRoute(),
+    nativeHostedProviderAttachment: attachment,
+  });
+  attachment.providerId = "changed";
+  expect(handoff.route.nativeHostedProviderAttachment?.providerId).toBe("recorded-id");
+  expect(Object.isFrozen(handoff.route.nativeHostedProviderAttachment)).toBe(true);
+});

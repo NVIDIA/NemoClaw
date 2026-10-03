@@ -16,6 +16,8 @@ import {
   resolveManagedDcodeIdentity,
 } from "../../src/lib/inference/managed-dcode/identity.ts";
 
+import { OPENROUTER_DEFAULT_HEADERS } from "../../src/lib/inference/native-hosted/openrouter-headers.ts";
+
 type ReasoningEffort = "low" | "medium" | "high";
 
 type Settings = {
@@ -164,6 +166,15 @@ function providerConfigLines(
     'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
     `base_url = ${tomlString(baseUrl)}`,
     "enabled = true",
+    ...(provider === "openrouter"
+      ? [
+          "",
+          "[models.providers.openrouter.params.default_headers]",
+          ...OPENROUTER_DEFAULT_HEADERS.map(
+            ([name, value]) => `${tomlString(name)} = ${tomlString(value)}`,
+          ),
+        ]
+      : []),
     ...(provider === "openai"
       ? [
           "",

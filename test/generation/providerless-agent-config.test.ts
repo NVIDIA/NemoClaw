@@ -268,7 +268,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       ),
     ).toBe(false);
   });
-  it("leaves generated configuration absent when the later route update fails", async () => {
+  it("leaves generated configuration absent when native provider attachment fails", async () => {
     const generated = generate(agent, dockerEnvironment(agent));
     expect(generated.result.status, generated.result.stderr).toBe(0);
     const config = generated.read();
@@ -276,7 +276,10 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       config,
       entry: { name: "alpha", agent, provider: null, model: null },
       target: agent === "hermes" ? HERMES_TARGET : OPENCLAW_TARGET,
-      openshellStatus: 1,
+    });
+    deps.providerAdapter.attachProvider = async () => ({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "sandbox missing" },
     });
     await expect(
       runInferenceSet(

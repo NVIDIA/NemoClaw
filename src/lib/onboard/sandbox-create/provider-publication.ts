@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_HOSTED_PROFILES } from "../../inference/native-hosted/profiles";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
@@ -10,10 +11,7 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import {
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-  verifyNativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
+import { verifyNativeHostedProviderAttachment } from "../../inference/native-hosted";
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -64,24 +62,24 @@ function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProvide
   );
 }
 
-export function usesNativeNvidiaProvider(inferenceProvider: string | null): boolean {
-  return inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER;
+export function usesNativeHostedProvider(inferenceProvider: string | null): boolean {
+  return NATIVE_HOSTED_PROFILES.some((profile) => profile.providerName === inferenceProvider);
 }
 
-export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
+export async function verifyNativeHostedAttachmentAfterCreate(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly inferenceProvider: string | null;
-  readonly expected: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expected: SandboxEntry["nativeHostedProviderAttachment"];
   readonly deps: ProviderPreparationDeps;
 }): Promise<void> {
-  if (!usesNativeNvidiaProvider(input.inferenceProvider)) return;
+  if (!usesNativeHostedProvider(input.inferenceProvider)) return;
   if (!input.expected) {
     throw new Error(
-      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+      `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
     );
   }
-  await verifyNativeNvidiaProviderAttachment({
+  await verifyNativeHostedProviderAttachment({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,

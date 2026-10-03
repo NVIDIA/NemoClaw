@@ -112,15 +112,15 @@ describe("buildCreatedSandboxRegistryEntry", () => {
           compatibleEndpointReasoningEffort: null,
           nimContainer: null,
         },
-        nativeNvidiaProviderAttachment: attachment,
+        nativeHostedProviderAttachment: attachment,
       }),
     );
 
-    expect(entry.nativeNvidiaProviderAttachment).toEqual(attachment);
+    expect(entry.nativeHostedProviderAttachment).toEqual(attachment);
     expect(() =>
       buildCreatedSandboxRegistryEntry(
         createdRegistryEntryInput({
-          nativeNvidiaProviderAttachment: { ...attachment, providerId: "" },
+          nativeHostedProviderAttachment: { ...attachment, providerId: "" },
         }),
       ),
     ).toThrow(/native NVIDIA provider attachment failed closed validation/u);

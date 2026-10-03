@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../inference/native-hosted/profiles";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
 import type {
@@ -21,10 +22,9 @@ import {
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import {
-  isNativeNvidiaProvider,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-  normalizeNativeNvidiaProviderAttachment,
-} from "../inference/native-nvidia";
+  isNativeHostedProvider,
+  normalizeNativeHostedProviderAttachment,
+} from "../inference/native-hosted";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
 import { valueLooksLikeSecret } from "../security/credential-filter";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
@@ -313,15 +313,23 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
+  const receipt = normalizeNativeHostedProviderAttachment(
+    selectedSandbox?.nativeHostedProviderAttachment,
+  );
+  if (receipt && nativeHostedProfile(selectedSandbox?.provider)?.profileId !== receipt.profileId) {
+    throw new InferenceGetError(
+      "Recorded native inference provider does not match the selected provider.",
+    );
+  }
   if (
     selectedSandbox &&
-    isNativeNvidiaProvider(selectedSandbox.provider) &&
-    normalizeNativeNvidiaProviderAttachment(selectedSandbox.nativeNvidiaProviderAttachment)
+    isNativeHostedProvider(selectedSandbox.provider) &&
+    normalizeNativeHostedProviderAttachment(selectedSandbox.nativeHostedProviderAttachment)
   ) {
     const payload: InferenceGetResult = {
       provider: selectedSandbox.provider ?? null,
       model: selectedSandbox.model ?? null,
-      endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      endpointUrl: nativeHostedProfile(selectedSandbox.provider)!.endpoint,
     };
     if (!options.quiet) {
       if (options.json) {
@@ -329,7 +337,9 @@ export async function runInferenceGet(
       } else {
         deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
         deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
-        deps.log(`Endpoint: ${formatRouteValueForDisplay(NVIDIA_HOSTED_NATIVE_ENDPOINT)}`);
+        deps.log(
+          `Endpoint: ${formatRouteValueForDisplay(nativeHostedProfile(selectedSandbox.provider)!.endpoint)}`,
+        );
       }
     }
     return payload;

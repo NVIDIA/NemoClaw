@@ -37,3 +37,14 @@ describe("managed llama.cpp OpenClaw compatibility", () => {
     expect(model.compat?.toolSchemaProfile).toBeUndefined();
   });
 });
+
+describe("managed OpenRouter attribution", () => {
+  it("adds static attribution only for OpenRouter requests", () => {
+    const config = buildLlamaCppConfig("openrouter-api");
+    expect(config.models.providers.inference.headers).toEqual({
+      "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
+      "X-OpenRouter-Title": "NVIDIA NemoClaw",
+    });
+    expect(buildLlamaCppConfig("gemini-api").models.providers.inference.headers).toBeUndefined();
+  });
+});

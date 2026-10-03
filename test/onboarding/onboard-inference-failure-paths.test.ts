@@ -113,11 +113,20 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
-      "EXIT_CALLED:1",
-    );
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "gpt-test",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(harness.errors).toEqual(["  Unsupported provider configuration: openai-api"]);
+    expect(harness.errors).toEqual(["  Unsupported provider configuration: compatible-endpoint"]);
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(setupBedrockRuntimeInference).not.toHaveBeenCalled();
@@ -142,18 +151,27 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
-      "EXIT_CALLED:1",
-    );
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "gpt-test",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toThrow("EXIT_CALLED:1");
 
     expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
-    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
     expect(upsertProvider).not.toHaveBeenCalled();
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(harness.errors).toEqual([
-      "  A host credential is required to configure provider 'openai-api'.",
+      "  A host credential is required to configure provider 'compatible-endpoint'.",
     ]);
     expectNoPostFailureSideEffects(harness);
   });
@@ -179,19 +197,28 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
-      "EXIT_CALLED:23",
-    );
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "gpt-test",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toThrow("EXIT_CALLED:23");
 
     expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
-    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
     expect(upsertProvider).toHaveBeenCalledOnce();
     expect(upsertProvider).toHaveBeenCalledWith(
-      "openai-api",
+      "compatible-endpoint",
       "openai",
-      "OPENAI_API_KEY",
+      "COMPATIBLE_API_KEY",
       expect.any(String),
-      { OPENAI_API_KEY: "openai-secret" },
+      { COMPATIBLE_API_KEY: "openai-secret" },
       "nemoclaw",
       { revalidateSandboxIdentity: expect.any(Function) },
     );
@@ -227,9 +254,18 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
-      "EXIT_CALLED:37",
-    );
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "gpt-test",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toThrow("EXIT_CALLED:37");
 
     expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
     expect(upsertProvider).toHaveBeenCalledOnce();
@@ -240,7 +276,7 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors.join("\n")).toContain("route failed");
     expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
-      "inference set -g nemoclaw --no-verify --provider openai-api --model gpt-test",
+      "inference set -g nemoclaw --no-verify --provider compatible-endpoint --model gpt-test --timeout 180",
     ]);
   });
 
@@ -860,7 +896,7 @@ describe("setupInference dependency failures", () => {
     ]);
   });
 
-  it("uses an injected Hermes DNS lookup before rejecting an unpinnable HTTPS endpoint", async () => {
+  it("rejects noncanonical native Hermes endpoints before DNS lookup", async () => {
     const exitProcess = createInjectedExit();
     const lookup = vi.fn<NonNullable<SetupInferenceDeps["lookup"]>>(async () => [
       { address: "8.8.8.8", family: 4 },
@@ -874,9 +910,9 @@ describe("setupInference dependency failures", () => {
         "hermes-provider",
         "https://api.public.example.test/v1",
       ),
-    ).rejects.toThrow("DNS-backed HTTPS URLs are not supported");
+    ).rejects.toThrow("native inference requires its canonical endpoint");
 
-    expect(lookup).toHaveBeenCalledWith("api.public.example.test", { all: true });
+    expect(lookup).not.toHaveBeenCalled();
     expect(exitProcess).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
   });

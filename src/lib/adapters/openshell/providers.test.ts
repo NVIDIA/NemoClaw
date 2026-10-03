@@ -66,7 +66,7 @@ function fixture() {
   return { raw, connect };
 }
 
-function nativeNvidiaFixture() {
+function nativeHostedFixture() {
   const fixtureValue = fixture();
   const profile = {
     id: "nvidia",
@@ -366,7 +366,7 @@ describe("OpenShell provider evidence", () => {
   });
 
   it("verifies the native NVIDIA endpoint through the named gateway profile", async () => {
-    const { connect, raw } = nativeNvidiaFixture();
+    const { connect, raw } = nativeHostedFixture();
     const input = request();
     const result = await createProviders(connect).get(input);
     expect(result).toMatchObject({
@@ -407,7 +407,7 @@ describe("OpenShell provider evidence", () => {
       },
     },
   ])("rejects NVIDIA profile evidence with $label", async ({ change }) => {
-    const { connect, raw, profile } = nativeNvidiaFixture();
+    const { connect, raw, profile } = nativeHostedFixture();
     raw.getProviderProfile.mockResolvedValue({ profile: { ...profile, ...change } });
     await expect(createProviders(connect).get(request())).rejects.toMatchObject({
       kind: "schema",
@@ -421,7 +421,7 @@ describe("OpenShell provider evidence", () => {
     { profileWorkspace: "", config: { NVIDIA_BASE_URL: "https://different.example/v1" } },
     { profileWorkspace: "", config: { UNUSED: canary } },
   ])("does not infer a builtin endpoint for NVIDIA overrides %#", async (change) => {
-    const { connect, raw } = nativeNvidiaFixture();
+    const { connect, raw } = nativeHostedFixture();
     raw.getProvider.mockResolvedValue({
       provider: { ...provider().provider, type: "nvidia", ...change },
     });
@@ -437,7 +437,7 @@ describe("OpenShell provider evidence", () => {
     { code: 4, kind: "timeout" },
     { code: 14, kind: "transport" },
   ])("stops when NVIDIA profile verification fails with status $code", async ({ code, kind }) => {
-    const { connect, raw } = nativeNvidiaFixture();
+    const { connect, raw } = nativeHostedFixture();
     raw.getProviderProfile.mockRejectedValue({ code, message: canary });
     await expect(createProviders(connect).get(request())).rejects.toMatchObject({
       kind,
