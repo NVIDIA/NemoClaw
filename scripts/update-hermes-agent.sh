@@ -199,7 +199,7 @@ installed_copy_schema_error() {
       "validate-hermes-env-secret-boundary.py" \
       "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env" \
       "hermes-mcp-config-transaction.py" \
-      "openshell-child-visible-credentials.v0.0.116.json" \
+      "openshell-child-visible-credentials.v0.1.2.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
       "node /opt/nemoclaw-hermes-config/generate-config.ts"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")

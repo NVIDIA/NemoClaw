@@ -289,7 +289,7 @@ export function checkUpstreamGatewayVersion(
       version,
       message:
         `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
-        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
+        "Install exact stable OpenShell 0.1.2 before retrying NemoClaw.",
     };
   }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();

@@ -11,7 +11,7 @@ import {
   resolveCredentialEnv,
   validateMcpCredentialEnvName,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.116.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.1.2.json";
 
 const CHILD_VISIBLE_CREDENTIAL_CASES = [
   {
