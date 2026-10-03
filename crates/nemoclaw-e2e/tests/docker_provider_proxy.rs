@@ -137,6 +137,8 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
             .as_bytes(),
     )
     .unwrap();
+    // Plans read sandbox image metadata from the gateway engine; serve the fixture's.
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let name = format!("{}-ollama-proxy-ollama-auth", document.workspace());
     let volume = format!("{name}-auth");
     let engine = Engine::connect(ENGINE).unwrap();
@@ -227,23 +229,18 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
         .unwrap();
     assert!(!String::from_utf8_lossy(&established).contains(std::str::from_utf8(&key).unwrap()));
     // Credentials remain an application contract even when provider apply is a no-op.
-    docker(&[
-        "exec",
-        &id,
-        "python3",
-        "-c",
-        "import os; os.chmod('/data/inference-key', 0o644)",
-    ]);
+    // The proxy image has no shell, so rewrite the key through Docker's archive API.
+    engine
+        .write_files(&id, "/data", &[("inference-key", &key, 0o644)])
+        .await
+        .unwrap();
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert!(deployment.apply(&document, &cancel).await.is_err());
     assert_same_bindings(&fs::read(&state_path).unwrap(), &established);
-    docker(&[
-        "exec",
-        &id,
-        "python3",
-        "-c",
-        "import os; os.chmod('/data/inference-key', 0o600)",
-    ]);
+    engine
+        .write_files(&id, "/data", &[("inference-key", &key, 0o600)])
+        .await
+        .unwrap();
     let original_volume = engine.volume(&volume).await.unwrap().unwrap();
     let mut changed = serde_json::to_value(&document).unwrap();
     changed["spec"]["services"]["ollama-auth"]["image"] = json!(replacement_image);

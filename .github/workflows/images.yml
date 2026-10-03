@@ -8,6 +8,8 @@ on:
     branches: [v1]
     paths:
       - image/**
+      - crates/nemoclaw-ollama-proxy/**
+      - Cargo.lock
       - docker-bake.hcl
       - .dockerignore
       - ruff.toml

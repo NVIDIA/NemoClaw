@@ -2150,6 +2150,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-ollama-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "nemoclaw-onboarding"
 version = "0.1.0"
 dependencies = [

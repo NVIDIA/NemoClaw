@@ -120,6 +120,7 @@ The AMD64 builds and image tests do not establish successful gateway provisionin
 On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `python3 image/build_fabric.py --platform linux/arm64 agents`.
 `AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
 The proxy and its `proxy-tests` target use the same explicit platform selector.
+The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary from [its crate](../crates/nemoclaw-ollama-proxy) and its license, with no shell or interpreter.
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).

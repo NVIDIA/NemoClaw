@@ -75,6 +75,12 @@ class ImageBuilds(unittest.TestCase):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})
 
+    def test_proxy_runs_its_rust_binary_without_an_interpreter(self):
+        dockerfile = (ROOT / "image/ollama-proxy/Dockerfile").read_text()
+        self.assertIn("FROM scratch AS runtime", dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/local/bin/nemoclaw-ollama-proxy"]', dockerfile)
+        self.assertNotIn("python", dockerfile.lower())
+
     def test_proxy_and_its_tests_use_the_selected_platform(self):
         for platform in ("linux/arm64", "linux/amd64"):
             targets = self.plan("ollama-proxy", "proxy-tests", platform=platform)["target"]
