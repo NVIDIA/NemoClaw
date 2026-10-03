@@ -4,6 +4,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +38,7 @@ type SetupJetsonRun = {
 
 function withJetsonReleaseSandbox<T>(
   run: (paths: { headArgsPath: string; releasePath: string; stubDir: string }) => T,
+  stubBodies: Partial<Record<string, string>> = {},
 ): T {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-jetson-release-"));
 
@@ -45,9 +47,9 @@ function withJetsonReleaseSandbox<T>(
     const headArgsPath = path.join(tempDir, "head-args");
     const releasePath = path.join(tempDir, "nv_tegra_release");
     mkdirSync(stubDir);
-    for (const command of HOST_MUTATION_COMMANDS) {
+    for (const command of new Set([...HOST_MUTATION_COMMANDS, ...Object.keys(stubBodies)])) {
       const stubPath = path.join(stubDir, command);
-      writeFileSync(stubPath, "#!/usr/bin/env bash\nexit 0\n");
+      writeFileSync(stubPath, `#!/usr/bin/env bash\n${stubBodies[command] ?? "exit 0"}\n`);
       chmodSync(stubPath, 0o755);
     }
 
@@ -94,11 +96,14 @@ function spawnSetupJetson(
   };
 }
 
-function runSetupJetson(releaseLine: string): SetupJetsonRun {
+function runSetupJetson(
+  releaseLine: string,
+  stubBodies: Partial<Record<string, string>> = {},
+): SetupJetsonRun {
   return withJetsonReleaseSandbox(({ headArgsPath, releasePath, stubDir }) => {
     writeFileSync(releasePath, `${releaseLine}\n`);
     return spawnSetupJetson(stubDir, headArgsPath);
-  });
+  }, stubBodies);
 }
 
 function runSetupJetsonWithoutReleaseFile(): SetupJetsonRun {
@@ -322,4 +327,80 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
     expect(result.stdout).toContain("Jetson detected (jp6)");
     expect(result.stderr).not.toContain("Skipped Jetson host setup");
   });
+});
+
+const BRIDGE_NF_CALL_IPTABLES = "/proc/sys/net/bridge/bridge-nf-call-iptables";
+
+// The R39 path skips setup when this host already has NemoClaw's br_netfilter
+// drop-ins, which the stubs cannot hide.
+const hostHasBridgeNetfilterDropIns =
+  existsSync("/etc/modules-load.d/nemoclaw.conf") && existsSync("/etc/sysctl.d/99-nemoclaw.conf");
+
+function catReportingBridgeNetfilterAs(value: string): string {
+  return [
+    `if [[ "$1" == "${BRIDGE_NF_CALL_IPTABLES}" ]]; then`,
+    `  echo ${value}`,
+    "else",
+    '  exec /bin/cat "$@"',
+    "fi",
+  ].join("\n");
+}
+
+describe("setup-jetson br_netfilter failure handling (#12587)", () => {
+  const passthroughSudo = { sudo: 'exec "$@"' };
+  const failingModprobe = {
+    ...passthroughSudo,
+    modprobe: 'echo "modprobe: FATAL: Module br_netfilter not found" >&2\nexit 1',
+  };
+  const r39ReleaseLine = "# R39 (release), REVISION: 2.0, GCID: 12345678, BOARD: generic";
+
+  it.skipIf(hostHasBridgeNetfilterDropIns)(
+    "exits non-zero on L4T 39.x when br_netfilter cannot be loaded",
+    () => {
+      const result = runSetupJetson(r39ReleaseLine, failingModprobe);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Module br_netfilter not found");
+      expect(result.stdout).not.toContain("is unblocked");
+    },
+  );
+
+  it.each([
+    ["L4T 38.x", "# R38 (release), REVISION: 2.0, GCID: 12345678, BOARD: generic"],
+    ["L4T 36.x", "# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref"],
+  ])("exits non-zero on %s when br_netfilter cannot be loaded", (_label, releaseLine) => {
+    const result = runSetupJetson(releaseLine, failingModprobe);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Module br_netfilter not found");
+  });
+
+  it.skipIf(hostHasBridgeNetfilterDropIns)(
+    "exits non-zero on L4T 39.x when bridge-nf-call-iptables does not read back as 1",
+    () => {
+      const result = runSetupJetson(r39ReleaseLine, {
+        ...passthroughSudo,
+        cat: catReportingBridgeNetfilterAs("0"),
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("bridge-nf-call-iptables reads back as '0' after setup");
+      expect(result.stdout).not.toContain("is unblocked");
+    },
+  );
+
+  it.skipIf(hostHasBridgeNetfilterDropIns)(
+    "reports br_netfilter as unblocked on L4T 39.x when the setting reads back as 1",
+    () => {
+      const result = runSetupJetson(r39ReleaseLine, {
+        ...passthroughSudo,
+        cat: catReportingBridgeNetfilterAs("1"),
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Jetson detected (L4T 39.2) — loading br_netfilter");
+      expect(result.stdout).toContain("bridge-nf-call-iptables=1");
+      expect(result.stdout).toContain("is unblocked");
+    },
+  );
 });
