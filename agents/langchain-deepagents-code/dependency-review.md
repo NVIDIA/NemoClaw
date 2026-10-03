@@ -99,6 +99,11 @@ manager. It selects one exact resolved name and invokes it only when DCode marks
 it as an MCP tool and its protocol annotations are coherently read-only. It
 does not expose a mutating tool command or ask a model to choose the call.
 
+Deep Agents Code `0.1.71` assigns unique aliases to colliding server/tool names.
+The managed command checks the original server and tool identities before
+selecting an alias, so an ambiguous name still fails without invoking either
+tool.
+
 The command accepts one bounded JSON object on standard input. It returns one
 JSON envelope of at most 131,072 bytes, followed by one newline delimiter, so
 standard output is at most 131,073 bytes. It rejects oversized nested results
@@ -109,7 +114,9 @@ ambiguous, unsafe, failed, malformed, oversized, and timed-out calls. A fixed
 deadline covers discovery, invocation, and session cleanup.
 
 The installed-image validator runs the patched DCode process in progressive
-mode against a local TLS Streamable HTTP server from the installed MCP SDK. It
+mode against a local TLS Streamable HTTP server from the locked FastMCP package.
+MCP `2.0.0` no longer bundles that server implementation. The validator uses
+FastMCP's HTTP application API with the same stateless JSON transport. It
 requires one exact invocation and exact nested output-attestation fidelity. It
 also rejects missing, duplicate, unannotated, malformed, mutating, failed, and
 oversized cases, and proves that a hanging tool exits with the fixed timeout
@@ -183,7 +190,7 @@ The real-wheel test substitutes the equivalent legacy table only for its
 offline, no-isolation wrong-version fixture with the runner's older system
 setuptools; this is a known fixture limitation, not production metadata. The
 production image builds the unchanged project with lock-pinned
-`setuptools==82.0.1`, and its isolated validator fails closed unless the
+`setuptools==84.0.0`, and its isolated validator fails closed unless the
 installed wheel exposes `License-Expression: Apache-2.0`.
 
 The adapter is a private, first-party build-context package: NemoClaw does not
