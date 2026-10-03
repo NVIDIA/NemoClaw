@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
+import logging
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -110,7 +113,19 @@ url = "http://127.0.0.1:{server.server_port}/must-not-run"
             require(requests[1][2]["assistant_id"] == "fixture-graph", "wrong remote graph")
             require(requests[1][2]["input"] == {"messages": [{"role": "user", "content": "fixture task input"}]}, "wrong remote task input")
             requests.clear()
-            result, message = asyncio.run(invoke(root, descriptors, "failed"))
+            diagnostics = io.StringIO()
+            log_handler = logging.StreamHandler(diagnostics)
+            logger = logging.getLogger()
+            logger.addHandler(log_handler)
+            try:
+                with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
+                    result, message = asyncio.run(invoke(root, descriptors, "failed"))
+            finally:
+                logger.removeHandler(log_handler)
+                log_handler.close()
+            require("Failed to launch async subagent" in diagnostics.getvalue(), "remote rejection diagnostic was not captured")
+            for value in (message, json.dumps(result, default=str), diagnostics.getvalue()):
+                require("failed-fixture-header" not in value, "remote rejection exposed the descriptor credential")
             require("Failed to launch async subagent" in message, "remote rejection was hidden")
             require(not result.get("async_tasks"), "rejected request registered a running task")
             require(len(requests) == 1 and requests[0][:2] == ("/failed/threads", "failed-fixture-header"), "remote rejection caused a follow-up or misrouted request")

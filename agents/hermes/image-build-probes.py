@@ -137,6 +137,7 @@ def verify_mcp_http_proxy() -> None:
             timeout=15,
         )
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
 
         class Handler(BaseHTTPRequestHandler):

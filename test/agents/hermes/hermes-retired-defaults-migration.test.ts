@@ -111,13 +111,15 @@ function fixture() {
     legacy,
     source,
     target,
-    run() {
+    writeConfig() {
       fs.writeFileSync(path.join(home, "config.yaml"), JSON.stringify(target));
       fs.writeFileSync(path.join(legacy, "config.yaml"), JSON.stringify(source));
+    },
+    run(extraEnv: NodeJS.ProcessEnv = {}) {
       return spawnSync(
         "python3",
         ["-I", migrator, "--hermes-dir", home, "--managed-policy", policyPath],
-        { encoding: "utf8", timeout: 5000 },
+        { encoding: "utf8", timeout: 5000, env: { ...process.env, ...extraEnv } },
       );
     },
   };
@@ -127,6 +129,7 @@ describe("Hermes prior generated-default migration", () => {
   it("migrates prior generated defaults and user memory without replacing native configuration (#11763)", () => {
     const f = fixture();
     try {
+      f.writeConfig();
       const result = f.run();
       expect(result.status, result.stderr).toBe(0);
       expect(fs.existsSync(f.legacy)).toBe(false);
@@ -140,6 +143,81 @@ describe("Hermes prior generated-default migration", () => {
       fs.rmSync(f.directory, { recursive: true, force: true });
     }
   });
+
+  // SQLite migration uses directory-relative /proc/self/fd paths in Linux images.
+  it.skipIf(process.platform !== "linux")(
+    "resumes an interrupted database migration without replacing published user data (#11763)",
+    () => {
+      const f = fixture();
+      try {
+        f.writeConfig();
+        const runtime = path.join(f.home, "runtime");
+        fs.mkdirSync(runtime);
+        fs.symlinkSync("runtime/state.db", path.join(f.home, "state.db"));
+        const sourceDatabase = path.join(f.legacy, "state.db");
+        const publishedDatabase = path.join(runtime, "state.db");
+        const record = path.join(runtime, ".nemoclaw-dashboard-state-migration.json");
+        const seed = spawnSync(
+          "python3",
+          [
+            "-I",
+            "-c",
+            [
+              "import sqlite3, sys",
+              "db = sqlite3.connect(sys.argv[1])",
+              "db.execute('CREATE TABLE messages (content TEXT)')",
+              "db.execute('INSERT INTO messages VALUES (?)', ('keep this conversation',))",
+              "db.commit()",
+              "db.close()",
+            ].join("\n"),
+            sourceDatabase,
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(seed.status, seed.stderr).toBe(0);
+        const interrupted = f.run({
+          NEMOCLAW_TEST_INTERRUPT_AFTER_DASHBOARD_STATE_PUBLICATION: "1",
+        });
+        expect(interrupted.status, interrupted.stderr).toBe(1);
+        expect(interrupted.stderr).toContain("the legacy copy could not be retired");
+        expect(fs.existsSync(sourceDatabase)).toBe(true);
+        expect(fs.existsSync(record)).toBe(true);
+        const publishedBytes = fs.readFileSync(publishedDatabase);
+        const publishedInode = fs.statSync(publishedDatabase).ino;
+        const resumed = f.run();
+        expect(resumed.status, resumed.stderr).toBe(0);
+        expect(fs.statSync(publishedDatabase).ino).toBe(publishedInode);
+        expect(fs.readFileSync(publishedDatabase)).toEqual(publishedBytes);
+        expect(fs.existsSync(f.legacy)).toBe(false);
+        expect(fs.existsSync(record)).toBe(false);
+        expect(fs.readdirSync(runtime)).toEqual(["state.db"]);
+        const rows = spawnSync(
+          "python3",
+          [
+            "-I",
+            "-c",
+            [
+              "import json, sqlite3, sys",
+              "with sqlite3.connect(sys.argv[1]) as db:",
+              "    print(json.dumps(db.execute('SELECT content FROM messages').fetchall()))",
+            ].join("\n"),
+            publishedDatabase,
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(rows.status, rows.stderr).toBe(0);
+        expect(JSON.parse(rows.stdout)).toEqual([["keep this conversation"]]);
+        expect(fs.readFileSync(path.join(f.home, "memory.txt"), "utf8")).toBe(
+          "keep this user memory\n",
+        );
+        expect(JSON.parse(fs.readFileSync(path.join(f.home, "config.yaml"), "utf8"))).toEqual(
+          f.target,
+        );
+      } finally {
+        fs.rmSync(f.directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     [
@@ -196,6 +274,7 @@ describe("Hermes prior generated-default migration", () => {
       const f = fixture();
       try {
         customize(f);
+        f.writeConfig();
         const result = f.run();
         expect(result.status).toBe(1);
         expect(fs.readFileSync(path.join(f.legacy, "memory.txt"), "utf8")).toBe(
