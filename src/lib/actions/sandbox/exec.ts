@@ -56,6 +56,7 @@ function execInputError(command: readonly string[], workdir: string | undefined)
   return null;
 }
 
+/** Usage line for exec, shared by the command's usage errors. */
 export function execUsage(sandboxName: string): string {
   const { CLI_NAME } = require("../../cli/branding");
   return `${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`;
