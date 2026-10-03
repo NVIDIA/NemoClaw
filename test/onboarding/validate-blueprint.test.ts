@@ -194,8 +194,16 @@ describe("effective sandbox policy behavior", () => {
         { allow: { method: "GET", path: "/v1/models" } },
         { allow: { method: "GET", path: "/v1/models/**" } },
       ]);
+      expect(binaries(policy, "managed_inference")).not.toContain("/usr/bin/curl");
       expect(binaries(policy, "managed_inference")).toEqual(
-        ["/opt/hermes/.venv/bin/python", "/usr/bin/python3.11", "/usr/local/bin/hermes"].sort(),
+        [
+          "/opt/hermes/.venv/bin/python",
+          "/usr/bin/python3",
+          "/usr/bin/python3.11",
+          "/usr/bin/python3.13",
+          "/usr/local/bin/hermes",
+          "/usr/local/bin/hermes.real",
+        ].sort(),
       );
 
       const hosts = new Set(allEndpoints(policy).map((candidate) => candidate.host));

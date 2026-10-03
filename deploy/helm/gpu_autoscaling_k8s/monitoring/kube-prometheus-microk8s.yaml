@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Slim kube-prometheus-stack for single-node MicroK8s (GPU HPA via DCGM metrics).
+
+alertmanager:
+  enabled: false
+
+grafana:
+  enabled: true
+  defaultDashboardsEnabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+coreDns:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 300m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi

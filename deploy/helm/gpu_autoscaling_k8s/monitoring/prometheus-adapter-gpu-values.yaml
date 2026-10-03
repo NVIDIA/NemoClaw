@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# prometheus-adapter: expose HPA custom metrics.
+# Built-in recipe signals (live-validated): DCGM GPU utilization and metrics-proxy
+# rolling average LLM latency. Select one via autoscaling.metric / HPA_METRIC.
+# Additional custom series can be added here for operator-defined HPA metrics.
+
+prometheus:
+  url: http://REPLACE_PROMETHEUS_SERVICE.monitoring.svc
+  port: 9090
+
+rules:
+  default: false
+  custom:
+    # DCGM exporter attributes GPU util to workloads via exported_* labels (not pod/namespace).
+    - seriesQuery: 'DCGM_FI_DEV_GPU_UTIL{exported_namespace!="",exported_pod!=""}'
+      resources:
+        overrides:
+          exported_namespace:
+            resource: namespace
+          exported_pod:
+            resource: pod
+      name:
+        matches: "^(.*)$"
+        as: "gpu_utilization_percent"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # metrics-proxy /metrics rolling avg latency (idle-expires when traffic stops).
+    - seriesQuery: 'nemoclaw_llm_latency_avg_milliseconds{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^(.*)$"
+        as: "nemoclaw_llm_latency_avg_milliseconds"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'

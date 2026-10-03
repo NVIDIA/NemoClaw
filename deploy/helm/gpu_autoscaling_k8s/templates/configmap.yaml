@@ -1,0 +1,21 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-metrics-proxy
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+data:
+  metrics-proxy-server.ts: |
+{{ .Files.Get "files/metrics-proxy-server.ts" | indent 4 }}
+  metrics-proxy-metrics.ts: |
+{{ .Files.Get "files/metrics-proxy-metrics.ts" | indent 4 }}
+  package.json: |
+{{ .Files.Get "files/package.json" | indent 4 }}
+  ollama-start.sh: |
+{{ .Files.Get "files/ollama-start.sh" | indent 4 }}
+  INFERENCE_RUNTIME: {{ include "nemoclaw-gpu.runtime" . | quote }}
+  INFERENCE_BASE_URL: {{ include "nemoclaw-gpu.runtimeBaseUrl" . | quote }}
+  INFERENCE_MODEL: {{ .Values.inference.model | quote }}

@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: nemoclaw-gpu
+description: GPU-backed inference pods (Ollama, vLLM, or NVIDIA NIM) on Kubernetes with GPU utilization HPA, fronting a swappable CPU-sandboxed agent (OpenClaw, Hermes, or Deep Agents Code)
+type: application
+version: 0.2.0
+appVersion: "2026.05.27"
+keywords:
+  - nemoclaw
+  - ollama
+  - vllm
+  - nim
+  - gpu
+  - openclaw
+  - hermes
+  - deepagents
+maintainers:
+  - name: maggiezha
