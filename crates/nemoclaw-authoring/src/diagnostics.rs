@@ -54,12 +54,3 @@ pub(crate) fn diagnostic(field: &'static str, message: &str) -> Diagnostics {
         }],
     }
 }
-
-pub(crate) fn from_messages(field: &'static str, messages: Vec<String>) -> Diagnostics {
-    Diagnostics {
-        items: messages
-            .into_iter()
-            .map(|message| Diagnostic { field, message })
-            .collect(),
-    }
-}

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
+use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
@@ -15,7 +16,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
     );
     assert!(tofu.is_absolute() && provider.is_absolute());
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
     fs::write(
@@ -24,8 +25,6 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     )
     .unwrap();
     fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root.to_str().unwrap()).unwrap())).unwrap();
     for (file, value) in [
         ("engine.json", json!({"effects":0})),
         ("fixture.json", json!({})),
@@ -79,12 +78,9 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         |graph: &Value| fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
-        let output = Command::new(&tofu)
+        let output = directory
+            .command()
             .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1")
             .env("NEMOCLAW_TEST_REMOTE", root)
             .env(
                 "PATH",

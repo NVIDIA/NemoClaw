@@ -59,6 +59,18 @@ class ImageBuilds(unittest.TestCase):
         target = self.plan("deepagents", platform="linux/amd64")["target"]["deepagents"]
         self.assertEqual(target["platforms"], ["linux/amd64"])
 
+    def test_dummy_is_an_independent_reference_image_on_both_platforms(self):
+        for platform in ("linux/arm64", "linux/amd64"):
+            targets = self.plan("dummy", platform=platform)["target"]
+            self.assertEqual(set(targets), {"dummy"})
+            self.assertEqual(targets["dummy"]["target"], "dummy")
+            self.assertEqual(targets["dummy"]["platforms"], [platform])
+            self.assertEqual(targets["dummy"]["tags"], ["nc-fabric:dummy"])
+            self.assertNotIn("dummy", self.plan("agents", platform=platform)["target"])
+
+    def test_reference_contract_is_part_of_the_image_checks(self):
+        self.assertIn("reference-tests", self.plan("check")["target"])
+
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})

@@ -6,6 +6,7 @@ mod tests;
 
 mod agent;
 mod agent_configuration;
+mod connected;
 mod protocol;
 pub use protocol::AgentSnapshot;
 mod network;
@@ -13,7 +14,7 @@ mod profile;
 pub use nemoclaw_sdk::config::{inference_profile, policy_json};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
-use network::row_policy;
+use network::{row_policy, validate_row_policy};
 mod gateway;
 mod transport;
 use nemoclaw_sdk::{ObservationError, backend::Row};
@@ -22,6 +23,7 @@ use nemoclaw_sdk::config::credential_metadata;
 pub use nemoclaw_sdk::{EnvironmentSecrets, Secrets};
 use openshell_sdk::raw::proto;
 pub use transport::OpenShell;
+use transport::{ConnectedOpenShellGateway, SandboxPhase};
 
 pub const OWNER: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION: &str = "nemoclaw.nvidia.com/generation";

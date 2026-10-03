@@ -23,6 +23,24 @@ pub(crate) fn absolute(path: &str) -> bool {
     path.starts_with('/') && !path.contains('\0') && !path.split('/').any(|part| part == "..")
 }
 
+/// Check lexical containment under Linux sandbox grants on every client platform.
+/// Callers select the grants that allow the required read or write access.
+pub fn path_is_granted(path: &str, grants: &[String]) -> bool {
+    absolute(path)
+        && grants.iter().any(|grant| {
+            if !absolute(grant) {
+                return false;
+            }
+            let mut required = path
+                .split('/')
+                .filter(|part| !part.is_empty() && *part != ".");
+            grant
+                .split('/')
+                .filter(|part| !part.is_empty() && *part != ".")
+                .all(|part| required.next() == Some(part))
+        })
+}
+
 impl ImageRuntime {
     pub(crate) fn valid(&self, adapters: &[FabricAdapter]) -> bool {
         self.valid_layout()
@@ -213,6 +231,45 @@ impl RuntimeBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sandbox_paths_use_linux_grant_components_on_every_client_platform() {
+        for (path, grant, expected) in [
+            ("/sandbox", "/sandbox", true),
+            ("/work/tmp", "/work", true),
+            ("/work/./tmp/", "/work//.", true),
+            ("/work", "/", true),
+            ("/", "//./", true),
+            ("/work/..cache", "/work", true),
+            (r"/work\tmp", r"/work\tmp", true),
+            ("/work", "/work/tmp", false),
+            ("/work-other", "/work", false),
+            ("/work/../elsewhere", "/work", false),
+            ("/work/..", "/", false),
+            ("/work", "/other/../work", false),
+            ("work", "/", false),
+            ("/work", "work", false),
+            ("", "/", false),
+            ("/work", "", false),
+            (r"C:\work", r"C:\work", false),
+            (r"\\server\work", "/", false),
+            (r"/work\tmp", "/work", false),
+            ("/work\0file", "/work", false),
+            ("/work", "/work\0", false),
+            ("/work\0", "/work\0", false),
+        ] {
+            assert_eq!(
+                path_is_granted(path, &[grant.into()]),
+                expected,
+                "{path:?} in {grant:?}"
+            );
+        }
+        assert!(!path_is_granted("/work", &[]));
+        assert!(path_is_granted(
+            "/work/file",
+            &["/work\0".into(), "relative".into(), "/work".into()]
+        ));
+    }
+
     #[test]
     fn retained_image_layout_controls_launch_user_and_managed_executables() {
         let binding = RuntimeBinding::from_json(&serde_json::json!({

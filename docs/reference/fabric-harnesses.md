@@ -6,7 +6,7 @@
 Choose a harness before selecting an image, inference API, and management mode.
 The table lists maintained examples, not a closed set of supported identifiers or live qualification of every model and host.
 Available adapters and native settings constraints come from canonical Fabric descriptors packaged in the selected image.
-Without target metadata, the bundled catalog provides provisional suggestions and compatibility remains unknown.
+Onboarding offers choices from the bundled catalog; without target metadata, compatibility remains unknown.
 Use [inference API selection](../inference.md#choose-the-request-api) for the protocol restrictions and [agent access](../agents.md#choose-native-access) for interaction and session behavior.
 
 | `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |

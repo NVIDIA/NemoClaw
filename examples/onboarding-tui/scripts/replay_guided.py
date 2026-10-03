@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Replay the built-in partial-template onboarding flow in a watchable tmux pane."""
+"""Replay the built-in or minimum-inline journey in a watchable tmux pane."""
 
 import argparse
 import fcntl
@@ -23,40 +23,20 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 BINARY = ROOT / "target/debug/nemoclaw-onboarding"
 NAME = "onboarding-e2e-demo"
-QUESTIONS = [
-    ("Welcome to NemoClaw", "Enter"),
-    ("Choose your agent harness", "Enter"),
-    ("How should your agent reach its model?", "Enter"),
-    ("Which inference API should the harness speak?", "Enter"),
-    ("Where should the sandbox run?", "Enter"),
-    ("Name this deployment", NAME),
-    ("Choose the model", "Enter"),
-    ("/agent_name", "Enter"),
-    ("/cli", "Enter"),
-    ("/home", "Enter"),
-    ("/native_config", "Enter"),
-    ("/timeout_seconds", "Enter"),
-    ("/settings/api", "Enter"),
-    ("/settings/model_metadata", "Enter"),
-    ("/settings/reasoning_effort", "Enter"),
-    ("Gateway: endpoint", "Enter"),
-    ("Gateway: engine", "Enter"),
-    ("Gateway: image", "Enter"),
-    ("Gateway: network CIDR", "Enter"),
-    ("Agent: image / ref", "Enter"),
-    ("Agent: network / tier", "Enter"),
-    ("Enter  author YAML", "Enter"),
-]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, help="new YAML path")
+    parser.add_argument("--template", type=Path, help="optional desired-state template")
     parser.add_argument("--socket", type=Path, help="tmux socket path")
     parser.add_argument("--delay", type=float, default=1.5, help="seconds to show each question")
     parser.add_argument("--wait-for-viewer", action="store_true", help="wait for a read-only tmux client")
     parser.add_argument("--keep-session", action="store_true", help="leave tmux open after replay")
     args = parser.parse_args()
+    minimum_inline = args.template is not None and args.template.resolve() == (
+        ROOT / "crates/nemoclaw-authoring/tests/fixtures/minimum-inline.yaml"
+    )
     output = args.output or Path(tempfile.gettempdir()) / f"nemoclaw-onboarding-replay-{os.getpid()}.yaml"
     socket = args.socket or Path(tempfile.gettempdir()) / f"nemoclaw-onboarding-replay-{os.getpid()}.sock"
     transcript = output.with_suffix(".jsonl")
@@ -95,6 +75,11 @@ def main() -> int:
     def screen() -> str:
         return tmux("capture-pane", "-p", "-t", pane)
 
+    def question_marker(current: str) -> str:
+        return next((line.strip() for line in current.splitlines()
+                     if "Required  ·" in line or "Optional  ·" in line),
+                    "Review" if "Review desired state" in current else "Welcome")
+
     def await_text(marker: str, timeout: float = 15) -> str:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -105,10 +90,13 @@ def main() -> int:
         raise RuntimeError(f"expected {marker!r}; current screen:\n{screen()}")
 
     try:
-        command = shlex.join([str(BINARY), "--output", str(output)])
+        command = [str(BINARY), "--output", str(output)]
+        if args.template:
+            command.append(str(args.template.resolve()))
+        command = shlex.join(command)
         send(command, literal=True)
         send("Enter")
-        await_text(QUESTIONS[0][0])
+        await_text("Create desired state")
         attach = shlex.join(["tmux", "-S", str(socket), "attach-session", "-r", "-t", session])
         print(f"Watch in another terminal: {attach}", flush=True)
         if args.wait_for_viewer:
@@ -122,21 +110,52 @@ def main() -> int:
                 raise RuntimeError("no read-only viewer attached within two minutes")
 
         with transcript.open("w") as log:
-            for number, (marker, answer) in enumerate(QUESTIONS, 1):
-                current = await_text(marker)
-                if marker == "Enter  author YAML":
-                    for expected in (f"Deployment: {NAME}", "Harness: nvidia.fabric.openclaw",
-                                     "Runtime: Docker", "Set NVIDIA_API_KEY before applying."):
-                        if expected not in current:
-                            raise RuntimeError(f"review is missing {expected!r}")
-                json.dump({"step": number, "expected": marker, "screen": current}, log)
+            for number in range(1, 129):
+                current = screen()
+                marker = question_marker(current)
+                json.dump({"step": number, "question": marker, "screen": current}, log)
                 log.write("\n")
-                print(f"{number:02}/{len(QUESTIONS)} {marker}", flush=True)
+                print(f"{number:02} {marker}", flush=True)
                 time.sleep(args.delay)
-                if answer == NAME:
-                    send(NAME, literal=True)
-                    await_text(NAME)
+                answer = None
+                if "/metadata/name" in current:
+                    answer = NAME
+                elif minimum_inline:
+                    for field, value in {
+                        "/spec/sandboxes/0/agent/inference/routes/0/name": "primary",
+                        "/spec/sandboxes/0/name": "assistant",
+                        "/spec/sandboxes/0/agent/name": "primary",
+                    }.items():
+                        if field in current:
+                            answer = value
+                            break
+                    if "/spec/sandboxes/0/harness/kind" in current:
+                        # The TUI shows the harness label; the saved YAML keeps its ID.
+                        desired = "OpenClaw"
+                        if desired not in current:
+                            raise RuntimeError(f"harness choice {desired!r} is unavailable")
+                        for _ in range(32):
+                            if f"●  {desired}" in screen():
+                                break
+                            send("Down")
+                            time.sleep(0.05)
+                        else:
+                            raise RuntimeError(f"could not select {desired!r}:\n{screen()}")
+                if answer is not None:
+                    send(answer, literal=True)
+                    await_text(answer)
                 send("Enter")
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if output.is_file() or question_marker(screen()) != marker:
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError(f"question did not advance:\n{screen()}")
+                if output.is_file():
+                    break
+            else:
+                raise RuntimeError("journey exceeded 128 screens")
 
         # The shell may wrap a long output path across terminal rows.
         await_text("Authored desired state:")

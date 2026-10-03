@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Diagnostics, Draft, diagnostics::diagnostic};
+use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Gateway, HarnessKind},
+    config::{ComputeDriver, Document, Gateway, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
@@ -51,55 +51,40 @@ pub struct DiscoveryAssessment {
     pub pending: Vec<DiscoveryQuery>,
 }
 
-impl Draft {
-    pub fn discovery_key(&self) -> Result<DiscoveryKey, Diagnostics> {
-        let document = self.document();
-        let [sandbox] = document.spec.sandboxes.as_slice() else {
-            return Err(diagnostic(
-                "sandbox",
-                "guided discovery requires one sandbox",
-            ));
-        };
-        let harness = document
-            .sandbox_harness(sandbox)
-            .map_err(|error| diagnostic("harness", &error.to_string()))?
-            .kind
-            .clone();
-        Ok(DiscoveryKey {
-            engine: match &document.spec.gateway {
-                Gateway::Managed(gateway) => gateway.engine.clone(),
-                Gateway::External(gateway) => gateway.engine.clone(),
-            },
-            managed_gateway: document.spec.gateway.as_managed().is_some(),
-            compute_driver: sandbox.runtime.provider,
-            image: sandbox.image.ref_.clone(),
-            harness,
-        })
-    }
+/// Read target dependencies from SDK-valid desired state.
+pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, Diagnostics> {
+    let [sandbox] = document.spec.sandboxes.as_slice() else {
+        return Err(diagnostic(
+            "sandbox",
+            "guided discovery requires one sandbox",
+        ));
+    };
+    let harness = document
+        .sandbox_harness(sandbox)
+        .map_err(|error| diagnostic("harness", &error.to_string()))?
+        .kind
+        .clone();
+    Ok(DiscoveryKey {
+        engine: match &document.spec.gateway {
+            Gateway::Managed(gateway) => gateway.engine.clone(),
+            Gateway::External(gateway) => gateway.engine.clone(),
+        },
+        managed_gateway: document.spec.gateway.as_managed().is_some(),
+        compute_driver: sandbox.runtime.provider,
+        image: sandbox.image.ref_.clone(),
+        harness,
+    })
 }
 
 impl DiscoveryEvidence {
-    /// Invalidate only facts whose query inputs changed. Changing harness merely
-    /// re-evaluates the existing image catalog against the new requirement.
-    pub fn retarget(&mut self, key: DiscoveryKey) {
-        if !key.managed_gateway
-            || self.key.managed_gateway != key.managed_gateway
-            || self.key.engine != key.engine
-            || self.key.compute_driver != key.compute_driver
-        {
-            self.engine = None;
-        }
-        if self.key.engine != key.engine || self.key.image != key.image {
-            self.fabric = None;
-        }
-        self.key = key;
-    }
-
     /// Evaluate target facts without rewriting desired state or the global menu.
     /// Pending contains only dependency-ready reads. A completed unknown result
     /// remains unknown until the caller explicitly refreshes it.
-    pub fn assessment(&self, draft: &Draft) -> Result<DiscoveryAssessment, Diagnostics> {
-        let key = draft.discovery_key()?;
+    pub fn assessment_for_document(
+        &self,
+        document: &Document,
+    ) -> Result<DiscoveryAssessment, Diagnostics> {
+        let key = discovery_key_for_document(document)?;
         let engine = self.engine.as_ref().filter(|_| {
             key.managed_gateway
                 && self.key.managed_gateway == key.managed_gateway
@@ -149,8 +134,8 @@ impl DiscoveryEvidence {
                 if observed.image_id.as_ref().is_some_and(|id| !id.is_empty())
                     && observed.status != ObservationStatus::Unavailable =>
             {
-                let sandbox = &draft.document().spec.sandboxes[0];
-                let requirements = FabricRequirements::for_sandbox(draft.document(), sandbox)
+                let sandbox = &document.spec.sandboxes[0];
+                let requirements = FabricRequirements::for_sandbox(document, sandbox)
                     .map_err(|error| diagnostic("discovery", &error.to_string()))?;
                 let capability = assess_image(
                     observed.catalog.as_ref(),

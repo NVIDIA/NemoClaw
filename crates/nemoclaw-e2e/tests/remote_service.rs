@@ -178,6 +178,10 @@ async fn lifecycle(
         value["spec"]["services"]["qwen"]["authentication"] = "bearer".into();
         value["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
     }
+    let mut image_document =
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let image_engine = nemoclaw_e2e::image_runtime::engine(&mut image_document).await;
+    value["spec"]["gateway"]["engine"] = json!(image_engine.endpoint);
     save(root, "config.yaml", &value);
     let mut files = json!({});
     let mut stats = json!({});
@@ -773,7 +777,12 @@ async fn refused_sandbox_changes_preserve_retained_intent(
             let message = result["error"]["message"].as_str().unwrap();
             assert!(message.contains("reviewer"), "{result}");
             assert!(message.contains("ordinary apply"), "{result}");
-            assert_eq!(result["remainingState"], "No runtime resources changed.");
+            // Only operations that can mutate resources report remaining state.
+            if operation == "apply" {
+                assert_eq!(result["remainingState"], "No runtime resources changed.");
+            } else {
+                assert!(result.get("remainingState").is_none(), "{result}");
+            }
             assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
             let exported = run(root, bundle, "export", "", true).await;
             assert_eq!(

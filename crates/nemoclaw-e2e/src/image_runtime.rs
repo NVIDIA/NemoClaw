@@ -58,10 +58,9 @@ pub fn targets(
 #[cfg(unix)]
 use crate::docker as transport;
 
-/// Installed-image evidence for isolated deployment tests; never queries a live engine.
-#[cfg(unix)]
-pub async fn engine(document: &mut Document) -> transport::Fixture {
-    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+/// Installed-image metadata for isolated fixtures.
+pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
+    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
     let mut catalog = FabricCatalog::bundled();
     catalog.bridge = Some(BridgeCapabilities {
         interface_version: 1,
@@ -76,6 +75,7 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
         .map(String::from)
         .to_vec(),
         health_checks: vec![],
+        input_sources: vec!["file".into(), "stdin".into()],
     });
     let mut runtime = binding("fixture").runtime;
     runtime.binaries = catalog
@@ -89,7 +89,14 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
         })
         .collect();
     catalog.runtime = Some(runtime);
-    let label = serde_json::to_string(&catalog).unwrap();
+    catalog
+}
+
+/// Installed-image evidence for isolated deployment tests; never queries a live engine.
+#[cfg(unix)]
+pub async fn engine(document: &mut Document) -> transport::Fixture {
+    use nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL;
+    let label = serde_json::to_string(&catalog()).unwrap();
     let references: Vec<_> = document
         .spec
         .sandboxes

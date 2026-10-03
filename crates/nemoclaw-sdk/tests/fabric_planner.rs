@@ -237,7 +237,8 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     let bridge = json!({
         "interface_version": 1,
         "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
-        "health_checks": []
+        "health_checks": [],
+        "input_sources": ["file", "stdin"]
     });
     let mut raw = serde_json::to_value(catalog()).unwrap();
     let status = |raw: &serde_json::Value| {
@@ -247,6 +248,19 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
     assert_eq!(status(&raw), Support::Supported);
+    // Later bridge fields are additive within interface version 1.
+    raw["bridge"]["future_capability"] = json!({"any": "shape"});
+    assert_eq!(status(&raw), Support::Supported);
+    // The provider sends input only on stdin.
+    raw["bridge"] = bridge.clone();
+    raw["bridge"]["input_sources"] = json!(["file"]);
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"]
+        .as_object_mut()
+        .unwrap()
+        .remove("input_sources");
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge.clone();
     raw["bridge"]["interface_version"] = 2.into();
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
@@ -287,5 +301,31 @@ fn relocated_image_runtime_read_requirements_replace_client_layout_assumptions()
             },
         );
         assert_eq!(report.status, expected, "{:?}", report.checks);
+    }
+}
+
+#[test]
+fn explicit_filesystem_grants_reject_nul_in_required_paths_and_grants() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    for (path, grant) in [
+        ("/opt/hermes\0private", "/opt"),
+        ("/opt\0private/hermes", "/opt\0private"),
+    ] {
+        let mut catalog = catalog();
+        catalog
+            .runtime_files
+            .insert("org.fixture.new-adapter".into(), vec![path.into()]);
+        let report = assess_fabric(
+            &catalog,
+            &FabricRequirements {
+                configuration: config(),
+                filesystem_read: Some(vec![grant.into()]),
+            },
+        );
+        assert_eq!(report.status, Support::Unsupported, "{path:?} in {grant:?}");
+        assert!(report.checks.iter().any(|check| {
+            check.requirement == "deployment_filesystem_grant"
+                && check.status == Support::Unsupported
+        }));
     }
 }

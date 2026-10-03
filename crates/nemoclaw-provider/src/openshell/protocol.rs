@@ -9,26 +9,6 @@ use serde_json::Value;
 pub(super) const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const REQUEST_LIMIT: usize = 512 * 1024;
 
-// Sandbox paths use Linux semantics on every client platform.
-fn writable_directory(path: &str, grants: &[String]) -> bool {
-    let valid = |path: &str| {
-        path.starts_with('/') && !path.contains('\0') && !path.split('/').any(|part| part == "..")
-    };
-    valid(path)
-        && grants.iter().any(|grant| {
-            if !valid(grant) {
-                return false;
-            }
-            let mut parts = path
-                .split('/')
-                .filter(|part| !part.is_empty() && *part != ".");
-            grant
-                .split('/')
-                .filter(|part| !part.is_empty() && *part != ".")
-                .all(|part| parts.next() == Some(part))
-        })
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Response {
@@ -169,7 +149,7 @@ impl Response {
 impl OpenShell {
     /// Validate through the adapter packaged in the bound sandbox image.
     pub async fn validate_agent(&self, binding: &Row, config: &Value) -> Result<Value, Error> {
-        let response = self.bridge_file(binding, "validate", config, None).await?;
+        let response = self.bridge_input(binding, "validate", config, None).await?;
         let result = response.result.ok_or_else(invalid)?;
         if response.status != "succeeded" || result["valid"] != true {
             return Err(Error::Conflict(
@@ -185,14 +165,26 @@ impl OpenShell {
         arguments: &[&str],
         seconds: u32,
     ) -> Result<Response, Error> {
+        self.bridge_with_stdin(binding, arguments, seconds, Vec::new())
+            .await
+    }
+
+    async fn bridge_with_stdin(
+        &self,
+        binding: &Row,
+        arguments: &[&str],
+        seconds: u32,
+        stdin: Vec<u8>,
+    ) -> Result<Response, Error> {
         let runtime = agent::binding(binding)?;
         let name = binding.get("agent_name").map(String::as_str).unwrap_or("");
         let (exit, output) = self
-            .exec_bound(
+            .exec_input(
                 binding,
                 runtime.command(arguments[0], &arguments[1..]),
                 runtime.environment(name),
                 seconds,
+                stdin,
             )
             .await?;
         Response::decode(arguments[0], exit, &output)
@@ -213,7 +205,9 @@ impl OpenShell {
         .snapshot()
     }
 
-    pub(super) async fn bridge_file(
+    /// Send one JSON object on stdin in the same exec as the command, so no
+    /// file is staged in the sandbox and no cleanup can leave the outcome unknown.
+    pub(super) async fn bridge_input(
         &self,
         binding: &Row,
         operation: &str,
@@ -227,78 +221,23 @@ impl OpenShell {
         if payload.len() > REQUEST_LIMIT {
             return Err(Error::Conflict("Fabric input exceeds the request limit"));
         }
-        let runtime = agent::binding(binding)?;
         let name = binding.get("agent_name").map(String::as_str).unwrap_or("");
-        let environment = runtime.environment(name);
-        let python = &environment["ADAPTER_PYTHON"];
-        let filesystem = super::row_policy(binding)?
-            .filesystem
-            .ok_or(ObservationError::Incomplete)?;
-        let directory = ["HOME", "TMPDIR"]
-            .into_iter()
-            .filter_map(|key| environment.get(key))
-            .find(|directory| writable_directory(directory, &filesystem.read_write))
-            .ok_or(Error::Conflict(
-                "image does not advertise a writable Fabric input directory",
-            ))?;
-        let mut nonce = [0; 16];
-        getrandom::fill(&mut nonce)
-            .map_err(|_| Error::Conflict("cannot allocate Fabric input file"))?;
-        let token: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-        let path = format!("{}/.nemoclaw-{token}.json", directory.trim_end_matches('/'));
-        let stage = self
-            .exec_input(
-                binding,
-                vec![
-                    python.clone(),
-                    "-c".into(),
-                    include_str!("stage_json.py").into(),
-                    path.clone(),
-                ],
-                environment.clone(),
-                20,
-                payload,
-            )
-            .await;
-        let mut arguments = vec![
-            operation,
-            "--agent",
-            name,
-            if operation == "invoke" {
-                "--input"
-            } else {
-                "--config"
-            },
-            &path,
-        ];
+        let flag = if operation == "invoke" {
+            "--input"
+        } else {
+            "--config"
+        };
+        let mut arguments = vec![operation, "--agent", name, flag, "-"];
         if let Some(generation) = expected_generation {
             arguments.extend(["--expected-generation", generation]);
         }
-        let response = match stage {
-            Ok((0, _)) => self.bridge(binding, &arguments, 120).await,
-            Ok(_) => Err(Error::Conflict("cannot stage Fabric input file")),
-            Err(error) => Err(error),
-        };
-        let cleanup = self
-            .exec_bound(
-                binding,
-                vec![python.clone(), "-c".into(), "from pathlib import Path; import sys; Path(sys.argv[1]).unlink(missing_ok=True)".into(), path],
-                environment,
-                20,
-            )
-            .await;
-        match (response, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(response), Ok((0, _))) => Ok(response),
-            (Ok(_), _) => Err(Error::Conflict(
-                "Fabric input cleanup failed; command outcome requires observation",
-            )),
-        }
+        self.bridge_with_stdin(binding, &arguments, 120, payload)
+            .await
     }
 
     /// Send one explicit request. An ambiguous outcome is never retried.
     pub async fn invoke_agent(&self, binding: &Row, input: &Value) -> Result<Value, Error> {
-        let response = self.bridge_file(binding, "invoke", input, None).await?;
+        let response = self.bridge_input(binding, "invoke", input, None).await?;
         if response.status != "succeeded" {
             return Err(Error::Conflict(
                 if response
@@ -326,29 +265,6 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn staging_uses_linux_directory_grants_on_every_client_platform() {
-        for (path, grant, expected) in [
-            ("/sandbox", "/sandbox", true),
-            ("/work/tmp", "/work", true),
-            ("/work/./tmp", "/work//", true),
-            ("/work", "/", true),
-            ("/work-other", "/work", false),
-            ("/work/../elsewhere", "/work", false),
-            ("/work", "/other/../work", false),
-            ("work", "/", false),
-            (r"C:\work", r"C:\work", false),
-            ("/work\0file", "/work", false),
-        ] {
-            assert_eq!(
-                writable_directory(path, &[grant.into()]),
-                expected,
-                "{path:?} in {grant:?}"
-            );
-        }
-        assert!(!writable_directory("/work", &[]));
-    }
 
     #[test]
     fn contradictory_or_incomplete_envelopes_never_confirm_an_outcome() {

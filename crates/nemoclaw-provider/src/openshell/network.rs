@@ -74,3 +74,7 @@ pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationE
             .map_err(|_| ObservationError::Query)?;
     agent::binding(row)?.policy(&input)
 }
+
+pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {
+    row_policy(row).map(|_| ())
+}

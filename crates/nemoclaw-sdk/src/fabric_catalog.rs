@@ -33,12 +33,16 @@ pub struct FabricCatalog {
 }
 
 /// Image-owned bridge metadata, separate from Fabric adapter descriptors.
+/// Fields added within an interface version are additive, so unknown fields
+/// are ignored rather than rejected.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BridgeCapabilities {
     pub interface_version: u32,
     pub operations: Vec<String>,
     pub health_checks: Vec<String>,
+    /// Ways `--config` and `--input` accept JSON: `file` and `stdin`.
+    #[serde(default)]
+    pub input_sources: Vec<String>,
 }
 
 impl BridgeCapabilities {
@@ -62,6 +66,8 @@ impl BridgeCapabilities {
                 .iter()
                 .zip(["live", "active", "ready"])
                 .all(|(actual, expected)| actual == expected)
+            // The provider delivers configuration and invocation input on stdin.
+            && self.input_sources.iter().any(|source| source == "stdin")
     }
 }
 

@@ -155,3 +155,7 @@ pub(super) fn verify_stat(
     }
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+#[path = "capacity_tests.rs"]
+mod tests;

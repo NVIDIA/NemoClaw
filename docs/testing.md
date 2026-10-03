@@ -3,15 +3,23 @@
 
 # Tests
 
-The pinned Rust toolchain needs a C linker and `protoc` on PATH (or `PROTOC` pointing to it) to build the provider protocol.
-Validation used protoc 36.1 on Linux ARM64.
-No host package installation is part of the tests.
+Before pushing, run this platform's `CI / Native` checks from the repository root:
 
 ```sh
-cargo test --workspace
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo ci
 ```
+
+The command needs the pinned Rust toolchain and a C linker.
+It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a native bundle build, and the bundle lifecycle tests, stopping at the first failure.
+A warm run on Linux ARM64 takes about ten minutes, mostly in the workspace and lifecycle tests.
+
+Run one step with `cargo ci STEP`, for example `cargo ci lifecycle`.
+The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and `lifecycle`; every step first checks the pinned tools.
+Each workflow step calls the same command, so the local result matches the platform's CI job.
+It does not run the image, documentation, or dependency workflows, or another platform's job.
+
+To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
 
 ## CI Workflows
 
@@ -33,17 +41,8 @@ The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/l
 ## Test Runner
 
 All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
-The pinned prebuilt runner is installed with checksum verification; installation cannot fall back to compiling it.
-
-To run ordinary tests locally from the repository root, install the pinned runner once and use:
-
-```sh
-cargo install cargo-nextest --version 0.9.144 --locked
-cargo nextest run --locked --workspace --all-targets --profile ci
-cargo test --locked --workspace --doc
-```
-
-The local install command compiles the tool; CI downloads its prebuilt executable.
+`cargo ci tools` installs its prebuilt executable after checksum verification; installation cannot fall back to compiling it.
+`cargo ci test` runs the ordinary tests with the `ci` profile and then the doctests.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
@@ -80,12 +79,12 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 python3 -B -m unittest discover -s image -p test_builds.py
-AGENT_PLATFORM=linux/arm64 docker buildx bake --check agents ollama-proxy
+AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
-Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks and generic runtime behavior tests against Fabric's installed fixture adapter.
+Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
 
@@ -101,7 +100,10 @@ The scope includes image Python and retained integration fixtures.
 Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
 The [image workflow](../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
-It also qualifies the installed OpenClaw, Hermes, and Pi adapters against isolated local inference, on platforms with those image targets.
+It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../image/test_agent_contract.py) against every selected agent image.
+Use the [reference image procedure](build.md#reference-contract-image) to run that suite locally against explicit image references.
+The suite tests real entrypoints, file and stdin inputs, exit codes, capability labels, standalone validation, host startup and shutdown, and retained files; the dummy also exercises successful configuration, health, invocation, and preparation.
+The workflow separately qualifies the installed OpenClaw, Hermes, and Pi adapters against isolated local inference, on platforms with those image targets.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
@@ -132,7 +134,8 @@ The checksum-addressed OpenTofu archives in `.build/downloads` use a separate ca
 Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
-The [shared Rust setup](../.github/actions/setup-rust/action.yml) downloads and checksum-verifies Protobuf's compiler for native, documentation, and Brev builds.
+The [shared Rust setup](../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, and Brev builds and exports the installed `PROTOC` to later steps.
+That runner compiles without the SDK in `target/ci-runner`, so it can install the compiler before anything needs it.
 GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.
 Parallel VM preparation reduces the build's contribution to elapsed time even on a cold run.
 
@@ -161,7 +164,7 @@ Coverage artifacts stay under the Git-ignored `target/` directory.
 Coverage uses a separate build directory, so the first run recompiles dependencies.
 On a memory-constrained host, use `CARGO_BUILD_JOBS=2 cargo coverage`.
 
-The same linker and `PROTOC` prerequisites apply as for ordinary tests.
+The same linker and `PROTOC` prerequisites apply as for SDK builds outside `cargo ci`.
 
 To print a summary from the collected data without rerunning tests:
 

@@ -72,9 +72,10 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
+RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
 
 FROM runtime-base AS generic
 USER node
@@ -173,4 +174,24 @@ RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
 ENV ADAPTER_PYTHON=/opt/fabric/bin/python NEMOCLAW_FABRIC_SOURCE=/src/fabric NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/src/fabric/tests/fixtures/discovery/future.fabric-adapter.json
+RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
+
+# A small executable specification with no native agent or model dependencies.
+FROM ${PYTHON_IMAGE} AS dummy
+RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
+    && python3 -m venv /opt/fabric \
+    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
+COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
+ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
+RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
+LABEL io.nemoclaw.fabric.reference="dummy"
+USER node
+HEALTHCHECK NONE
+ENTRYPOINT ["/usr/local/bin/fabric-agent"]
+CMD ["serve", "--agent", "main"]
+
+FROM dummy AS reference-tests
+COPY image/fabric/test_reference.py image/fabric/dummy_backend.py /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

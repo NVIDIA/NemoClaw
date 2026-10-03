@@ -48,27 +48,51 @@ def main():
             )
             # This temporary packaging process only reads metadata. It does not
             # start an adapter, contact a model, or attach deployment resources.
-            raw = subprocess.check_output(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--network=none",
-                    "--read-only",
-                    "--entrypoint",
-                    "/opt/fabric/bin/python",
-                    temporary_tag,
-                    "/opt/nemoclaw/catalog.py",
-                    "--installed",
-                    "--provenance",
-                    "/opt/nemoclaw/provenance.json",
-                ],
-                cwd=ROOT,
+            bridge = json.loads(
+                subprocess.check_output(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network=none",
+                        "--read-only",
+                        "--entrypoint",
+                        "/opt/fabric/bin/python",
+                        temporary_tag,
+                        "-c",
+                        "from pathlib import Path; print(Path('/opt/nemoclaw/bridge.json').read_text())",
+                    ],
+                    cwd=ROOT,
+                )
             )
-            catalog = json.dumps(json.loads(raw), separators=(",", ":"))
+            labels = {"io.nemoclaw.fabric.bridge": json.dumps(bridge, separators=(",", ":"))}
+            if name != "dummy":
+                raw = subprocess.check_output(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network=none",
+                        "--read-only",
+                        "--entrypoint",
+                        "/opt/fabric/bin/python",
+                        temporary_tag,
+                        "/opt/nemoclaw/catalog.py",
+                        "--installed",
+                        "--provenance",
+                        "/opt/nemoclaw/provenance.json",
+                    ],
+                    cwd=ROOT,
+                )
+                catalog = json.loads(raw)
+                if catalog["bridge"] != bridge:
+                    raise ValueError("catalog and executable bridge capabilities disagree")
+                labels["io.nemoclaw.fabric.catalog"] = json.dumps(catalog, separators=(",", ":"))
             with tempfile.TemporaryDirectory(prefix="nemoclaw-image-label-") as directory:
                 Path(directory, "Dockerfile").write_text(f"FROM {temporary_tag}\n")
-                command = ["docker", "build", "--label", f"io.nemoclaw.fabric.catalog={catalog}"]
+                command = ["docker", "build"]
+                for label, value in labels.items():
+                    command.extend(("--label", f"{label}={value}"))
                 for tag in tags:
                     command.extend(("--tag", tag))
                 subprocess.run([*command, directory], check=True)

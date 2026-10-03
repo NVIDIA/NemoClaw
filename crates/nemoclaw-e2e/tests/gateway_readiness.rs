@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::{docker, openshell::Fixture};
+use nemoclaw_e2e::{docker, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     fs,
     path::PathBuf,
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -43,10 +42,8 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
         })).unwrap()))
     }).await;
     spec.gateway.engine = engine.endpoint.clone();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::copy(provider, root.join("terraform-provider-nemoclaw")).unwrap();
-    fs::write(root.join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(root.to_str().unwrap()).unwrap())).unwrap();
     let mut graph = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
         "provider":{"nemoclaw":{"endpoint":gateway.endpoint}},
@@ -60,14 +57,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     });
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
-        let output = Command::new(&tofu)
-            .args(args)
-            .current_dir(root)
-            .env("TF_CLI_CONFIG_FILE", root.join("tofu.rc"))
-            .env("CHECKPOINT_DISABLE", "1")
-            .env("TF_IN_AUTOMATION", "1")
-            .output()
-            .unwrap();
+        let output = directory.command().args(args).output().unwrap();
         let text = format!(
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
