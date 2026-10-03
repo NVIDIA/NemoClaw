@@ -79,19 +79,7 @@ def _restrict_browser_evaluate() -> bool:
     return _browser_eval_flag("restrict_evaluate")
 `;
 
-function patchSource(
-  kind:
-    | "config"
-    | "browser"
-    | "browser_policy"
-    | "gateway"
-    | "cli"
-    | "tui"
-    | "tui_config"
-    | "agent"
-    | "main",
-  source: string,
-) {
+function patchSource(kind: "config" | "browser" | "browser_policy", source: string) {
   const harness = `\
 import importlib.util
 import pathlib

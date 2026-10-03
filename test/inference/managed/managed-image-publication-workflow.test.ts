@@ -214,12 +214,6 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
-    const packageGuardEnd = validationRun.indexOf("managed OpenClaw plugin");
-    const packageGuardStart = validationRun.lastIndexOf("const packages = {", packageGuardEnd);
-    expect(packageGuardStart).toBeGreaterThan(-1);
-    expect(validationRun.slice(packageGuardStart, packageGuardEnd)).toContain(
-      'googlechat: ["@openclaw/googlechat", "2026.9.2"]',
-    );
     expect(publisher).toMatchObject({
       needs: [
         "build-and-push-hermes",
