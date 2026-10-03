@@ -122,7 +122,8 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 Native CI disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
-Changing this profile requires a one-time dependency rebuild before measuring warm-cache CI duration.
+Profiles live in `.cargo/config.toml`, which the CI dependency cache hashes; changing one requires a one-time dependency rebuild.
+Other manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
 The dependency cache keeps third-party build artifacts for both debug and target-specific release profiles.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.

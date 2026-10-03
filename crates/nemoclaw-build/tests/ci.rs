@@ -50,6 +50,39 @@ fn shared_setup_installs_pinned_tools_without_python() {
 }
 
 #[test]
+fn dependency_cache_survives_workspace_manifest_changes() {
+    // The cache action can restore an older cache only when the part of its
+    // key outside its own lockfile hash is unchanged. A root manifest hash
+    // there turns every workspace change into a cold build on every platform.
+    let action: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../.github/actions/setup-rust/action.yml"
+    ))
+    .unwrap();
+    let cache = action["runs"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("Swatinem/rust-cache@"))
+        })
+        .expect("Rust dependency cache step");
+    let key = cache["with"]["key"].as_str().unwrap_or_default();
+    assert!(!key.contains("hashFiles"), "{key}");
+    assert_eq!(cache["with"]["add-rust-environment-hash-key"], "true");
+    // Profiles change compiled dependencies, so they live where the cache
+    // action hashes them: .cargo/config.toml, not the root manifest.
+    let manifest = include_str!("../../../Cargo.toml");
+    assert!(
+        !manifest.lines().any(|line| line.starts_with("[profile")),
+        "move profiles to .cargo/config.toml"
+    );
+    let config = include_str!("../../../.cargo/config.toml");
+    assert!(config.lines().any(|line| line == "[profile.dev]"));
+}
+
+#[test]
 fn every_bundle_platform_pins_its_ci_tools() {
     let pins: serde_json::Value =
         serde_json::from_str(include_str!("../../../versions.json")).unwrap();
