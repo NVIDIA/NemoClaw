@@ -4,6 +4,7 @@
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
+import type { McpServerIdentity, McpTransport } from "./mcp-bridge-contracts";
 import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
@@ -39,39 +40,50 @@ export const MCP_BRIDGE_ALLOWED_METHODS = [
   "notifications/elicitation/complete",
 ] as const;
 
+/**
+ * buildMcpBridgePolicyName.
+ */
 export function buildMcpBridgePolicyName(server: string): string {
   validateMcpServerName(server);
   return `mcp-bridge-${server.toLowerCase().replace(/_/g, "-")}`;
 }
 
+/**
+ * buildMcpBridgePolicyKey.
+ */
 export function buildMcpBridgePolicyKey(server: string): string {
   return buildMcpBridgePolicyName(server).replace(/-/g, "_");
 }
 
+/**
+ * endpointPort.
+ */
 function endpointPort(url: URL): number {
   if (url.port) return Number.parseInt(url.port, 10);
   return url.protocol === "https:" ? 443 : 80;
 }
 
+/**
+ * endpointPath.
+ */
 function endpointPath(url: URL): string {
   return url.pathname || "/";
 }
 
+/**
+ * binariesForAdapter.
+ */
 function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   switch (adapter) {
     case "openclaw-config":
       return [
         { path: "/usr/local/bin/openclaw" },
-        // npm entrypoints are #!/usr/bin/env node scripts. OpenShell binds
-        // policy to /proc/<pid>/exe and ancestors, not spoofable argv paths.
         { path: "/usr/local/bin/node" },
         { path: "/usr/bin/node" },
       ];
     case "hermes-config":
       return [
         { path: "/usr/local/bin/hermes" },
-        // Hermes is a Python console script; /proc/<pid>/exe resolves the venv
-        // interpreter to the system Python binary after the wrapper execs it.
         { path: "/usr/bin/python3*" },
         { path: "/opt/hermes/.venv/bin/python*" },
       ];
@@ -80,6 +92,9 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   }
 }
 
+/**
+ * renderMcpBridgePolicyYaml.
+ */
 function renderMcpBridgePolicyYaml(
   server: string,
   url: string,
@@ -87,13 +102,51 @@ function renderMcpBridgePolicyYaml(
   target: McpBridgeTargetValidation,
   providerName?: string,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
+  _serverIdentity?: McpServerIdentity,
+  _transport?: McpTransport,
+  _requireOAuth?: boolean,
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
-  // OpenShell resolves this hostname for every new connection, validates every
-  // current answer against allowed_ips, and connects to that validated list.
   const allowedIps = [...target.addresses];
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  const normalizedAllowTools = allowTools ? [...allowTools].sort() : [];
+  const isAllowlistMode = normalizedAllowTools.length > 0;
+
+  // OpenShell 0.0.116 reads:
+  // - tool names from allow.params.name (in allowlist mode)
+  // - denials from endpoint.deny_rules (in denylist mode)
+  const denyRules = normalizedDenyTools.map((tool) => {
+    return {
+      method: "tools/call",
+      params: { name: tool },
+    };
+  });
+
+  const allowedMethods = isAllowlistMode
+    ? MCP_BRIDGE_ALLOWED_METHODS.filter((m) => m !== "tools/call")
+    : MCP_BRIDGE_ALLOWED_METHODS;
+
+  // In allowlist mode, emit explicit allow rules using params.name
+  const allowRules = normalizedAllowTools.map((tool) => {
+    return {
+      allow: { method: "tools/call", params: { name: tool } },
+    };
+  });
+
+  // In denylist mode, emit deny rules at endpoint level (deny_rules)
+  // Do NOT emit deny entries in the rules array — not part of schema
+  // No serverIdentity, transport, or requireOAuth in mcp config - these are unsupported by OpenShell v0.0.116.
+  // They are persisted separately in the bridge state and restored during add/rebuild.
+  // The mcp.allow field is also unsupported; allowlist rules belong in rules[].allow.params.name.
+  const mcpConfig: Record<string, unknown> = {};
+
+  // In denylist mode, emit deny rules at endpoint level
+  const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
+
+  const mcpExtras: Record<string, unknown> = {};
+
   return YAML.stringify({
     preset: {
       name: buildMcpBridgePolicyName(server),
@@ -115,16 +168,11 @@ function renderMcpBridgePolicyYaml(
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
               strict_tool_names: true,
               allow_all_known_mcp_methods: false,
+              ...mcpConfig,
+              ...mcpExtras,
             },
-            rules: MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
-            ...(normalizedDenyTools.length > 0
-              ? {
-                  deny_rules: normalizedDenyTools.map((tool) => ({
-                    method: "tools/call",
-                    tool,
-                  })),
-                }
-              : {}),
+            ...(endpointDenyRules ? { deny_rules: endpointDenyRules } : {}),
+            rules: [...allowedMethods.map((method) => ({ allow: { method } })), ...allowRules],
           },
         ],
         binaries: binariesForAdapter(adapter),
@@ -133,6 +181,9 @@ function renderMcpBridgePolicyYaml(
   });
 }
 
+/**
+ * buildMcpBridgePolicyYaml.
+ */
 export function buildMcpBridgePolicyYaml(
   server: string,
   url: string,
@@ -140,20 +191,52 @@ export function buildMcpBridgePolicyYaml(
   target: McpBridgeTargetValidation,
   providerName: string,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
+  serverIdentity?: McpServerIdentity,
+  transport?: McpTransport,
+  requireOAuth?: boolean,
 ): string {
   if (providerName.trim() !== providerName || providerName.length === 0) {
     throw new Error("Generated MCP credential binding requires an exact provider name.");
   }
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, providerName, denyTools);
+  return renderMcpBridgePolicyYaml(
+    server,
+    url,
+    adapter,
+    target,
+    providerName,
+    denyTools,
+    allowTools,
+    serverIdentity,
+    transport,
+    requireOAuth,
+  );
 }
 
-/** Render the temporary credential-free policy used before first provider attachment. */
+/**
+ * buildMcpBridgeCapabilityPolicyYaml.
+ */
 export function buildMcpBridgeCapabilityPolicyYaml(
   server: string,
   url: string,
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
+  serverIdentity?: McpServerIdentity,
+  transport?: McpTransport,
+  requireOAuth?: boolean,
 ): string {
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools);
+  return renderMcpBridgePolicyYaml(
+    server,
+    url,
+    adapter,
+    target,
+    undefined,
+    denyTools,
+    allowTools,
+    serverIdentity,
+    transport,
+    requireOAuth,
+  );
 }

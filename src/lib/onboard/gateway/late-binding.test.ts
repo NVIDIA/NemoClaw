@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import path from "node:path";
 
@@ -48,11 +49,12 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
+/** Capture the recovery evidence produced by a failed gateway start attempt. */
   async function captureFailedStartRecovery(
     ownsSelectedState: boolean,
     runtimeSelection?: OpenShellRuntimeSelection,
   ) {
-    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const adapters = gatewayAdaptersForTest();
     const lines: string[] = [];
@@ -530,7 +532,7 @@ describe("gateway lifecycle late binding", () => {
   it("admits proven pre-marker state and rejects unproven custom roots before startup", async () => {
     let name = "initial";
     let port = 9000;
-    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-start-boundary-"));
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nemoclaw-gateway-start-boundary-"));
     const stateDir = path.join(root, "gateway");
     const verifyReachability = vi.fn(async () => undefined);
     const adapters = gatewayAdaptersForTest();

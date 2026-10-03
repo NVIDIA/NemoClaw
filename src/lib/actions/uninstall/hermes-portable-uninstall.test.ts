@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { writeConfigFile } from "../../state/config-io";
@@ -26,6 +26,29 @@ import {
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
 import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninstall-transaction";
+import { cleanupPrivateHermesManifestAgent } from "../../onboard/experimental/__test-helpers__/hermes-manifest-agent";
+
+// Uninstall preparation re-reads the current Hermes manifest through lifecycle
+// removal, so resolve it from an owner-only copy instead of the checkout's
+// group-writable modes. The manifest bytes are unchanged, so digests and
+// reviewed-version checks still apply.
+vi.mock("../../agent/defs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../agent/defs")>();
+  const { privateHermesManifestAgent } =
+    await import("../../onboard/experimental/__test-helpers__/hermes-manifest-agent");
+  return {
+    ...original,
+    /** Resolve Hermes through the owner-only manifest copy; pass others through. */
+    loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
+      name === "hermes"
+        ? privateHermesManifestAgent(original.loadAgent(name, env))
+        : original.loadAgent(name, env),
+  };
+});
+
+afterAll(() => {
+  cleanupPrivateHermesManifestAgent();
+});
 
 let homeDir: string;
 let fixture: HermesPortableUninstallFixture | undefined;
