@@ -3,7 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./service-command";
+import {
+  resolveDefaultSandboxName,
+  resolveDefaultSandboxServiceOptions,
+  runStartCommand,
+  runStopCommand,
+} from "./service-command";
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;
@@ -47,6 +52,59 @@ describe("services command", () => {
     );
   });
 
+  it("keeps explicit sandbox overrides independent of registry availability", () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "env-sandbox";
+    const listSandboxes = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+
+    expect(resolveDefaultSandboxServiceOptions({ listSandboxes })).toEqual({
+      sandboxName: "env-sandbox",
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["NEMOCLAW_SANDBOX_NAME", "NEMOCLAW_SANDBOX", "SANDBOX_NAME"])(
+    "starts the registered dashboard selected by %s",
+    async (envKey) => {
+      process.env[envKey] = "selected";
+      const startAll = vi.fn(async () => {});
+      await runStartCommand({
+        listSandboxes: () => ({
+          defaultSandbox: "default",
+          sandboxes: [
+            { name: "default", dashboardPort: 18_789 },
+            { name: "selected", dashboardPort: 18_791 },
+          ],
+        }),
+        startAll,
+      });
+      expect(startAll).toHaveBeenCalledWith({ sandboxName: "selected", dashboardPort: 18_791 });
+    },
+  );
+
+  it("keeps the fallback for an unregistered override without using the default sandbox port", () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "selected";
+    expect(
+      resolveDefaultSandboxServiceOptions({
+        listSandboxes: () => ({
+          defaultSandbox: "default",
+          sandboxes: [{ name: "default", dashboardPort: 18_791 }],
+        }),
+      }),
+    ).toEqual({ sandboxName: "selected" });
+  });
+
+  it("reports an unavailable registry when no explicit sandbox is selected", () => {
+    expect(() =>
+      resolveDefaultSandboxServiceOptions({
+        listSandboxes: () => {
+          throw new Error("registry unavailable");
+        },
+      }),
+    ).toThrow("registry unavailable");
+  });
+
   it("prefers NEMOCLAW_SANDBOX env var over registry default", () => {
     process.env.NEMOCLAW_SANDBOX = "env-sandbox-2";
     expect(resolveDefaultSandboxName(() => ({ defaultSandbox: "registry-sandbox" }))).toBe(
@@ -64,11 +122,36 @@ describe("services command", () => {
   it("starts services for the default sandbox when present", async () => {
     const startAll = vi.fn(async () => {});
     await runStartCommand({
-      listSandboxes: () => ({ defaultSandbox: "alpha" }),
+      listSandboxes: () => ({
+        defaultSandbox: "alpha",
+        sandboxes: [{ name: "alpha", dashboardPort: 18_791 }],
+      }),
       startAll,
     });
-    expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha", dashboardPort: 18_791 });
   });
+
+  it("keeps the service fallback when the selected sandbox is not registered", () => {
+    expect(
+      resolveDefaultSandboxServiceOptions({
+        listSandboxes: () => ({ defaultSandbox: "alpha", sandboxes: [] }),
+      }),
+    ).toEqual({ sandboxName: "alpha" });
+  });
+
+  it.each([0, 65_536, 18_791.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "keeps the service fallback for an invalid registered dashboard port (%s)",
+    (dashboardPort) => {
+      expect(
+        resolveDefaultSandboxServiceOptions({
+          listSandboxes: () => ({
+            defaultSandbox: "alpha",
+            sandboxes: [{ name: "alpha", dashboardPort }],
+          }),
+        }),
+      ).toEqual({ sandboxName: "alpha" });
+    },
+  );
 
   it("stops services without a sandbox override when the default sandbox is unsafe", () => {
     const stopAll = vi.fn();

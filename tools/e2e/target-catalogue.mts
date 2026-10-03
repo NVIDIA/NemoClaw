@@ -1537,10 +1537,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     cloudflared: true,
+    owningPaths: [
+      "src/lib/tunnel/services.ts",
+      "src/lib/tunnel/service-command.ts",
+      "test/e2e/live/tunnel-lifecycle-helpers.ts",
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life",
+      NEMOCLAW_DASHBOARD_PORT: "18790",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),

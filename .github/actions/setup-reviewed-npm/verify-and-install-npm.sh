@@ -57,7 +57,8 @@ if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$e
 fi
 
 if ! archive_version="$(
-  tar -xOf "$archive" package/package.json | node -e '
+  cd "$download_dir"
+  tar -xOf "npm-$version.tgz" package/package.json | node -e '
     const version = JSON.parse(require("node:fs").readFileSync(0, "utf8")).version;
     if (typeof version !== "string") process.exit(1);
     process.stdout.write(version);

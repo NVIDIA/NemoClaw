@@ -10,10 +10,12 @@ import { describe, expect, it } from "vitest";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  cloudflaredTargetsRegisteredPort,
   classifyCloudflaredLog,
   getCloudflaredLogPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
+  tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
 
@@ -109,6 +111,26 @@ describe("tunnel lifecycle cleanup registration", () => {
 });
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
+  it("rejects a live cloudflared command targeting another dashboard port", () => {
+    expect(
+      cloudflaredTargetsRegisteredPort(
+        4321,
+        shellResult({ stdout: "cloudflared tunnel --url http://localhost:18789" }),
+        "18790",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not override the registered dashboard port in tunnel commands", () => {
+    expect(tunnelLifecycleCommandEnv({}, { NEMOCLAW_DASHBOARD_PORT: "18790" })).not.toHaveProperty(
+      "NEMOCLAW_DASHBOARD_PORT",
+    );
+    expect(tunnelLifecycleCommandEnv({ NEMOCLAW_DASHBOARD_PORT: "18790" })).toHaveProperty(
+      "NEMOCLAW_DASHBOARD_PORT",
+      "18790",
+    );
+  });
+
   it("starts onboarding fresh so stale runner sessions cannot block the tunnel contract", () => {
     expect(tunnelLifecycleInstallArgs()).toEqual([
       "install.sh",
@@ -139,8 +161,10 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     );
 
     try {
-      expect(getCloudflaredLogPath(logRoot, "e2e-tunnel-life")).toBeUndefined();
-      expect(classifyCloudflaredLog(logRoot, "e2e-tunnel-life")).toBe("nemoclaw_no_spawn");
+      expect([
+        getCloudflaredLogPath(logRoot, "e2e-tunnel-life"),
+        classifyCloudflaredLog(logRoot, "e2e-tunnel-life"),
+      ]).toEqual([undefined, "nemoclaw_no_spawn"]);
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
