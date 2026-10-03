@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
-    ObservationError,
     backend::{Backend, Row},
     docker::{Engine, fixture::Fixture},
     managed::Storage,
@@ -62,30 +61,5 @@ async fn proxy_compute_changes_preserve_bound_credential_storage() {
             .await
             .error()
             .is_some()
-    );
-}
-
-#[tokio::test]
-async fn obsolete_proxy_backend_rejects_compute_without_engine_effects() {
-    let fixture = Fixture::start(|request| {
-        panic!(
-            "unexpected engine effect {} {}",
-            request.method, request.path
-        )
-    })
-    .await;
-    let backend = super::ProxyBackend::new(Engine::connect(&fixture.endpoint).unwrap());
-    let expected = ObservationError::Backend("proxy lifecycle belongs to the Docker provider");
-    assert_eq!(
-        backend.ensure("ollama_proxy", &Row::new()).await.error(),
-        Some(expected)
-    );
-    assert_eq!(
-        backend.read("ollama_proxy", &Row::new(), false).await,
-        Err(expected)
-    );
-    assert_eq!(
-        backend.remove("ollama_proxy", &Row::new(), true).await,
-        Err(expected)
     );
 }

@@ -31,7 +31,6 @@ fn evidence(document: &Document) -> DiscoveryEvidence {
         .map(String::from)
         .collect(),
         health_checks: Vec::new(),
-        input_sources: vec!["file".into(), "stdin".into()],
     });
     DiscoveryEvidence {
         key: discovery_key_for_document(document).unwrap(),

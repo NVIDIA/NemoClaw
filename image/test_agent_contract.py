@@ -86,7 +86,7 @@ class AgentContract(unittest.TestCase):
         )
         health = advertised["health_checks"]
         self.assertEqual(health, ["live", "active", "ready"][: len(health)])
-        self.assertEqual(advertised["input_sources"], ["file", "stdin"])
+        self.assertEqual(set(advertised), {"interface_version", "operations", "health_checks"})
 
     def test_validation_without_a_host_reports_owner_rejection(self):
         config = self.file(

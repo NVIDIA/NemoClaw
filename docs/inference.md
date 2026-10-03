@@ -140,7 +140,6 @@ Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until 
 ## Build an Image with the Configuration Interface
 
 Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
-Images built for the former `inference.local` route are incompatible; rebuild before creating a native-inference deployment.
 
 Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
 

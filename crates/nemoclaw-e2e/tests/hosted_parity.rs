@@ -96,7 +96,6 @@ fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
             std::panic::catch_unwind(|| authored_document(raw, changed.yaml().unwrap().as_bytes()))
                 .is_err()
         );
-        assert!(std::panic::catch_unwind(|| authored_document(raw, raw)).is_err());
     }
 }
 
@@ -153,17 +152,13 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
 }
 
 #[test]
-fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent() {
+fn hosted_openclaw_scenario_preserves_authored_intent() {
     assert_source_manifest(
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml"),
         OPENCLAW_V0_REVISION,
         OPENCLAW_V0_MANIFEST_SHA256,
     );
     let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
-    assert!(
-        Document::parse(raw.as_slice()).is_err(),
-        "legacy agents lists require explicit reauthoring"
-    );
     let v1 = authored_document(
         raw,
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
@@ -172,7 +167,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
 }
 
 #[test]
-fn hosted_hermes_scenario_rejects_legacy_export_and_preserves_authored_intent() {
+fn hosted_hermes_scenario_preserves_authored_intent() {
     assert_source_manifest(
         include_bytes!("../fixtures/hermes-nvidia-hosted/v0.yaml"),
         HERMES_V0_REVISION,
@@ -184,10 +179,6 @@ fn hosted_hermes_scenario_rejects_legacy_export_and_preserves_authored_intent() 
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     assert_eq!(export_digest, HERMES_V0_EXPORT_SHA256);
-    assert!(
-        Document::parse(export.as_slice()).is_err(),
-        "legacy agents lists require explicit reauthoring"
-    );
     let v1 = authored_document(
         export,
         include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),

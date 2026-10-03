@@ -89,15 +89,12 @@ struct Artifact {
 struct Pins {
     rust: String,
     protobuf: String,
-    /// Required only by `cargo ci`; runtime builds read older pin files.
-    #[serde(default)]
-    nextest: Option<String>,
+    nextest: String,
     #[cfg(feature = "sdk")]
     opentofu: String,
     #[cfg(feature = "sdk")]
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
-    #[serde(default)]
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
 }
 fn cargo() -> Command {

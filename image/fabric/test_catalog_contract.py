@@ -108,7 +108,6 @@ class CatalogContract(unittest.TestCase):
                     "interface_version": 1,
                     "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
                     "health_checks": [],
-                    "input_sources": ["file", "stdin"],
                 },
             )
             self.assertEqual(catalog["runtime"]["command"], layout["command"])
