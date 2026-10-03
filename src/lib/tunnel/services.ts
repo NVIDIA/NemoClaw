@@ -975,23 +975,18 @@ export function showStatus(opts: ServiceOptions = {}): void {
   const logFile = join(pidDir, "cloudflared.log");
   if (state.kind === "running") {
     const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
-    const publicUrl = existsSync(logFile) ? getTunnelUrl(pidDir, dashboardPort) : "";
-    const args = cloudflaredArgs(
-      (opts.processControl ?? REAL_PROCESS_CONTROL).commandLine(state.pid),
-    );
+    const log = existsSync(logFile) ? readFileSync(logFile, "utf-8") : "";
+    const namedTunnelUrl = extractNamedCloudflareUrl(log, dashboardPort);
+    const publicUrl = namedTunnelUrl ?? extractTryCloudflareUrl(log) ?? "";
+    const commandLine = (opts.processControl ?? REAL_PROCESS_CONTROL).commandLine(state.pid);
+    const args = cloudflaredArgs(commandLine);
     const tunnelIndex = args?.indexOf("tunnel") ?? -1;
     const namedTunnel = tunnelIndex >= 0 && args?.[tunnelIndex + 1] === "run";
-    const namedTargetConfirmed = Boolean(
-      extractNamedCloudflareUrl(readCloudflaredLog(pidDir), dashboardPort),
-    );
+    const namedTargetConfirmed = Boolean(namedTunnelUrl);
     const quickTunnelUrl = /(?:^|\.)trycloudflare\.com(?:\/|$)/u.test(publicUrl);
     const targetConfirmed = quickTunnelUrl
-      ? quickTunnelTargetsDashboard(
-          pidDir,
-          (opts.processControl ?? REAL_PROCESS_CONTROL).commandLine(state.pid),
-          dashboardPort,
-        )
-      : Boolean(extractNamedCloudflareUrl(readCloudflaredLog(pidDir), dashboardPort));
+      ? quickTunnelTargetsDashboard(pidDir, commandLine, dashboardPort)
+      : namedTargetConfirmed;
     if (publicUrl && targetConfirmed) {
       info(`Public URL: ${publicUrl}`);
     } else if (publicUrl && quickTunnelUrl) {

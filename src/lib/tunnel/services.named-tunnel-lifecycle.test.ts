@@ -56,9 +56,10 @@ describe("showStatus named tunnel diagnostics", () => {
       join(pidDir, "cloudflared.log"),
       'config="{\\"ingress\\":[{\\"hostname\\":\\"agent.example.com\\", \\"service\\":\\"http://localhost:18791\\"}]}"',
     );
+    const commandLine = vi.fn(() => "cloudflared tunnel run");
     const processControl: ProcessControl = {
       isAlive: () => true,
-      commandLine: () => "cloudflared tunnel run",
+      commandLine,
       signalCloudflared: vi.fn(() => "signaled" as const),
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -69,6 +70,7 @@ describe("showStatus named tunnel diagnostics", () => {
     const output = [...logSpy.mock.calls, ...warnSpy.mock.calls].flat().join("\n");
     expect(output).toContain("https://agent.example.com");
     expect(output).not.toContain("dashboard target is unconfirmed");
+    expect(commandLine).toHaveBeenCalledTimes(2);
   });
 });
 
