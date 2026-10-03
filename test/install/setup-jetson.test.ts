@@ -357,6 +357,18 @@ describe("setup-jetson br_netfilter failure handling (#12587)", () => {
     expect(result.stdout).not.toContain("is unblocked");
   });
 
+  it("exits non-zero on L4T 39.x when sysctl fails even if the setting reads back as 1", () => {
+    const result = runSetupJetson(r39ReleaseLine, {
+      ...r39SetupRequired,
+      sysctl: 'echo "sysctl: permission denied" >&2\nexit 1',
+      cat: catReportingBridgeNetfilterAs("1"),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("sysctl: permission denied");
+    expect(result.stdout).not.toContain("is unblocked");
+  });
+
   it.each([
     ["L4T 38.x", "# R38 (release), REVISION: 2.0, GCID: 12345678, BOARD: generic"],
     ["L4T 36.x", "# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref"],
