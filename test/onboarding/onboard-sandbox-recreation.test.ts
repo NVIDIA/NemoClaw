@@ -334,7 +334,6 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
-processRecovery.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor = async (window) => ({ ok: true, window: { sandboxName: window.sandboxName } });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
@@ -677,7 +676,6 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
-processRecovery.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor = async (window) => ({ ok: true, window: { sandboxName: window.sandboxName } });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -895,6 +893,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+	  if (cmd.includes("openclaw config get agents.defaults.model.primary --json")) return JSON.stringify("inference/gpt-5.4");
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
 	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
@@ -1052,6 +1051,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+	  if (cmd.includes("openclaw config get agents.defaults.model.primary --json")) return JSON.stringify("openai/gpt-4o");
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
 	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";

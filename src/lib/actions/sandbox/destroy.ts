@@ -22,7 +22,10 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import {
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
+  readPendingHostLocalVllmRetirement,
+} from "../../inference/local-model-profile/cleanup";
 import {
   isLocalOllamaRouteOwner,
   loadPersistedOllamaHost,
@@ -44,7 +47,6 @@ import {
   removeManagedAgentStateVolumes,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   retireRemovedImmutabilityStateRecord,
@@ -77,16 +79,20 @@ import {
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
 } from "./destroy-presence";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   prepareSandboxDestroy,
+  recordManagedVllmRetirementPending,
+  reportManagedVllmDestroyOutcome,
   resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
+  retireManagedVllmForDestroyedSandbox,
   stopModelRouterForDestroyedSandbox,
+  stopDestroyedSandboxProxy,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
 } from "./destroy-preflight";
-import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
@@ -634,11 +640,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
   }
 }
 
-export type { WipeSandboxStateDeps };
-// Re-export so existing callers (tests, downstream code) keep working after
-// the wipe was extracted out of the destroy monolith (#5455 PRA-2).
-export { wipeSandboxState };
-
 class SandboxDestroyExitRequest extends Error {
   constructor(readonly exitCode: number) {
     super(`Sandbox destroy requested exit ${String(exitCode)}`);
@@ -658,7 +659,7 @@ export async function destroySandbox(
   } = {},
 ): Promise<void> {
   try {
-    return await withMcpLifecycleLock(sandboxName, () => {
+    return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
         sandboxName,
         { allowStateRecord: true },
@@ -1064,6 +1065,9 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
+    abortPreparedCleanupOnError(() =>
+      stopDestroyedSandboxProxy(sandboxName, sandbox, listRegisteredSandboxes),
+    );
     const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
       removeManagedAgentStateVolumes(
         {
@@ -1162,6 +1166,21 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
   }
+  if (deleteSucceededOrAlreadyGone) {
+    try {
+      recordManagedVllmRetirementPending(sandbox, { keepVllm: normalized.keepVllm });
+    } catch (error) {
+      defaultDestroyWarn(
+        `Could not record the pending managed vLLM retirement for '${sandboxName}': ${redactDestroyError(error)}. A destroy retry cannot retire the container if this retirement does not complete.`,
+      );
+      if (readPendingHostLocalVllmRetirement() !== sandboxName) {
+        console.error(
+          "  The sandbox registry entry was preserved so exact managed vLLM retirement can be retried.",
+        );
+        requestSandboxDestroyExit(1);
+      }
+    }
+  }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName, {
     removeImage: (name) => removeSandboxImage(name, { getSandbox: getRegisteredSandbox }),
     removeSandbox: registryAuthority.removeSandbox,
@@ -1250,6 +1269,17 @@ async function destroySandboxUnlocked(
       );
     }
   }
+  // The registry row is gone, so every remaining Local vLLM row in any gateway
+  // state root is a peer that still needs the host-global container. A retry
+  // that finds no row owns the retirement only through its pending record.
+  if (deleteSucceededOrAlreadyGone && (removed || (!sandbox && registryEntryAbsent))) {
+    reportManagedVllmDestroyOutcome(
+      await retireManagedVllmForDestroyedSandbox(sandboxName, sandbox, {
+        keepVllm: normalized.keepVllm,
+      }),
+      { log: console.log, warn: defaultDestroyWarn },
+    );
+  }
   const retainedRecoveryOwnsDestroySession = retainedRecoveryAuthority
     ? onboardSession.retainedSandboxRecoveryMatchesSession(
         retainedRecoveryAuthority,
@@ -1268,6 +1298,7 @@ async function destroySandboxUnlocked(
         current.sandboxName === destroySession.sandboxName &&
         current.endpointUrl === destroySession.endpointUrl &&
         current.routerPid === destroySession.routerPid &&
+        (current.routerPort ?? null) === (destroySession.routerPort ?? null) &&
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;

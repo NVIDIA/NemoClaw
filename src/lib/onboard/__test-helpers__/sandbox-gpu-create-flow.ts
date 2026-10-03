@@ -227,26 +227,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     runtimeDir: "/run/user/1001",
     socketPath: "/run/user/1001/podman/podman.sock",
   };
-  const managedDockerConfigPreservationCases = [
-    {
-      title: "the Desktop helper responds",
-      helperResponds: true,
-      dockerHost: "unix:///var/run/docker.sock",
-      contextStdout: "default\n",
-    },
-    {
-      title: "the Docker context is not default",
-      helperResponds: false,
-      dockerHost: undefined,
-      contextStdout: "remote-builder\n",
-    },
-    {
-      title: "an explicit remote Docker host is selected",
-      helperResponds: false,
-      dockerHost: "tcp://remote-builder.example:2376",
-      contextStdout: "default\n",
-    },
-  ];
   const temporaryDirectories: string[] = [];
 
   type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
@@ -332,14 +312,10 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return dockerConfig;
   }
 
-  function captureCreateEnv(): {
-    env: NodeJS.ProcessEnv;
-    configExisted: boolean;
-  } {
-    const captured = { env: {} as NodeJS.ProcessEnv, configExisted: false };
+  function captureCreateEnv(): { env: NodeJS.ProcessEnv } {
+    const captured = { env: {} as NodeJS.ProcessEnv };
     mocks.streamSandboxCreate.mockImplementation((_exe, _args, env: NodeJS.ProcessEnv) => {
       captured.env = env;
-      captured.configExisted = fs.existsSync(String(env.DOCKER_CONFIG));
       return Promise.resolve({
         status: 0,
         output: "Created sandbox: alpha",
@@ -377,7 +353,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     NVIDIA_SMI_FAILED_PROOF: nvidiaSmiFailedProof,
     DEFAULT_RUNTIME_SNAPSHOT: defaultRuntimeSnapshot,
     PORTABLE_RUNTIME_AUTHORITY: portableRuntimeAuthority,
-    managedDockerConfigPreservationCases,
     readySandboxGetResult,
     createSequencedOpenShellRunner,
     failNativeCreate,
