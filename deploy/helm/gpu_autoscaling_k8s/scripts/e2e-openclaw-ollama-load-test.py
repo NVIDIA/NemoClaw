@@ -136,8 +136,9 @@ def read_hpa(namespace: str, name: str) -> tuple[int, int]:
             ],
             text=True,
             timeout=10,
+            stderr=subprocess.DEVNULL,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return 0, 0
     parts = raw.split()
     current = int(parts[0]) if parts and parts[0].isdigit() else 0
@@ -571,7 +572,8 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
     if endpoints:
-        print("  Path: laptop HTTP / WebSocket to published host ports (no SSH, no kubectl exec).")
+        print("  Path: laptop HTTP / WebSocket to published host ports (no SSH, no kubectl).")
+        print("  Watch HPA on the DGX: ./scripts/get-hpa.sh -n nemoclaw-gpu -w")
         for i in range(args.users):
             ep = endpoint_for_user(endpoints, i)
             print(
@@ -582,6 +584,8 @@ async def run_test(args: argparse.Namespace) -> int:
         print("  Each user sends chats to that user's sandbox.")
     print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
+
+    skip_hpa = bool(args.chat_only or endpoints)
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, hold_started
@@ -608,7 +612,7 @@ async def run_test(args: argparse.Namespace) -> int:
             except asyncio.TimeoutError:
                 continue
 
-    poll_task = asyncio.create_task(poll_hpa())
+    poll_task = None if skip_hpa else asyncio.create_task(poll_hpa())
     if endpoints:
         user_tasks = [
             asyncio.create_task(
@@ -666,10 +670,11 @@ async def run_test(args: argparse.Namespace) -> int:
         else:
             normalized.append({"error": str(item), "ok": 0, "err": 1})
     results = normalized
-    await poll_task
+    if poll_task is not None:
+        await poll_task
 
     scale_down_ok = False
-    if args.chat_only or bool(endpoints):
+    if skip_hpa:
         args.scale_down_wait_loops = 0
     for _ in range(args.scale_down_wait_loops):
         current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)

@@ -198,9 +198,9 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_gpuutil.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
-# UI: after Terminals, see OpenClaw UI below
 
-# simpler option — from the same DGX in another terminal
+
+# Or a simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
@@ -219,9 +219,9 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
-# UI: after Terminals, see OpenClaw UI below
 
-# simpler option — from the same DGX in another terminal
+
+# or a simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
@@ -317,7 +317,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_gpuutil.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
-# UI: Hermes dashboard on that user's published host port (no #token=)
+
 
 # simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_hermes.sh
@@ -340,7 +340,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_hermes_latency.sh
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
-# UI: Hermes dashboard on that user's published host port (no #token=)
+
 
 # simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client_hermes.sh
