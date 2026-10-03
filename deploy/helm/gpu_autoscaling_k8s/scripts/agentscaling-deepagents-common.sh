@@ -22,7 +22,7 @@ agentscaling_deepagents_common_pin() {
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
   INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
   export INFERENCE_MODEL
-  export MAX_TOKENS="${MAX_TOKENS:-2048}"
+  export MAX_TOKENS="$(agent_common_resolve_max_tokens deepagents)"
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then
@@ -116,7 +116,6 @@ agentscaling_deepagents_common_apply_hpa() {
   if [[ "${wanted}" == "latency_avg" ]]; then
     kubectl get apiservice v1beta1.custom.metrics.k8s.io 2>/dev/null | grep -q True \
       || agentscaling_deepagents_common_fail "custom.metrics.k8s.io is not ready; latency HPA cannot run"
-    echo "Latency HPA is armed after client_deepagents.sh; not waiting for chats during provision"
   fi
   hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${MAX_REPLICAS}" \
     || agentscaling_deepagents_common_fail "HPA is not 1 current replica; leftover load would scale before client_deepagents.sh"
@@ -149,8 +148,6 @@ agentscaling_deepagents_common_main() {
       agentscaling_deepagents_common_apply_hpa
       ;;
   esac
-  echo "HPA metric=${HPA_METRIC}. maxReplicas=${MAX_REPLICAS}. Current replicas stay 1 until ./scripts/client_deepagents.sh sends chats."
-  echo "After sandboxes are Ready: E2E_USERS=${E2E_USERS} ./scripts/client_deepagents.sh (Deep Agents has no HTTP UI)."
   "${SCRIPT_DIR}/setup-deepagent-nim-e2e-sandboxes.sh" "${cmd}"
   case "${cmd}" in
     stop | cleanup | layout | refresh-inference) ;;

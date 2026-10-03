@@ -24,6 +24,40 @@ agent_common_print_laptop_client_usage() {
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
+# Inflight stays 1. Default MAX_TOKENS is the GPU-util workload
+# (1024 OpenClaw/Hermes, 2048 Deep Agents). Latency HPA overrides to 256.
+# Set MAX_TOKENS only if you want to force a value.
+agent_common_resolve_max_tokens() {
+  local agent="${1:-openclaw}"
+  local raw metric
+  raw="${MAX_TOKENS:-}"
+  if [[ -z "${raw}" ]]; then
+    metric="${HPA_METRIC:-}"
+    if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
+      metric="$(kubectl get hpa "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
+        -n "${NAMESPACE:-nemoclaw-gpu}" \
+        -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
+    fi
+    case "${metric}" in
+      *latency*) raw="256" ;;
+      *)
+        case "${agent}" in
+          deepagents) raw="2048" ;;
+          *) raw="1024" ;;
+        esac
+        ;;
+    esac
+  fi
+  [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: MAX_TOKENS must be a positive integer (got '${raw}')" >&2
+    return 1
+  }
+  if ((raw < 8)); then
+    raw=8
+  fi
+  printf '%s\n' "${raw}"
+}
+
 agent_common_fail_openshell_for_client() {
   echo "ERROR: $*. From a laptop use HTTP, not SSH:" >&2
   echo "  E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/client.sh" >&2

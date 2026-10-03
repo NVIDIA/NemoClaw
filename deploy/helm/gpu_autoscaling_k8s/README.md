@@ -131,7 +131,7 @@ openshell status
 
 ### 6. E2E test with multiple end users and sandboxes
 
-Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). One end user ↔ one sandbox ↔ one agent. End users do not log into the DGX. CLI is `E2E_CLIENT_HOST=dgx-ip` plus the pairing script in 6a / 6b / 6c (or the same script from the same DGX in another terminal). The OpenClaw browser UI is [6a](#6a-openclaw--ollama) only.
+Queries from end users go **into the sandboxes**, one sandbox per end user. Any pairing can be first after steps 1–5. Provision waits for HPA **1/1** Ready (up to 240s, `HPA_BASELINE_WAIT_SEC`). One end user ↔ one sandbox ↔ one agent. End users do not log into the DGX. CLI is `E2E_CLIENT_HOST=dgx-ip` plus the pairing script in 6a / 6b / 6c (or the same script from the same DGX in another terminal). The OpenClaw remote laptop UI is [OpenClaw simple test](#openclaw-simple-test).
 
 | | Agent | Default `INFERENCE_RUNTIME` | Default model | Provision | Client |
 |--|-------|------------------------------|---------------|-----------|--------|
@@ -148,11 +148,12 @@ Each wrapper pins **`AGENT_NAME`**. Do not pass `AGENT_NAME=hermes` into `agents
 
 Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end users, `E2E_USERS=5` and one sandbox per user. This 8×H100 demo runs those sandboxes on the DGX H100 **CPU cores and DRAM**. Sandboxes can run on a different CPU node with more memory to support more sandboxes and end users. Size `E2E_USERS` so `E2E_USERS × AGENT_SANDBOX_MEMORY` fits the CPU node.
 
+
 #### 6a. OpenClaw + Ollama
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
 - inflight **1** per sandbox (one agent per sandbox)
-- Long completions (`MAX_TOKENS` default **1024**). `client.sh` re-pins `max_tokens` on each sandbox the same way `client_deepagents.sh` does, and keeps the provisioned model. 2048 kept `latency_avg` ~7s at 8 replicas (target 3000 ms). Inflight stays **1** so 8Gi CPU sandboxes do not OOM.
+- `MAX_TOKENS` **1024** for GPU util; latency overrides to **256**. `client.sh` re-pins `max_tokens` and keeps the provisioned model.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
@@ -222,6 +223,7 @@ E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
 
 
 # or a simpler option — from the same DGX in another terminal
+# MAX_TOKENS is 256 for latency (automatic). GPU-util client stays at 1024.
 E2E_USERS=5 ./scripts/client.sh
 ```
 
@@ -242,17 +244,7 @@ Check the log to see the end users, sandboxes, and chats:
 <img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
 </p>
 
-**OpenClaw UI.** Each user is a **different host port**. You do not type a token. Leave Password empty.
-
-| User | Open this in the browser        |
-|------|---------------------------------|
-| 0    | `http://dgx-ip:18789/u/0`       |
-| 1    | `http://dgx-ip:18790/u/0`       |
-| 2    | `http://dgx-ip:18791/u/0`       |
-| 3    | `http://dgx-ip:18792/u/0`       |
-| 4    | `http://dgx-ip:18793/u/0`       |
-
-
+Remote laptop UI (simple Q&A, not `client.sh`): [OpenClaw simple test](#openclaw-simple-test).
 
 #### 6b. Hermes + vLLM
 
@@ -274,7 +266,7 @@ export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` **1024** for GPU util; latency overrides to **256**. 
 
 ```text
 E2E test: Hermes + vLLM
@@ -343,6 +335,7 @@ E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client_hermes.sh
 
 
 # simpler option — from the same DGX in another terminal
+# MAX_TOKENS is 256 for latency (automatic). GPU-util client stays at 1024.
 E2E_USERS=5 ./scripts/client_hermes.sh
 ```
 
@@ -371,7 +364,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes.
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. `MAX_TOKENS` **2048** for GPU util; latency overrides to **256**.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -435,6 +428,7 @@ E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_deepagents_latency.sh
 
 ```bash
 # Terminal C — from the same DGX in another terminal
+# MAX_TOKENS is 256 for latency (automatic). GPU-util client stays at 2048.
 E2E_USERS=5 ./scripts/client_deepagents.sh
 ```
 
@@ -617,6 +611,18 @@ export AGENT_NAME=openclaw
 A non-empty answer plus the final `OK:` line is a pass. Wording varies; small models may not know product names. Sample output: [`AGENT-SELECTION.md`](AGENT-SELECTION.md#example-verify-output).
 
 
+
+**Remote UI test** (from any browser). After [6a](#6a-openclaw--ollama) has the five sandboxes up, open these URLs on the browser. Each user is a **different host port**. You do not type a token. Leave Password empty.
+
+| User | Open this in the browser on your laptop |
+|------|-----------------------------------------|
+| 0    | `http://dgx-ip:18789/u/0`               |
+| 1    | `http://dgx-ip:18790/u/0`               |
+| 2    | `http://dgx-ip:18791/u/0`               |
+| 3    | `http://dgx-ip:18792/u/0`               |
+| 4    | `http://dgx-ip:18793/u/0`               |
+
+
 ### Hermes simple test
 
 This is the pairing check for Hermes. It is a oneshot through the in-sandbox
@@ -766,7 +772,7 @@ Shared Prometheus, Adapter, the Envoy load balancer, and Agent Sandbox CRDs are 
 
 ### Can I run the client from my laptop?
 
-Yes. Terminal C is a **remote terminal such as your laptop** (`E2E_CLIENT_HOST=dgx-ip` plus `client.sh` / `client_hermes.sh` / `client_deepagents.sh`). A simpler option is the same script from the same DGX in another terminal. The OpenClaw browser UI is one port per user (`http://dgx-ip:18789/u/0` … `:18793/u/0`) — see [6a](#6a-openclaw--ollama). End users do not log into the DGX.
+Yes. Terminal C is a **remote terminal such as your laptop** (`E2E_CLIENT_HOST=dgx-ip` plus `client.sh` / `client_hermes.sh` / `client_deepagents.sh`). A simpler option is the same script from the same DGX in another terminal. The OpenClaw remote laptop UI is [OpenClaw simple test](#openclaw-simple-test). End users do not log into the DGX.
 
 ### Agents and sandboxes run on CPU — what limits how many I can run?
 

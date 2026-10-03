@@ -580,8 +580,9 @@ hpa_common_require_live_runtime() {
 }
 
 # Keep current/desired replicas at 1 while idle. Do not clamp maxReplicas
-# to 1 — HPA max stays the installed value (8 on this DGX). Restart GPU
-# pods so leftover latency_avg / GPU-util samples cannot scale before chats.
+# to 1 — HPA max stays the installed value (8 on this DGX). Do not restart
+# GPU pods that are already 1/1 (yesterday's fast path). Set
+# E2E_FORCE_GPU_RESTART=1 only when leftover util/latency must be wiped.
 hpa_common_wait_hpa_replicas() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
@@ -612,16 +613,30 @@ hpa_common_hold_hpa_until_client() {
     max="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)"
   fi
   max="${max:-8}"
-  if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
-    echo "Holding ${ns}/${hpa} at 1 current replica (maxReplicas=${max})"
-    echo "Restarting GPU pods so leftover latency/util cannot scale before the client"
-  fi
   kubectl patch hpa "${hpa}" -n "${ns}" --type merge --field-manager=helm \
     -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${max}}}" >/dev/null
+  local current desired ready
+  current="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.currentReplicas}' 2>/dev/null || true)"
+  desired="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || true)"
+  ready="$(kubectl get deploy "${deploy}" -n "${ns}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+  if [[ "${current}" == "1" && "${desired}" == "1" && "${ready}" == "1" && "${E2E_FORCE_GPU_RESTART:-0}" != "1" ]]; then
+    if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+      echo "Holding ${ns}/${hpa} at 1 current replica (maxReplicas=${max})"
+    fi
+    return 0
+  fi
+  if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+    echo "Holding ${ns}/${hpa} at 1 current replica (maxReplicas=${max})"
+  fi
   kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
-  kubectl rollout restart "deployment/${deploy}" -n "${ns}" >/dev/null
-  hpa_common_wait_rollout "${deploy}" "${ns}" 300 || true
-  kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
+  if [[ "${E2E_FORCE_GPU_RESTART:-0}" == "1" ]]; then
+    if [[ "${E2E_CLIENT_QUIET_HPA:-0}" != "1" ]]; then
+      echo "Restarting GPU pods (E2E_FORCE_GPU_RESTART=1) so leftover latency/util cannot scale before the client"
+    fi
+    kubectl rollout restart "deployment/${deploy}" -n "${ns}" >/dev/null
+    hpa_common_wait_rollout "${deploy}" "${ns}" 300 || true
+    kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
+  fi
   hpa_common_wait_hpa_replicas "${ns}" "${hpa}" 1 180
 }
 

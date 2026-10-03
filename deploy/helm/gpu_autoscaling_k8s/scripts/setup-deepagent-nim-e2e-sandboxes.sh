@@ -184,10 +184,6 @@ print_e2e_layout() {
   echo ""
   echo "========================================================================"
   echo "E2E test: ${AGENT_DISPLAY_NAME} + NIM"
-  echo "  ${count} end users send dcode -n to ${count} OpenShell sandboxes"
-  echo "  ${count} Deep Agents run in ${count} OpenShell sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY})"
-  echo "  LLM (NIM ${INFERENCE_MODEL}) runs on GPUs"
-  echo "  When end-user demand increases, HPA scales NIM from 1 to 8 GPUs"
   echo "------------------------------------------------------------------------"
   printf "  %-10s  %-12s  %s\n" "end user" "sandbox" "status"
   for ((i = 0; i < count; i += 1)); do
@@ -199,13 +195,6 @@ print_e2e_layout() {
     fi
     printf "  %-10s  %-12s  %s\n" "user ${i}" "sandbox ${i}" "${sandbox_st}"
   done
-  echo "------------------------------------------------------------------------"
-  echo "  HPA: NIM ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
-  echo "  One OpenShell gateway for all sandboxes. One Envoy load balancer."
-  echo "  Users send dcode -n into each sandbox. Do not start a per-sandbox Deep Agents listener."
-  echo "  Client (Deep Agents has no HTTP UI; same for GPU util or latency HPA):"
-  echo "    E2E_USERS=${count} ./scripts/client_deepagents.sh"
-  echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"
 }
 
@@ -215,7 +204,6 @@ refresh_openshell_inference_backend() {
   load_e2e_inference_env
   local log="${STATE_DIR}/openshell-provider.log"
   mkdir -p "${STATE_DIR}"
-  echo "  OpenShell provider ${OPENSHELL_PROVIDER_NAME} → Envoy dataplane ${E2E_INFERENCE_URL} (pod IP, not ClusterIP)"
   if openshell provider get "${OPENSHELL_PROVIDER_NAME}" >/dev/null 2>&1; then
     OPENAI_API_KEY="${E2E_API_KEY}" openshell provider update "${OPENSHELL_PROVIDER_NAME}" \
       --credential OPENAI_API_KEY \
@@ -267,7 +255,6 @@ start_one_gateway() {
   local log="${STATE_DIR}/${name}.log"
   local pidfile="${STATE_DIR}/${name}.pid"
   if gateway_health_ok "${name}"; then
-    echo "  ${name}: Deep Agents gateway already healthy"
     return 0
   fi
   if [[ -f "${pidfile}" ]]; then
@@ -280,7 +267,6 @@ start_one_gateway() {
     fi
   fi
   if [[ ! -f "${pidfile}" ]]; then
-    echo "  ${name}: starting /usr/local/bin/nemoclaw-start"
     openshell sandbox exec -n "${name}" --no-tty -- \
       /usr/local/bin/nemoclaw-start >"${log}" 2>&1 &
     echo $! >"${pidfile}"
@@ -288,7 +274,6 @@ start_one_gateway() {
   local i
   for ((i = 1; i <= 90; i += 1)); do
     if gateway_health_ok "${name}"; then
-      echo "  ${name}: gateway healthy"
       return 0
     fi
     sleep 2
@@ -330,8 +315,7 @@ count_from_existing() {
 start_gateways() {
   local count="${1:?count}"
   local i name
-  echo "Starting Deep Agents gateways in ${count} sandboxes (${SANDBOX_PREFIX}0000…)"
-  echo "  Optional: the HPA client uses dcode -n and does not need :8642."
+  echo "Starting Deep Agents gateways"
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
     openshell sandbox get "${name}" >/dev/null 2>&1 \
@@ -390,7 +374,6 @@ wait_inference_local_parallel() {
   ((${#} > 0)) || return 0
   echo "Checking https://inference.local on ${#} sandboxes one at a time (up to ${timeout_sec}s)"
   for name in "$@"; do
-    echo "  ${name}: checking inference.local"
     while ! inference_local_ok "${name}"; do
       if ((SECONDS >= deadline)); then
         echo "ERROR: inference.local still failing for: ${name}" >&2
@@ -399,19 +382,21 @@ wait_inference_local_parallel() {
       echo "  ${name}: still waiting for inference.local"
       sleep 2
     done
-    echo "  ${name}: inference.local ok"
   done
 }
 
 bringup_one() {
   local name="${1:?sandbox}"
+  if sandbox_pod_ready "${name}" && inference_local_ok "${name}"; then
+    echo "  ${name}: reusing existing OpenShell sandbox"
+    return 0
+  fi
   if sandbox_pod_ready "${name}"; then
     echo "  ${name}: reusing existing OpenShell sandbox"
   else
     create_one_sandbox "${name}" || return 1
   fi
   skip_connect_shell_nproc "${name}" || return 1
-  echo "  ${name}: pinning Deep Agents model.default=${INFERENCE_MODEL} max_tokens=${MAX_TOKENS:-2048}"
   agent_common_pin_deepagents_model "${name}" "${INFERENCE_MODEL}" || return 1
 }
 
@@ -424,12 +409,8 @@ bringup_sandboxes() {
   openshell status >/dev/null \
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
-  echo "E2E test: Deep Agents Code + NIM — ${count} end users send dcode -n to ${count} CPU sandboxes (LLM on GPUs)"
-  echo "  image ${AGENT_SANDBOX_IMAGE}"
-  echo "  ${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY} per sandbox. Do not start a per-sandbox Deep Agents listener."
-  echo "  One OpenShell gateway for all sandboxes. Do not destroy extras."
+  echo "E2E test: Deep Agents + NIM — ${count} sandboxes"
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
-  echo "  pointing OpenShell inference backend at Envoy/metrics-proxy dataplane pod IP (not ClusterIP)"
   refresh_openshell_inference_backend \
     || fail "could not update OpenShell provider ${OPENSHELL_PROVIDER_NAME} to ${E2E_INFERENCE_URL:-unknown}"
   for ((i = 0; i < count; i += 1)); do
@@ -464,9 +445,7 @@ create_sandboxes() {
   openshell status >/dev/null \
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
-  echo "Creating ${count} light CPU-only Deep Agents Code + NIM e2e sandboxes in parallel (${SANDBOX_PREFIX}0000 …)"
-  echo "  Agent: AGENT_NAME=${AGENT_NAME} (${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY}; no GPU; Deep Agents runs here)"
-  echo "  GPU inference backend: NIM model=${INFERENCE_MODEL} ns=${NAMESPACE} release=${RELEASE} ENABLE_ENVOY_LB=${ENABLE_ENVOY_LB}"
+  echo "Creating ${count} Deep Agents sandboxes"
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
@@ -506,9 +485,7 @@ create_sandboxes() {
   if ((${#failed[@]} > 0)); then
     fail "failed to create: ${failed[*]}"
   fi
-  echo "Ready: ${count}/${count} light sandboxes in $((SECONDS - started_at))s (parallel)."
-  echo "  ./scripts/agentscaling_deepagents_gpuutil.sh   # or agentscaling_deepagents_latency.sh"
-  echo "  E2E_USERS=${count} ./scripts/client_deepagents.sh"
+  echo "Ready: ${count}/${count} sandboxes in $((SECONDS - started_at))s"
 }
 
 case "${ACTION}" in

@@ -572,8 +572,7 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
     if endpoints:
-        print("  Path: laptop HTTP / WebSocket to published host ports (no SSH, no kubectl).")
-        print("  Watch HPA on the DGX: ./scripts/get-hpa.sh -n nemoclaw-gpu -w")
+        print("  Path: laptop HTTP / WebSocket to published host ports.")
         for i in range(args.users):
             ep = endpoint_for_user(endpoints, i)
             print(

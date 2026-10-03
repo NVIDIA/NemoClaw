@@ -229,9 +229,17 @@ def main() -> int:
     gateway["reload"] = {"mode": "off"}
     ui = gateway.setdefault("controlUi", {})
     if isinstance(ui, dict):
-        # Extra Node `openclaw devices list` workers fill 4Gi before :18789 binds.
-        ui["enabled"] = False
+        # Serve Control UI on first start so publish does not restart every sandbox.
+        ui["enabled"] = True
         ui["dangerouslyDisableDeviceAuth"] = True
+        ui["dangerouslyAllowHostHeaderOriginFallback"] = True
+        origins = ui.get("allowedOrigins")
+        if not isinstance(origins, list):
+            origins = []
+        for item in ("http://127.0.0.1:18789", "http://localhost:18789"):
+            if item not in origins:
+                origins.append(item)
+        ui["allowedOrigins"] = origins
 
     cfg.setdefault("update", {})["checkOnStart"] = False
 

@@ -103,7 +103,7 @@ export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # workers remain (openclaw-devices ~150–220Mi each). 8Gi is the floor
 # that lets one OpenClaw listen for the client.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
-export MAX_TOKENS="${MAX_TOKENS:-1024}"
+export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
 export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
@@ -202,10 +202,6 @@ print_e2e_layout() {
   echo ""
   echo "========================================================================"
   echo "E2E test: ${AGENT_DISPLAY_NAME} + Ollama"
-  echo "  ${count} end users send requests to ${count} OpenClaw agents"
-  echo "  ${count} OpenClaw agents run in ${count} OpenShell sandboxes"
-  echo "  LLM (Ollama ${INFERENCE_MODEL}) runs on GPUs"
-  echo "  When end-user demand increases, HPA scales Ollama from 1 to 8 GPUs"
   echo "------------------------------------------------------------------------"
   printf "  %-10s  %-24s  %-12s  %s\n" "end user" "OpenClaw agent" "sandbox" "status"
   for ((i = 0; i < count; i += 1)); do
@@ -222,13 +218,6 @@ print_e2e_layout() {
     fi
     printf "  %-10s  %-24s  %-12s  %s\n" "user ${i}" "${agent_st}" "sandbox ${i}" "${sandbox_st}"
   done
-  echo "------------------------------------------------------------------------"
-  echo "  HPA: Ollama ${INFERENCE_MODEL} in ${NAMESPACE}/${RELEASE} scales 1 → 8 GPUs as demand rises"
-  echo "  One OpenShell gateway. One Envoy load balancer."
-  echo "  Users talk to sandbox :18789 over HTTP (laptop UI + CLI)."
-  echo "  UI: one dashboard → sandbox 0. CLI: ${count} users → ${count} agents."
-  echo "  Laptop UI: http://dgx-ip:18789/   CLI: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${count} ./scripts/client.sh"
-  echo "  Watch HPA (percent or ms): ./scripts/get-hpa.sh -n ${NAMESPACE} -w"
   echo "========================================================================"
 }
 
@@ -238,7 +227,6 @@ refresh_openshell_inference_backend() {
   load_e2e_inference_env
   local log="${STATE_DIR}/openshell-provider.log"
   mkdir -p "${STATE_DIR}"
-  echo "  OpenShell provider ${OPENSHELL_PROVIDER_NAME} → Envoy dataplane ${E2E_INFERENCE_URL} (pod IP, not ClusterIP)"
   if openshell provider get "${OPENSHELL_PROVIDER_NAME}" >/dev/null 2>&1; then
     OPENAI_API_KEY="${E2E_API_KEY}" openshell provider update "${OPENSHELL_PROVIDER_NAME}" \
       --credential OPENAI_API_KEY \
@@ -293,7 +281,6 @@ pin_openclaw_ollama_model() {
     kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
       python3 - "${INFERENCE_MODEL}" "${MAX_TOKENS:-128}" <"${PIN_OPENCLAW_MODEL_PY}"
   )" || fail "$(sandbox_label "${name}"): OpenClaw pin failed"
-  echo "  $(sandbox_label "${name}"): ${out}"
 }
 
 prune_unused_openclaw_npm() {
@@ -350,7 +337,6 @@ launch_one_agent() {
     fi
     rm -f "${pidfile}"
   fi
-  echo "  $(sandbox_label "${name}"): starting /usr/local/bin/nemoclaw-start (minimal bootstrap)"
   # Keep the OpenShell exec attached: nemoclaw-start must run in the sandbox
   # startup transaction (kubectl nohup is rejected by config-guard).
   openshell sandbox exec -n "${name}" --no-tty \
@@ -382,9 +368,7 @@ wait_names_healthy() {
       hnames+=("${name}")
     done
     for i in "${!hpids[@]}"; do
-      if wait "${hpids[$i]}"; then
-        echo "  $(sandbox_label "${hnames[$i]}"): OpenClaw agent healthy"
-      else
+      if ! wait "${hpids[$i]}"; then
         still+=("${hnames[$i]}")
       fi
     done
@@ -402,7 +386,6 @@ finish_one_agent() {
     echo "ERROR: $(sandbox_label "${name}"): https://inference.local not reachable after agent start" >&2
     return 1
   fi
-  echo "  $(sandbox_label "${name}"): ${INFERENCE_MODEL} via inference.local ok"
 }
 
 stop_one_agent() {
@@ -428,7 +411,6 @@ stop_one_agent() {
   kubectl cp "${killer}" "${E2E_SANDBOX_NS}/${name}:/tmp/e2e-stop-openclaw.sh" -c agent >/dev/null 2>&1 || true
   kubectl exec -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
     sh /tmp/e2e-stop-openclaw.sh >/dev/null 2>&1 || true
-  echo "  $(sandbox_label "${name}"): leftover OpenClaw/Node processes stopped"
 }
 
 count_from_existing() {
@@ -450,10 +432,7 @@ start_agents() {
   local count="${1:?count}"
   local i name started_at="${SECONDS}"
   local -a names=() pending=()
-  echo "Starting ${count} OpenClaw agents in parallel (sandbox 0 … sandbox $((count - 1))). Cluster still has one OpenShell gateway and one Envoy load balancer."
-  echo "  Light sandboxes (${AGENT_SANDBOX_CPU} / ${AGENT_SANDBOX_MEMORY}); GPUs do inference."
-  echo "  One agent per sandbox (nemoclaw-start, NEMOCLAW_MINIMAL_BOOTSTRAP=1). Not sequential :18789 waits."
-  echo "  pointing OpenShell inference backend at Envoy dataplane pod IP (not ClusterIP)"
+  echo "Starting ${count} OpenClaw agents"
   refresh_openshell_inference_backend \
     || fail "could not update OpenShell provider ${OPENSHELL_PROVIDER_NAME} to ${E2E_INFERENCE_URL:-unknown}"
   for ((i = 0; i < count; i += 1)); do
@@ -462,15 +441,13 @@ start_agents() {
       || fail "sandbox ${name} does not exist"
     names+=("${name}")
   done
-  echo "  stopping leftover OpenClaw gateways so start does not reuse a rotated token"
   for name in "${names[@]}"; do
+    if agent_health_ok "${name}"; then
+      echo "  $(sandbox_label "${name}"): reusing existing OpenClaw"
+      continue
+    fi
     stop_one_agent "${name}"
-  done
-  echo "  patching nproc + slim OpenClaw config (nemoclaw plugin only)"
-  for name in "${names[@]}"; do
     slim_one_sandbox "${name}" || fail "could not slim ${name}"
-  done
-  for name in "${names[@]}"; do
     launch_one_agent "${name}"
     pending+=("${name}")
   done
@@ -518,6 +495,11 @@ cleanup_sandboxes() {
 
 bringup_one() {
   local name="${1:?sandbox}"
+  if sandbox_pod_ready "${name}" && agent_health_ok "${name}"; then
+    agent_common_pin_openclaw_max_tokens "${name}" "${MAX_TOKENS}" || return 1
+    echo "  $(sandbox_label "${name}"): reusing existing OpenShell sandbox"
+    return 0
+  fi
   if sandbox_pod_ready "${name}"; then
     echo "  $(sandbox_label "${name}"): reusing existing OpenShell sandbox"
   else
@@ -539,11 +521,8 @@ bringup_sandboxes() {
   openshell status >/dev/null \
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
-  echo "E2E test: OpenClaw + Ollama — ${count} end users send requests to ${count} OpenClaw agents in ${count} OpenShell sandboxes (LLM on GPUs)"
-  echo "  Reuse a Ready OpenShell sandbox when it already exists. Start the ${count} agents in parallel."
-  echo "  One OpenShell gateway for all sandboxes. Do not destroy extras."
+  echo "E2E test: OpenClaw + Ollama — ${count} sandboxes"
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
-  echo "  pointing OpenShell inference backend at Envoy/metrics-proxy dataplane pod IP (not ClusterIP)"
   refresh_openshell_inference_backend \
     || fail "could not update OpenShell provider ${OPENSHELL_PROVIDER_NAME} to ${E2E_INFERENCE_URL:-unknown}"
   for ((i = 0; i < count; i += 1)); do
@@ -594,7 +573,6 @@ wait_inference_local_parallel() {
   ((${#} > 0)) || return 0
   echo "Checking https://inference.local on ${#} sandboxes one at a time (up to ${timeout_sec}s)"
   for name in "$@"; do
-    echo "  $(sandbox_label "${name}"): checking inference.local"
     while ! inference_local_ok "${name}"; do
       if ((SECONDS >= deadline)); then
         echo "ERROR: inference.local still failing for: $(sandbox_label "${name}")" >&2
@@ -603,7 +581,6 @@ wait_inference_local_parallel() {
       echo "  $(sandbox_label "${name}"): still waiting for inference.local"
       sleep 2
     done
-    echo "  $(sandbox_label "${name}"): inference.local ok"
   done
 }
 
@@ -618,10 +595,7 @@ create_sandboxes() {
   openshell status >/dev/null \
     || fail "OpenShell gateway is not connected; port-forward service/openshell and re-register the gateway"
   hpa_common_verify_target_node 1 || exit 1
-  echo "Creating ${count} light OpenClaw + Ollama e2e sandboxes in parallel (sandbox 0 … sandbox $((count - 1)))"
-  echo "  Agent: AGENT_NAME=${AGENT_NAME} (${AGENT_SANDBOX_CPU} CPU / ${AGENT_SANDBOX_MEMORY}; no GPU; OpenClaw runs here)"
-  echo "  GPU inference backend: Ollama model=${INFERENCE_MODEL} ns=${NAMESPACE} release=${RELEASE} ENABLE_ENVOY_LB=${ENABLE_ENVOY_LB}"
-  echo "  Skip smoke/supervisor/policy waits. Wall-clock should be ~one sandbox (plus image pull), not ${count} sequential creates."
+  echo "Creating ${count} OpenClaw sandboxes"
   rm -f "${E2E_OPENSHELL_LOG_DIR:-${CHART_DIR}/e2e-results/openshell-create}/.provider.done"
   for ((i = 0; i < count; i += 1)); do
     name="$(sandbox_name "${i}")"
@@ -665,8 +639,7 @@ create_sandboxes() {
   if ((${#failed[@]} > 0)); then
     fail "failed to create: $(sandbox_labels "${failed[@]}")"
   fi
-  echo "Ready: ${count}/${count} light sandboxes in $((SECONDS - started_at))s (parallel). Envoy check runs at agent start."
-  echo "  ./scripts/agentscaling_gpuutil.sh start   # or agentscaling_latency.sh start"
+  echo "Ready: ${count}/${count} sandboxes in $((SECONDS - started_at))s"
 }
 
 case "${ACTION}" in

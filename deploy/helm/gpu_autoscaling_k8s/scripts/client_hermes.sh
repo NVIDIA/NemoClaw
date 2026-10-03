@@ -43,6 +43,7 @@ export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+export MAX_TOKENS="$(agent_common_resolve_max_tokens hermes)"
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
@@ -55,9 +56,9 @@ if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client_hermes.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
   echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
-  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" <<'PY'
+  python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" <<'PY'
 import json, sys, time, urllib.error, urllib.request
-host, users, duration, timeout = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+host, users, duration, timeout, max_tokens = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5])
 prompt = "Explain Kubernetes HPA and GPU autoscaling in detail with examples."
 deadline = time.monotonic() + duration
 failed = 0
@@ -85,7 +86,7 @@ while time.monotonic() < deadline:
             f"http://{host}:{8642 + i}/v1/chat/completions",
             data=json.dumps({
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 256,
+                "max_tokens": max_tokens,
                 "stream": False,
             }).encode(),
             headers={"Content-Type": "application/json"},

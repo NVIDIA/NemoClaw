@@ -208,8 +208,8 @@ remote_http_wait_http() {
   return 1
 }
 
-# E2E pin turns Control UI off (RAM). Turn it on per sandbox so each user
-# has their own dashboard and cannot open the others.
+# Pin already enables Control UI. Add this user's host origin; restart only
+# if :18789 is not serving the dashboard yet.
 remote_http_enable_openclaw_ui() {
   local name="${1:?sandbox}"
   local origin="${2:?origin}"
@@ -240,8 +240,7 @@ for path in paths:
             origins.append(item)
     ui["allowedOrigins"] = origins
     path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-print("enabled Control UI")
-' "${origin}"
+' "${origin}" >/dev/null
 }
 
 # Official OpenClaw shape from generate-openclaw-config.mts. Sandbox 0 only.
@@ -289,8 +288,7 @@ for path in paths:
                 allow.append(item)
         plugins["allow"] = allow
     path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-print("enabled web search (" + provider + ")")
-' "${provider}" "${cred_env}"
+' "${provider}" "${cred_env}" >/dev/null
 }
 
 remote_http_openclaw_root_ok() {
@@ -327,7 +325,6 @@ remote_http_restart_openclaw() {
   local killer script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   killer="${script_dir}/../files/e2e-stop-openclaw.sh"
-  echo "  restarting OpenClaw on ${name} so the laptop Control UI is served"
   if [[ -f "${killer}" ]]; then
     kubectl cp "${killer}" "${ns}/${name}:/tmp/e2e-stop-openclaw.sh" -c agent >/dev/null 2>&1 || true
     kubectl exec -n "${ns}" "${name}" -c agent -- sh /tmp/e2e-stop-openclaw.sh >/dev/null 2>&1 || true
@@ -372,7 +369,6 @@ remote_http_publish_openclaw() {
   local restart_ui=0
   remote_http_load_optional_secrets
   host="$(remote_http_advertise_host)"
-  echo "Publishing OpenClaw HTTP: one laptop UI per user, plus CLI"
   for ((i = 0; i < count; i += 1)); do
     name="$(printf '%s%04d' "${prefix}" "${i}")"
     port=$((18789 + i))
@@ -392,10 +388,11 @@ remote_http_publish_openclaw() {
         remote_http_enable_openclaw_web_search "${name}" "${provider}" "${key_env}" \
           || echo "WARNING: could not enable OpenClaw web search on ${name}" >&2
         restart_ui=1
-        echo "  web search on for sandbox 0 (${provider}); key is not printed"
       fi
     fi
-    if ((restart_ui)) || ! remote_http_openclaw_root_ok "${name}"; then
+    if ((restart_ui)); then
+      remote_http_restart_openclaw "${name}" || return 1
+    elif ! remote_http_openclaw_root_ok "${name}" && ! remote_http_openclaw_health_ok "${name}"; then
       remote_http_restart_openclaw "${name}" || return 1
     fi
     token="$(remote_http_openclaw_token "${name}")" \
@@ -426,8 +423,6 @@ print(json.dumps({
 }))
 ' "${i}" "${name}" "http://${host}:${port}/u/0" \
       "http://${host}:${port}" "${host}" "${port}" "${token}")")
-    echo "  UI user ${i} (this user only): http://${host}:${port}/u/0"
-    echo "  CLI user ${i}: http://${host}:${port}"
   done
   mkdir -p "$(dirname "${out}")"
   python3 -c '
@@ -438,8 +433,6 @@ json.dump({"kind": "openclaw", "host": host, "users": users}, open(path, "w"), i
 open(path, "a").write("\n")
 ' "${host}" "${count}" "${out}" <<<"$(printf '%s\n' "${users_json[@]}")"
   remote_http_serve_discovery "${out}"
-  echo "Laptop UI: http://${host}:18789/u/0 … :$((18788 + count))/u/0  (no token to type)"
-  echo "Laptop CLI: E2E_CLIENT_HOST=${host} E2E_USERS=${count} ./scripts/client.sh"
 }
 
 # Hermes: one dashboard UI (sandbox 0) plus OpenAI HTTP API per user.
@@ -450,7 +443,6 @@ remote_http_publish_hermes() {
   local host dash_port api_port name token i
   local -a users_json=()
   host="$(remote_http_advertise_host)"
-  echo "Publishing Hermes HTTP for a laptop UI (one dashboard → sandbox 0) and CLI"
   for ((i = 0; i < count; i += 1)); do
     name="$(printf '%s%04d' "${prefix}" "${i}")"
     dash_port=$((18789 + i))
@@ -478,10 +470,6 @@ print(json.dumps({
 }))
 ' "${i}" "${name}" "http://${host}:${dash_port}/" \
       "http://${host}:${api_port}/v1" "${host}" "${api_port}" "${token}")")
-    if ((i == 0)); then
-      echo "  UI (laptop browser, one agent): http://${host}:${dash_port}/"
-    fi
-    echo "  CLI user ${i}: http://${host}:${api_port}/v1"
   done
   mkdir -p "$(dirname "${out}")"
   python3 -c '
@@ -492,8 +480,6 @@ json.dump({"kind": "hermes", "host": host, "users": users}, open(path, "w"), ind
 open(path, "a").write("\n")
 ' "${host}" "${out}" <<<"$(printf '%s\n' "${users_json[@]}")"
   remote_http_serve_discovery "${out}"
-  echo "Laptop UI: http://${host}:18789/"
-  echo "Laptop CLI: E2E_CLIENT_HOST=${host} E2E_USERS=${count} ./scripts/client_hermes.sh"
 }
 
 remote_http_stop_e2e_forwards() {

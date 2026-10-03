@@ -17,6 +17,8 @@
 #
 # simpler option — from the same DGX in another terminal:
 #   E2E_USERS=5 ./scripts/client.sh
+# Workload: inflight stays 1. Default MAX_TOKENS=1024 (GPU util).
+# Latency HPA overrides to 256. Set MAX_TOKENS only to force a value.
 
 set -euo pipefail
 
@@ -42,7 +44,7 @@ export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
-export MAX_TOKENS="${MAX_TOKENS:-1024}"
+export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
