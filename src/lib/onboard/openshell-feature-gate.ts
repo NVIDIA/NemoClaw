@@ -68,6 +68,9 @@ const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
   // OpenShell v0.0.116 standalone sandbox binaries.
   ["326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40", "0.0.116"],
   ["7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d", "0.0.116"],
+  // OpenShell v0.1.2 standalone sandbox binaries.
+  ["5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1", "0.1.2"],
+  ["9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa", "0.1.2"],
 ]);
 
 export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
