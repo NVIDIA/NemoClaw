@@ -49,7 +49,7 @@ import {
   type OllamaRouteHolder,
   writeLocalAdapterJsonFile,
 } from "./local-adapter-lifecycle";
-import { detectNvidiaPlatform } from "./nim";
+import { detectNvidiaPlatform, isOpenAiModelListBody } from "./nim";
 import {
   anyRegistryModelFits,
   DEFAULT_OLLAMA_MODEL_TAG,
@@ -1327,7 +1327,8 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
 export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
   const normalized = output.trim();
   if (!normalized || normalized === "000") return false;
-  return endpoint.endsWith("/health") ? normalized === "200" : true;
+  if (endpoint.endsWith("/health")) return normalized === "200";
+  return endpoint.endsWith("/models") ? isOpenAiModelListBody(normalized) : true;
 }
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {

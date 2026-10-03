@@ -32,7 +32,7 @@ import {
   acquireHuggingFaceModel,
   hfDownloadAuthentication,
 } from "./model-acquisition/hugging-face";
-import { getGpuIndicesByName } from "./nim";
+import { getGpuIndicesByName, isOpenAiModelListBody } from "./nim";
 import {
   buildLocalDualStationDockerEnv,
   buildLocalManagedVllmDockerEnv,
@@ -1292,14 +1292,8 @@ function vllmEndpointReady(baseUrl?: string): boolean {
       ]),
     ],
     { ignoreError: true },
-  ).trim();
-  if (!response) return false;
-  try {
-    const parsed = JSON.parse(response) as { data?: unknown };
-    return Array.isArray(parsed.data);
-  } catch {
-    return false;
-  }
+  );
+  return isOpenAiModelListBody(response);
 }
 
 function verifyDualStationVllmAuthBoundary(
