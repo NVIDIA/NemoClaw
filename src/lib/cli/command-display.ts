@@ -28,7 +28,7 @@ export type CommandGroup =
  * strings.
  */
 export interface PublicCommandDisplayEntry {
-  /** Canonical public command signature, e.g. "nemoclaw <name> snapshot create" */
+  /** Canonical public command signature, e.g. "nemoclaw <name> rebuild" */
   usage: string;
   /** One-line description for public help output */
   description: string;

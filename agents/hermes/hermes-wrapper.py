@@ -76,8 +76,8 @@
 #
 # Only a small set of top-level commands are intercepted. Managed dashboard
 # launches receive the local API bearer token through process environment after
-# a descriptor-safe read, so the isolated dashboard home does not need a second
-# credential-bearing dotenv file.
+# a descriptor-safe read, so the native Hermes home remains the only config
+# location and does not need a second credential-bearing dotenv file.
 
 import ast
 import hashlib

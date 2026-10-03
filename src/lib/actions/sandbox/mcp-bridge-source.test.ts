@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const JSON5_MODULE_PATH = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+
 const mocks = vi.hoisted(() => ({
   executeSandboxExecCommand: vi.fn(),
   capturePolicy: vi.fn(),
@@ -131,6 +133,27 @@ network_policies:
     });
   });
 
+  it("bounds source inspection by the remaining recovery observation deadline", async () => {
+    mocks.executeSandboxExecCommand.mockResolvedValue({ status: 0, stdout: "[]", stderr: "" });
+    const now = vi.fn().mockReturnValue(9_000);
+
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).resolves.toEqual({ native: {}, legacy: {} });
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(String),
+      1_000,
+      expect.objectContaining({ honorCallerTimeout: true, runtimeSelection }),
+    );
+
+    now.mockReturnValue(10_000);
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).rejects.toThrow("MCP observation deadline expired");
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ...(
       [
@@ -177,14 +200,23 @@ network_policies:
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
         };
+        const contents = JSON.stringify(
+          agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
+        );
         fs.writeFileSync(
           path.join(root, directory, file),
-          JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
+          agent === "openclaw" ? `// Native OpenClaw JSON5\n${contents}` : contents,
           { mode: 0o600 },
         );
         mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
           const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
-          const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
+          const program = command
+            .split(`<<'${marker}'\n`)[1]
+            .split(`\n${marker}`)[0]
+            .replaceAll(
+              "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+              JSON5_MODULE_PATH,
+            );
           const result = spawnSync(
             marker === "NODE" ? process.execPath : "python3",
             marker === "NODE" ? ["-"] : ["-I", "-S", "-"],
@@ -236,6 +268,33 @@ network_policies:
     });
   });
 
+  it("rejects an indeterminate provider observation for a recorded policy", async () => {
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
+  });
+
   it("keeps legacy configuration separate for explicit migration", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
@@ -280,6 +339,34 @@ network_policies:
       providerId: "provider-id",
       source: "native",
     });
+  });
+
+  it("rejects an indeterminate deterministic provider observation", async () => {
+    mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
   });
 
   it("detects the owning agent from native MCP state after local registry loss", async () => {

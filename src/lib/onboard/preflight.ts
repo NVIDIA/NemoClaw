@@ -250,7 +250,9 @@ function buildCommandVArgv(commandName: string): readonly string[] {
 
 function commandExists(commandName: string, runCaptureImpl: RunCaptureFn): boolean {
   try {
-    const output = runCaptureImpl(buildCommandVArgv(commandName), { ignoreError: true });
+    const output = runCaptureImpl(buildCommandVArgv(commandName), {
+      ignoreError: true,
+    });
     return Boolean(String(output || "").trim());
   } catch {
     return false;
@@ -618,12 +620,15 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
-  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. Authority detection
-  // reduces a context naming a supported local socket to DOCKER_HOST, so a
-  // selector that survives to here names an endpoint onboarding cannot use --
+  // DOCKER_HOST overrides DOCKER_CONTEXT in the Docker CLI. Authority detection
+  // reduces the selected authority to DOCKER_HOST, so a context selector that
+  // survives to here names an endpoint onboarding cannot use --
   // and probing the default socket instead would certify a daemon the operator
   // did not select (#11719).
-  const dockerContextInvalid = String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
+  const explicitDockerHost = String(env.DOCKER_HOST ?? "").trim();
+  const dockerContextInvalid = explicitDockerHost
+    ? undefined
+    : String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
   const dockerHostInvalid =
     !isSupportedGatewayDockerHost(env.DOCKER_HOST) || dockerContextInvalid !== undefined;
 
@@ -816,13 +821,17 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerServiceActive =
     platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
-          runCaptureImpl(["systemctl", "is-active", "docker"], { ignoreError: true }),
+          runCaptureImpl(["systemctl", "is-active", "docker"], {
+            ignoreError: true,
+          }),
         )
       : null;
   const dockerServiceEnabled =
     platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
-          runCaptureImpl(["systemctl", "is-enabled", "docker"], { ignoreError: true }),
+          runCaptureImpl(["systemctl", "is-enabled", "docker"], {
+            ignoreError: true,
+          }),
         )
       : null;
   const assessment: HostAssessment = {
@@ -1158,7 +1167,9 @@ function createSwapfile(mem: MemoryInfo): SwapResult {
     runCapture(["sudo", "chmod", "600", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "mkswap", "/swapfile"], { ignoreError: false });
     runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
-    const fstab = runCapture(["sudo", "cat", "/etc/fstab"], { ignoreError: true });
+    const fstab = runCapture(["sudo", "cat", "/etc/fstab"], {
+      ignoreError: true,
+    });
     if (
       !String(fstab || "")
         .split(/\r?\n/)
@@ -2079,7 +2090,12 @@ export function probeHostDns(opts: ProbeHostDnsOpts = {}): HostDnsProbeResult {
   try {
     execution = normalizeProbeExecution(runProbe(command, { timeout: timeoutMs }));
   } catch (e) {
-    return { ok: false, hostname, reason: "error", details: String((e as Error)?.message ?? e) };
+    return {
+      ok: false,
+      hostname,
+      reason: "error",
+      details: String((e as Error)?.message ?? e),
+    };
   }
 
   const output = probeCombinedOutput(execution);

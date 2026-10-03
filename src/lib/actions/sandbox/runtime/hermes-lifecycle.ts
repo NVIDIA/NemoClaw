@@ -23,10 +23,16 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = await processRecovery.restartSandboxGateway(sandboxName, { quiet: true });
+      const result = await processRecovery.restartSandboxGateway(sandboxName, {
+        quiet: true,
+      });
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
       return result.ok
-        ? { status: 0, stdout: "Hermes gateway restarted and forwards recovered.", stderr: "" }
+        ? {
+            status: 0,
+            stdout: "Hermes gateway restarted and forwards recovered.",
+            stderr: "",
+          }
         : {
             status: 1,
             stdout: "",

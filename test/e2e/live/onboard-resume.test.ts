@@ -46,6 +46,7 @@ import {
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 
 // Disruption-recovery contract — regression for #446.
 //
@@ -242,7 +243,7 @@ test(
     // Assertion: hermetic-compatible-endpoint-ready — the workflow does not
     // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
     // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
-    // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
+    // sandbox can route to.
     const fakePublicHost = "host.openshell.internal";
     let fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -494,6 +495,13 @@ test(
       captureGatewayLog: true,
     });
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
+    await captureOpenClawOnboardFailure(resumeRun, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-3-onboard-resume",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE, EXTRA_PROVIDER_TOKEN],
+      runtime: runtimeProvider,
+    });
 
     // Assertion: resume-exit-0.
     expect(resumeRun.exitCode, resumeText).toBe(0);

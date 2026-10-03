@@ -55,9 +55,7 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
   });
 
   it("rejects a pending onboarding route reservation before any mutation", async () => {
@@ -120,6 +118,7 @@ describe("runtime shared gateway route containment", () => {
   });
 
   it("targets the selected sandbox gateway and allows a conflicting route elsewhere (#6315)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
     const deps = createDeps({
       config: {},
       entries: [
@@ -152,6 +151,33 @@ describe("runtime shared gateway route containment", () => {
     );
   });
 
+  it("writes native OpenClaw configuration to the recorded gateway (#11764)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    const deps = createDeps({
+      config: {},
+      entries: [entry("alpha", { gatewayName: "nemoclaw-9090", gatewayPort: 9090 })],
+      defaultSandbox: "alpha",
+    });
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+      deps,
+    );
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Array),
+      "nemoclaw-9090",
+    );
+    expect(deps.calls.readSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "nemoclaw-9090",
+    );
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw-9090");
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
+    );
+  });
+
   it("aborts before mutation when the target changes gateways while waiting", async () => {
     const alpha = entry("alpha");
     const deps = createDeps({
@@ -180,7 +206,6 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
   });
 
   it("blocks a custom endpoint conflict before DNS validation or mutation (#6315)", async () => {

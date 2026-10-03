@@ -29,6 +29,12 @@ const { probeOpenAiLikeEndpointOptimized } = require("../../inference/onboard-pr
     options?: Record<string, unknown>,
   ) => Promise<{ ok: boolean; message?: string }>;
 };
+const { getRemoteProviderConfigForName } = require("../providers") as {
+  getRemoteProviderConfigForName: (
+    providerName: string,
+    remoteProviderConfig: RemoteProviderDeps["REMOTE_PROVIDER_CONFIG"],
+  ) => RemoteProviderDeps["REMOTE_PROVIDER_CONFIG"][string] | null;
+};
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
 
@@ -146,6 +152,7 @@ export async function setupRemoteProviderInference(
     endpointUrl: string | null;
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
+    allowLegacyRecordedNoAuthEndpoint?: boolean;
     skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
@@ -161,6 +168,7 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
+    allowLegacyRecordedNoAuthEndpoint,
     skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
@@ -188,10 +196,7 @@ export async function setupRemoteProviderInference(
     compactText,
   } = deps;
 
-  const config =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  const config = getRemoteProviderConfigForName(provider, REMOTE_PROVIDER_CONFIG);
   if (!config) {
     error(`  Unsupported provider configuration: ${provider}`);
     return exitProcess(1);
@@ -250,7 +255,11 @@ export async function setupRemoteProviderInference(
   > => {
     const previousProxyCredential = credentialEnv ? process.env[credentialEnv] : undefined;
     const proxy =
-      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
+      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV
+        ? allowLegacyRecordedNoAuthEndpoint
+          ? noAuth(endpointUrl!, { allowLegacyRecordedEndpoint: true })
+          : noAuth(endpointUrl!)
+        : null;
     if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
     let proxySettled = proxy === null;
     const restoreUncommittedProxy = () => {
@@ -395,6 +404,15 @@ export async function setupRemoteProviderInference(
         }
         const applyResult = runOpenshell(argsv, { ignoreError: true });
         if (applyResult.status === 0) {
+          // Publish the pending owner before releasing the proxy lifecycle lock.
+          // Otherwise concurrent teardown can stop the newly configured proxy.
+          if (
+            proxy &&
+            sandboxName &&
+            registry.updateSandbox(sandboxName, { model, provider }) === false
+          ) {
+            throw new Error(`Could not reserve the inference route for sandbox '${sandboxName}'.`);
+          }
           proxy?.persist();
           proxySettled = true;
           break;

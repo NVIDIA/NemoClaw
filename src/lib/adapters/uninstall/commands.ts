@@ -11,6 +11,10 @@ import {
   createCliOpenShellSandboxLookupFromRunner,
   createCliOpenShellSandboxObserverFromRunner,
 } from "../openshell/sandbox-lifecycle-cli";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../openshell/runtime-selection";
 import { dockerSpawnSync } from "../docker/exec";
 import { buildSubprocessEnvFrom } from "../../subprocess-env";
 
@@ -44,16 +48,33 @@ export function defaultRunDocker(args: string[], options: SpawnSyncOptions = {})
   return toRunResult(dockerSpawnSync(args, { encoding: "utf-8", ...options }));
 }
 
-export function createUninstallProviderAdapter(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
+export function createUninstallProviderAdapter(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellProviderAdapter({
-    environment: env,
-    run: (args, options) => run("openshell", args, { ...options, env }),
+    environment: childEnv,
+    run: (args, options) =>
+      run("openshell", args, { ...options, env: { ...childEnv, ...options.env } }),
   });
 }
 
-export function createUninstallGatewayLifecycle(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
+export function createUninstallGatewayLifecycle(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellGatewayLifecycleFromRunner((args, options) =>
-    run("openshell", args, { ...options, env }),
+    run("openshell", args, { ...options, env: childEnv }),
   );
 }
 
@@ -72,8 +93,15 @@ export function createUninstallSandboxLookup(run: typeof defaultRun, env: NodeJS
   );
 }
 
-export function createUninstallSandboxObserver(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
-  const childEnv = buildSubprocessEnvFrom(env);
+export function createUninstallSandboxObserver(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellSandboxObserverFromRunner((args, options) =>
     run("openshell", args, { env: childEnv, ...options }),
   );

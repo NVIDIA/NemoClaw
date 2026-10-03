@@ -1,0 +1,217 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.130
+
+NemoClaw v0.0.130 adds publisher-managed Docker image onboarding, strengthens sandbox recovery and security controls, and expands hardware and inference qualification.
+It also improves messaging, status output, configuration export, and operator diagnostics.
+
+- When `CHAT_UI_URL` records a non-loopback browser address, onboarding keeps the host dashboard forward loopback-bound unless remote binding is explicitly configured.
+  `nemoclaw <sandbox> dashboard-url`, `nemoclaw list`, and `nemoclaw status` show the recorded browser-facing URL, while status retains the local forwarding port.
+  Related change: [PR #11621](https://github.com/NVIDIA/NemoClaw/pull/11621).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-dashboard-url).
+- On Windows-on-Arm WSL with Docker Desktop, a Station GB300 chassis can qualify an installed `qwen3.6:35b` model when the bounded CUDA proof verifies every reported GPU, includes an NVIDIA GB300 device, and reports at least 30,000 MiB available.
+  Generic multi-GPU and Podman Station hosts remain compute-constrained.
+  Related change: [PR #12553](https://github.com/NVIDIA/NemoClaw/pull/12553).
+  Refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Managed Hermes images now use the published multi-architecture base that contains OpenSSL 3.5.7-1~deb13u3 and matches the completed-image security verification.
+  Related change: [PR #12555](https://github.com/NVIDIA/NemoClaw/pull/12555).
+- Docker onboarding for OpenClaw and Hermes accepts a publisher-managed image with `nemoclaw onboard --from-image <repository>@sha256:<digest>`.
+  NemoClaw validates the image platform, non-root user, `/sandbox` working directory, executable, any agent metadata, and tool-disclosure declaration before it creates a sandbox.
+  It inspects a local image before it pulls, and Docker's configured credentials provide private-registry access.
+  In non-interactive onboarding, use `NEMOCLAW_FROM_IMAGE` and a sandbox name.
+  Related change: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-onboard) for image requirements and recovery limits.
+- Sandboxes created with `--from-image` retain their recorded digest through resume, rebuild, and snapshot clone.
+  NemoClaw revalidates the image before a rebuild or clone changes a sandbox.
+  Cleanup retains the published image, and `nemoclaw upgrade-sandboxes` lists the sandbox as pinned without automatically rebuilding it.
+  After you update NemoClaw, run `nemoclaw <sandbox> rebuild` to recreate the sandbox from its recorded digest.
+  Related change: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) for the update behavior.
+- Fresh OpenClaw sandboxes created with a custom Dockerfile apply the selected OpenShell inference route through OpenClaw's native configuration before onboarding completes.
+  If the selected model differs from the image's model, OpenClaw uses its own defaults for any inherited context-window and output-token limits.
+  Related change: [PR #12421](https://github.com/NVIDIA/NemoClaw/pull/12421).
+  Refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) for OpenClaw configuration ownership.
+- OpenClaw owns `/sandbox/.openclaw/openclaw.json` after first launch.
+  Configure it inside the sandbox with `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
+  Rebuild and snapshot restore preserve only credential-sanitized native configuration; they do not reconcile OpenShell inference routes, credential bindings, or network policy.
+  Related change: [PR #12120](https://github.com/NVIDIA/NemoClaw/pull/12120).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#change-openclaw-configuration-inside-the-sandbox).
+- Windows WSL GPU qualification recognizes the exact normalized `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)` identity.
+  The existing WSL, CUDA proof, Docker Desktop, and capacity requirements still apply.
+  Related change: [PR #12407](https://github.com/NVIDIA/NemoClaw/pull/12407).
+  Refer to [System Readiness](/user-guide/openclaw/reference/system-readiness#interpret-platform-qualification).
+- Configuration export translates a source Landlock `strict` compatibility setting to v1alpha1 `hard_requirement`, preserving fail-closed enforcement.
+  It preserves `best_effort` unchanged.
+  Related change: [PR #12312](https://github.com/NVIDIA/NemoClaw/pull/12312).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-config-export-sandbox).
+- OpenClaw device approval exits successfully only after direct-gateway or local-fallback output drains.
+  A callback failure or a one-second timeout exits nonzero instead.
+  A same-device CLI request for `operator.admin` requires explicit approval; bounded non-administrative scope upgrades remain automatic.
+  After approving the local CLI device for `operator.admin`, the CLI confirms the grant through the gateway before reporting success.
+  Ordinary local agent turns use OpenClaw's native method scopes, while model overrides and session resets retain administrative scope.
+  Related changes: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197) and [PR #12354](https://github.com/NVIDIA/NemoClaw/pull/12354).
+  Refer to [Gateway Authentication Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#approve-administrative-scopes-manually).
+- `nemoclaw <sandbox> exec -- ...` no longer runs `openclaw devices list --json` after a command.
+  When a command reports a pending scope approval, use the native request ID to review and approve the matching request in a prepared `connect` shell.
+  Related change: [PR #12332](https://github.com/NVIDIA/NemoClaw/pull/12332).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval).
+- Hermes now uses one native configuration for its gateway, CLI, TUI, and Web Dashboard.
+  Startup migrates safe state from retired dashboard homes, including WhatsApp session state.
+  It removes generated shadow configuration only after verification; unsafe paths or conflicting files stop migration without deleting either copy.
+  Related change: [PR #12333](https://github.com/NVIDIA/NemoClaw/pull/12333).
+  Refer to [Create and Restore Snapshots](/user-guide/hermes/manage-sandboxes/state-and-backups/create-and-restore-snapshots) for migration and recovery limits.
+- Google Chat accepts formatted service-account JSON with LF or CRLF line breaks in `GOOGLECHAT_SERVICE_ACCOUNT`.
+  Interactive entry still requires minified one-line JSON.
+  Related change: [PR #10393](https://github.com/NVIDIA/NemoClaw/pull/10393).
+  Refer to [Set Up Google Chat](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-google-chat).
+- OpenClaw managed `inference.local` routes clear NVIDIA credential aliases and remove only the matching NemoClaw-generated legacy profile before setup.
+  Direct routes and unrelated profiles remain unchanged.
+  Related change: [PR #12237](https://github.com/NVIDIA/NemoClaw/pull/12237).
+  Refer to [Process Controls](/user-guide/openclaw/security/security-controls/process-controls#auth-profile-permissions).
+- OpenClaw messaging image builds verify trusted official registry provenance for Discord, Slack, WhatsApp, Microsoft Teams, and Google Chat plugins.
+  They stop before runtime checks when the verification fails or the offline cache lacks a verified package.
+  WeChat uses the compatible 2.4.9 runtime.
+  Related change: [PR #12292](https://github.com/NVIDIA/NemoClaw/pull/12292).
+  Refer to [Add Channels After Onboarding](/user-guide/openclaw/manage-sandboxes/messaging-channels/add-channels-after-onboarding) for build-failure recovery.
+- The experimental direct blueprint runner reports an unreadable run directory instead of treating it as missing during `reconcile` or `rollback`.
+  It stops before OpenShell commands or state writes; correct the directory access, then rerun the command.
+  Related change: [PR #12320](https://github.com/NVIDIA/NemoClaw/pull/12320).
+- Onboarding treats a persistent ordinary `404` from `/v1/models` as an inference-route failure instead of reporting a verified deployment.
+  Correct the endpoint, then run `nemoclaw onboard --resume` to verify the retained session.
+  Related change: [PR #12339](https://github.com/NVIDIA/NemoClaw/pull/12339).
+  Refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route).
+- Native rootless Podman preserves its current-user runtime context during gateway recovery.
+  It can reuse a trusted managed gateway service after that service removes standalone ownership records.
+  Related change: [PR #12267](https://github.com/NVIDIA/NemoClaw/pull/12267).
+  Refer to [Podman](/user-guide/openclaw/reference/troubleshooting#podman) for provider requirements and recovery guidance.
+- Balanced policy tiers now use `brew-balanced`, which limits `raw.githubusercontent.com` to GET and HEAD requests for its Homebrew binaries.
+  Existing `brew` access remains until you remove `brew` and add `brew-balanced`; Open retains `brew`.
+  Related change: [PR #10487](https://github.com/NVIDIA/NemoClaw/pull/10487).
+  Refer to [Network Policies](/user-guide/openclaw/reference/network-policies#policy-tiers) for tier and replacement details.
+- Rebuild can preserve declared state from a managed Docker OpenClaw or Deep Agents Code sandbox in `Phase: Error` without starting or executing in its stopped container.
+  Deep Agents Code carries only supported managed native MCP entries through a bounded recovery handoff.
+  It requires an unchanged source container and exclusively owned managed state volume; credential state and user-authored or unsupported MCP content remain excluded.
+  Related changes: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305) and [PR #11293](https://github.com/NVIDIA/NemoClaw/pull/11293).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for requirements and recovery limits.
+- Destroying the final registered `vllm-local` consumer now removes an eligible NemoClaw-managed vLLM container after sandbox deletion, ownership, and cross-gateway consumer checks succeed.
+  Use `--keep-vllm` or `NEMOCLAW_KEEP_VLLM=1` to retain the container for later reuse.
+  Related change: [PR #11528](https://github.com/NVIDIA/NemoClaw/pull/11528).
+  Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm#handle-a-running-vllm-server) for cleanup and recovery conditions.
+- Pi rebuild and snapshot restore preserve the sanitized native `settings.json`, including its global project-trust default.
+  Per-path decisions in `trust.json` remain excluded.
+  Related change: [PR #12393](https://github.com/NVIDIA/NemoClaw/pull/12393).
+  Refer to [Pi Support](/user-guide/pi/reference/pi-support#persistent-and-reconstructed-state) for the preservation boundary.
+- Lock contention during onboarding now reports the recorded owner state and directs you to retry normal lock acquisition after any active owner exits.
+  It no longer recommends deleting a lock or stopping an unverified process.
+  Related change: [PR #10465](https://github.com/NVIDIA/NemoClaw/pull/10465).
+- In-place upgrades normalize trusted OpenShell gateway service paths before comparing them, so equivalent `HOME` and XDG paths with redundant slashes do not block retirement of NemoClaw's own service.
+  Prepared legacy OpenClaw recovery also waits for ordinary write pairing before closing the recovery transaction.
+  Related changes: [PR #10541](https://github.com/NVIDIA/NemoClaw/pull/10541) and [PR #10629](https://github.com/NVIDIA/NemoClaw/pull/10629).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) for upgrade recovery behavior.
+- The hosted installer passes the selected runtime-provider authority into Windows WSL readiness checks, allowing a Podman-selected installation to reach onboarding without Docker.
+  Related change: [PR #12294](https://github.com/NVIDIA/NemoClaw/pull/12294).
+  Refer to [Windows Preparation](/user-guide/openclaw/get-started/additional-setup/windows-preparation) for supported runtime paths.
+- Onboarding can reclaim a foreign pending inference-route reservation attached to an already published sandbox when the selected gateway authority matches.
+  The route remains pending until normal onboarding finalization, and sandbox data is preserved.
+  Related change: [PR #12295](https://github.com/NVIDIA/NemoClaw/pull/12295).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-onboard) for resume behavior.
+- When both Docker selectors are set, NemoClaw now follows Docker CLI precedence and uses `DOCKER_HOST` instead of `DOCKER_CONTEXT` across readiness, onboarding, image builds, storage checks, runner commands, and cleanup diagnostics.
+  Related change: [PR #12330](https://github.com/NVIDIA/NemoClaw/pull/12330).
+  Refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) for Docker endpoint selection.
+- Uninstall leaves unrelated Docker containers intact and keeps a managed gateway running until its registered sandboxes are cleaned up.
+  For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.
+  Related changes: [PR #10478](https://github.com/NVIDIA/NemoClaw/pull/10478) and [PR #12299](https://github.com/NVIDIA/NemoClaw/pull/12299).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for verification and retry conditions.
+- The `--all-gateway-ports` sweep restores each gateway's recorded custom OpenShell state directory.
+  It preserves the affected state when recorded directories conflict or cannot be read.
+  Related change: [PR #10774](https://github.com/NVIDIA/NemoClaw/pull/10774).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for gateway-state recovery.
+- DGX Station Express preserves a recognized legacy single-Station workload when automatic peer discovery cannot qualify a trusted pair.
+  If the workload changes during discovery, installation stops rather than continuing the upgrade.
+  Related change: [PR #12296](https://github.com/NVIDIA/NemoClaw/pull/12296).
+  Refer to [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations) for the recovery procedure.
+- Messaging-channel removal uses native OpenShell execution for running-sandbox session cleanup.
+  A failed, cancelled, or inconclusive cleanup does not retry through SSH or a local runtime provider, and the command stops before rebuilding.
+  OpenClaw WeChat can use its separately verified stopped-state cleanup before native execution.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) for cleanup and retry conditions.
+- When managed OpenClaw onboarding imports a corporate CA, it refreshes the OpenShell supervisor trust through a native stop and start before onboarding completes.
+  If either action fails, onboarding retains the sandbox for recovery.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust) for the trust boundary.
+- MCP status reports public DNS pin drift without changing the live policy.
+  Refresh verified public pins with `nemoclaw <sandbox> mcp update <server> --refresh-public-pins`; the command replaces only the endpoint's `allowed_ips`.
+  It rejects private or special-use DNS answers and address ranges.
+  Related change: [PR #10781](https://github.com/NVIDIA/NemoClaw/pull/10781).
+  Refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#change-endpoint-pins) for recovery and verification.
+- CoreDNS repair uses a responding Docker authority.
+  A stale Podman socket does not redirect repair from a working Docker CLI default.
+  On Linux, rootless Podman discovery also checks the socket under `XDG_RUNTIME_DIR`.
+  Related change: [PR #12348](https://github.com/NVIDIA/NemoClaw/pull/12348).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#coredns-crashloop-after-onboarding) for CoreDNS recovery.
+- Hermes now waits through a restart-rate cooldown and restarts its gateway automatically.
+  The Bedrock Runtime adapter lists models only after it successfully serves an inference request.
+  Related change: [PR #12343](https://github.com/NVIDIA/NemoClaw/pull/12343).
+  Refer to [Understand Gateway Lifecycle Control](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) for Hermes recovery behavior.
+- Linux launch-readiness failures can identify the unsafe authority path, owner UID, permissions, bounded error code, and supported repair guidance.
+  Diagnostics exclude receipt contents, environment values, and raw operating-system error messages.
+  Related change: [PR #10851](https://github.com/NVIDIA/NemoClaw/pull/10851).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#understand-launch-readiness-leases).
+- OpenClaw Telegram channel status detects missing, malformed, mismatched, identityless, or non-OpenShell runtime credentials without exposing the credential value.
+  It reports these states as `token_rejected`.
+  Related change: [PR #10860](https://github.com/NVIDIA/NemoClaw/pull/10860).
+  Refer to the [CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-channels-status).
+- When `connect` or `start` reaches a terminal phase for a Docker sandbox with no matching managed container, NemoClaw identifies containers that carry the sandbox-name label.
+  Resolve each listed container through its owning workflow, then rerun the command.
+  Related change: [PR #12355](https://github.com/NVIDIA/NemoClaw/pull/12355).
+  Refer to the [CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-connect).
+- Interrupting onboarding during agent selection exits with status `130` without printing a raw prompt error.
+  Related change: [PR #12361](https://github.com/NVIDIA/NemoClaw/pull/12361).
+- The installer limits a curl connection to 10 seconds and retries a failed OpenShell release-asset download up to three times.
+  It stops a transfer that remains below 1 KiB/s for 60 seconds.
+  Related change: [PR #12374](https://github.com/NVIDIA/NemoClaw/pull/12374).
+- Sandbox download accepts a relative source path that begins with `-` when you place the standard outer `--` before the path.
+  NemoClaw anchors that path before it checks and transfers the source, so OpenShell treats it as a path rather than an option.
+  Related change: [PR #12391](https://github.com/NVIDIA/NemoClaw/pull/12391).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-download-sandbox-path-host-dest).
+- An interrupted rebuild retains recovery state separately for each sandbox.
+  Rerun the affected sandbox's rebuild with the same settings; do not delete its recovery files.
+  Related change: [PR #11389](https://github.com/NVIDIA/NemoClaw/pull/11389).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+- Linux Ollama onboarding retries a timed-out systemd execution proof with a bounded direct proof as the configured service user.
+  Onboarding continues when the direct proof succeeds and stops without restarting Ollama when it fails or times out.
+  Related change: [PR #12337](https://github.com/NVIDIA/NemoClaw/pull/12337).
+  Refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- For a NemoClaw-managed gateway, full uninstall deletes sandboxes through the selected gateway authority and requires two consecutive empty inventories before it removes providers, registrations, or local state.
+  If authority or inventory verification fails, it preserves the downstream state for a retry.
+  Related change: [PR #12308](https://github.com/NVIDIA/NemoClaw/pull/12308).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for retry conditions.
+- For a stopped sandbox that `backup-all` or `rebuild` starts, NemoClaw waits for SSH readiness before it captures the backup.
+  It reserves time to return the sandbox to `Stopped`, and stops without replacement if backup or return-to-stopped verification fails.
+  Related change: [PR #12250](https://github.com/NVIDIA/NemoClaw/pull/12250).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for recovery limits.
+- When an OpenClaw inference-route change lacks context-window evidence, NemoClaw removes the prior route's context-window value so OpenClaw uses its default.
+  A same-route retry preserves its existing value; a retry after incomplete native configuration synchronization removes a stale value.
+  Related change: [PR #12336](https://github.com/NVIDIA/NemoClaw/pull/12336).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-inference-set).
+- Managed OpenClaw images now use OpenClaw 2026.9.2.
+  After you update NemoClaw, rebuild an existing sandbox to use the new runtime.
+  Related change: [PR #12507](https://github.com/NVIDIA/NemoClaw/pull/12507).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- On DGX Spark, managed Qwen vLLM selects a smaller recipe for detected unified memory from 60 GB to less than 64 GB.
+  The recipe supports a 32,768-token context window, one concurrent sequence, 4,096 batched tokens, and 0.5 GPU-memory utilization.
+  A detected capacity of at least 64 GB retains the 262,144-token recipe.
+  Related change: [PR #12502](https://github.com/NVIDIA/NemoClaw/pull/12502).
+  Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) for qualification and override details.
+- For a JSON OpenClaw agent response with `replayInvalid: true`, NemoClaw returns success only when completed-run, successful-tool-summary, and final-reply evidence corroborate completion.
+  Otherwise, it exits with status `1` and inspect-before-retry guidance because retrying can repeat side effects.
+  Related change: [PR #12502](https://github.com/NVIDIA/NemoClaw/pull/12502).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-agent).
+- Deep Agents Code skill installation verifies the staged and placed canonical-root copies before publication.
+  After placement and private staging cleanup succeed, it prints a SHA-256 digest of sorted relative paths, normalized executable modes, and file digests.
+  The digest attests the placed copy at that time; it does not identify which same-name skill Deep Agents Code activates.
+  Related change: [PR #12483](https://github.com/NVIDIA/NemoClaw/pull/12483).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands#nemoclaw-name-skill-install-path).

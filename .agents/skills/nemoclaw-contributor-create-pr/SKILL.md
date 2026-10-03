@@ -41,6 +41,9 @@ response alone or weaken the reference's concurrency and recovery rules.
 
 Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
 unobserved approval. Do not select labels or request maintainer reviews in this workflow.
+A workflow or live E2E file change does not require separate approval. Manual live E2E dispatch
+still requires authority for the selected target. Missing dispatch authority does not block draft
+publication unless the accepted scope requires that live evidence before publication.
 When the diff adds, expands, or repairs live E2E evidence, require the implementation handoff to apply
 [Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). When it
 prunes or relocates live assertions, require the handoff to apply

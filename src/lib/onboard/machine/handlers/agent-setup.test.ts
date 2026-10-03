@@ -14,7 +14,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
   let session = createSession();
   const calls = {
     handleAgentSetup: vi.fn(async () => undefined),
-    context: vi.fn(() => ({ ctx: true })),
+    context: vi.fn(() => ({ ctx: true, gatewayName: "nemoclaw-19090" })),
     ensureDashboard: vi.fn(() => 18789),
     persistDashboardPort: vi.fn(),
     skipped: vi.fn(async (stepName: string) => {
@@ -23,12 +23,15 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     }),
     openclawReady: vi.fn(async () => false),
     controlPlaneReady: vi.fn(async () => true),
+    openclawGatewayStarted: vi.fn(async () => true as boolean | null),
+    openclawGatewaySettled: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
     announceOpenclawSetup: vi.fn(),
     setupOpenclaw: vi.fn(async () => undefined),
     configureOpenclaw: vi.fn(async () => undefined),
+    initializeOpenclawInferenceRoute: vi.fn(async () => undefined),
     complete: vi.fn(async (stepName: string, updates: SessionUpdates = {}) => {
       session.steps[stepName].status = "complete";
       Object.assign(session, updates);
@@ -45,12 +48,15 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
       waitForSandboxControlPlaneReady: calls.controlPlaneReady,
+      waitForStartedOpenclawGatewayProcess: calls.openclawGatewayStarted,
+      settleStartedOpenclawGatewayForConfiguration: calls.openclawGatewaySettled,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
       announceOpenclawSetup: calls.announceOpenclawSetup,
       setupOpenclaw: calls.setupOpenclaw,
       configureOpenclawSandbox: calls.configureOpenclaw,
+      initializeOpenclawInferenceRoute: calls.initializeOpenclawInferenceRoute,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       ...overrides,
@@ -67,7 +73,7 @@ function baseOptions(
     sandboxName: "my-assistant",
     model: "model",
     provider: "provider",
-    webSearchConfig: null,
+    preferredInferenceApi: "openai-completions",
     resume: false,
     session: createSession(),
     hermesAuthMethod: null,
@@ -95,7 +101,7 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true },
+      { ctx: true, gatewayName: "nemoclaw-19090" },
     );
     expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
@@ -152,7 +158,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       undefined,
       false,
     );
@@ -232,7 +237,6 @@ describe("handleAgentSetupState", () => {
     await handleAgentSetupState({
       ...baseOptions(deps),
       resume: true,
-      webSearchConfig: { fetchEnabled: false },
       revalidateSandboxIdentity,
     });
 
@@ -240,7 +244,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      { fetchEnabled: false },
       revalidateSandboxIdentity,
       false,
     );
@@ -265,7 +268,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       undefined,
       true,
     );
@@ -279,7 +281,6 @@ describe("handleAgentSetupState", () => {
         sandboxName: string,
         _model: string,
         _provider: string,
-        _webSearchConfig: { fetchEnabled?: boolean } | null,
         revalidate?: (operation: string) => void,
       ): Promise<void> => {
         revalidate?.(`synchronize OpenClaw config in sandbox '${sandboxName}'`);
@@ -334,7 +335,10 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
+      undefined,
+      "openai-completions",
+      false,
+      "nemoclaw-19090",
       undefined,
     );
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
@@ -378,7 +382,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       revalidateSandboxIdentity,
       true,
     );
@@ -386,6 +389,147 @@ describe("handleAgentSetupState", () => {
       "openclaw",
       expect.objectContaining({ sandboxName: "my-assistant" }),
     );
+  });
+
+  it("initializes a fresh custom OpenClaw route through setup (#12033)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      initializeNativeInferenceRoute: true,
+    });
+
+    expect(calls.setupOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      undefined,
+      "openai-completions",
+      true,
+      "nemoclaw-19090",
+      undefined,
+    );
+    expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("settles external-image pairing after config sync and before route restart (#11932)", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => {
+        order.push("started");
+        return true;
+      }),
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => {
+        order.push("paired");
+        return true;
+      }),
+      setupOpenclaw: vi.fn(async (...args) => {
+        order.push("configured");
+        await args[7]?.();
+      }),
+    });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      initializeNativeInferenceRoute: true,
+      settleOpenclawStartupBeforeConfiguration: true,
+    });
+
+    expect(order).toEqual(["started", "configured", "paired"]);
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
+  it("does not change external-image config when its gateway startup is unproven (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      waitForStartedOpenclawGatewayProcess: vi.fn(async () => false),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/startup did not settle before configuration/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("withholds route restart when pairing does not settle after config sync (#11932)", async () => {
+    const { deps, calls } = createDeps({
+      settleStartedOpenclawGatewayForConfiguration: vi.fn(async () => false),
+      setupOpenclaw: vi.fn(async (...args) => {
+        expect(await args[7]?.()).toBe(false);
+        throw new Error("External-image OpenClaw pairing did not settle after configuration");
+      }),
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        settleOpenclawStartupBeforeConfiguration: true,
+      }),
+    ).rejects.toThrow(/pairing did not settle after configuration/u);
+
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("rejects an identity change before reading a fresh custom-image route (#12033)", async () => {
+    const readConfig = vi.fn();
+    const writeConfig = vi.fn();
+    const restartGateway = vi.fn();
+    const setupOpenclaw = vi.fn(
+      async (
+        sandboxName: string,
+        _model: string,
+        _provider: string,
+        revalidate?: (operation: string) => void,
+      ) => {
+        revalidate?.(`read native OpenClaw config in sandbox '${sandboxName}'`);
+        readConfig();
+        writeConfig();
+        restartGateway();
+      },
+    );
+    const { deps, calls } = createDeps({ setupOpenclaw });
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        initializeNativeInferenceRoute: true,
+        revalidateSandboxIdentity,
+      }),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(readConfig).not.toHaveBeenCalled();
+    expect(writeConfig).not.toHaveBeenCalled();
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("retries native route initialization while the OpenClaw step is unfinished (#12033)", async () => {
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      resume: true,
+      initializeNativeInferenceRoute: true,
+    });
+
+    expect(calls.initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      "openai-completions",
+      "nemoclaw-19090",
+      undefined,
+    );
+    expect(calls.initializeOpenclawInferenceRoute).toHaveBeenCalledBefore(calls.complete);
   });
 
   it("does not sync managed OpenClaw metadata before native readiness", async () => {
