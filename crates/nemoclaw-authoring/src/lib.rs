@@ -25,13 +25,10 @@ mod provider_presets;
 pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
 pub use evidence::{
-    CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+    CompatibilityStatus, DiscoveryAssessment, DiscoveryKey, DiscoveryQuery, assess_target,
     discovery_key_for_document,
 };
-pub use facts::{
-    AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence,
-    inference_request_for_document,
-};
+pub use facts::{environment_needs, fact_needs, inference_request_for_document};
 pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,

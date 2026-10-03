@@ -4,8 +4,9 @@
 use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway, HarnessKind},
-    discovery::{EngineObservation, FabricObservation, ObservationStatus},
+    discovery::{DiscoveryRequest, ObservationStatus},
     fabric_capabilities::{FabricRequirements, Support, assess_image},
+    facts::{FactQuery, FactSheet},
 };
 
 /// Inputs determining which target facts can constrain the current document.
@@ -18,14 +19,6 @@ pub struct DiscoveryKey {
     pub compute_driver: ComputeDriver,
     pub image: String,
     pub harness: HarnessKind,
-}
-
-/// Observations retain their query inputs rather than becoming global choices.
-#[derive(Clone, Debug)]
-pub struct DiscoveryEvidence {
-    pub key: DiscoveryKey,
-    pub engine: Option<EngineObservation>,
-    pub fabric: Option<FabricObservation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,117 +69,127 @@ pub fn discovery_key_for_document(document: &Document) -> Result<DiscoveryKey, D
     })
 }
 
-impl DiscoveryEvidence {
-    /// Evaluate target facts without rewriting desired state or the global menu.
-    /// Pending contains only dependency-ready reads. A completed unknown result
-    /// remains unknown until the caller explicitly refreshes it.
-    pub fn assessment_for_document(
-        &self,
-        document: &Document,
-    ) -> Result<DiscoveryAssessment, Diagnostics> {
-        let key = discovery_key_for_document(document)?;
-        let engine = self.engine.as_ref().filter(|_| {
-            key.managed_gateway
-                && self.key.managed_gateway == key.managed_gateway
-                && self.key.engine == key.engine
-                && self.key.compute_driver == key.compute_driver
-        });
-        let fabric = self
-            .fabric
-            .as_ref()
-            .filter(|_| self.key.engine == key.engine && self.key.image == key.image);
-        let mut reasons = Vec::new();
-        let mut pending = Vec::new();
-        let mut conflict = false;
-        // An external gateway's engine only supplies image metadata. Do not
-        // infer its execution platform or prerequisites from that image store.
-        let engine_available = if !key.managed_gateway {
-            if key.engine.is_empty() {
-                reasons.push(
-                    "Set spec.gateway.engine to inspect the external gateway's sandbox image."
-                        .into(),
-                );
-                false
-            } else {
-                true
-            }
+/// Evaluate target facts without rewriting desired state or the global menu.
+/// Pending contains only dependency-ready reads that were never attempted. A
+/// read that was attempted without an observation, or observed as unknown,
+/// remains unverified until the caller refreshes it.
+pub fn assess_target(
+    document: &Document,
+    facts: &FactSheet,
+) -> Result<DiscoveryAssessment, Diagnostics> {
+    let key = discovery_key_for_document(document)?;
+    let engine_request = DiscoveryRequest {
+        engine: key.engine.clone(),
+        compute_driver: key.compute_driver,
+    };
+    let engine = facts
+        .engine(&engine_request)
+        .filter(|_| key.managed_gateway);
+    let engine_attempted = facts.attempted(&FactQuery::Engine(engine_request));
+    let fabric = facts.fabric(&key.engine, &key.image);
+    let fabric_attempted = facts.attempted(&FactQuery::Fabric {
+        engine: key.engine.clone(),
+        image: key.image.clone(),
+    });
+    let mut reasons = Vec::new();
+    let mut pending = Vec::new();
+    let mut conflict = false;
+    // An external gateway's engine only supplies image metadata. Do not
+    // infer its execution platform or prerequisites from that image store.
+    let engine_available = if !key.managed_gateway {
+        if key.engine.is_empty() {
+            reasons.push(
+                "Set spec.gateway.engine to inspect the external gateway's sandbox image.".into(),
+            );
+            false
         } else {
-            match engine.map(|engine| engine.status) {
-                Some(ObservationStatus::Available) => true,
-                Some(ObservationStatus::Unavailable) => {
-                    conflict = true;
-                    reasons.push("The selected engine does not meet gateway prerequisites.".into());
-                    false
-                }
-                Some(ObservationStatus::Unknown) => {
-                    reasons.push("The selected engine remains unverified.".into());
-                    false
-                }
-                None => {
-                    pending.push(DiscoveryQuery::Engine);
-                    reasons.push("The selected engine has not been observed.".into());
-                    false
-                }
+            true
+        }
+    } else {
+        match engine.map(|engine| engine.status) {
+            Some(ObservationStatus::Available) => true,
+            Some(ObservationStatus::Unavailable) => {
+                conflict = true;
+                reasons.push("The selected engine does not meet gateway prerequisites.".into());
+                false
             }
-        };
-        let fabric_supported = match fabric {
-            Some(observed)
-                if observed.image_id.as_ref().is_some_and(|id| !id.is_empty())
-                    && observed.status != ObservationStatus::Unavailable =>
-            {
-                let sandbox = &document.spec.sandboxes[0];
-                let requirements = FabricRequirements::for_sandbox(document, sandbox)
-                    .map_err(|error| diagnostic("discovery", &error.to_string()))?;
-                let capability = assess_image(
-                    observed.catalog.as_ref(),
-                    &requirements,
-                    &observed.image,
-                    &key.image,
-                    engine
-                        .filter(|_| engine_available)
-                        .and_then(|engine| engine.architecture.as_deref()),
-                    engine
-                        .filter(|_| engine_available)
-                        .and_then(|engine| engine.operating_system.as_deref()),
-                );
-                for check in &capability.checks {
-                    if check.status == Support::Unsupported {
-                        conflict = true;
-                    }
-                    if check.status != Support::Supported {
-                        reasons.push(format!("{}: {}.", check.requirement, check.reason));
-                    }
-                }
-                capability.status == Support::Supported
+            Some(ObservationStatus::Unknown) => {
+                reasons.push("The selected engine remains unverified.".into());
+                false
             }
-            Some(observed) => {
-                reasons.push(if observed.status == ObservationStatus::Unavailable {
-                    "The selected image is not present; its Fabric capabilities remain unverified."
-                } else {
-                    "The selected image's Fabric capabilities remain unverified."
-                }.into());
+            None if engine_attempted => {
+                reasons.push("The selected engine remains unverified.".into());
                 false
             }
             None => {
-                if engine_available {
-                    pending.push(DiscoveryQuery::Fabric);
-                }
-                reasons.push(
-                    "The selected image's Fabric capabilities have not been observed.".into(),
-                );
+                pending.push(DiscoveryQuery::Engine);
+                reasons.push("The selected engine has not been observed.".into());
                 false
             }
-        };
-        Ok(DiscoveryAssessment {
-            status: if conflict {
-                CompatibilityStatus::Conflict
-            } else if engine_available && fabric_supported {
-                CompatibilityStatus::Compatible
-            } else {
-                CompatibilityStatus::Unverified
-            },
-            reasons,
-            pending,
-        })
-    }
+        }
+    };
+    let fabric_supported = match fabric {
+        Some(observed)
+            if observed.image_id.as_ref().is_some_and(|id| !id.is_empty())
+                && observed.status != ObservationStatus::Unavailable =>
+        {
+            let sandbox = &document.spec.sandboxes[0];
+            let requirements = FabricRequirements::for_sandbox(document, sandbox)
+                .map_err(|error| diagnostic("discovery", &error.to_string()))?;
+            let capability = assess_image(
+                observed.catalog.as_ref(),
+                &requirements,
+                &observed.image,
+                &key.image,
+                engine
+                    .filter(|_| engine_available)
+                    .and_then(|engine| engine.architecture.as_deref()),
+                engine
+                    .filter(|_| engine_available)
+                    .and_then(|engine| engine.operating_system.as_deref()),
+            );
+            for check in &capability.checks {
+                if check.status == Support::Unsupported {
+                    conflict = true;
+                }
+                if check.status != Support::Supported {
+                    reasons.push(format!("{}: {}.", check.requirement, check.reason));
+                }
+            }
+            capability.status == Support::Supported
+        }
+        Some(observed) => {
+            reasons.push(
+                if observed.status == ObservationStatus::Unavailable {
+                    "The selected image is not present; its Fabric capabilities remain unverified."
+                } else {
+                    "The selected image's Fabric capabilities remain unverified."
+                }
+                .into(),
+            );
+            false
+        }
+        None if fabric_attempted => {
+            reasons.push("The selected image's Fabric capabilities remain unverified.".into());
+            false
+        }
+        None => {
+            if engine_available {
+                pending.push(DiscoveryQuery::Fabric);
+            }
+            reasons.push("The selected image's Fabric capabilities have not been observed.".into());
+            false
+        }
+    };
+    Ok(DiscoveryAssessment {
+        status: if conflict {
+            CompatibilityStatus::Conflict
+        } else if engine_available && fabric_supported {
+            CompatibilityStatus::Compatible
+        } else {
+            CompatibilityStatus::Unverified
+        },
+        reasons,
+        pending,
+    })
 }

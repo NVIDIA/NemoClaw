@@ -4,30 +4,43 @@
 use super::*;
 
 impl JourneyState {
-    /// Resolve questions and readiness against current observations. Endpoint
-    /// models remain suggestions, while target evidence can block readiness.
-    pub fn resolve_with_evidence(
+    /// Resolve questions and readiness against the facts gathered so far.
+    /// Endpoint models remain suggestions, while target facts can block
+    /// readiness. An empty sheet leaves the resolution as it was.
+    pub fn resolve_with_facts(
         &self,
         capabilities: &Capabilities,
-        facts: &AuthoringFacts,
-        evidence: Option<&DiscoveryEvidence>,
+        facts: &FactSheet,
     ) -> Result<JourneyResolution, Diagnostics> {
         let mut resolution = self.resolve(capabilities)?;
-        if let (Some(evidence), Some(document)) = (evidence, resolution.assessment.document()) {
-            resolution.target_assessment = Some(evidence.assessment_for_document(document)?);
+        // A host that can run only one local runtime makes it the suggestion,
+        // even over a supplied value; the user still decides.
+        if let [only] = crate::facts::reachable_runtimes(facts).as_slice()
+            && let Some(question) = resolution
+                .questions
+                .iter_mut()
+                .find(|question| question.id == RUNTIME_PROVIDER)
+        {
+            question.suggestion = Some(Value::String((*only).into()));
+        }
+        if !facts.is_empty()
+            && let Some(document) = resolution.assessment.document()
+        {
+            resolution.target_assessment = Some(crate::assess_target(document, facts)?);
         }
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
-        let Some(request) =
-            crate::inference_request_for_document(document, self.current_route()).ok()
+        let Some(request) = crate::inference_request_for_document(document, self.current_route())
+            .ok()
+            .flatten()
         else {
             return Ok(resolution);
         };
-        let Some(observed) = facts.endpoint.as_ref().filter(|observed| {
-            observed.request == request
-                && observed.observation.status == ObservationStatus::Available
-        }) else {
+        let Some(observed) = facts
+            .endpoint(&request)
+            .filter(|observed| observed.status == ObservationStatus::Available)
+        else {
             return Ok(resolution);
         };
         let Some(path) = self.route_model_path() else {
@@ -41,7 +54,7 @@ impl JourneyState {
             if let Some(suggestion) = question.suggestion.clone() {
                 question.choices.push(suggestion);
             }
-            for model in &observed.observation.models {
+            for model in &observed.models {
                 if !model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control) {
                     let value = Value::String(model.clone());
                     if !question.choices.contains(&value) {
@@ -53,21 +66,20 @@ impl JourneyState {
         Ok(resolution)
     }
 
-    /// Accept remaining suggestions as one explicit, evidence-gated action.
+    /// Accept remaining suggestions as one explicit, fact-gated action.
     /// Required questions without a suggestion and route choices stay manual.
     pub fn delegate_remaining(
         &self,
         capabilities: &Capabilities,
-        evidence: Option<&DiscoveryEvidence>,
-        facts: &AuthoringFacts,
+        facts: &FactSheet,
     ) -> Result<Self, Diagnostics> {
-        self.check_delegation(capabilities, evidence, facts)?;
+        self.check_delegation(capabilities, facts)?;
         let mut candidate = self.clone();
         for _ in 0..256 {
-            let resolution = candidate.resolve_with_evidence(capabilities, facts, evidence)?;
+            let resolution = candidate.resolve_with_facts(capabilities, facts)?;
             let Some(question) = resolution.next_question() else {
                 if resolution.materialized_document().is_some() {
-                    candidate.check_delegation(capabilities, evidence, facts)?;
+                    candidate.check_delegation(capabilities, facts)?;
                     return Ok(candidate);
                 }
                 return Err(diagnostic(
@@ -99,8 +111,7 @@ impl JourneyState {
     pub(super) fn check_delegation(
         &self,
         capabilities: &Capabilities,
-        evidence: Option<&DiscoveryEvidence>,
-        facts: &AuthoringFacts,
+        facts: &FactSheet,
     ) -> Result<(), Diagnostics> {
         if !self.decisions.accepted.contains(HARNESS) {
             return Err(diagnostic(
@@ -113,26 +124,33 @@ impl JourneyState {
             .assessment()
             .document()
             .ok_or_else(|| diagnostic("delegation", "The desired state is not SDK-valid yet."))?;
-        let key = crate::discovery_key_for_document(document)?;
-        let evidence = evidence
-            .filter(|evidence| evidence.key == key)
-            .ok_or_else(|| diagnostic("delegation", "Target discovery is missing or stale."))?;
-        if evidence.assessment_for_document(document)?.status != CompatibilityStatus::Compatible {
+        let target = crate::assess_target(document, facts)?;
+        if !target.pending.is_empty() {
+            return Err(diagnostic(
+                "delegation",
+                "Target discovery is missing or stale.",
+            ));
+        }
+        if target.status != CompatibilityStatus::Compatible {
             return Err(diagnostic(
                 "delegation",
                 "Target engine and image compatibility is not verified.",
             ));
         }
-        let request = crate::inference_request_for_document(document, self.current_route())?;
+        let request = crate::inference_request_for_document(document, self.current_route())?
+            .ok_or_else(|| {
+                diagnostic(
+                    "delegation",
+                    "The selected route has no external model catalog to verify.",
+                )
+            })?;
         let endpoint = facts
-            .endpoint
-            .as_ref()
-            .filter(|endpoint| endpoint.request == request)
+            .endpoint(&request)
             .ok_or_else(|| diagnostic("delegation", "Model discovery is missing or stale."))?;
-        if endpoint.observation.status != ObservationStatus::Available
-            || endpoint.observation.reachable != Some(true)
+        if endpoint.status != ObservationStatus::Available
+            || endpoint.reachable != Some(true)
             || !matches!(
-                endpoint.observation.authentication,
+                endpoint.authentication,
                 AuthenticationStatus::Accepted | AuthenticationStatus::NotRequired
             )
         {
@@ -148,22 +166,16 @@ impl JourneyState {
             .ok_or_else(|| {
                 diagnostic("delegation", "Choose a model before delegating settings.")
             })?;
-        if !endpoint
-            .observation
-            .models
-            .iter()
-            .any(|advertised| advertised == model)
-        {
+        if !endpoint.models.iter().any(|advertised| advertised == model) {
             return Err(diagnostic(
                 "delegation",
                 "The selected model was not advertised by the endpoint.",
             ));
         }
         if document.credential_names().iter().any(|reference| {
-            !facts.credentials.iter().any(|credential| {
-                credential.reference == *reference
-                    && credential.status == ObservationStatus::Available
-            })
+            facts
+                .credential(reference)
+                .is_none_or(|credential| credential.status != ObservationStatus::Available)
         }) {
             return Err(diagnostic(
                 "delegation",

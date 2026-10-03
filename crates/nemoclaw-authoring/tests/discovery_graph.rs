@@ -2,20 +2,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    Capabilities, CompatibilityStatus, DiscoveryEvidence, DiscoveryQuery, JourneyDefinition,
-    PartialDocument, discovery_key_for_document, inference_request_for_document,
+    Capabilities, CompatibilityStatus, DiscoveryAssessment, DiscoveryQuery, JourneyDefinition,
+    PartialDocument, assess_target, discovery_key_for_document, inference_request_for_document,
 };
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, HarnessKind},
-    discovery::{EngineObservation, FabricObservation, ObservationStatus},
+    config::{ComputeDriver, Document, Gateway, InferenceApi, InferenceProviderKind},
+    discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
     fabric_catalog::{BridgeCapabilities, FabricCatalog},
+    facts::{Fact, FactQuery, FactSheet},
 };
 
 fn document() -> Document {
     Document::parse(&include_bytes!("../../../examples/onboarding/openclaw.yaml")[..]).unwrap()
 }
 
-fn evidence(document: &Document) -> DiscoveryEvidence {
+/// What reading a document's target returned. The sheet it produces holds the
+/// observations under that document's own engine, driver, and image, as a
+/// journey's sheet does after reading it.
+#[derive(Clone)]
+struct Observed {
+    engine: Option<EngineObservation>,
+    fabric: Option<FabricObservation>,
+}
+
+impl Observed {
+    fn sheet(&self, document: &Document) -> FactSheet {
+        let key = discovery_key_for_document(document).unwrap();
+        let mut sheet = FactSheet::new();
+        if let Some(engine) = &self.engine {
+            sheet.record(
+                FactQuery::Engine(DiscoveryRequest {
+                    engine: key.engine.clone(),
+                    compute_driver: key.compute_driver,
+                }),
+                Some(Fact::Engine(engine.clone())),
+            );
+        }
+        if let Some(fabric) = &self.fabric {
+            sheet.record(
+                FactQuery::Fabric {
+                    engine: key.engine,
+                    image: key.image,
+                },
+                Some(Fact::Fabric(fabric.clone())),
+            );
+        }
+        sheet
+    }
+
+    fn assess(&self, document: &Document) -> DiscoveryAssessment {
+        assess_target(document, &self.sheet(document)).unwrap()
+    }
+}
+
+fn evidence(document: &Document) -> Observed {
     let mut catalog = FabricCatalog::bundled();
     catalog.bridge = Some(BridgeCapabilities {
         interface_version: 1,
@@ -32,8 +72,7 @@ fn evidence(document: &Document) -> DiscoveryEvidence {
         .collect(),
         health_checks: Vec::new(),
     });
-    DiscoveryEvidence {
-        key: discovery_key_for_document(document).unwrap(),
+    Observed {
         engine: Some(EngineObservation {
             status: ObservationStatus::Available,
             reason: None,
@@ -65,8 +104,7 @@ fn evidence(document: &Document) -> DiscoveryEvidence {
 fn available_engine_and_owner_valid_configuration_establish_compatibility() {
     let document = document();
     let before = document.yaml().unwrap();
-    let observed = evidence(&document);
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = evidence(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Compatible);
     assert!(assessment.pending.is_empty());
     assert_eq!(document.yaml().unwrap(), before);
@@ -85,7 +123,7 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
         .unwrap()
         .adapters
         .retain(|adapter| adapter.descriptor["adapter_id"] != "nvidia.fabric.openclaw");
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(
         assessment
@@ -95,12 +133,12 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
     );
     observed.fabric.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Unverified
     );
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unknown;
     observed.fabric = None;
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert!(
         assessment.pending.is_empty(),
@@ -109,35 +147,65 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
 }
 
 #[test]
-fn changing_the_target_discards_old_conflicts_and_queries_engine_before_fabric() {
+fn a_read_that_observed_nothing_is_unverified_and_not_asked_again() {
+    let document = document();
+    let key = discovery_key_for_document(&document).unwrap();
+    let sheet = FactSheet::new()
+        .with(
+            FactQuery::Engine(DiscoveryRequest {
+                engine: key.engine.clone(),
+                compute_driver: key.compute_driver,
+            }),
+            None,
+        )
+        .with(
+            FactQuery::Fabric {
+                engine: key.engine,
+                image: key.image,
+            },
+            None,
+        );
+    let assessment = assess_target(&document, &sheet).unwrap();
+    assert_eq!(assessment.status, CompatibilityStatus::Unverified);
+    assert!(assessment.pending.is_empty());
+}
+
+#[test]
+fn changing_the_target_leaves_old_facts_behind_and_queries_engine_before_fabric() {
     let document = document();
     let mut observed = evidence(&document);
     observed.engine.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Conflict
     );
-    observed.key.engine = "unix:///another-target.sock".into();
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let sheet = observed.sheet(&document);
+    let mut moved = document.clone();
+    let Gateway::Managed(gateway) = &mut moved.spec.gateway else {
+        panic!("the example uses a managed gateway")
+    };
+    gateway.engine = "unix:///another-target.sock".into();
+    let assessment = assess_target(&moved, &sheet).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_eq!(assessment.pending, vec![DiscoveryQuery::Engine]);
 }
 
 #[test]
-fn changing_only_image_preserves_engine_evidence_and_queries_fabric() {
+fn changing_only_image_keeps_engine_facts_and_queries_fabric() {
     let document = document();
-    let mut observed = evidence(&document);
-    observed.key.image = "another-image".into();
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let sheet = evidence(&document).sheet(&document);
+    let mut changed = document.clone();
+    changed.spec.sandboxes[0].image.ref_ = "another-image".into();
+    let assessment = assess_target(&changed, &sheet).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert_eq!(assessment.pending, vec![DiscoveryQuery::Fabric]);
 }
 
 #[test]
-fn identity_edits_preserve_evidence_and_runtime_edits_recheck_engine() {
+fn identity_edits_keep_facts_and_runtime_edits_recheck_engine() {
     let capabilities = Capabilities::available();
     let original = document();
-    let observed = evidence(&original);
+    let sheet = evidence(&original).sheet(&original);
     let base = PartialDocument::from_yaml(original.yaml().unwrap().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("rename", base)
         .ask(["/metadata/name"])
@@ -158,25 +226,21 @@ fn identity_edits_preserve_evidence_and_runtime_edits_recheck_engine() {
         .unwrap()
         .clone();
     assert_eq!(
-        observed.assessment_for_document(&renamed).unwrap().status,
+        assess_target(&renamed, &sheet).unwrap().status,
         CompatibilityStatus::Compatible
     );
-    let mut changed_driver = observed.clone();
-    changed_driver.key.compute_driver = ComputeDriver::Podman;
+    let mut changed_driver = renamed.clone();
+    changed_driver.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     assert_eq!(
-        changed_driver
-            .assessment_for_document(&renamed)
-            .unwrap()
-            .pending,
+        assess_target(&changed_driver, &sheet).unwrap().pending,
         vec![DiscoveryQuery::Engine]
     );
 }
 
 #[test]
-fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() {
+fn a_catalog_without_the_adapter_conflicts_without_reading_the_image_again() {
     let document = document();
     let mut observed = evidence(&document);
-    observed.key.harness = "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap();
     observed
         .fabric
         .as_mut()
@@ -186,7 +250,7 @@ fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() 
         .unwrap()
         .adapters
         .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = observed.assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(assessment.pending.is_empty());
 }
@@ -195,10 +259,7 @@ fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() 
 fn native_configuration_is_checked_by_the_fabric_planner() {
     let valid = document();
     assert_eq!(
-        evidence(&valid)
-            .assessment_for_document(&valid)
-            .unwrap()
-            .status,
+        evidence(&valid).assess(&valid).status,
         CompatibilityStatus::Compatible
     );
     let mut document = valid.clone();
@@ -208,8 +269,7 @@ fn native_configuration_is_checked_by_the_fabric_planner() {
         .unwrap()
         .settings =
         Some(serde_json::from_value(serde_json::json!({"not_in_the_owner_schema": true})).unwrap());
-    let observed = evidence(&document);
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = evidence(&document).assess(&document);
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(
         assessment
@@ -225,12 +285,12 @@ fn image_platform_conflict_blocks_while_missing_platform_stays_unverified() {
     let mut observed = evidence(&document);
     observed.fabric.as_mut().unwrap().image.architecture = Some("amd64".into());
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Conflict
     );
     observed.fabric.as_mut().unwrap().image.architecture = None;
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Unverified
     );
 }
@@ -244,21 +304,33 @@ fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
     image.catalog = None;
     image.image.architecture = Some("amd64".into());
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Conflict
     );
 }
 
 #[test]
-fn managed_provider_discovery_uses_sdk_publication_without_rewriting_service() {
+fn managed_service_route_has_no_external_catalog_to_discover() {
     let document =
         Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
     let before = document.clone();
-    let expected = document.inference_connection().unwrap();
-    let request = inference_request_for_document(&document, None).unwrap();
-    assert_eq!(request.endpoint, expected.endpoint);
-    request.validate().unwrap();
+    assert_eq!(
+        inference_request_for_document(&document, None).unwrap(),
+        None
+    );
     assert_eq!(document, before);
+}
+
+#[test]
+fn provider_without_an_explicit_api_is_probed_with_its_protocol_default() {
+    let mut document = document();
+    let provider = document.inference_provider_mut().unwrap();
+    provider.provider = InferenceProviderKind::Anthropic;
+    provider.api = None;
+    let request = inference_request_for_document(&document, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.api, InferenceApi::AnthropicMessages);
 }
 
 fn external_document(engine: &str) -> Document {
@@ -281,12 +353,7 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
         discovery_key_for_document(&document).unwrap().engine,
         "ssh://images@example.com"
     );
-    let observed = DiscoveryEvidence {
-        key: discovery_key_for_document(&document).unwrap(),
-        engine: None,
-        fabric: None,
-    };
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = assess_target(&document, &FactSheet::new()).unwrap();
     assert_eq!(assessment.pending, vec![DiscoveryQuery::Fabric]);
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
 
@@ -297,13 +364,15 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
     engine.status = ObservationStatus::Unavailable;
     engine.architecture = Some("amd64".into());
     assert_eq!(
-        observed.assessment_for_document(&document).unwrap().status,
+        observed.assess(&document).status,
         CompatibilityStatus::Compatible
     );
 
     let changed = external_document("ssh://different-images@example.com");
     assert_eq!(
-        observed.assessment_for_document(&changed).unwrap().pending,
+        assess_target(&changed, &observed.sheet(&document))
+            .unwrap()
+            .pending,
         vec![DiscoveryQuery::Fabric]
     );
 }
@@ -311,12 +380,7 @@ fn external_gateway_discovery_tracks_only_the_configured_image_engine() {
 #[test]
 fn external_gateway_without_an_image_engine_stays_unverified_without_a_query() {
     let document = external_document("");
-    let observed = DiscoveryEvidence {
-        key: discovery_key_for_document(&document).unwrap(),
-        engine: None,
-        fabric: None,
-    };
-    let assessment = observed.assessment_for_document(&document).unwrap();
+    let assessment = assess_target(&document, &FactSheet::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
     assert!(assessment.pending.is_empty());
     assert!(
@@ -338,9 +402,15 @@ fn switching_to_a_managed_gateway_requires_an_engine_observation() {
     }))
     .unwrap();
     let external = document;
-    let observed = evidence(&external);
+    // An external gateway's engine is never probed, so its sheet holds only the image.
+    let observed = Observed {
+        engine: None,
+        ..evidence(&external)
+    };
     assert_eq!(
-        observed.assessment_for_document(&managed).unwrap().pending,
+        assess_target(&managed, &observed.sheet(&external))
+            .unwrap()
+            .pending,
         vec![DiscoveryQuery::Engine]
     );
 }

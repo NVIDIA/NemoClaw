@@ -210,11 +210,10 @@ impl JourneyWizard {
             )),
             Line::from(""),
         ];
-        match self.state.resolve_with_evidence(
-            &self.capabilities,
-            &self.facts,
-            self.discovery.as_ref(),
-        ) {
+        match self
+            .state
+            .resolve_with_facts(&self.capabilities, &self.facts)
+        {
             Ok(resolution) => {
                 if let Some(document) = resolution.materialized_document() {
                     if let Ok(yaml) = document.yaml() {
