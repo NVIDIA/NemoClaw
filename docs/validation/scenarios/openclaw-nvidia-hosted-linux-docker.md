@@ -8,8 +8,8 @@ It compares a redacted v0 configuration export with separately authored current 
 It does not run, patch, or inspect the v0 test harness.
 
 The checked-in export is raw output from the public v0 `nemoclaw config export` path aligned by [NVIDIA/NemoClaw issue #11977](https://github.com/NVIDIA/NemoClaw/issues/11977) and merged at revision `b6934c6300c4e1e175757e9281ae3a641d9a5b1f`.
-The historical checked-in export uses the obsolete `agents` list and is rejected by the current parser.
-The separately authored `v1.yaml` fixture preserves its intent using singular `agent`; deterministic checks verify both rejection and retained intent.
+The historical checked-in export uses the earlier `agents` list.
+The separately authored `v1.yaml` fixture preserves its intent using singular `agent`; deterministic checks verify the retained intent.
 Live verification requires both the raw export and a separately authored current configuration; it does not import the historical export directly.
 Updating the fixture is a manual review step: run the public command against a representative supported deployment, inspect the output for credential values, copy the redacted bytes into this repository without reshaping them, and update the separately authored current document in the same change.
 The v0 E2E export mechanism is a convenient producer of candidate inputs, not a pipeline dependency of the v1 test.
@@ -31,7 +31,6 @@ This comparison requires one sandbox and one historical agent, and rejects chang
 The checked-in contract lives under `crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/`:
 
 - `NOTICE.md` records producer revision, refresh date, and artifact handling.
-- `v0.yaml` is the unmodified reference manifest with its upstream revision and hash.
 - `v0-export.yaml` is the raw representative redacted export from the supported public path.
 - `v1.yaml` is the explicitly reauthored current document with the same portable intent.
 
