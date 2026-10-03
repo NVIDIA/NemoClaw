@@ -11,8 +11,9 @@ use crate::{
 pub const PROXY: &str = "ollama_proxy";
 pub const STORAGE: &str = "ollama_proxy_storage";
 pub const MODEL: &str = "ollama_external_model";
+/// Kinds the NemoClaw provider owns; the proxy container belongs to the Docker provider.
 pub fn supports(kind: &str) -> bool {
-    matches!(kind, PROXY | STORAGE | MODEL)
+    matches!(kind, STORAGE | MODEL)
 }
 pub fn specification(
     document: &Document,

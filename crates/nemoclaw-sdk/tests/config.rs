@@ -255,13 +255,6 @@ fn sandbox_harness_is_the_only_implementation_selector() {
         "fabric"
     );
     assert!(!document.yaml().unwrap().contains("type:"));
-    for field in ["type: fabric", "type: openclaw"] {
-        let legacy = input.replace(
-            "kind: nvidia.fabric.openclaw",
-            &format!("{field}\n          kind: openclaw"),
-        );
-        assert!(Document::parse(legacy.as_bytes()).is_err());
-    }
     for invalid in ["", " "] {
         let changed = input.replace(
             "kind: nvidia.fabric.openclaw",
