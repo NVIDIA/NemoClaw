@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.55 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.71 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -26,7 +26,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.55"
+EXPECTED_DCODE_VERSION = "0.1.71"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -45,7 +45,7 @@ NON_INTERACTIVE_TIMEOUT_MARKER = '''                        timeout=timeout,
 '''
 NON_INTERACTIVE_TIMEOUT_PATCH = '''                        timeout=(None if output_format == "json" else timeout),
 '''
-ENTRYPOINT_MARKER = "from deepagents_code.main import cli_main\n"
+ENTRYPOINT_MARKER = "from deepagents_code import cli_main\n"
 ENTRYPOINT_PATCH = '''# NemoClaw-managed Deep Agents Code hardening v2.
 import os
 
@@ -440,7 +440,7 @@ def _tracing_enabled() -> bool:
     return False
 
 
-# Deep Agents Code 0.1.55 enables OpenAI prompt-cache affinity for every
+# Deep Agents Code 0.1.71 enables OpenAI prompt-cache affinity for every
 # ChatOpenAI-compatible endpoint. NVIDIA Endpoints rejects that OpenAI-specific
 # request field. Disable its dynamic injection at the final config boundary so
 # managed non-interactive calls retain only supported request fields (#10549).
@@ -500,7 +500,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.55 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.71 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -540,7 +540,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.55 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.71 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
@@ -636,7 +636,7 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         kwargs.get("mcp_server_info"),
         kwargs.get("mcp_tools"),
     )
-    # Deep Agents Code 0.1.55 passes the exact loaded MCP tool objects
+    # Deep Agents Code 0.1.71 passes the exact loaded MCP tool objects
     # separately from the status-oriented server metadata. The metadata can be
     # empty or lag the executable catalog, so it must not decide whether the
     # progressive middleware is installed.
@@ -1222,21 +1222,19 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
 _nemoclaw_original_run_non_interactive = run_non_interactive
 
 
+def _resolve_shell_allow_list():
+    """Disable the unapproved headless shell backend at its policy boundary."""
+    return None
+
+
 async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
     _nemoclaw_os.environ["NEMOCLAW_DCODE_HEADLESS_INTERNAL"] = "1"
     output_format = kwargs.pop("output_format", "text")
     timeout_seconds = kwargs.pop("timeout_seconds", None)
-    settings.shell_allow_list = None
     kwargs["startup_cmd"] = None
-    from deepagents_code.config import CLI_MAX_RETRIES_KEY
-
-    model_params = kwargs.get("model_params")
-    kwargs["model_params"] = (
-        {CLI_MAX_RETRIES_KEY: model_params[CLI_MAX_RETRIES_KEY]}
-        if isinstance(model_params, dict) and CLI_MAX_RETRIES_KEY in model_params
-        else None
-    )
+    # Upstream carries the CLI retry budget separately as cli_max_retries.
+    kwargs["model_params"] = None
     kwargs["profile_override"] = None
     kwargs["sandbox_type"] = "none"
     from deepagents_code._nemoclaw_managed import managed_mcp_config_path
@@ -1344,7 +1342,7 @@ def _normalize_path(raw_path, project_context, label):
 MCP_TOOLS_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
-def discover_mcp_configs(*, project_context=None) -> list[Path]:
+def discover_mcp_config_sources(*, project_context=None) -> list[Path]:
     """Disable user and project MCP layering in the managed image."""
     del project_context
     return []
@@ -1403,12 +1401,14 @@ MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
         configs.append(load_mcp_config(config_path))
 '''
 
-SERVER_ENV_OVERRIDES_MARKER = '''            env.update(self._persistent_env_overrides)
-            env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_MARKER = '''            env = _server_env_with_overrides(
+                self._persistent_env_overrides, self._env_overrides
+            )
 '''
 
-SERVER_ENV_OVERRIDES_PATCH = '''            env.update(self._persistent_env_overrides)
-            env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
+                self._persistent_env_overrides, self._env_overrides
+            )
 
             # Reassert the managed child-process posture after both override
             # layers so restarts cannot re-enable update checks, optional
@@ -1448,6 +1448,9 @@ SERVER_POPEN_MARKER = '''            self._process = subprocess.Popen(  # noqa: 
                 stdout=self._log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=(sys.platform != "win32"),
+                creationflags=(
+                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+                ),
             )
 '''
 
@@ -1459,6 +1462,9 @@ SERVER_POPEN_PATCH = '''            self._process = subprocess.Popen(  # noqa: S
                 stderr=subprocess.STDOUT,
                 pass_fds=nemoclaw_mcp_pass_fds,
                 start_new_session=(sys.platform != "win32"),
+                creationflags=(
+                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+                ),
             )
 '''
 
@@ -1985,9 +1991,9 @@ def main() -> None:
         and node.func.id == "_run_install_subprocess"
         for node in ast.walk(update_tree)
     )
-    if install_calls != 5:
+    if install_calls != 6:
         raise RuntimeError(
-            "Expected five Deep Agents Code install-subprocess call sites, "
+            "Expected six Deep Agents Code install-subprocess call sites, "
             f"found {install_calls}"
         )
     _require_functions(
@@ -2035,13 +2041,13 @@ def main() -> None:
     _require_functions(
         paths["mcp_tools"],
         texts["mcp_tools"],
-        {"discover_mcp_configs", "load_mcp_config"},
+        {"discover_mcp_config_sources", "load_mcp_config"},
     )
     _require_functions(paths["subagents"], texts["subagents"], {"list_subagents"})
     _require_functions(
         paths["non_interactive"],
         texts["non_interactive"],
-        {"run_non_interactive", "_run_startup_command"},
+        {"run_non_interactive", "_run_startup_command", "_resolve_shell_allow_list"},
     )
 
     if texts["main"].count(MAIN_MARKER) != 1:
