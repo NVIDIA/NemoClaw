@@ -461,7 +461,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 _dotenv_loaded_values = {}
-CLI_MAX_RETRIES_KEY = "__deepagents_cli_max_retries__"
 
 
 def _preview_dotenv_environ(*, start_path=None):
@@ -711,10 +710,12 @@ class HooksManager:
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
 
-settings = SimpleNamespace(shell_allow_list=["bash"])
 logger = logging.getLogger(__name__)
+
+
+def _resolve_shell_allow_list():
+    return ["bash"]
 
 
 class _Console:

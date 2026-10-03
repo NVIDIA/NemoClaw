@@ -1222,21 +1222,19 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
 _nemoclaw_original_run_non_interactive = run_non_interactive
 
 
+def _resolve_shell_allow_list():
+    """Disable the unapproved headless shell backend at its policy boundary."""
+    return None
+
+
 async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
     _nemoclaw_os.environ["NEMOCLAW_DCODE_HEADLESS_INTERNAL"] = "1"
     output_format = kwargs.pop("output_format", "text")
     timeout_seconds = kwargs.pop("timeout_seconds", None)
-    settings.shell_allow_list = None
     kwargs["startup_cmd"] = None
-    from deepagents_code.config import CLI_MAX_RETRIES_KEY
-
-    model_params = kwargs.get("model_params")
-    kwargs["model_params"] = (
-        {CLI_MAX_RETRIES_KEY: model_params[CLI_MAX_RETRIES_KEY]}
-        if isinstance(model_params, dict) and CLI_MAX_RETRIES_KEY in model_params
-        else None
-    )
+    # Upstream carries the CLI retry budget separately as cli_max_retries.
+    kwargs["model_params"] = None
     kwargs["profile_override"] = None
     kwargs["sandbox_type"] = "none"
     from deepagents_code._nemoclaw_managed import managed_mcp_config_path
@@ -2049,7 +2047,7 @@ def main() -> None:
     _require_functions(
         paths["non_interactive"],
         texts["non_interactive"],
-        {"run_non_interactive", "_run_startup_command"},
+        {"run_non_interactive", "_run_startup_command", "_resolve_shell_allow_list"},
     )
 
     if texts["main"].count(MAIN_MARKER) != 1:

@@ -1063,6 +1063,7 @@ async def validate():
         "assistant",
         startup_cmd="touch /tmp/unsafe",
         model_params={"api_key": "secret"},
+        cli_max_retries=2,
         profile_override={"attacker": True},
         sandbox_type="modal",
         mcp_config_path="mcp.json",
@@ -1074,6 +1075,7 @@ async def validate():
     )
     assert headless_kwargs["startup_cmd"] is None
     assert headless_kwargs["model_params"] is None
+    assert headless_kwargs["cli_max_retries"] == 2
     assert headless_kwargs["profile_override"] is None
     assert headless_kwargs["sandbox_type"] == "none"
     assert headless_kwargs["mcp_config_path"] is None
@@ -1082,7 +1084,7 @@ async def validate():
     assert headless_kwargs["enable_interpreter"] is False
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
-    assert non_interactive.settings.shell_allow_list is None
+    assert non_interactive._resolve_shell_allow_list() is None
     assert not headless_hook_marker.exists()
     os.environ.pop("DCODE_FIXTURE_HOOK_MARKER")
     if sys.platform == "linux":
