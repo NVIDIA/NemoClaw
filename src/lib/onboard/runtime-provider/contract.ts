@@ -440,6 +440,15 @@ export interface RuntimeProviderStoppedSandboxStateCleanupInput {
   readonly paths: readonly string[];
 }
 
+export interface RuntimeProviderStoppedNativeHomeCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly expectedResourceHandle?: string;
+  readonly root: string;
+  readonly protectedPaths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
@@ -452,6 +461,9 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  clearStoppedNativeHome?(
+    input: RuntimeProviderStoppedNativeHomeCleanupInput,
   ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(
@@ -569,9 +581,8 @@ export interface RuntimeProviderSnapshotRestoreSource {
 }
 
 export interface RuntimeProviderStoppedStateProjection {
-  readonly directories: readonly string[];
-  readonly prefixes: readonly string[];
-  readonly files: readonly string[];
+  /** Canonical complete native home/workspace root owned by the stopped runtime. */
+  readonly nativeRoot: string;
   readonly managedStateRoots?: readonly {
     readonly mountTarget: string;
     readonly resourceIdentity: string;
@@ -581,7 +592,7 @@ export interface RuntimeProviderStoppedStateProjection {
 
 export interface RuntimeProviderStoppedStateCapture {
   /** The caller owns the private destination fd and archive validation. */
-  capture(archiveFd: number): Promise<void>;
+  capture(archiveFd: number, maxBytes: number): Promise<void>;
   assertCurrent(): void;
 }
 

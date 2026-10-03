@@ -763,11 +763,6 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
-const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
-  "src/lib/actions/sandbox/auto-pair-approval.ts",
-  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
@@ -789,9 +784,6 @@ export function focusedE2eJobsForChangedFiles(
     }
     for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
       if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
-    }
-    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
-      addMapValue(matchedFilesByJob, "snapshot-commands", file);
     }
   }
   return [...matchedFilesByJob]

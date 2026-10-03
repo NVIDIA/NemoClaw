@@ -4489,6 +4489,398 @@ finally:
 PY
 }
 
+# Whole-home backups cannot carry machine-local private keys into a replacement
+# sandbox. Remove either the archive sanitizer's exact placeholder or, while a
+# trusted post-upgrade maintenance marker is active, the restored legacy
+# identity itself so OpenClaw creates fresh local authority. Ordinary starts
+# preserve real identities and malformed user data for native diagnostics.
+remove_restored_legacy_device_identity() {
+  local upgrade_request="${1:-nemoclaw-openclaw-post-upgrade-doctor-v2}"
+  case "$upgrade_request" in
+    nemoclaw-openclaw-post-upgrade-doctor-v2 | nemoclaw-openclaw-post-upgrade-doctor-release-v1) ;;
+    *)
+      echo "[SECURITY] Refusing invalid restored device identity migration phase" >&2
+      return 1
+      ;;
+  esac
+  run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw "$upgrade_request" <<'PY'
+import os
+import stat
+import sys
+
+MARKER = b'{"nemoclawSanitizedDeviceIdentity":1}'
+UPGRADE_MARKER = '.nemoclaw-post-upgrade-doctor'
+UPGRADE_REQUEST = (sys.argv[2] + '\n').encode('ascii')
+CONSUME_UPGRADE_MARKER = sys.argv[2] == 'nemoclaw-openclaw-post-upgrade-doctor-release-v1'
+
+def identity(value):
+    return value.st_dev, value.st_ino, value.st_mode
+
+def stable(value):
+    return (identity(value), value.st_nlink, value.st_uid, value.st_gid,
+            value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+fds = []
+try:
+    config = os.path.normpath(sys.argv[1])
+    parent = os.path.dirname(config)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(parent, directory_flags)
+    fds.append(parent_fd)
+    root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
+    fds.append(root_fd)
+    root_before = os.fstat(root_fd)
+    identity_fd = None
+    try:
+        identity_fd = os.open('identity', directory_flags, dir_fd=root_fd)
+    except FileNotFoundError:
+        if not CONSUME_UPGRADE_MARKER:
+            sys.exit(0)
+    if identity_fd is not None:
+        fds.append(identity_fd)
+    target_names = (
+        'device.json',
+        'device.json.doctor-importing',
+        'device.json.native-importing',
+    )
+    targets = []
+    for name in (target_names if identity_fd is not None else ()):
+        try:
+            before = os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError('unsafe device identity file')
+        target_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=identity_fd,
+        )
+        fds.append(target_fd)
+        if (before.st_dev != os.fstat(identity_fd).st_dev
+                or stable(os.fstat(target_fd)) != stable(before)):
+            raise ValueError('device identity file changed')
+        payload = None
+        if before.st_size <= 131072:
+            payload = bytearray()
+            while len(payload) < before.st_size:
+                chunk = os.read(target_fd, before.st_size - len(payload))
+                if not chunk:
+                    raise ValueError('device identity file changed')
+                payload.extend(chunk)
+            if os.read(target_fd, 1):
+                raise ValueError('device identity file changed')
+        # The archive sanitizer preserves member length with ASCII space
+        # padding. Byte equality keeps ordinary startup cleanup narrower than
+        # JSON equality (which would accept duplicate keys or alternate
+        # encodings). OpenClaw's interrupted-import claims are never accepted
+        # as sanitizer placeholders.
+        sanitized_placeholder = (
+            name == 'device.json'
+            and payload is not None
+            and bytes(payload).rstrip(b' ') == MARKER
+        )
+        targets.append((name, before, target_fd, sanitized_placeholder))
+    if not targets and not CONSUME_UPGRADE_MARKER:
+        sys.exit(0)
+
+    upgrade_before = None
+    upgrade_fd = None
+    if CONSUME_UPGRADE_MARKER or any(not target[3] for target in targets):
+        try:
+            upgrade_before = os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if CONSUME_UPGRADE_MARKER:
+                raise ValueError('missing post-upgrade marker')
+            # Ordinary startup may retire only the archive sanitizer's exact
+            # direct-file placeholder. Leave every other legacy/claim path to
+            # OpenClaw's native diagnostics.
+            targets = [target for target in targets if target[3]]
+            if not targets:
+                sys.exit(0)
+        else:
+            if (not stat.S_ISREG(upgrade_before.st_mode)
+                    or stat.S_IMODE(upgrade_before.st_mode) != 0o600
+                    or upgrade_before.st_nlink != 1
+                    or upgrade_before.st_uid != root_before.st_uid
+                    or upgrade_before.st_size != len(UPGRADE_REQUEST)):
+                raise ValueError('unsafe post-upgrade marker')
+            upgrade_fd = os.open(
+                UPGRADE_MARKER,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=root_fd,
+            )
+            fds.append(upgrade_fd)
+            if stable(os.fstat(upgrade_fd)) != stable(upgrade_before):
+                raise ValueError('post-upgrade marker changed')
+            request = bytearray()
+            while len(request) < upgrade_before.st_size:
+                chunk = os.read(upgrade_fd, upgrade_before.st_size - len(request))
+                if not chunk:
+                    raise ValueError('post-upgrade marker changed')
+                request.extend(chunk)
+            if os.read(upgrade_fd, 1) or bytes(request) != UPGRADE_REQUEST:
+                raise ValueError('invalid post-upgrade marker')
+    if (identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
+            or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
+            or (identity_fd is not None
+                and identity(os.stat('identity', dir_fd=root_fd, follow_symlinks=False)) != identity(os.fstat(identity_fd)))
+            or (upgrade_before is not None
+                and (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
+                     or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)))):
+        raise ValueError('device identity file changed')
+    for name, before, target_fd, _sanitized_placeholder in targets:
+        if (stable(os.stat(name, dir_fd=identity_fd, follow_symlinks=False)) != stable(before)
+                or stable(os.fstat(target_fd)) != stable(before)):
+            raise ValueError('device identity file changed')
+    for name, _before, _target_fd, _sanitized_placeholder in targets:
+        os.unlink(name, dir_fd=identity_fd)
+    if identity_fd is not None:
+        os.fsync(identity_fd)
+    for name, _before, _target_fd, sanitized_placeholder in targets:
+        try:
+            os.stat(name, dir_fd=identity_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('device identity file reappeared')
+        if sanitized_placeholder:
+            message = '[migration] Removed sanitized legacy device identity placeholder'
+        else:
+            message = f'[migration] Removed restored legacy device identity for post-upgrade rotation: {name}'
+        print(message, file=sys.stderr)
+    if CONSUME_UPGRADE_MARKER:
+        if (stable(os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)) != stable(upgrade_before)
+                or stable(os.fstat(upgrade_fd)) != stable(upgrade_before)):
+            raise ValueError('post-upgrade marker changed')
+        os.unlink(UPGRADE_MARKER, dir_fd=root_fd)
+        os.fsync(root_fd)
+        try:
+            os.stat(UPGRADE_MARKER, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('post-upgrade marker reappeared')
+except (OSError, ValueError):
+    print('[SECURITY] Refusing unsafe restored device identity migration', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for fd in reversed(fds):
+        os.close(fd)
+PY
+}
+
+repair_openclaw_shared_state_schema() {
+  local database="/sandbox/.openclaw/state/openclaw.sqlite"
+  local database_metadata database_owner database_links node_bin repair_rc=0
+  local -a repair_command
+
+  if [ ! -e "$database" ] && [ ! -L "$database" ]; then
+    return 0
+  fi
+  if [ ! -f "$database" ] || [ -L "$database" ]; then
+    echo "[SECURITY] Refusing unsafe OpenClaw shared state database" >&2
+    return 1
+  fi
+  database_metadata="$(stat -c '%u %h' "$database" 2>/dev/null)" || return 1
+  read -r database_owner database_links <<EOF
+$database_metadata
+EOF
+  if [ "$database_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    || [ "$database_links" != "1" ]; then
+    echo "[SECURITY] Refusing untrusted OpenClaw shared state database" >&2
+    return 1
+  fi
+  node_bin="$(command -v node 2>/dev/null)" || {
+    echo "[SECURITY] Cannot repair the OpenClaw shared state schema without Node.js" >&2
+    return 1
+  }
+
+  # OpenClaw's doctor validates the current schema before loading its repair
+  # contributions, so databases from sufficiently old releases cannot reach
+  # the repair that doctor recommends. Invoke the exact startup repair exported
+  # by the installed OpenClaw package, rather than duplicating its SQL here.
+  repair_command=("$node_bin" - "$OPENCLAW")
+  if [ "$(id -u)" -eq 0 ]; then
+    repair_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env
+      HOME=/sandbox PATH="$PATH:/sandbox/.local/bin"
+      "${repair_command[@]}"
+    )
+  fi
+  "${repair_command[@]}" <<'NODEREPAIR' || repair_rc=$?
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  const executable = fs.realpathSync(process.argv[2]);
+  const databasePath = "/sandbox/.openclaw/state/openclaw.sqlite";
+  let current = fs.statSync(executable).isDirectory() ? executable : path.dirname(executable);
+  let packageRoot;
+  while (true) {
+    const candidates = [current];
+    if (path.basename(current) === "node_modules") {
+      candidates.unshift(path.join(current, "openclaw"));
+    }
+    for (const candidate of candidates) {
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8"));
+      } catch {
+        continue;
+      }
+      if (manifest.name === "openclaw") {
+        packageRoot = candidate;
+        break;
+      }
+    }
+    if (packageRoot) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  if (!packageRoot) throw new Error("OpenClaw package root not found");
+  const dist = path.join(packageRoot, "dist");
+  const stateModules = fs
+    .readdirSync(dist)
+    .filter((name) => /^openclaw-state-db-.*\.js$/.test(name))
+    .sort();
+  let stateApi;
+  for (const candidate of stateModules) {
+    const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+    if (
+      typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded === "function" &&
+      typeof loaded.repairOpenClawStateDatabaseSchema === "function" &&
+      typeof loaded.detectOpenClawStateDatabaseSchemaMigrations === "function" &&
+      typeof loaded.withOpenClawStateStartupMigrationCheckpointDatabase === "function"
+    ) {
+      stateApi = loaded;
+      break;
+    }
+  }
+  if (!stateApi) throw new Error("OpenClaw shared state schema repair not found");
+
+  const repairOptions = { env: process.env, path: databasePath };
+  const validateResult = (result) => {
+    if (!result || !Array.isArray(result.changes) || !Array.isArray(result.warnings)) {
+      throw new Error("OpenClaw shared state repair returned an invalid result");
+    }
+    if (result.warnings.length > 0) {
+      throw new Error(`OpenClaw shared state repair warnings: ${result.warnings.join("; ")}`);
+    }
+    return result;
+  };
+  const changes = [
+    ...validateResult(
+      await Promise.resolve(stateApi.repairOpenClawStateDatabaseSchemaIfNeeded(repairOptions)),
+    ).changes,
+  ];
+  let pending = stateApi.detectOpenClawStateDatabaseSchemaMigrations(repairOptions);
+  if (!Array.isArray(pending)) {
+    throw new Error("OpenClaw shared state migration detector returned an invalid result");
+  }
+
+  if (pending.length > 0) {
+    // OpenClaw 2026.6.10 created schema v1 before the audit ledger existed.
+    // OpenClaw 2026.9.1 retires three v1 surfaces but gates the migrations that
+    // advance the schema version on audit_events, so its successful repair can
+    // otherwise leave the database permanently at v1. Bootstrap only that
+    // missing canonical table from the installed package's own schema, through
+    // OpenClaw's write-ownership boundary, and let its repair own every migration.
+    const expectedKinds = new Set([
+      "state-consolidation-v13",
+      "creator-namespace-v14",
+      "conversation-binding-targets-v15",
+    ]);
+    const pendingKinds = pending.map((entry) => entry?.kind);
+    if (
+      pendingKinds.length !== expectedKinds.size ||
+      pendingKinds.some((kind) => !expectedKinds.has(kind))
+    ) {
+      throw new Error(
+        `OpenClaw shared state repair left unexpected migration(s): ${pendingKinds.join(", ")}`,
+      );
+    }
+
+    const schemaModules = fs
+      .readdirSync(dist)
+      .filter((name) => /^openclaw-state-db-cache-.*\.js$/.test(name))
+      .sort();
+    const auditStart = "CREATE TABLE IF NOT EXISTS audit_events (";
+    const auditIdentityStart = "CREATE TABLE IF NOT EXISTS audit_identity_keys (";
+    let canonicalSchema;
+    for (const candidate of schemaModules) {
+      const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+      const matches = Object.values(loaded).filter(
+        (value) =>
+          typeof value === "string" &&
+          value.includes(auditStart) &&
+          value.includes(auditIdentityStart) &&
+          value.includes("CREATE TABLE IF NOT EXISTS agent_databases ("),
+      );
+      if (matches.length > 1 || (canonicalSchema && matches.length > 0)) {
+        throw new Error("OpenClaw exported multiple canonical shared state schemas");
+      }
+      if (matches.length === 1) canonicalSchema = matches[0];
+    }
+    if (!canonicalSchema) throw new Error("OpenClaw canonical shared state schema not found");
+    const canonicalTableBlock = (startMarker) => {
+      const offset = canonicalSchema.indexOf(startMarker);
+      const end = canonicalSchema.indexOf("\n\nCREATE TABLE IF NOT EXISTS ", offset + 1);
+      if (offset < 0 || end < 0) {
+        throw new Error("OpenClaw canonical audit ledger schema is malformed");
+      }
+      return canonicalSchema.slice(offset, end);
+    };
+    const auditSchema = [
+      canonicalTableBlock(auditStart),
+      canonicalTableBlock(auditIdentityStart),
+    ].join("\n\n");
+
+    stateApi.withOpenClawStateStartupMigrationCheckpointDatabase((database) => {
+      const versionRow = database.prepare("PRAGMA user_version").get();
+      const auditRow = database
+        .prepare("SELECT type FROM sqlite_master WHERE name = 'audit_events'")
+        .get();
+      if (versionRow?.user_version !== 1 || auditRow !== undefined) {
+        throw new Error("OpenClaw legacy audit ledger bootstrap precondition changed");
+      }
+      database.exec("BEGIN IMMEDIATE;");
+      try {
+        database.exec(auditSchema);
+        database.exec("COMMIT;");
+      } catch (error) {
+        database.exec("ROLLBACK;");
+        throw error;
+      }
+    }, repairOptions);
+    console.error("[setup] OpenClaw bootstrapped the missing legacy audit ledger migration boundary");
+    changes.push(
+      ...validateResult(
+        await Promise.resolve(stateApi.repairOpenClawStateDatabaseSchema(repairOptions)),
+      ).changes,
+    );
+    pending = stateApi.detectOpenClawStateDatabaseSchemaMigrations(repairOptions);
+    if (!Array.isArray(pending) || pending.length > 0) {
+      const kinds = Array.isArray(pending) ? pending.map((entry) => entry?.kind).join(", ") : "invalid";
+      throw new Error(`OpenClaw shared state repair did not converge: ${kinds}`);
+    }
+  }
+  if (changes.length > 0) {
+    console.error(`[setup] OpenClaw repaired ${changes.length} shared state schema change(s)`);
+  }
+})().catch((error) => {
+  console.error(`[SECURITY] Could not repair the OpenClaw shared state schema: ${error.message}`);
+  process.exit(1);
+});
+NODEREPAIR
+  if [ "$repair_rc" -ne 0 ]; then
+    echo "[SECURITY] OpenClaw shared state schema repair failed" >&2
+    return 1
+  fi
+}
+
 wait_for_openclaw_startup_migration_lease() {
   local node_bin lease_rc lease_attempt=0
   local -a lease_command
@@ -4589,6 +4981,7 @@ run_requested_openclaw_post_upgrade_doctor() {
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
   local ready_owner=""
   local gate_attempt
+  local -a doctor_command
 
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
@@ -4627,14 +5020,48 @@ EOF
   # a fresh one only after doctor succeeds.
   rm -f -- "$ready" || return 1
 
+  # Backup quiesce is promoted to the doctor request only after the restored
+  # native home is in place. Rotate machine-local legacy authority here as
+  # well as during ordinary startup so a post-quiesce restore cannot put the
+  # retired sandbox identity back after the earlier migration pass.
+  remove_restored_legacy_device_identity || return 1
+
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
   if [ "$(id -u)" -eq 0 ]; then
-    "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" \
-      "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+    doctor_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}"
+      /usr/bin/env
+      HOME=/sandbox
+      PATH="$PATH:/sandbox/.local/bin"
+      "$OPENCLAW"
+      doctor
+      --fix
+      --yes
+      --non-interactive
+    )
   else
-    "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+    doctor_command=("$OPENCLAW" doctor --fix --yes --non-interactive)
   fi
+  repair_openclaw_shared_state_schema || return 1
+  if ! "${doctor_command[@]}"; then
+    echo "[setup] OpenClaw doctor requested a follow-up migration pass; retrying once" >&2
+  else
+    echo "[setup] OpenClaw doctor completed its first migration pass; checking dependent migrations once" >&2
+  fi
+  # OpenClaw intentionally repairs the shared SQLite schema before it
+  # discovers dependent plugin, agent, and device-identity migrations. Some
+  # older native homes also expose another shared-state migration only after
+  # the first doctor process initializes its lazy registry tables. Repair the
+  # schema again, then perform exactly one bounded follow-up doctor pass before
+  # releasing the gateway.
+  repair_openclaw_shared_state_schema || return 1
+  "${doctor_command[@]}" || return 1
   wait_for_openclaw_startup_migration_lease || return 1
+  # Doctor deliberately retains invalid interrupted-import claims so an
+  # operator can recover them. This maintenance window is the narrower case:
+  # the restored machine-local identity belongs to the retired sandbox, so
+  # rotate any claim Doctor could not import before allowing gateway startup.
+  remove_restored_legacy_device_identity || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"
   fi
@@ -4675,8 +5102,12 @@ EOF
       fi
     } <"$marker" || return 1
     if [ "$marker_value" = "$release_expected" ]; then
-      rm -f -- "$marker" "$ready" || return 1
-      echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
+      # Keep the authenticated release marker through the remaining entrypoint
+      # setup. OpenClaw can materialize a legacy identity after Doctor exits,
+      # so consuming the marker here leaves a race before gateway launch.
+      # The final launch edge rotates that authority and consumes both receipts.
+      _NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING=1
+      echo "[setup] OpenClaw post-upgrade offline restore release accepted; final identity rotation pending" >&2
       return 0
     fi
     if [ "$marker_value" = "$abort_expected" ]; then
@@ -4695,6 +5126,25 @@ EOF
   return 1
 }
 
+consume_openclaw_post_upgrade_release_before_gateway() {
+  local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
+  local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
+  local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
+
+  [ "${_NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING:-0}" = "1" ] || return 0
+  # This is the last synchronous operation before spawning the gateway. Keep
+  # the release marker in place while the descriptor-based cleanup validates
+  # and removes any identity that a completed migration materialized late.
+  remove_restored_legacy_device_identity "$release_expected" || return 1
+  rm -f -- "$ready" || return 1
+  if [ -e "$marker" ] || [ -L "$marker" ] || [ -e "$ready" ] || [ -L "$ready" ]; then
+    echo "[SECURITY] OpenClaw post-upgrade release receipts reappeared before gateway launch" >&2
+    return 1
+  fi
+  _NEMOCLAW_OPENCLAW_POST_UPGRADE_RELEASE_PENDING=0
+  echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # OpenClaw 2026.9.1 enforces owner-only SQLite and models-file modes on every
@@ -4708,6 +5158,7 @@ prepare_openshell_sqlite_tmpdir || exit 1
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
 remove_empty_legacy_exec_approvals || exit 1
+remove_restored_legacy_device_identity || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
@@ -4796,6 +5247,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # to healthy — see the mark_in_container_gateway comment near the top of this
   # file for the #4710 rationale (why the marker is tied to the launch site
   # rather than an env-var conditional at startup).
+  consume_openclaw_post_upgrade_release_before_gateway || exit 1
   launch_openclaw_gateway_non_root
   # Diagnostic: mirror gateway log to PID 1's stderr — see root-mode block
   # below for rationale (NVIDIA/NemoClaw#2484).
@@ -4962,6 +5414,7 @@ validate_nemoclaw_tmp_permissions
 # new process identity for health integration, and forwards sandbox shutdown
 # signals.
 # The launch primitive arms signal and EXIT cleanup before writing the marker.
+consume_openclaw_post_upgrade_release_before_gateway || exit 1
 launch_openclaw_gateway
 
 # Diagnostic: mirror gateway log to PID 1's stderr so its content surfaces in

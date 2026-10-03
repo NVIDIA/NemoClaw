@@ -316,6 +316,45 @@ describe("managed image activation failure diagnostics", () => {
     }
   });
 
+  it("re-approves the replacement OpenClaw authority after an external-image rebuild", async () => {
+    const requestIds = [
+      "4edc8df0-20d0-4308-b0e8-850843ae0cf4",
+      "ad592d20-6f2a-4db3-a966-bc7cb96b8543",
+    ];
+    const sandboxExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: `scope upgrade pending approval (requestId: ${requestIds[0]})`,
+        stdout: "",
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: `scope upgrade pending approval (requestId: ${requestIds[1]})`,
+        stdout: "",
+        timedOut: false,
+      });
+    const hostCommand = vi.fn(async (_command: string, _args: string[]) => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
+      timedOut: false,
+    }));
+    const host = { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never;
+    const sandbox = { exec: sandboxExec } as never;
+
+    await approveOpenClawAdminScope(host, sandbox, "fixture-sandbox", {});
+    await approveOpenClawAdminScope(host, sandbox, "fixture-sandbox", {});
+
+    expect(sandboxExec).toHaveBeenCalledTimes(2);
+    expect(hostCommand).toHaveBeenCalledTimes(2);
+    expect(hostCommand.mock.calls[0]![0]).toBe("bash");
+    expect(hostCommand.mock.calls[0]![1][1]).toContain(`expected_request_id='${requestIds[0]}'`);
+    expect(hostCommand.mock.calls[1]![0]).toBe("bash");
+    expect(hostCommand.mock.calls[1]![1][1]).toContain(`expected_request_id='${requestIds[1]}'`);
+  });
+
   it("preserves feature approval success without running host logout hooks or creating a cron job", async () => {
     const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
