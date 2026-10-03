@@ -22,7 +22,19 @@ const HARNESSES: [&str; 10] = [
 ];
 const AMD64_HARNESSES: [&str; 2] = ["deepagents", "openclaw"];
 
+/// Whether Docker Buildx can run here; the Windows and macOS runners lack it.
+fn buildx_available() -> bool {
+    Command::new("docker")
+        .args(["buildx", "version"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn bake(platform: Option<&str>, targets: &[&str]) -> Option<std::process::Output> {
+    if !buildx_available() {
+        eprintln!("skipping: docker buildx is unavailable");
+        return None;
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut command = Command::new("docker");
     command
@@ -34,18 +46,7 @@ fn bake(platform: Option<&str>, targets: &[&str]) -> Option<std::process::Output
     if let Some(platform) = platform {
         command.env("AGENT_PLATFORM", platform);
     }
-    match command.output() {
-        Ok(output)
-            if output.status.success()
-                || !String::from_utf8_lossy(&output.stderr).contains("unknown command") =>
-        {
-            Some(output)
-        }
-        _ => {
-            eprintln!("skipping: docker buildx is unavailable");
-            None
-        }
-    }
+    Some(command.output().expect("docker runs after buildx answered"))
 }
 
 fn plan(platform: &str, targets: &[&str]) -> Option<serde_json::Map<String, Value>> {
