@@ -56,6 +56,11 @@ function execInputError(command: readonly string[], workdir: string | undefined)
   return null;
 }
 
+export function execUsage(sandboxName: string): string {
+  const { CLI_NAME } = require("../../cli/branding");
+  return `${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`;
+}
+
 export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
 }
@@ -192,9 +197,7 @@ export async function startSandboxExec(
   const { CLI_NAME } = require("../../cli/branding");
   const exit = deps.exit ?? process.exit;
   if (command.length === 0) {
-    console.error(
-      `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`,
-    );
+    console.error(`  Usage: ${execUsage(sandboxName)}`);
     exit(2);
   }
   const inputError = execInputError(command, options.workdir);
