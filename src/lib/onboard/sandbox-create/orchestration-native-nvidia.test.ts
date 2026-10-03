@@ -32,7 +32,7 @@ function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
     deferred: false,
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
-    expectedNativeNvidiaProviderAttachment: {
+    expectedNativeHostedProviderAttachment: {
       schemaVersion: 1,
       profileId: "nemoclaw-nvidia-inference-v1",
       providerName: "nemoclaw-nvidia-prod-v1",

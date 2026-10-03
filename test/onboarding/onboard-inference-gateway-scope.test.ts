@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createNativeSetupProviderAdapter } from "../helpers/onboard-split-context";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import {
@@ -38,13 +39,10 @@ function expectCommandsTargetOnly(commands: Array<{ command: string }>): void {
 }
 
 describe("onboarding inference gateway scope", () => {
-  it("targets a non-default gateway for provider creation, route apply, and verification", async () => {
+  it("targets a non-default gateway for native provider creation and verification", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
-      });
-
+      const providerAdapter = createNativeSetupProviderAdapter("openai-api", false);
+      const harness = createHarness({ overrides: { providerAdapter } });
       await expect(
         harness.setupInference(
           "test-box",
@@ -57,14 +55,25 @@ describe("onboarding inference gateway scope", () => {
           { gatewayName: GATEWAY },
         ),
       ).resolves.toEqual({ ok: true });
-
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        `provider get -g ${GATEWAY} openai-api`,
-        `provider create -g ${GATEWAY} --name openai-api --type openai --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://api.openai.com/v1`,
-        `inference set -g ${GATEWAY} --no-verify --provider openai-api --model gpt-test`,
-      ]);
-      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(GATEWAY, "openai-api", "gpt-test");
-      expectCommandsTargetOnly(harness.commands);
+      expect(harness.updateSandbox).toHaveBeenCalledWith(
+        "test-box",
+        expect.objectContaining({
+          nativeHostedProviderAttachment: expect.objectContaining({
+            providerName: "nemoclaw-openai-api-v1",
+            providerId: "fixture-native-id",
+          }),
+          gatewayName: GATEWAY,
+        }),
+      );
+      expect(providerAdapter.createProvider).toHaveBeenCalledOnce();
+      const targetRequest = expect.objectContaining({
+        target: { kind: "named", gatewayName: GATEWAY },
+      });
+      expect(providerAdapter.importProviderProfile.mock.calls).toEqual([[targetRequest]]);
+      expect(providerAdapter.getProvider.mock.calls).toEqual([[targetRequest], [targetRequest]]);
+      expect(providerAdapter.createProvider.mock.calls).toEqual([[targetRequest]]);
+      expect(harness.commands).toEqual([]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
     });
   });
 

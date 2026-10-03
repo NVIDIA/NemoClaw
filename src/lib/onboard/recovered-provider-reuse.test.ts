@@ -55,51 +55,63 @@ describe("assessRecoveredProviderCredentialReuse", () => {
   });
 
   it.each(
-    Array.from([[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]], (value) => [value]),
-  )(
-    "requires the exact endpoint-config binding for built-in provider recovery [case %#]",
-    (configKeys) => {
-      const builtInOpenAi = {
-        ...completeRecovery,
-        selectedKey: "openai",
-        selectedProvider: "openai-api",
-        recoveredProvider: "openai-api",
-        expectedCredentialEnv: "OPENAI_API_KEY",
-        gatewayProvider: {
-          name: "openai-api",
-          type: "openai",
-          credentialKeys: ["OPENAI_API_KEY"],
-          configKeys: ["OPENAI_BASE_URL"],
-        },
-        endpointIdentity: undefined,
-      };
+    Array.from(
+      [["OPENAI_BASE_URL"], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]],
+      (value) => [value],
+    ),
+  )("requires zero endpoint-config keys for native provider recovery [case %#]", (configKeys) => {
+    const builtInOpenAi = {
+      ...completeRecovery,
+      selectedKey: "openai",
+      selectedProvider: "openai-api",
+      recoveredProvider: "openai-api",
+      expectedNativeAttachment: {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "recorded-id",
+      },
+      expectedCredentialEnv: "OPENAI_API_KEY",
+      gatewayProvider: {
+        name: "nemoclaw-openai-api-v1",
+        type: "nemoclaw-openai-inference-v1",
+        credentialKeys: ["OPENAI_API_KEY"],
+        configKeys: [],
+      },
+      endpointIdentity: undefined,
+    };
 
-      expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
-        kind: "reuse-gateway-credential",
-      });
+    expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
+      kind: "reuse-gateway-credential",
+    });
 
-      expect(
-        assessRecoveredProviderCredentialReuse({
-          ...builtInOpenAi,
-          gatewayProvider: { ...builtInOpenAi.gatewayProvider, configKeys },
-        }),
-      ).toMatchObject({ kind: "reject" });
-    },
-  );
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...builtInOpenAi,
+        gatewayProvider: { ...builtInOpenAi.gatewayProvider, configKeys },
+      }),
+    ).toMatchObject({ kind: "reject" });
+  });
 
-  it("reuses OpenRouter when its distinct provider name is registered as OpenAI-compatible (#5826)", () => {
+  it("reuses OpenRouter when its distinct provider name is registered with its native profile", () => {
     expect(
       assessRecoveredProviderCredentialReuse({
         ...completeRecovery,
         selectedKey: "openrouter",
         selectedProvider: "openrouter-api",
         recoveredProvider: "openrouter-api",
+        expectedNativeAttachment: {
+          schemaVersion: 1 as const,
+          profileId: "nemoclaw-openrouter-inference-v1",
+          providerName: "nemoclaw-openrouter-api-v1",
+          providerId: "recorded-id",
+        },
         expectedCredentialEnv: "OPENROUTER_API_KEY",
         gatewayProvider: {
-          name: "openrouter-api",
-          type: "openai",
+          name: "nemoclaw-openrouter-api-v1",
+          type: "nemoclaw-openrouter-inference-v1",
           credentialKeys: ["OPENROUTER_API_KEY"],
-          configKeys: ["OPENAI_BASE_URL"],
+          configKeys: [],
         },
         endpointIdentity: undefined,
       }),
@@ -117,12 +129,18 @@ describe("assessRecoveredProviderCredentialReuse", () => {
         selectedProvider: "openrouter-api",
         recoveredProvider: "openrouter-api",
         recoveredPreferredInferenceApi: "openai-responses",
+        expectedNativeAttachment: {
+          schemaVersion: 1 as const,
+          profileId: "nemoclaw-openrouter-inference-v1",
+          providerName: "nemoclaw-openrouter-api-v1",
+          providerId: "recorded-id",
+        },
         expectedCredentialEnv: "OPENROUTER_API_KEY",
         gatewayProvider: {
-          name: "openrouter-api",
-          type: "openai",
+          name: "nemoclaw-openrouter-api-v1",
+          type: "nemoclaw-openrouter-inference-v1",
           credentialKeys: ["OPENROUTER_API_KEY"],
-          configKeys: ["OPENAI_BASE_URL"],
+          configKeys: [],
         },
         endpointIdentity: undefined,
       }),

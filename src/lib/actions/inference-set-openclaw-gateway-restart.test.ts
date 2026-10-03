@@ -7,7 +7,7 @@ import { runInferenceSet } from "./inference-set";
 import { defaultInferenceGatewayRestart } from "./inference-set-gateway-restart";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
-const nativeNvidiaReceipt = {
+const nativeHostedReceipt = {
   schemaVersion: 1 as const,
   profileId: "nemoclaw-nvidia-inference-v1" as const,
   providerName: "nemoclaw-nvidia-prod-v1" as const,
@@ -65,7 +65,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         agent: "openclaw",
         provider: "nvidia-prod",
         model: "nvidia/model-a",
-        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+        nativeHostedProviderAttachment: nativeHostedReceipt,
       },
       session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
     });
@@ -224,7 +224,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         agent: "openclaw",
         provider: "nvidia-prod",
         model: "nvidia/model-a",
-        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+        nativeHostedProviderAttachment: nativeHostedReceipt,
       },
       session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
     });

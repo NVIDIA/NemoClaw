@@ -7,7 +7,7 @@ import {
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
   nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
+  normalizeNativeHostedProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -130,19 +130,19 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   { readonly status: "skipped" }
 >["reason"];
 
-function nativeNvidiaCreateIntentFields(
+function nativeHostedCreateIntentFields(
   provider: string | null | undefined,
   entry: SandboxEntry | null,
 ): {
   inferenceProvider: string | null;
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
+  const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(
+    entry?.nativeHostedProviderAttachment,
   );
   return {
     inferenceProvider: nativeInferenceProviderForSandbox(provider),
-    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
   };
 }
 
@@ -368,7 +368,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
-      nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -1825,7 +1825,7 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
+      ...nativeHostedCreateIntentFields(
         this.options.provider,
         this.deps.getSandboxRegistryEntry(sandboxName),
       ),

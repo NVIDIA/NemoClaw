@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
+import { getOpenRouterCurlHeaders } from "../../inference/openrouter";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -13,10 +15,7 @@ import {
 } from "../../adapters/openshell/sandbox-observer";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
-import {
-  isNativeNvidiaProvider,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-} from "../../inference/native-nvidia";
+import { isNativeHostedProvider } from "../../inference/native-hosted";
 import { validateInferenceResponseBody } from "../../inference/health";
 import {
   MIN_PROBE_REPLY_TOKENS,
@@ -86,19 +85,30 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.provider,
     input.preferredInferenceApi,
   );
-  const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const useNativeHosted = input.nativeProvider === true && isNativeHostedProvider(input.provider);
   const baseUrl = (
-    useNativeNvidia
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : isNativeNvidiaProvider(input.provider)
+    useNativeHosted
+      ? nativeHostedProfile(input.provider)!.endpoint
+      : isNativeHostedProvider(input.provider)
         ? "https://inference.local/v1"
         : config.inferenceBaseUrl
   ).replace(/\/+$/u, "");
-  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  const apiBaseUrl =
+    config.inferenceApi === "anthropic-messages" && !baseUrl.endsWith("/v1")
+      ? `${baseUrl}/v1`
+      : baseUrl;
+  const nativeHeaders = useNativeHosted
+    ? [
+        input.provider === "anthropic-prod"
+          ? "x-api-key: nemoclaw-openshell-provider"
+          : "Authorization: Bearer nemoclaw-openshell-provider",
+        ...(input.provider === "openrouter-api" ? getOpenRouterCurlHeaders() : []),
+      ]
+    : [];
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
-      headers: ["anthropic-version: 2023-06-01"],
+      headers: ["anthropic-version: 2023-06-01", ...nativeHeaders],
       payload: {
         model: input.model,
         max_tokens: MIN_PROBE_REPLY_TOKENS,
@@ -109,7 +119,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   if (config.inferenceApi === "openai-responses" || config.inferenceApi === "responses") {
     return {
       endpoint: `${apiBaseUrl}/responses`,
-      headers: [],
+      headers: nativeHeaders,
       payload: {
         model: input.model,
         input: "Reply with OK",
@@ -119,7 +129,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: useNativeNvidia ? ["Authorization: Bearer nemoclaw-openshell-provider"] : [],
+    headers: nativeHeaders,
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),

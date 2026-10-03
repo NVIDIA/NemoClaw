@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
+import { createNativeSetupProviderAdapter } from "../helpers/onboard-split-context";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import {
   createDirectSetupInferenceHarnessFactory,
@@ -18,35 +18,18 @@ const openrouterRuntimeOnboard =
 const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFactory(
   onboard.createSetupInference,
 );
-const OPENROUTER_PROVIDER_METADATA =
-  "Name: openrouter-api\nType: openai\nCredential keys: OPENROUTER_API_KEY\nConfig keys: OPENAI_BASE_URL\n";
-
 describe("OpenRouter onboarding inference setup", () => {
-  it("configures OpenRouter through the runtime header adapter (#5826)", async () => {
+  it("configures fixed OpenRouter without the runtime header adapter (#12589)", async () => {
     await withProcessEnv({ OPENROUTER_API_KEY: "sk-or-test" }, async () => {
-      const ensureAdapter = vi.fn(async () => ({
-        baseUrl: "http://host.openshell.internal:11437/v1",
-        localBaseUrl: "http://127.0.0.1:11437/v1",
-        credentialEnv: "OPENROUTER_API_KEY",
-        logPath: "/tmp/openrouter-runtime-adapter.log",
-      }));
-      const setupOpenRouterRuntimeInference =
-        openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
+      const providerAdapter = createNativeSetupProviderAdapter("openrouter-api", false);
+      const setupOpenRouterRuntimeInference = vi.fn(async () => ({ handled: false as const }));
       const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: OPENROUTER_PROVIDER_METADATA }
-            : undefined,
         overrides: {
           isNonInteractive: () => true,
-          openrouterRuntimeOnboard: {
-            setupOpenRouterRuntimeInference: (
-              input: Parameters<typeof setupOpenRouterRuntimeInference>[0],
-            ) => setupOpenRouterRuntimeInference({ ...input, ensureAdapter }),
-          },
+          providerAdapter,
+          openrouterRuntimeOnboard: { setupOpenRouterRuntimeInference },
         },
       });
-
       await harness.setupInference(
         "test-box",
         "moonshotai/kimi-k2.6",
@@ -54,36 +37,39 @@ describe("OpenRouter onboarding inference setup", () => {
         "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY",
       );
-
-      expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: "sk-or-test" });
-      const commands = harness.commands.map(({ command }) => command);
-      expect(commands).toEqual([
-        "provider get -g nemoclaw openrouter-api",
-        "provider update -g nemoclaw openrouter-api --credential OPENROUTER_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
-        "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
-      ]);
-      assert.equal(harness.commands[1].env?.OPENROUTER_API_KEY, "sk-or-test");
-      assert.ok(
-        !commands.some((command) => command.includes("sk-or-test")),
-        "OpenRouter key must not appear in argv",
+      expect(providerAdapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "nemoclaw-openrouter-api-v1",
+          type: "nemoclaw-openrouter-inference-v1",
+          credentials: [{ name: "OPENROUTER_API_KEY", value: "sk-or-test" }],
+          config: [],
+        }),
       );
-      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(
-        "nemoclaw",
-        "openrouter-api",
-        "moonshotai/kimi-k2.6",
+      expect(setupOpenRouterRuntimeInference).not.toHaveBeenCalled();
+      expect(harness.commands).toEqual([]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "openrouter-api",
+          model: "moonshotai/kimi-k2.6",
+          endpointUrl: "https://openrouter.ai/api/v1",
+          credentialEnv: "OPENROUTER_API_KEY",
+        }),
       );
-      expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({
-        provider: "openrouter-api",
-        model: "moonshotai/kimi-k2.6",
-        endpointUrl: "http://127.0.0.1:11437/v1",
-        credentialEnv: "OPENROUTER_API_KEY",
-        forceOpenAiLike: true,
-      });
-      assert.deepEqual(harness.errors, []);
-      assert.deepEqual(harness.logs, [
-        "  OpenRouter Runtime adapter ready: sandbox route http://host.openshell.internal:11437/v1, host log /tmp/openrouter-runtime-adapter.log",
-        "  ✓ Inference route set: openrouter-api / moonshotai/kimi-k2.6",
-      ]);
+      expect(harness.updateSandbox).toHaveBeenCalledWith(
+        "test-box",
+        expect.objectContaining({
+          provider: "openrouter-api",
+          endpointUrl: "https://openrouter.ai/api/v1",
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-openrouter-inference-v1",
+            providerName: "nemoclaw-openrouter-api-v1",
+            providerId: "fixture-native-id",
+          },
+        }),
+      );
+      expect(harness.errors).toEqual([]);
     });
   });
 
@@ -125,31 +111,17 @@ describe("OpenRouter onboarding inference setup", () => {
     expect(log).toHaveBeenCalledWith("  ✓ Inference route set: openrouter-api / test-model");
   });
 
-  it("updates OpenRouter adapter config while reusing a gateway-held credential (#5826)", async () => {
+  it("reuses the gateway-held native OpenRouter credential without updating it (#12589)", async () => {
     await withProcessEnv({ OPENROUTER_API_KEY: undefined }, async () => {
-      const ensureAdapter = vi.fn(async () => ({
-        baseUrl: "http://host.openshell.internal:11437/v1",
-        localBaseUrl: "http://127.0.0.1:11437/v1",
-        credentialEnv: "OPENROUTER_API_KEY",
-        logPath: "/tmp/openrouter-runtime-adapter.log",
-      }));
-      const setupOpenRouterRuntimeInference =
-        openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
+      const providerAdapter = createNativeSetupProviderAdapter("openrouter-api");
+      const setupOpenRouterRuntimeInference = vi.fn(async () => ({ handled: false as const }));
       const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: OPENROUTER_PROVIDER_METADATA }
-            : undefined,
         overrides: {
           isNonInteractive: () => true,
-          openrouterRuntimeOnboard: {
-            setupOpenRouterRuntimeInference: (
-              input: Parameters<typeof setupOpenRouterRuntimeInference>[0],
-            ) => setupOpenRouterRuntimeInference({ ...input, ensureAdapter }),
-          },
+          providerAdapter,
+          openrouterRuntimeOnboard: { setupOpenRouterRuntimeInference },
         },
       });
-
       await harness.setupInference(
         "test-box",
         "moonshotai/kimi-k2.6",
@@ -163,20 +135,26 @@ describe("OpenRouter onboarding inference setup", () => {
           skipHostInferenceSmoke: true,
         },
       );
-
-      expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: null });
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        "provider get -g nemoclaw openrouter-api",
-        "provider update -g nemoclaw openrouter-api --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",
-        "inference set -g nemoclaw --no-verify --provider openrouter-api --model moonshotai/kimi-k2.6 --timeout 180",
-      ]);
-      expect(harness.commands[2].env?.OPENROUTER_API_KEY).toBeUndefined();
+      expect(providerAdapter.getProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ providerName: "nemoclaw-openrouter-api-v1" }),
+      );
+      expect(providerAdapter.createProvider).not.toHaveBeenCalled();
+      expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
+      expect(setupOpenRouterRuntimeInference).not.toHaveBeenCalled();
+      expect(harness.commands).toEqual([]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
-      expect(harness.logs).toEqual([
-        "  OpenRouter Runtime adapter ready: sandbox route http://host.openshell.internal:11437/v1, host log /tmp/openrouter-runtime-adapter.log",
-        "  Reusing existing gateway credential; skipping host inference smoke.",
-        "  ✓ Inference route set: openrouter-api / moonshotai/kimi-k2.6",
-      ]);
+      expect(harness.updateSandbox).toHaveBeenCalledWith(
+        "test-box",
+        expect.objectContaining({
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-openrouter-inference-v1",
+            providerName: "nemoclaw-openrouter-api-v1",
+            providerId: "fixture-native-id",
+          },
+        }),
+      );
       expect(harness.errors).toEqual([]);
     });
   });

@@ -479,7 +479,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       preferredInferenceApi: "openai-completions",
-      nativeNvidiaProviderAttachment: {
+      nativeHostedProviderAttachment: {
         schemaVersion: 1,
         profileId: "nemoclaw-nvidia-inference-v1",
         providerName: "nemoclaw-nvidia-prod-v1",

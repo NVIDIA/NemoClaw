@@ -36,7 +36,7 @@ import {
   inventory,
   provider,
   configuration,
-  nativeNvidiaProvider,
+  nativeHostedProvider,
   telemetryEntry,
   dashboardSource,
   braveProvider,
@@ -74,9 +74,9 @@ function mockBraveLiveSource() {
   return search;
 }
 
-function mockNativeNvidiaSource() {
+function mockNativeHostedSource() {
   mockSupportedLiveSource();
-  raw.getProvider.mockResolvedValue({ provider: nativeNvidiaProvider() });
+  raw.getProvider.mockResolvedValue({ provider: nativeHostedProvider() });
   raw.getProviderProfile.mockResolvedValue({
     profile: {
       id: "nvidia",
@@ -285,6 +285,24 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
+  it("refuses native attachment export without consulting the shared gateway route", async () => {
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "native-openai-id",
+      },
+    });
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "inference-route",
+    });
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+
   it("does not fall back to the selected gateway after an inference read failure", async () => {
     mockSupportedLiveSource();
     vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
@@ -458,7 +476,7 @@ describe("live export snapshot reader", () => {
   });
 
   it("exports canonical YAML for the native NVIDIA hosted provider (#11154)", async () => {
-    mockNativeNvidiaSource();
+    mockNativeHostedSource();
     const writeStdout = vi.fn(async (_yaml: string) => {});
     const publish = vi.fn();
     const result = await runConfigExport(
@@ -502,9 +520,9 @@ describe("live export snapshot reader", () => {
     { label: "missing credentials", providerChange: { credentials: {} } },
     { label: "unverified profile scope", providerChange: { profileWorkspace: "default" } },
   ])("rejects native NVIDIA $label without publishing YAML", async ({ providerChange }) => {
-    mockNativeNvidiaSource();
+    mockNativeHostedSource();
     raw.getProvider.mockResolvedValue({
-      provider: { ...nativeNvidiaProvider(), ...providerChange },
+      provider: { ...nativeHostedProvider(), ...providerChange },
     });
     const writeStdout = vi.fn();
     const publish = vi.fn();
@@ -528,7 +546,7 @@ describe("live export snapshot reader", () => {
   });
 
   it("rejects NVIDIA endpoint drift between the registry and builtin profile", async () => {
-    mockNativeNvidiaSource();
+    mockNativeHostedSource();
     vi.mocked(loadRegistry).mockReturnValue({
       sandboxes: { alpha: { ...entry, endpointUrl: "https://different.example/v1" } },
       defaultSandbox: null,
@@ -546,11 +564,11 @@ describe("live export snapshot reader", () => {
   });
 
   it("rejects a native NVIDIA provider that changes during both observations", async () => {
-    mockNativeNvidiaSource();
+    mockNativeHostedSource();
     let revision = 0;
     raw.getProvider.mockImplementation(async () => ({
       provider: {
-        ...nativeNvidiaProvider(),
+        ...nativeHostedProvider(),
         metadata: { ...provider().provider.metadata, resourceVersion: BigInt(++revision) },
       },
     }));

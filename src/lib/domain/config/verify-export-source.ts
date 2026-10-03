@@ -5,6 +5,7 @@ import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
@@ -523,6 +524,24 @@ function deepAgentsObservability(
   return agent === "langchain-deepagents-code" ? false : null;
 }
 
+function preserveLegacyExportEndpoint(
+  entry: ObservedExportRegistry,
+  inference: ReturnType<typeof resolveManagedStartupInferenceRoute>,
+): void {
+  // Export verifies the retained image contract; older hosted sandboxes were
+  // built for the shared route and do not acquire native access by inspection.
+  if (
+    !entry.nativeHostedProviderAttachment &&
+    entry.provider !== "nvidia-prod" &&
+    nativeHostedProfile(entry.provider)
+  ) {
+    inference.inferenceBaseUrl =
+      inference.inferenceApi === "anthropic-messages"
+        ? "https://inference.local"
+        : "https://inference.local/v1";
+  }
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
   if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
@@ -543,6 +562,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.model,
     selected.preferredInferenceApi,
   );
+  preserveLegacyExportEndpoint(entry, inference);
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   return buildManagedStartupProfile({
     agent,

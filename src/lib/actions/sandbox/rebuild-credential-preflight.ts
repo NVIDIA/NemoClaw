@@ -20,12 +20,6 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     exists: boolean;
     credentialKeys: string[] | null;
   }>;
-  registerHermesInferenceProvider: (
-    apiKey: string,
-    runOpenshellFn: typeof runOpenshell,
-    credentialEnv?: string,
-    baseUrl?: string,
-  ) => Promise<void>;
 };
 
 export type RebuildBail = (message: string, code?: number) => never;
@@ -57,11 +51,6 @@ function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" |
   return null;
 }
 
-function nonEmptyString(value: unknown): string | null {
-  const normalized = String(value || "").trim();
-  return normalized || null;
-}
-
 async function preflightHermesProviderCredentials(
   persistedAuthMethod: unknown,
   credentialEnv: string | null,
@@ -70,10 +59,8 @@ async function preflightHermesProviderCredentials(
   const authMethod =
     normalizeHermesRebuildAuthMethod(persistedAuthMethod) ||
     (credentialEnv === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV ? "api_key" : null);
-  const expectedCredentialEnv =
-    authMethod === "api_key"
-      ? hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-      : hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV;
+  // Native Hermes stores either logical authentication method under one profile key.
+  const expectedCredentialEnv = hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV;
   const binding = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
 
   if (binding.exists) {
@@ -95,38 +82,8 @@ async function preflightHermesProviderCredentials(
     return false;
   }
 
-  if (authMethod === "api_key") {
-    const envKey = nonEmptyString(
-      process.env[hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV],
-    );
-    log(
-      `Hermes Provider rebuild preflight: OpenShell provider missing; API key env=${envKey ? "present" : "missing"}`,
-    );
-    if (envKey) {
-      try {
-        console.log(
-          "  Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
-        );
-        await hermesProviderAuth.registerHermesInferenceProvider(
-          envKey,
-          runOpenshell,
-          hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-        );
-        const registered = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
-        return (
-          registered.credentialKeys?.length === 1 &&
-          registered.credentialKeys[0] === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-        );
-      } catch (err) {
-        log(
-          `Hermes Provider rebuild preflight: failed to register OpenShell provider: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
-  }
-
+  // A rebuild may reuse only the recorded provider identity. Recreating a
+  // missing provider here would mutate credentials before the receipt check.
   console.error("");
   console.error(
     `  ${RD}Rebuild preflight failed:${R} Hermes Provider is not registered in OpenShell.`,
@@ -134,7 +91,7 @@ async function preflightHermesProviderCredentials(
   console.error("  Hermes Provider credentials must be stored in OpenShell, not host-side files.");
   if (authMethod === "api_key") {
     console.error(
-      `  Export the Hermes Provider API key and rerun rebuild, or re-run ${CLI_NAME} onboard to register it.`,
+      `  Re-run ${CLI_NAME} onboard to recreate the sandbox with its native provider attachment.`,
     );
   } else {
     console.error(

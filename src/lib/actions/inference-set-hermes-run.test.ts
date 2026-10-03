@@ -30,6 +30,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -65,6 +71,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -103,6 +115,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -122,20 +140,7 @@ describe("runInferenceSet Hermes routing", () => {
       deps,
     );
 
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--provider",
-        "hermes-provider",
-        "--model",
-        "openai/gpt-5.4-mini",
-        "--no-verify",
-      ],
-      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
-    );
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(config).toEqual({
       _nemoclaw_upstream: {
         provider: "hermes-provider",
@@ -145,7 +150,7 @@ describe("runInferenceSet Hermes routing", () => {
       custom_providers: [
         {
           name: "hermes-provider",
-          base_url: "https://inference.local/v1",
+          base_url: "https://inference-api.nousresearch.com/v1",
           api_key: HERMES_PROXY_REWRITE_SENTINEL,
           discover_models: true,
         },
@@ -153,14 +158,14 @@ describe("runInferenceSet Hermes routing", () => {
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
-        base_url: "https://inference.local/v1",
+        base_url: "https://inference-api.nousresearch.com/v1",
         api_key: HERMES_PROXY_REWRITE_SENTINEL,
         context_length: 128_000,
       },
       providers: {
         "hermes-provider": {
           name: "hermes-provider",
-          api: "https://inference.local/v1",
+          api: "https://inference-api.nousresearch.com/v1",
           api_key: HERMES_PROXY_REWRITE_SENTINEL,
           default_model: "openai/gpt-5.4-mini",
           discover_models: true,
@@ -222,6 +227,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -255,6 +266,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -302,6 +319,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
       },
@@ -356,6 +379,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "openai/gpt-5.4-mini",
       },
@@ -406,7 +435,7 @@ describe("runInferenceSet Hermes routing", () => {
       provider_key: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
     });
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -415,7 +444,7 @@ describe("runInferenceSet Hermes routing", () => {
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "openai-completions",
       }),
-    ]);
+    );
     expect(result).toMatchObject({
       providerKey: "inference",
       primaryModelRef: "inference/claude-sonnet-proxy",
@@ -478,6 +507,12 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-hermes-inference-v1",
+          providerName: "nemoclaw-hermes-provider-v1",
+          providerId: "hermes-provider-id",
+        },
         provider: "hermes-provider",
         model: "openai/gpt-5.4-mini",
       },
@@ -574,6 +609,12 @@ describe("runInferenceSet Hermes routing", () => {
         {
           name: "hermes-one",
           agent: "hermes",
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-hermes-inference-v1",
+            providerName: "nemoclaw-hermes-provider-v1",
+            providerId: "hermes-provider-id",
+          },
           provider: "hermes-provider",
           model: "z-ai/glm-5.1",
         },

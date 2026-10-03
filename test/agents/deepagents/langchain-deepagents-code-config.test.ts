@@ -114,6 +114,9 @@ describe("LangChain Deep Agents Code config generator", () => {
 
     expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
     expect(config).toContain("[models.providers.openrouter]");
+    expect(config).toContain("[models.providers.openrouter.params.default_headers]");
+    expect(config).toContain('"HTTP-Referer" = "https://www.nvidia.com/nemoclaw/"');
+    expect(config).toContain('"X-OpenRouter-Title" = "NVIDIA NemoClaw"');
     expect(config).toContain('models = ["nvidia/nemotron-3-ultra-550b-a55b"]');
     expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
     expect(config).toContain('base_url = "https://inference.local/v1"');
@@ -135,6 +138,9 @@ describe("LangChain Deep Agents Code config generator", () => {
 
     expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
     expect(config).toContain("[models.providers.openrouter]");
+    expect(config).toContain("[models.providers.openrouter.params.default_headers]");
+    expect(config).toContain('"HTTP-Referer" = "https://www.nvidia.com/nemoclaw/"');
+    expect(config).toContain('"X-OpenRouter-Title" = "NVIDIA NemoClaw"');
     expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
     expect(config).toContain('base_url = "https://inference.local/v1"');
     expect(config).toContain(

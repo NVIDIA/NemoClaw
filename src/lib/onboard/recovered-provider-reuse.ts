@@ -3,6 +3,11 @@
 
 import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import {
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../inference/native-hosted";
+import { nativeHostedProfile } from "../inference/native-hosted/profiles";
 import { isSafeModelId } from "../validation";
 import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
@@ -112,6 +117,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
   expectedCredentialEnv: string;
   gatewayProvider: GatewayProviderMetadata | null;
   endpointIdentity?: EndpointIdentity;
+  expectedNativeAttachment?: NativeHostedProviderAttachment;
 }): RecoveredProviderReuseDecision {
   if (options.hostCredentialAvailable) return { kind: "validate-host-credential" };
   if (!options.recoveredFromSandbox) {
@@ -149,6 +155,32 @@ export function assessRecoveredProviderCredentialReuse(options: {
     };
   }
   const gatewayProvider = options.gatewayProvider;
+  const nativeProfile = nativeHostedProfile(selectedProvider);
+  if (nativeProfile) {
+    const expected = normalizeNativeHostedProviderAttachment(options.expectedNativeAttachment);
+    if (
+      !expected ||
+      expected.profileId !== nativeProfile.profileId ||
+      expected.providerName !== nativeProfile.providerName ||
+      !gatewayProvider ||
+      gatewayProvider.name !== nativeProfile.providerName ||
+      gatewayProvider.type !== nativeProfile.profileId ||
+      gatewayProvider.credentialKeys.length !== 1 ||
+      gatewayProvider.credentialKeys[0] !== nativeProfile.credentialEnv ||
+      gatewayProvider.configKeys.length !== 0
+    ) {
+      return {
+        kind: "reject",
+        condition: "gateway-provider-identity",
+        reason: `provider '${selectedProvider}' has no exact native identity in OpenShell`,
+      };
+    }
+    return {
+      kind: "reuse-gateway-credential",
+      preferredInferenceApi: options.recoveredPreferredInferenceApi as string,
+    };
+  }
+
   // #6294: an OpenAI-only agent coerced onto openai-completions registers the
   // compatible-anthropic-endpoint provider as type=openai (OPENAI_BASE_URL),
   // so the reuse identity must expect that surface rather than the static
@@ -270,7 +302,10 @@ export function resolveRecoveredProviderCredentialReuse(
     recoveredPreferredInferenceApi: recoveredRoute?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: selectedCredentialEnv,
-    gatewayProvider: deps.readGatewayProviderMetadata(state.provider),
+    expectedNativeAttachment: recoveredRoute?.nativeHostedProviderAttachment,
+    gatewayProvider: deps.readGatewayProviderMetadata(
+      nativeHostedProfile(state.provider)?.providerName ?? state.provider,
+    ),
     endpointIdentity: customFlavor
       ? {
           flavor: customFlavor,

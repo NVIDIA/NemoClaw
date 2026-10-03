@@ -136,7 +136,7 @@ interface SandboxRegistry {
       credentialEnv?: unknown;
       preferredInferenceApi?: unknown;
       nimContainer?: unknown;
-      nativeNvidiaProviderAttachment?: unknown;
+      nativeHostedProviderAttachment?: unknown;
     }
   >;
 }
@@ -593,7 +593,7 @@ async function assertRegistryAndSession(
             artifactName: "native-nvidia-provider-attachment-after-switch",
             env: commandEnv(home),
             logicalProvider: SWITCH_PROVIDER,
-            receipt: sandbox?.nativeNvidiaProviderAttachment,
+            receipt: sandbox?.nativeHostedProviderAttachment,
             sandbox: options.sandbox,
             sandboxName: SANDBOX_NAME,
           }),

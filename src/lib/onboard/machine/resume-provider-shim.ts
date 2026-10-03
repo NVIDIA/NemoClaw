@@ -3,6 +3,7 @@
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
 import { validateNvidiaApiKeyValue } from "../../validation";
 import { hydrateCredentialEnv } from "../credential-env";
@@ -55,7 +56,11 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
         remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
         defaultRouteCredentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
         isRoutedInferenceProvider: deps.isRoutedInferenceProvider,
-        providerExistsInGateway: (name) => deps.providerExistsInGateway(name, gatewayName),
+        providerExistsInGateway: (name) =>
+          deps.providerExistsInGateway(
+            nativeHostedProfile(name)?.providerName ?? name,
+            gatewayName,
+          ),
         hydrateCredentialEnv,
         getProviderLabel: onboardProviders.getProviderLabel,
         isNonInteractive: deps.isNonInteractive,

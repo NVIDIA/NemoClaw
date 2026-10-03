@@ -82,18 +82,18 @@ describe("runtime shared gateway route containment", () => {
     const deps = createDeps({
       config: {},
       entries: [
-        entry("alpha", { provider: "openrouter-api", model: "openrouter/model-a" }),
-        entry("stopped-peer", { provider: "openrouter-api", model: "openrouter/model-a" }),
+        entry("alpha", { provider: "ollama-local", model: "local/model-a" }),
+        entry("stopped-peer", { provider: "ollama-local", model: "local/model-a" }),
       ],
       defaultSandbox: "alpha",
     });
 
     await expect(
       runInferenceSet(
-        { provider: "openrouter-api", model: "openrouter/model-b", sandboxName: "alpha" },
+        { provider: "ollama-local", model: "local/model-b", sandboxName: "alpha" },
         deps,
       ),
-    ).resolves.toMatchObject({ sandboxName: "alpha", model: "openrouter/model-b" });
+    ).resolves.toMatchObject({ sandboxName: "alpha", model: "local/model-b" });
 
     expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
@@ -102,9 +102,10 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw",
         "--provider",
-        "openrouter-api",
+        "ollama-local",
         "--model",
-        "openrouter/model-b",
+        "local/model-b",
+        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -116,9 +117,7 @@ describe("runtime shared gateway route containment", () => {
       message.includes("Setting OpenShell inference route"),
     );
     expect(warningIndex).toBeGreaterThanOrEqual(0);
-    expect(messages[warningIndex]).toContain(
-      "'stopped-peer' (openrouter-api / openrouter/model-a)",
-    );
+    expect(messages[warningIndex]).toContain("'stopped-peer' (ollama-local / local/model-a)");
     expect(warningIndex).toBeLessThan(mutationIndex);
   });
 
@@ -130,8 +129,8 @@ describe("runtime shared gateway route containment", () => {
         entry("alpha", {
           gatewayName: "nemoclaw-9090",
           gatewayPort: 9090,
-          provider: "openrouter-api",
-          model: "openrouter/model-a",
+          provider: "ollama-local",
+          model: "local/model-a",
         }),
         entry("default-gateway-peer"),
       ],
@@ -141,10 +140,10 @@ describe("runtime shared gateway route containment", () => {
 
     await expect(
       runInferenceSet(
-        { provider: "openrouter-api", model: "openrouter/model-b", sandboxName: "alpha" },
+        { provider: "ollama-local", model: "local/model-b", sandboxName: "alpha" },
         deps,
       ),
-    ).resolves.toMatchObject({ sandboxName: "alpha", model: "openrouter/model-b" });
+    ).resolves.toMatchObject({ sandboxName: "alpha", model: "local/model-b" });
 
     expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
@@ -153,9 +152,10 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw-9090",
         "--provider",
-        "openrouter-api",
+        "ollama-local",
         "--model",
-        "openrouter/model-b",
+        "local/model-b",
+        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -169,7 +169,7 @@ describe("runtime shared gateway route containment", () => {
         entry("alpha", {
           gatewayName: "nemoclaw-9090",
           gatewayPort: 9090,
-          nativeNvidiaProviderAttachment: {
+          nativeHostedProviderAttachment: {
             schemaVersion: 1,
             profileId: "nemoclaw-nvidia-inference-v1",
             providerName: "nemoclaw-nvidia-prod-v1",
@@ -683,8 +683,8 @@ describe("runtime shared gateway route containment", () => {
     try {
       const entries = [
         entry("route-lock-alpha", {
-          provider: "openrouter-api",
-          model: "openrouter/model-a",
+          provider: "ollama-local",
+          model: "local/model-a",
         }),
         entry("route-lock-beta"),
       ];
@@ -710,14 +710,14 @@ describe("runtime shared gateway route containment", () => {
       const results = await Promise.allSettled([
         runInferenceSet(
           {
-            provider: "openrouter-api",
-            model: "openrouter/model-a",
+            provider: "ollama-local",
+            model: "local/model-a",
             sandboxName: entries[0].name,
           },
           deps,
         ),
         runInferenceSet(
-          { provider: "anthropic-prod", model: "claude-new", sandboxName: entries[1].name },
+          { provider: "ollama-local", model: "local/model-b", sandboxName: entries[1].name },
           deps,
         ),
       ]);
@@ -729,8 +729,8 @@ describe("runtime shared gateway route containment", () => {
         ),
       ).toHaveLength(2);
       expect(entries).toEqual([
-        expect.objectContaining({ provider: "openrouter-api", model: "openrouter/model-a" }),
-        expect.objectContaining({ provider: "anthropic-prod", model: "claude-new" }),
+        expect.objectContaining({ provider: "ollama-local", model: "local/model-a" }),
+        expect.objectContaining({ provider: "ollama-local", model: "local/model-b" }),
       ]);
       expect(
         deps.calls.log.mock.calls.some(([message]) =>

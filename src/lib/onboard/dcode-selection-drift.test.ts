@@ -114,6 +114,7 @@ describe("live DCode selection drift", () => {
 
   it("accepts the generated OpenRouter identity (#9555)", async () => {
     const output = identity({
+      Endpoint: "https://openrouter.ai/api/v1",
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
     });

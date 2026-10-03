@@ -25,6 +25,31 @@ onboard-probes.ts         onboarding-time inference validation probes
 
 Longer term, pure inference decisions should move under `src/lib/domain/inference/**`, and HTTP/process boundaries should move under `src/lib/adapters/**`.
 
+## Native hosted inference
+
+`native-hosted/profiles.ts` maps fixed hosted selections to checked-in OpenShell provider profiles.
+The supported selections are NVIDIA, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
+Each profile restricts the upstream hostname, TLS port, request paths, and agent executables.
+Credential values remain in OpenShell. Sandbox configuration contains only a placeholder credential.
+
+`native-hosted/index.ts` owns profile import, provider identity checks, attachment, and confirmed removal.
+The registry records the selected attachment in `nativeHostedProviderAttachment`.
+The persistence boundary also reads Slice 1's `nativeNvidiaProviderAttachment` field without changing its provider identity.
+Selection does not update the shared `inference.local` route.
+A switch retains `pendingNativeHostedProviderDetach` until OpenShell confirms removal of the previous attachment.
+Retries complete that cleanup before applying another selection.
+Existing beta sandboxes without an attachment receipt require recreation.
+Custom endpoints and local providers retain their existing routing behavior.
+V1alpha1 configuration export does not yet represent native profile attachments.
+Native sandboxes require an exporter follow-up; exporting an older shared-route sandbox
+continues to verify its original image endpoint without implicitly migrating it.
+
+Agent configuration preserves the provider's API protocol and native base URL.
+OpenRouter attribution comes from `native-hosted/openrouter-headers.ts` and is configured in each supported agent.
+Hermes authentication retains its logical OAuth or manual-key selection.
+Both authentication methods store the protected native credential under `OPENAI_API_KEY` in OpenShell.
+The host's unrelated OpenAI credential must never replace that Hermes credential during model selection.
+
 ## Ollama export observations
 
 V1alpha1 configuration export currently refuses attached Ollama before publication.

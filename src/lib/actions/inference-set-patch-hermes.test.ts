@@ -7,6 +7,20 @@ import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
+  it("keeps OpenRouter attribution in both Hermes provider representations", () => {
+    const config: ConfigObject = {};
+    patchHermesInferenceConfig(config, "openrouter-api", "selected");
+    const headers = {
+      "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
+      "X-OpenRouter-Title": "NVIDIA NemoClaw",
+    };
+    expect(config.providers).toMatchObject({ "openrouter-api": { extra_headers: headers } });
+    expect(config.custom_providers).toEqual([expect.objectContaining({ extra_headers: headers })]);
+    patchHermesInferenceConfig(config, "gemini-api", "selected");
+    expect(JSON.stringify(config)).not.toContain("HTTP-Referer");
+    expect(JSON.stringify(config)).not.toContain("X-OpenRouter-Title");
+  });
+
   it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
@@ -32,7 +46,7 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.model).toEqual({
       default: "openai/gpt-5.4-mini",
       provider: "custom",
-      base_url: "https://inference.local/v1",
+      base_url: "https://inference-api.nousresearch.com/v1",
       api_key: HERMES_PROXY_REWRITE_SENTINEL,
     });
     expect(config._nemoclaw_upstream).toEqual({
@@ -43,7 +57,7 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.providers).toEqual({
       "hermes-provider": {
         name: "hermes-provider",
-        api: "https://inference.local/v1",
+        api: "https://inference-api.nousresearch.com/v1",
         api_key: HERMES_PROXY_REWRITE_SENTINEL,
         default_model: "openai/gpt-5.4-mini",
         discover_models: true,
@@ -52,7 +66,7 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.custom_providers).toEqual([
       {
         name: "hermes-provider",
-        base_url: "https://inference.local/v1",
+        base_url: "https://inference-api.nousresearch.com/v1",
         api_key: HERMES_PROXY_REWRITE_SENTINEL,
         discover_models: true,
       },
@@ -110,7 +124,7 @@ describe("patchHermesInferenceConfig", () => {
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
-        base_url: "https://inference.local/v1",
+        base_url: "https://api.anthropic.com/v1",
       },
     };
 
@@ -119,13 +133,13 @@ describe("patchHermesInferenceConfig", () => {
     expect(result.route).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-4-6",
-      inferenceBaseUrl: "https://inference.local",
+      inferenceBaseUrl: "https://api.anthropic.com",
       inferenceApi: "anthropic-messages",
     });
     expect(config.model).toEqual({
       default: "claude-sonnet-4-6",
       provider: "custom",
-      base_url: "https://inference.local",
+      base_url: "https://api.anthropic.com",
       api_key: HERMES_PROXY_REWRITE_SENTINEL,
       api_mode: "anthropic_messages",
     });

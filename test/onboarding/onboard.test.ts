@@ -668,25 +668,26 @@ startGateway(null).catch((error) => {
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
 
-  it("uses the OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
+  it("keeps the custom OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
     const { commands } = runProductionSetupInferenceCredentialBoundary({
-      credentialEnv: "OPENAI_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
       credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
       endpointUrl: "https://api.openai.com/v1",
       model: "gpt-5.4",
-      provider: "openai-api",
+      provider: "compatible-endpoint",
     });
     const commandSequence = commands.map(({ argv }) => argv.join(" "));
 
-    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
+    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw compatible-endpoint$/);
     assert.ok(
       commandSequence.some((command) =>
-        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+        /^provider update -g nemoclaw compatible-endpoint(?: |$)/.test(command),
       ),
     );
     assert.ok(
       commandSequence.some((command) =>
-        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+        /^inference set -g nemoclaw --no-verify --provider compatible-endpoint --model gpt-5\.4(?: |$)/.test(
           command,
         ),
       ),
@@ -839,19 +840,19 @@ const { createSandbox } = require(${onboardPath});
         ok: true,
         value: {
           state: "configured",
-          route: { provider: "openai-api", model: "gpt-5.4" },
+          route: { provider: "compatible-endpoint", model: "gpt-5.4" },
         },
       }),
     });
 
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
             ? {
                 status: 0,
                 stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                  "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
                 stderr: "",
               }
             : undefined,
@@ -861,12 +862,12 @@ const { createSandbox } = require(${onboardPath});
       await harness.setupInference(
         "test-box",
         "gpt-5.4",
-        "openai-api",
+        "compatible-endpoint",
         "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
+        "COMPATIBLE_API_KEY",
       );
 
-      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw compatible-endpoint");
       assert.equal(harness.commands.length, 3);
     });
   });

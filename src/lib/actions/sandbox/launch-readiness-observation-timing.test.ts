@@ -163,7 +163,7 @@ describe("launch readiness observation timing", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      nativeNvidiaProviderAttachment: {
+      nativeHostedProviderAttachment: {
         schemaVersion: 1,
         profileId: "nemoclaw-nvidia-inference-v1",
         providerName: "nemoclaw-nvidia-prod-v1",
@@ -178,7 +178,7 @@ describe("launch readiness observation timing", () => {
     const invoke = vi.fn(async () => ({ ok: true }) as const);
     currentDeps.getSandbox = () => nativeEntry;
     currentDeps.capture = capture;
-    currentDeps.verifyNativeNvidiaAttachment = verifyAttachment;
+    currentDeps.verifyNativeHostedAttachment = verifyAttachment;
     currentDeps.inferenceInvocationProbe = invoke;
 
     const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);

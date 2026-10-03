@@ -13,6 +13,21 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it("adds OpenRouter attribution and removes only owned headers when switching away", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { headers: { "X-Operator": "keep" } } } },
+    };
+    patchOpenClawInferenceConfig(config, "openrouter-api", "selected");
+    const providers = (config.models as ConfigObject).providers as ConfigObject;
+    expect((providers.inference as ConfigObject).headers).toEqual({
+      "X-Operator": "keep",
+      "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
+      "X-OpenRouter-Title": "NVIDIA NemoClaw",
+    });
+    patchOpenClawInferenceConfig(config, "gemini-api", "selected");
+    expect((providers.inference as ConfigObject).headers).toEqual({ "X-Operator": "keep" });
+  });
+
   it.each([undefined, null, 16384])(
     "updates only the selected model's context when the resolved window is %s",
     (contextWindow) => {
@@ -309,7 +324,7 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         anthropic: {
-          baseUrl: "https://inference.local",
+          baseUrl: "https://api.anthropic.com",
           apiKey: "unused",
           api: "anthropic-messages",
           models: [

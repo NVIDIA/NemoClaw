@@ -179,7 +179,7 @@ describe("runInferenceGet", () => {
       agent: "openclaw",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      nativeNvidiaProviderAttachment: {
+      nativeHostedProviderAttachment: {
         schemaVersion: 1 as const,
         profileId: "nemoclaw-nvidia-inference-v1" as const,
         providerName: "nemoclaw-nvidia-prod-v1" as const,

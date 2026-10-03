@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -14,10 +15,6 @@ import {
   PROVIDER_NAME_VALID_PATTERN,
 } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
-import {
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "../../inference/native-nvidia";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
@@ -94,7 +91,7 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
-  const providerName = key === NVIDIA_HOSTED_LOGICAL_PROVIDER ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
+  const providerName = nativeHostedProfile(key)?.providerName ?? key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
     return fail([
       "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",

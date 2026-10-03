@@ -9,6 +9,8 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
   hasBedrockRuntimeAwsAuthEnv,
@@ -67,26 +69,45 @@ export async function inspectRebuildGatewayProviderRegistration(
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
   credentialKey?: string | null,
 ): Promise<RebuildGatewayProviderRegistration> {
+  const nativeProfile = nativeHostedProfile(provider);
+  const effectiveCredentialKey = nativeProfile
+    ? credentialKey
+      ? nativeProfile.credentialEnv
+      : null
+    : credentialKey;
   const result = await providerAdapter.getProvider({
-    providerName: provider,
+    providerName: nativeHostedProfile(provider)?.providerName ?? provider,
     target: managedProviderGatewayTarget,
-    ...(credentialKey ? { includeCredentialExpirations: true } : {}),
+    ...(effectiveCredentialKey ? { includeCredentialExpirations: true } : {}),
   });
-  const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
-  const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
+  const expiresAtMs =
+    result.ok && effectiveCredentialKey ? result.value.credentialExpiresAtMs : undefined;
+  const credentialExpiresAtMs = effectiveCredentialKey
+    ? expiresAtMs?.[effectiveCredentialKey]
+    : undefined;
   const credentialKeyMissing = Boolean(
-    result.ok && credentialKey && !result.value.credentialKeys.includes(credentialKey),
+    result.ok &&
+    effectiveCredentialKey &&
+    !result.value.credentialKeys.includes(effectiveCredentialKey),
   );
   const registration = result.ok
-    ? credentialKey && expiresAtMs === undefined
+    ? nativeProfile &&
+      (result.value.name !== nativeProfile.providerName ||
+        result.value.type !== nativeProfile.profileId ||
+        result.value.configKeys.length !== 0 ||
+        result.value.credentialKeys.length !== 1 ||
+        result.value.credentialKeys[0] !== nativeProfile.credentialEnv ||
+        !result.value.revision?.id)
       ? "indeterminate"
-      : credentialKeyMissing
-        ? "credential_missing"
-        : credentialExpiresAtMs !== undefined &&
-            credentialExpiresAtMs > 0 &&
-            credentialExpiresAtMs <= Date.now()
-          ? "expired"
-          : "registered"
+      : effectiveCredentialKey && expiresAtMs === undefined
+        ? "indeterminate"
+        : credentialKeyMissing
+          ? "credential_missing"
+          : credentialExpiresAtMs !== undefined &&
+              credentialExpiresAtMs > 0 &&
+              credentialExpiresAtMs <= Date.now()
+            ? "expired"
+            : "registered"
     : result.error.kind === "command" && result.error.reason === "not_found"
       ? "missing"
       : "indeterminate";
@@ -108,7 +129,11 @@ export async function inspectRebuildGatewayProviderRegistration(
 
 type GatewayCredentialReusePreflightDeps = {
   hasBedrockRuntimeAwsAuth?(): boolean;
-  readGatewayProviderMetadata(provider: string): Promise<GatewayProviderMetadata | null>;
+  readGatewayProviderMetadata(
+    provider: string,
+  ): Promise<
+    (GatewayProviderMetadata & { revision?: { id: string; resourceVersion: number } | null }) | null
+  >;
   readRecordedProviderEndpoints(provider: string, excludeSandboxName: string): string[] | null;
 };
 
@@ -277,7 +302,7 @@ function defaultGatewayCredentialReusePreflightDeps(): GatewayCredentialReusePre
   return {
     readGatewayProviderMetadata: async (provider) => {
       const result = await providerAdapter.getProvider({
-        providerName: provider,
+        providerName: nativeHostedProfile(provider)?.providerName ?? provider,
         target: managedProviderGatewayTarget,
       });
       return result.ok ? result.value : null;
@@ -306,6 +331,28 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  const native = nativeHostedProfile(config.provider);
+  if (native) {
+    const expected = normalizeNativeHostedProviderAttachment(config.nativeHostedProviderAttachment);
+    const observed = await deps.readGatewayProviderMetadata(native.providerName);
+    if (
+      !expected ||
+      expected.providerName !== native.providerName ||
+      expected.profileId !== native.profileId ||
+      !observed ||
+      observed.name !== native.providerName ||
+      observed.type !== native.profileId ||
+      observed.revision?.id !== expected.providerId ||
+      observed.configKeys.length !== 0 ||
+      observed.credentialKeys.length !== 1 ||
+      observed.credentialKeys[0] !== native.credentialEnv
+    ) {
+      bail("Native inference provider identity changed or is missing; sandbox is untouched.");
+      return false;
+    }
+    log(`Preflight native inference: verified recorded provider '${native.providerName}'`);
+    return true;
+  }
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&
@@ -351,7 +398,9 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
     recoveredPreferredInferenceApi: route?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: config.credentialEnv,
-    gatewayProvider: await deps.readGatewayProviderMetadata(config.provider),
+    gatewayProvider: await deps.readGatewayProviderMetadata(
+      nativeHostedProfile(config.provider)?.providerName ?? config.provider,
+    ),
     endpointIdentity: endpointFlavor
       ? {
           flavor: endpointFlavor,

@@ -8,8 +8,8 @@ import type { SandboxEntry } from "../state/registry";
 
 export {
   nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
-} from "./native-nvidia";
+  normalizeNativeHostedProviderAttachment,
+} from "./native-hosted";
 
 export type GatewayInferenceRoute = Pick<
   SandboxEntry,

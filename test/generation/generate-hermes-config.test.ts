@@ -253,6 +253,21 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
+  fs.mkdirSync(path.join(fixtureRoot, "src", "lib", "inference", "native-hosted"), {
+    recursive: true,
+  });
+  fs.copyFileSync(
+    path.join(
+      import.meta.dirname,
+      "../..",
+      "src",
+      "lib",
+      "inference",
+      "native-hosted",
+      "openrouter-headers.ts",
+    ),
+    path.join(fixtureRoot, "src", "lib", "inference", "native-hosted", "openrouter-headers.ts"),
+  );
   return fixtureScriptPath;
 }
 

@@ -129,6 +129,7 @@ export type ProductionSetupInferenceBoundaryResult = {
 export function runProductionSetupInferenceCredentialBoundary(options: {
   credentialEnv: string;
   credentialValue: string;
+  preferredInferenceApi?: string;
   endpointUrl?: string | null;
   model: string;
   provider: string;
@@ -186,6 +187,9 @@ const setupCredentialBefore = process.env[credentialEnv] || null;
     ${JSON.stringify(options.provider)},
     ${JSON.stringify(options.endpointUrl ?? null)},
     credentialEnv,
+    null,
+    [],
+    { preferredInferenceApi: ${JSON.stringify(options.preferredInferenceApi ?? null)} },
   );
   fs.writeFileSync(
     ${JSON.stringify(setupResultPath)},

@@ -7,10 +7,7 @@ import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/opens
 import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
-import {
-  isNativeNvidiaProvider,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-} from "../../inference/native-nvidia";
+import { isNativeHostedProvider } from "../../inference/native-hosted";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
@@ -244,7 +241,7 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   agentName: string | null;
   provider: string | null;
-  nativeNvidia?: boolean;
+  nativeHosted?: boolean;
 };
 
 /**
@@ -297,11 +294,17 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
-  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+  if (context.nativeHosted && isNativeHostedProvider(context.provider)) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
         ? invocation.endpoint
-        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+        : resolveSandboxInferenceInvocationEndpoint({
+            sandboxName: "",
+            provider: context.provider!,
+            model: "",
+            preferredInferenceApi: null,
+            nativeProvider: true,
+          });
     const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
     const nativeHealth: ProviderHealthStatus = invocation?.ok
       ? {
@@ -309,7 +312,7 @@ export function buildSandboxInferenceRouteHealth(
           probed: true,
           providerLabel: "Inference route",
           endpoint,
-          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+          detail: "The attached OpenShell provider served a native hosted inference request.",
         }
       : {
           ok: false,
@@ -317,8 +320,8 @@ export function buildSandboxInferenceRouteHealth(
           providerLabel: "Inference route",
           endpoint,
           detail: invocation
-            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
-            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+            ? `The native hosted route did not serve an inference request: ${invocation.detail}.`
+            : "Could not probe the native hosted route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
           failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
         };
     return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { OPENROUTER_DEFAULT_HEADERS } from "./inference/native-hosted/openrouter-headers.ts";
+
 // Hermes requires an sk-prefixed value before it sends a request. OpenShell
 // removes this non-secret sentinel and injects the route credential at egress.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
@@ -14,6 +16,7 @@ type HermesManagedProvider = {
   default_model?: string;
   transport?: string;
   api_mode?: string;
+  extra_headers?: Record<string, string>;
 };
 
 export type HermesManagedRouting = {
@@ -113,6 +116,10 @@ export function applyHermesManagedRoute(
     discover_models: true,
   };
   if (apiMode) customProvider.api_mode = apiMode;
+  if (route.upstreamProvider === "openrouter-api") {
+    providerConfig.extra_headers = Object.fromEntries(OPENROUTER_DEFAULT_HEADERS);
+    customProvider.extra_headers = Object.fromEntries(OPENROUTER_DEFAULT_HEADERS);
+  }
 
   const providers = isObjectRecord(config.providers) ? { ...config.providers } : {};
   if (previousProviderKey && previousProviderKey !== providerKey) {

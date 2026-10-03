@@ -339,3 +339,64 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     expect(diagnostics).not.toContain("secret-canary");
   });
 });
+
+describe("native rebuild provider identity", () => {
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: "nemoclaw-openai-inference-v1",
+    providerName: "nemoclaw-openai-api-v1",
+    providerId: "recorded-id",
+  };
+  it.each([false, true])(
+    "checks the recorded identity even when a host key is available: %s",
+    async (hostCredentialAvailable) => {
+      const read = vi.fn(async () => ({
+        name: receipt.providerName,
+        type: receipt.profileId,
+        credentialKeys: ["OPENAI_API_KEY"],
+        configKeys: [],
+        revision: { id: "replacement-id", resourceVersion: 1 },
+      }));
+      await expect(
+        checkRebuildGatewayCredentialReuseOrBail(
+          "alpha",
+          config({ provider: "openai-api", nativeHostedProviderAttachment: receipt }),
+          hostCredentialAvailable,
+          vi.fn(),
+          throwingBail,
+          {
+            readGatewayProviderMetadata: read,
+            readRecordedProviderEndpoints: vi.fn(() => []),
+          },
+        ),
+      ).rejects.toThrow("identity changed");
+      expect(read).toHaveBeenCalledWith(receipt.providerName);
+    },
+  );
+  it("reuses the exact native provider without reading a host credential", async () => {
+    const read = vi.fn(async () => ({
+      name: receipt.providerName,
+      type: receipt.profileId,
+      credentialKeys: ["OPENAI_API_KEY"],
+      configKeys: [],
+      revision: { id: receipt.providerId, resourceVersion: 1 },
+    }));
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        config({
+          provider: "openai-api",
+          credentialEnv: "OPENAI_API_KEY",
+          nativeHostedProviderAttachment: receipt,
+        }),
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: read,
+          readRecordedProviderEndpoints: vi.fn(() => []),
+        },
+      ),
+    ).resolves.toBe(true);
+  });
+});

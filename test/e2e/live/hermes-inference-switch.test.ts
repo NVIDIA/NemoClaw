@@ -309,7 +309,7 @@ test(
       artifactName: "hermes-native-nvidia-provider-attachment",
       env: env(),
       logicalProvider: SWITCH_PROVIDER,
-      receipt: state.registry.sandboxes?.[SANDBOX_NAME]?.nativeNvidiaProviderAttachment,
+      receipt: state.registry.sandboxes?.[SANDBOX_NAME]?.nativeHostedProviderAttachment,
       sandbox,
       sandboxName: SANDBOX_NAME,
     });

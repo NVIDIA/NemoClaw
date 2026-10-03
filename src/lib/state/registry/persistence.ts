@@ -1,3 +1,4 @@
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -168,6 +169,16 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  const rawAttachment =
+    entry.nativeHostedProviderAttachment ?? entry.nativeNvidiaProviderAttachment;
+  const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
+  if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
+    throw new Error("Invalid native inference provider receipt");
+  const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
+    entry.pendingNativeHostedProviderDetach,
+  );
+  if (entry.pendingNativeHostedProviderDetach !== undefined && !pendingNativeHostedProviderDetach)
+    throw new Error("Invalid pending native inference detach receipt");
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -186,6 +197,9 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
+    nativeNvidiaProviderAttachment: _legacyNativeNvidiaAttachment,
+    nativeHostedProviderAttachment: _nativeHostedAttachment,
+    pendingNativeHostedProviderDetach: _pendingNativeHostedProviderDetach,
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
     workload: _workload,
@@ -198,6 +212,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
   return {
     ...rest,
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+    ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
@@ -227,6 +243,16 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     livePhase?: string | null;
     providerCredentialHashes?: unknown;
   };
+  const rawAttachment =
+    durable.nativeHostedProviderAttachment ?? durable.nativeNvidiaProviderAttachment;
+  const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
+  if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
+    throw new Error("Invalid native inference provider receipt");
+  const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
+    durable.pendingNativeHostedProviderDetach,
+  );
+  if (durable.pendingNativeHostedProviderDetach !== undefined && !pendingNativeHostedProviderDetach)
+    throw new Error("Invalid pending native inference detach receipt");
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -245,6 +271,9 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
+    nativeNvidiaProviderAttachment: _legacyNativeNvidiaAttachment,
+    nativeHostedProviderAttachment: _nativeHostedAttachment,
+    pendingNativeHostedProviderDetach: _pendingNativeHostedProviderDetach,
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
     workload: _workload,
@@ -257,6 +286,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
   return {
     ...rest,
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+    ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),

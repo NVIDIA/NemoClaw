@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_HOSTED_PROFILES, nativeHostedProfile } from "../inference/native-hosted/profiles";
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -13,12 +14,7 @@ import type { OpenShellGatewayTarget } from "../adapters/openshell/sandbox-obser
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
-import {
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-  nativeNvidiaProviderProfilePath,
-} from "../inference/native-nvidia";
+import { nativeHostedProviderProfilePath } from "../inference/native-hosted";
 import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_AGENTS,
@@ -133,8 +129,9 @@ async function providerConfigEndpointFailure(
 
 function bundledProviderProfile(type: string): { profileType: string; profilePath: string } | null {
   const profileType = type.toLowerCase();
-  if (profileType === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
-    return { profileType, profilePath: nativeNvidiaProviderProfilePath() };
+  const hostedProfile = NATIVE_HOSTED_PROFILES.find((profile) => profile.profileId === profileType);
+  if (hostedProfile) {
+    return { profileType, profilePath: nativeHostedProviderProfilePath(hostedProfile) };
   }
   const profilePath = path.join(
     ROOT,
@@ -263,8 +260,12 @@ export async function runCredentialsAddAction(
   }
 
   const normalizedType = type.toLowerCase();
-  const nativeNvidiaCredentialAlias =
-    provider === NVIDIA_HOSTED_LOGICAL_PROVIDER && normalizedType === "nvidia";
+  const hostedProfile = nativeHostedProfile(provider);
+  const expectedType =
+    provider === "nvidia-prod" ? "nvidia" : provider === "anthropic-prod" ? "anthropic" : "openai";
+  const nativeHostedCredentialAlias =
+    hostedProfile &&
+    (normalizedType === expectedType || normalizedType === hostedProfile.profileId);
   const isTavily =
     normalizedType === TAVILY_PROVIDER_PROFILE_ID ||
     normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID;
@@ -284,12 +285,12 @@ export async function runCredentialsAddAction(
       ]);
     }
   }
-  const effectiveType = nativeNvidiaCredentialAlias
-    ? NVIDIA_HOSTED_NATIVE_PROFILE_ID
+  const effectiveType = nativeHostedCredentialAlias
+    ? hostedProfile!.profileId
     : isTavily
       ? webSearchProviderProfileId(normalizedType, agentName)
       : type;
-  const effectiveProvider = nativeNvidiaCredentialAlias ? NVIDIA_HOSTED_NATIVE_PROVIDER : provider;
+  const effectiveProvider = nativeHostedCredentialAlias ? hostedProfile!.providerName : provider;
   const compatibilityWarnings =
     normalizedType === TAVILY_PROVIDER_PROFILE_ID && !agentName
       ? [
@@ -415,7 +416,7 @@ export async function runCredentialsAddAction(
     // Registration records this provider as an explicit extra-provider intent.
     // Rebuild validates that intent against current source-backed MCP entries;
     // orphaned providers retained by conservative MCP removal are not intent.
-    const recordedReservation = nativeNvidiaCredentialAlias
+    const recordedReservation = nativeHostedCredentialAlias
       ? false
       : recordExtraProvider(effectiveProvider);
     let keepReservation = false;

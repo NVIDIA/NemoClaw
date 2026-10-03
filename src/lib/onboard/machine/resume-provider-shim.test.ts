@@ -10,6 +10,22 @@ vi.mock("../../credentials/store", () => ({
 import { createResumeProviderShim } from "./resume-provider-shim";
 
 describe("createResumeProviderShim", () => {
+  it("resumes a native provider using its owned gateway name without a host key", async () => {
+    const providerExistsInGateway = vi.fn(() => true);
+    const replaceNamedCredential = vi.fn();
+    const shim = createResumeProviderShim({
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential,
+    });
+    await expect(
+      shim.ensureResumeProviderReady("gateway-west", "openai-api", "OPENAI_API_KEY"),
+    ).resolves.toEqual({ forceInferenceSetup: false, credentialEnv: "OPENAI_API_KEY" });
+    expect(providerExistsInGateway).toHaveBeenCalledWith("nemoclaw-openai-api-v1", "gateway-west");
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

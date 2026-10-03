@@ -256,7 +256,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
   });
 
   it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
-    mockRegistryState.sandboxes.gamma = gammaEntry([]);
+    mockRegistryState.sandboxes.gamma = { ...gammaEntry([]), provider: "ollama-local" };
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(captureOpenshell).mockReturnValue({
       output: "recovered-live Ready",
@@ -277,7 +277,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     });
     await expect(
       runInferenceSet(
-        { provider: "openrouter", model: "nvidia/model-b", sandboxName: "gamma" },
+        { provider: "ollama-local", model: "nvidia/model-b", sandboxName: "gamma" },
         deps,
       ),
     ).rejects.toMatchObject({

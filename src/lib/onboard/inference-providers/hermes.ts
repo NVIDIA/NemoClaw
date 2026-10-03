@@ -4,12 +4,16 @@
 // Hermes Provider inference setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
+import type { NativeHostedProviderAttachment } from "../../inference/native-hosted";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { HermesDeps, SetupInferenceResult } from "./types";
 
 export async function setupHermesProviderInference(
   args: {
+    nativeProvider?: boolean;
+    expectedNativeProviderAttachment?: NativeHostedProviderAttachment;
     sandboxName: string | null;
     model: string;
     provider: string;
@@ -34,7 +38,13 @@ export async function setupHermesProviderInference(
   // inference route), so SSRF validation only applies to an explicitly-supplied
   // custom endpoint.
   let resolvedEndpointUrl = endpointUrl;
-  if (endpointUrl) {
+  if (args.nativeProvider && endpointUrl) {
+    const canonical = nativeHostedProfile("hermes-provider")!.endpoint;
+    if (endpointUrl.replace(/\/+$/u, "") !== canonical) {
+      throw new Error("Hermes Provider native inference requires its canonical endpoint.");
+    }
+  }
+  if (endpointUrl && !args.nativeProvider) {
     let parsedEndpoint: URL;
     try {
       parsedEndpoint = new URL(endpointUrl);
@@ -134,11 +144,17 @@ export async function setupHermesProviderInference(
               apiKey: resolveHermesNousApiKey(),
               runOpenshell,
               baseUrl: resolvedEndpointUrl || undefined,
+              ...(args.expectedNativeProviderAttachment
+                ? { expected: args.expectedNativeProviderAttachment }
+                : {}),
             })
           : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
               allowInteractiveLogin: !isNonInteractive(),
               runOpenshell,
               baseUrl: resolvedEndpointUrl || undefined,
+              ...(args.expectedNativeProviderAttachment
+                ? { expected: args.expectedNativeProviderAttachment }
+                : {}),
               toolGatewayPresets: hermesToolGateways,
             });
     } catch (err) {
@@ -157,6 +173,8 @@ export async function setupHermesProviderInference(
       return exitProcess(1);
     }
   }
+
+  if (args.nativeProvider) return { ok: true };
 
   const applyResult = runOpenshell(
     ["inference", "set", "--no-verify", "--provider", provider, "--model", model],

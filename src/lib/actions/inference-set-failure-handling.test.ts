@@ -97,7 +97,7 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "openai-api", model: "openai/model-a" }, deps),
+      runInferenceSet({ provider: "ollama-local", model: "openai/model-a" }, deps),
     ).rejects.toThrow(/OpenShell inference route update failed/);
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe("runInferenceSet failure handling", () => {
         status: null,
         output: "",
         stdout: "",
-        stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
+        stderr: `error: provider 'ollama-local' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
         error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
         signal: "SIGTERM",
       })
@@ -130,7 +130,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      { provider: "ollama-local", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((error: Error) => error);
 
@@ -172,17 +172,17 @@ describe("runInferenceSet failure handling", () => {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "error: provider 'openai-api' not found in gateway",
+      stderr: "error: provider 'ollama-local' not found in gateway",
     });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      { provider: "ollama-local", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    expect(message).toMatch(/provider 'openai-api' not found/);
+    expect(message).toMatch(/provider 'ollama-local' not found/);
     expect(message).toMatch(/Registered providers: nvidia-prod/);
     expect(message).not.toMatch(/stale-local|telegram-bridge/);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
@@ -207,7 +207,7 @@ describe("runInferenceSet failure handling", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/model-a" },
+      { provider: "ollama-local", model: "openai/model-a" },
       deps,
     ).catch((e: Error) => e);
 
@@ -230,8 +230,8 @@ describe("runInferenceSet failure handling", () => {
     deps.calls.captureOpenshell
       .mockReturnValueOnce({
         status: 1,
-        output: "error: provider 'openai-api' not found in gateway",
-        stdout: "error: provider 'openai-api' not found in gateway",
+        output: "error: provider 'ollama-local' not found in gateway",
+        stdout: "error: provider 'ollama-local' not found in gateway",
         stderr: "",
       })
       .mockReturnValueOnce({
@@ -242,7 +242,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      { provider: "ollama-local", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
@@ -260,14 +260,14 @@ describe("runInferenceSet failure handling", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "error: provider 'openai-api' not found in gateway",
+        stderr: "error: provider 'ollama-local' not found in gateway",
       })
       .mockImplementationOnce(() => {
         throw new Error(`gateway provider query failed token=${querySecret}`);
       });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      { provider: "ollama-local", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
@@ -290,7 +290,7 @@ describe("runInferenceSet failure handling", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "error: provider 'openai-api' not found in gateway",
+        stderr: "error: provider 'ollama-local' not found in gateway",
       })
       .mockReturnValueOnce({
         status: null,
@@ -302,7 +302,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      { provider: "ollama-local", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((error: Error) => error);
 

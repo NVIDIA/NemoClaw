@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNativeProviderCommandRuntime } from "../support/native-provider-command-runtime";
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -20,6 +21,7 @@ import {
   bedrockRuntimeOnboard,
   type CommandEntry,
   createDirectSetupInferenceHarness,
+  createNativeSetupProviderAdapter,
   parseStdoutJson,
   stripMessagingEnv,
 } from "../helpers/onboard-split-context";
@@ -28,29 +30,19 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
-const HERMES_OAUTH_PROVIDER_METADATA = [
-  "Name: hermes-provider",
+const COMPATIBLE_PROVIDER_METADATA = [
+  "Name: compatible-endpoint",
   "Type: openai",
-  "Credential keys: OPENAI_API_KEY",
+  "Credential keys: COMPATIBLE_API_KEY",
   "Config keys: OPENAI_BASE_URL",
   "",
 ].join("\n");
 
-const HERMES_API_KEY_PROVIDER_METADATA = [
-  "Name: hermes-provider",
-  "Type: openai",
-  "Credential keys: NOUS_API_KEY",
-  "Config keys: OPENAI_BASE_URL",
-  "",
-].join("\n");
-
-const OPENAI_API_PROVIDER_METADATA = [
-  "Name: openai-api",
-  "Type: openai",
-  "Credential keys: OPENAI_API_KEY",
-  "Config keys: OPENAI_BASE_URL",
-  "",
-].join("\n");
+const {
+  run: hermesNativeCommand,
+  profileJson: HERMES_NATIVE_PROFILE_JSON,
+  metadata: HERMES_API_KEY_PROVIDER_METADATA,
+} = createNativeProviderCommandRuntime("hermes-provider", true);
 
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
@@ -61,30 +53,27 @@ describe("onboard helpers", () => {
       },
       async () => {
         const harness = createDirectSetupInferenceHarness({
-          runOpenshell: (args) =>
-            args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
-              : undefined,
-          overrides: { isNonInteractive: () => true },
+          runOpenshell: hermesNativeCommand,
+          overrides: {
+            isNonInteractive: () => true,
+            providerAdapter: createNativeSetupProviderAdapter("hermes-provider"),
+          },
         });
 
         await harness.setupInference(
           "test-box",
           "moonshotai/kimi-k2.6",
           "hermes-provider",
-          "https://8.8.8.8/v1",
+          "https://inference-api.nousresearch.com/v1",
           "OPENAI_API_KEY",
           "oauth",
         );
 
         const commands = harness.commands;
-        assert.equal(commands.length, 3);
+        assert.equal(commands.length, 2);
         assert.equal(commands[0].command, "provider list -g nemoclaw");
-        assert.equal(commands[1].command, "provider get -g nemoclaw hermes-provider");
-        assert.match(
-          commands[2].command,
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/,
-        );
+        assert.equal(commands[1].command, "provider get -g nemoclaw nemoclaw-hermes-provider-v1");
+        assert.ok(!commands.some((entry) => entry.command.startsWith("inference set")));
         assert.ok(!commands.some((entry) => entry.command.startsWith("gateway select")));
         assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
         assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
@@ -338,8 +327,8 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const providerGet = "provider get -g nemoclaw hermes-provider";
-  if (normalized === providerGet || normalized.endsWith(" " + providerGet)) {
+  if (normalized.includes("provider profile") && normalized.includes("export")) return { status: 0, stdout: ${JSON.stringify(HERMES_NATIVE_PROFILE_JSON)}, stderr: "" };
+  if (normalized.includes("provider get") && normalized.includes("nemoclaw-hermes-provider-v1")) {
     return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -367,6 +356,7 @@ registry.getSandbox = (name) =>
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
         hermesToolGateways: [],
+        nativeHostedProviderAttachment: { schemaVersion: 1, profileId: "nemoclaw-hermes-inference-v1", providerName: "nemoclaw-hermes-provider-v1", providerId: "11111111-2222-4333-8444-555555555555" },
       }
     : null;
 registry.reserveSandboxInferenceRoute = (name, updates) => {
@@ -441,7 +431,7 @@ const resumeSession = onboardSession.createSession({
   sandboxName: null,
   provider: "hermes-provider",
   model: "moonshotai/kimi-k2.6",
-  endpointUrl: "https://8.8.8.8/v1",
+  endpointUrl: "https://inference-api.nousresearch.com/v1",
   credentialEnv: "NOUS_API_KEY",
   hermesAuthMethod: "api_key",
   hermesToolGateways: [],
@@ -527,11 +517,12 @@ const { onboard } = require(${onboardPath});
         "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
       );
       assert.ok(
-        payload.commands.some((entry) =>
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/.test(entry.command),
+        payload.commands.some(
+          (entry) => entry.command.includes("provider profile") && entry.command.includes("export"),
         ),
-        "resume should reach openshell inference set",
+        "resume should reconcile native inference",
       );
+      assert.ok(!payload.commands.some((entry) => entry.command.includes("inference set")));
       assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
       assert.equal(
         payload.inferenceSessionSandboxName,
@@ -558,36 +549,33 @@ const { onboard } = require(${onboardPath});
       },
       async () => {
         const harness = createDirectSetupInferenceHarness({
-          runOpenshell: (args) =>
-            args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
-              : undefined,
-          overrides: { isNonInteractive: () => true },
+          runOpenshell: hermesNativeCommand,
+          overrides: {
+            isNonInteractive: () => true,
+            providerAdapter: createNativeSetupProviderAdapter("hermes-provider"),
+          },
         });
 
         await harness.setupInference(
           "test-box",
           "moonshotai/kimi-k2.6",
           "hermes-provider",
-          "https://8.8.8.8/v1",
+          "https://inference-api.nousresearch.com/v1",
           "NOUS_API_KEY",
           "api_key",
         );
 
         const update = harness.commands.find((entry) =>
-          /provider update -g nemoclaw hermes-provider/.test(entry.command),
+          /provider update -g nemoclaw nemoclaw-hermes-provider-v1/.test(entry.command),
         );
         assert.ok(update);
-        assert.match(update.command, /--credential NOUS_API_KEY/);
-        assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
+        assert.match(update.command, /--credential OPENAI_API_KEY/);
+        assert.equal(update.env?.OPENAI_API_KEY, "nous-host-secret");
         assert.ok(
           !harness.commands.some((entry) => /nous-host-secret/.test(entry.command)),
           "shell credential value must not appear in argv",
         );
-        assert.match(
-          harness.commands.at(-1)?.command || "",
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/,
-        );
+        assert.ok(!harness.commands.some((entry) => entry.command.startsWith("inference set")));
       },
     );
   });
@@ -900,15 +888,10 @@ const { isOpenclawReady } = require(${onboardPath});
     }
   });
 
-  it("uses native Anthropic provider creation without embedding the secret in argv", async () => {
+  it("creates the native Anthropic profile provider without changing the shared route", async () => {
     await withProcessEnv({ ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 1, stdout: "", stderr: "" }
-            : undefined,
-      });
-
+      const providerAdapter = createNativeSetupProviderAdapter("anthropic-prod", false);
+      const harness = createDirectSetupInferenceHarness({ overrides: { providerAdapter } });
       await harness.setupInference(
         "test-box",
         "claude-sonnet-4-5",
@@ -916,52 +899,62 @@ const { isOpenclawReady } = require(${onboardPath});
         "https://api.anthropic.com",
         "ANTHROPIC_API_KEY",
       );
-
-      const commands = harness.commands;
-      assert.equal(commands.length, 3);
-      assert.match(commands[0].command, /^provider get -g nemoclaw /);
-      assert.match(commands[1].command, /^provider create -g nemoclaw /);
-      assert.match(commands[1].command, /--type anthropic/);
-      assert.match(commands[1].command, /--credential ANTHROPIC_API_KEY/);
-      assert.doesNotMatch(commands[1].command, /sk-ant-TEST-NOT-A-REAL-VALUE/);
-      assert.match(commands[2].command, /^inference set -g nemoclaw /);
-      assert.match(commands[2].command, /--provider anthropic-prod/);
+      expect(providerAdapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "nemoclaw-anthropic-prod-v1",
+          type: "nemoclaw-anthropic-inference-v1",
+          credentials: [{ name: "ANTHROPIC_API_KEY", value: "sk-ant-TEST-NOT-A-REAL-VALUE" }],
+          config: [],
+        }),
+      );
+      expect(harness.commands).toEqual([]);
+      expect(harness.updateSandbox).toHaveBeenCalledWith(
+        "test-box",
+        expect.objectContaining({
+          nativeHostedProviderAttachment: expect.objectContaining({
+            providerId: "fixture-native-id",
+          }),
+        }),
+      );
     });
   });
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", async () => {
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
+            ? { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
       await harness.setupInference(
         "test-box",
         "gpt-5.4",
-        "openai-api",
-        "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
+        "compatible-endpoint",
+        "https://api.example.test/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
       );
 
       const commands = harness.commands;
       assert.equal(commands.length, 3);
       assert.match(commands[0].command, /^provider get -g nemoclaw /);
-      assert.match(commands[1].command, /^provider update -g nemoclaw openai-api/);
+      assert.match(commands[1].command, /^provider update -g nemoclaw compatible-endpoint/);
       assert.doesNotMatch(commands[1].command, /--type/);
       assert.match(commands[2].command, /^inference set -g nemoclaw --no-verify/);
     });
   });
   it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {
-    await withProcessEnv({ OPENAI_API_KEY: "sk-bad" }, async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: "sk-bad" }, async () => {
       const commandRouter = createDirectCommandRouter([
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
           results: [
-            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
-            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" },
           ],
         },
         {
@@ -974,7 +967,7 @@ const { isOpenclawReady } = require(${onboardPath});
         runOpenshell: commandRouter.runOpenshell,
         overrides: {
           promptValidationRecovery: async () => {
-            process.env.OPENAI_API_KEY = "sk-good";
+            process.env.COMPATIBLE_API_KEY = "sk-good";
             return "retry";
           },
         },
@@ -984,30 +977,33 @@ const { isOpenclawReady } = require(${onboardPath});
         await harness.setupInference(
           "test-box",
           "gpt-5.4",
-          "openai-api",
-          "https://api.openai.com/v1",
-          "OPENAI_API_KEY",
+          "compatible-endpoint",
+          "https://api.example.test/v1",
+          "COMPATIBLE_API_KEY",
+          null,
+          [],
+          { preferredInferenceApi: "openai-completions" },
         );
       } finally {
         error.mockRestore();
       }
 
-      assert.equal(process.env.OPENAI_API_KEY, "sk-good");
+      assert.equal(process.env.COMPATIBLE_API_KEY, "sk-good");
       assert.equal(commandRouter.callCount("inference-set"), 2);
       const providerEnvs = harness.commands
         .filter((entry) => entry.command.includes("provider"))
-        .map((entry) => entry.env?.OPENAI_API_KEY)
+        .map((entry) => entry.env?.COMPATIBLE_API_KEY)
         .filter(Boolean);
       assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
     });
   });
   it("returns control to provider selection when inference apply recovery chooses back", async () => {
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const commandRouter = createDirectCommandRouter([
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
+          results: [{ status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",
@@ -1025,9 +1021,12 @@ const { isOpenclawReady } = require(${onboardPath});
         result = await harness.setupInference(
           "test-box",
           "gpt-5.4",
-          "openai-api",
-          "https://api.openai.com/v1",
-          "OPENAI_API_KEY",
+          "compatible-endpoint",
+          "https://api.example.test/v1",
+          "COMPATIBLE_API_KEY",
+          null,
+          [],
+          { preferredInferenceApi: "openai-completions" },
         );
       } finally {
         error.mockRestore();
@@ -1402,6 +1401,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     // select the captured model before this cleanup runs.
     expect(events).toEqual([
       "lock-enter",
+      "read-prior-route",
       "read-prior-route",
       "ownership-lock-enter",
       "peer-scan",

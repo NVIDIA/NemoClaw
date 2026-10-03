@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { NATIVE_HOSTED_PROFILES } from "../inference/native-hosted/profiles";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import {
@@ -183,7 +184,9 @@ describe("createProviderReviewDeps", () => {
 });
 
 describe("native NVIDIA onboarding", () => {
-  it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
+  it.each(
+    NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "hermes-provider"),
+  )("records $label native inference without shared route mutation", async (profile) => {
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
       ok: true,
     }));
@@ -192,9 +195,9 @@ describe("native NVIDIA onboarding", () => {
       getProvider: vi.fn(async () => ({
         ok: true,
         value: {
-          name: "nemoclaw-nvidia-prod-v1",
-          type: "nemoclaw-nvidia-inference-v1",
-          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          name: profile.providerName,
+          type: profile.profileId,
+          credentialKeys: [profile.credentialEnv],
           configKeys: [],
           revision: { id: "provider-id", resourceVersion: 4 },
         },
@@ -222,7 +225,7 @@ describe("native NVIDIA onboarding", () => {
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       providerAdapter,
-      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      hydrateCredentialEnv: vi.fn(() => "host-only-inference-credential"),
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
@@ -236,9 +239,9 @@ describe("native NVIDIA onboarding", () => {
       setupInference(
         "alpha",
         "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia-prod",
-        "https://integrate.api.nvidia.com/v1",
-        "NVIDIA_INFERENCE_API_KEY",
+        profile.logicalProvider,
+        profile.endpoint,
+        profile.credentialEnv,
         null,
         [],
         { revalidateSandboxIdentity: () => undefined },
@@ -247,8 +250,8 @@ describe("native NVIDIA onboarding", () => {
 
     expect(updateProvider).toHaveBeenCalledWith(
       expect.objectContaining({
-        providerName: "nemoclaw-nvidia-prod-v1",
-        credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-credential" }],
+        providerName: profile.providerName,
+        credentials: [{ name: profile.credentialEnv, value: "host-only-inference-credential" }],
         config: [],
       }),
     );
@@ -260,12 +263,12 @@ describe("native NVIDIA onboarding", () => {
     expect(updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "nvidia-prod",
+        provider: profile.logicalProvider,
         model: "nvidia/nemotron-3-super-120b-a12b",
-        nativeNvidiaProviderAttachment: {
+        nativeHostedProviderAttachment: {
           schemaVersion: 1,
-          profileId: "nemoclaw-nvidia-inference-v1",
-          providerName: "nemoclaw-nvidia-prod-v1",
+          profileId: profile.profileId,
+          providerName: profile.providerName,
           providerId: "provider-id",
         },
       }),
