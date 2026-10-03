@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "../../lib/actions/sandbox/mcp-bridge-contracts";
+import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "../../lib/actions/sandbox/mcp-bridge/usage";
 
 const mocks = vi.hoisted(() => ({
   dispatchMcpBridgeCommand: vi.fn().mockResolvedValue(undefined),

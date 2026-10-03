@@ -13,7 +13,6 @@ import {
 import {
   type McpBridgeAddOptions,
   McpBridgeError,
-  MCP_BRIDGE_SUBCOMMANDS_USAGE,
   type McpBridgeStatus,
 } from "./mcp-bridge-contracts";
 import {
@@ -24,6 +23,7 @@ import {
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "./mcp-bridge/usage";
 import {
   type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,

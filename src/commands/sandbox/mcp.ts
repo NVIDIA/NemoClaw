@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "../../lib/actions/sandbox/mcp-bridge-contracts";
+import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "../../lib/actions/sandbox/mcp-bridge/usage";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxMcpCommand extends NemoClawCommand {
