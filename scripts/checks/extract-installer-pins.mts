@@ -596,6 +596,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
       // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
       "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+      "7e9c35c5610f151345bb996a5e475af95e25c83ab9d95497f502002f74a1497b",
     ],
     formula: {
       asset: "openshell.rb",
@@ -649,6 +650,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
         // Exact #11251 template after fail-closed gateway recovery validation.
         "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+        "dceba5ee9bf6d9cd20adf637d63d008c932f751c073bbb0a83cdce087518e917",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
