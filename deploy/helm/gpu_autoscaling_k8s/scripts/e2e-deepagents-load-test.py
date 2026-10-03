@@ -470,7 +470,11 @@ def main() -> int:
         return 2
     if args.inflight_start > args.inflight_per_user:
         args.inflight_start = args.inflight_per_user
-    return asyncio.run(run_test(args))
+    try:
+        return asyncio.run(run_test(args))
+    except KeyboardInterrupt:
+        stop_sandbox_chats(args.prefix, args.users)
+        return 130
 
 
 if __name__ == "__main__":

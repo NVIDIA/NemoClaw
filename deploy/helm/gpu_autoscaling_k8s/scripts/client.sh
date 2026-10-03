@@ -18,9 +18,11 @@
 # Users never talk to the Envoy load balancer. OpenShell is only the exec
 # tunnel into each sandbox; it is not the user-facing listener.
 #
-# Usage:
+# Usage (on dgx-20, or from a laptop via: ssh you@dgx-20):
 #   cd deploy/helm/gpu_autoscaling_k8s
 #   E2E_USERS=5 ./scripts/client.sh
+# Do not install OpenShell on the laptop. Agent :18789 is inside the sandbox
+# netns on the DGX CPUs.
 
 set -euo pipefail
 
@@ -63,7 +65,6 @@ openshell status >/dev/null \
   || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "client.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
-hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1). No sandbox create. HPA metric is not set here."
 missing=0
@@ -110,6 +111,9 @@ done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
+hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
+  || fail "HPA is not 1 replica; leftover load would scale before chats start"
+hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \

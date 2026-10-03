@@ -116,9 +116,27 @@ def format_hpa_line(namespace: str, name: str, current: int, desired: int) -> st
     )
 
 
-# Marker in the in-sandbox kubectl exec. pkill this when client.sh exits so
-# chats cannot outlive the host client.
-LOAD_HELPER_PATTERN = "E2E_ESCALATE_INTERVAL_SEC"
+# argv from exec -a. Also kill leftover python3 - that still has
+# NEMOCLAW_E2E_LOAD=1 (Ctrl-C used to pkill only the bash wrapper).
+KILL_SANDBOX_HELPERS = r"""
+pkill -TERM -f '[e]2e-openclaw-load' || true
+pkill -TERM -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
+for env in /proc/[0-9]*/environ; do
+  pid="${env#/proc/}"; pid="${pid%/environ}"
+  if tr '\0' '\n' < "$env" 2>/dev/null | grep -qx 'NEMOCLAW_E2E_LOAD=1'; then
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+done
+sleep 1
+pkill -KILL -f '[e]2e-openclaw-load' || true
+pkill -KILL -f '[E]2E_ESCALATE_INTERVAL_SEC' || true
+for env in /proc/[0-9]*/environ; do
+  pid="${env#/proc/}"; pid="${pid%/environ}"
+  if tr '\0' '\n' < "$env" 2>/dev/null | grep -qx 'NEMOCLAW_E2E_LOAD=1'; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+done
+"""
 
 
 def stop_sandbox_chats(prefix: str, users: int) -> None:
@@ -142,8 +160,7 @@ def stop_sandbox_chats(prefix: str, users: int) -> None:
                     "--",
                     "bash",
                     "-c",
-                    f"pkill -TERM -f '[E]2E_ESCALATE_INTERVAL_SEC' || true; "
-                    f"sleep 1; pkill -KILL -f '[E]2E_ESCALATE_INTERVAL_SEC' || true",
+                    KILL_SANDBOX_HELPERS,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -305,7 +322,8 @@ async def simulate_user(
         "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
         "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
         "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
-        "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" python3 -"
+        "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
+        "bash -c 'exec -a e2e-openclaw-load python3 -'"
     )
     proc = await asyncio.create_subprocess_exec(
         kubectl,
@@ -609,7 +627,11 @@ def main() -> int:
             check_listeners=False,
         )
         return 0
-    return asyncio.run(run_test(args))
+    try:
+        return asyncio.run(run_test(args))
+    except KeyboardInterrupt:
+        stop_sandbox_chats(args.prefix, args.users)
+        return 130
 
 
 if __name__ == "__main__":

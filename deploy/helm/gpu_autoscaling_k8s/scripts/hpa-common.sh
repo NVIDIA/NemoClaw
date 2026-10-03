@@ -580,15 +580,42 @@ hpa_common_require_live_runtime() {
 }
 
 # agentscaling_* holds HPA at 1 replica so provision / OpenClaw start cannot
-# scale GPUs. client.sh / client_hermes.sh / client_deepagents.sh arm maxReplicas.
+# scale GPUs. Restart the GPU Deployment so leftover latency_avg / GPU-util
+# samples die with the old pods. Clients arm maxReplicas only after this is 1/1.
+hpa_common_wait_hpa_replicas() {
+  local ns="${1:?namespace}"
+  local hpa="${2:?hpa}"
+  local want="${3:?replicas}"
+  local timeout_sec="${4:-120}"
+  local deadline=$((SECONDS + timeout_sec))
+  local current desired
+  echo "Waiting for HPA ${ns}/${hpa} ${want}/${want} (up to ${timeout_sec}s)"
+  while ((SECONDS < deadline)); do
+    current="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.currentReplicas}' 2>/dev/null || true)"
+    desired="$(kubectl get hpa "${hpa}" -n "${ns}" -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || true)"
+    if [[ "${current:-}" == "${want}" && "${desired:-}" == "${want}" ]]; then
+      echo "HPA ${ns}/${hpa} is ${want} current / ${want} desired"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "ERROR: HPA ${ns}/${hpa} is ${current:-?}/${desired:-?} after ${timeout_sec}s (want ${want}/${want})" >&2
+  return 1
+}
+
 hpa_common_hold_hpa_until_client() {
   local ns="${1:?namespace}"
   local hpa="${2:?hpa}"
   local deploy="${3:?deployment}"
   echo "Holding HPA ${ns}/${hpa} at 1 replica until the client sends chats"
-  kubectl patch hpa "${hpa}" -n "${ns}" --type merge \
+  echo "Restarting GPU pods so leftover latency/util cannot scale before the client"
+  kubectl patch hpa "${hpa}" -n "${ns}" --type merge --field-manager=helm \
     -p '{"spec":{"minReplicas":1,"maxReplicas":1}}' >/dev/null
   kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
+  kubectl rollout restart "deployment/${deploy}" -n "${ns}" >/dev/null
+  hpa_common_wait_rollout "${deploy}" "${ns}" 300 || true
+  kubectl scale "deploy/${deploy}" -n "${ns}" --replicas=1 >/dev/null 2>&1 || true
+  hpa_common_wait_hpa_replicas "${ns}" "${hpa}" 1 180
 }
 
 hpa_common_arm_hpa_for_client() {
@@ -596,7 +623,7 @@ hpa_common_arm_hpa_for_client() {
   local hpa="${2:?hpa}"
   local max="${3:?maxReplicas}"
   echo "Client starting: arming HPA ${ns}/${hpa} maxReplicas=${max}"
-  kubectl patch hpa "${hpa}" -n "${ns}" --type merge \
+  kubectl patch hpa "${hpa}" -n "${ns}" --type merge --field-manager=helm \
     -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${max}}}" >/dev/null
 }
 
@@ -1632,6 +1659,12 @@ hpa_common_gpu_helm_upgrade() {
   hpa_common_append_target_node_helm_sets helm_args
   hpa_common_append_servicemonitor_release_helm_set helm_args
   hpa_common_append_inference_runtime_helm_sets helm_args "${inference_runtime}" "${inference_model}"
+
+  # hold/arm used kubectl patch, which owns .spec.maxReplicas as kubectl-patch.
+  # Helm 4 server-side apply then fails: conflict with "kubectl-patch" on maxReplicas.
+  # Drop the HPA only (GPU Deployment stays). Helm recreates it with min/max from this upgrade.
+  kubectl delete hpa "$(RELEASE="${release}" CHART_NAME=nemoclaw-gpu hpa_common_metrics_proxy_deployment)" \
+    -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
   helm "${helm_args[@]}" >/dev/null
 }

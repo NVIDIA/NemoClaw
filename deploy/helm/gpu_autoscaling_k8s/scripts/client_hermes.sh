@@ -57,7 +57,6 @@ openshell status >/dev/null \
   || fail "OpenShell is not connected. In another terminal run ./scripts/openshell-port-forward.sh. Then rerun this command."
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "client_hermes.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_hermes_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
-hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 hermes -z). No sandbox create. HPA metric is not set here."
 missing=0
@@ -89,6 +88,9 @@ done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
+hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" \
+  || fail "HPA is not 1 replica; leftover load would scale before chats start"
+hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 exec python3 "${SCRIPT_DIR}/e2e-hermes-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
