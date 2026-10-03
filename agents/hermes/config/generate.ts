@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type HermesBuildSettings, readHermesBuildSettings } from "./build-env.ts";
-import { buildHermesManagedPolicy, type HermesManagedPolicyV3 } from "./managed-policy.ts";
+import {
+  buildHermesManagedPolicy,
+  finalizeHermesPlatformToolsets,
+  type HermesManagedPolicyV3,
+} from "./managed-policy.ts";
 import { discoverModelSpecificSetups } from "./model-specific-setup.ts";
 import { type WrittenHermesConfig, writeHermesConfigFiles } from "./write-config.ts";
 
@@ -44,6 +48,7 @@ export function generateHermesConfig({
   const policy = buildHermesManagedPolicy(settings, env);
   const config = policy.config;
   const envLines = policy.env_lines;
+  finalizeHermesPlatformToolsets(config, settings);
   const written = writeHermesConfigFiles(config, envLines, policy, homeDir);
 
   log(

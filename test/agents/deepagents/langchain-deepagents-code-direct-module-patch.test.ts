@@ -495,12 +495,57 @@ check("disabled", False)
     const tempDir = createPatchedPackageFixture();
     const run = (candidateName: string, candidateValue: string) =>
       spawnSync("python3", ["-m", "deepagents_code"], {
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          [candidateName]: candidateValue,
+        },
         encoding: "utf8",
       });
     const result = run(name, value);
     expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
     expect(result.stderr).toContain("invalid OpenShell credential placeholder");
+  });
+
+  it("excludes user and project MCP files from managed discovery", () => {
+    const tempDir = createPatchedPackageFixture();
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import asyncio
+import json
+import os
+from pathlib import Path
+from deepagents_code import mcp_tools
+
+home = Path.cwd() / "home"
+project = Path.cwd() / "project"
+os.environ["HOME"] = str(home)
+for config_path in (
+    home / ".deepagents" / ".mcp.json",
+    project / ".deepagents" / ".mcp.json",
+    project / ".mcp.json",
+):
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"mcpServers": {
+        "unmanaged": {"command": "unmanaged-command", "args": []}
+    }}))
+os.chdir(project)
+assert mcp_tools.discover_mcp_configs() == []
+assert asyncio.run(mcp_tools.resolve_and_load_mcp_tools()) == []
+print("unmanaged MCP servers excluded")
+`,
+      ],
+      {
+        cwd: tempDir,
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("unmanaged MCP servers excluded");
   });
 
   it("loads only strict HTTPS-only managed MCP configuration", () => {
@@ -540,7 +585,9 @@ check("disabled", False)
 
     const valid = validate({ mcpServers: { github: validServer } });
     expect(valid.status, valid.stderr).toBe(0);
-    expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
+    expect(JSON.parse(valid.stdout)).toEqual({
+      mcpServers: { github: validServer },
+    });
 
     [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
@@ -552,7 +599,10 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, headers: { Authorization: "Bearer raw-secret-value" } },
+          github: {
+            ...validServer,
+            headers: { Authorization: "Bearer raw-secret-value" },
+          },
         },
       },
       {
@@ -572,17 +622,26 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com:443/mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com:443/mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/a/../mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/a/../mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/mcp path/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/mcp path/",
+          },
         },
       },
       ...[
@@ -674,7 +733,9 @@ check("disabled", False)
         },
       };
 
-      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, {
+        mode: 0o600,
+      });
 
       const result = spawnSync(
         "python3",

@@ -67,7 +67,7 @@ class Client:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self._transport = object()
-        self._mounts = {}
+        self._mounts = {"proxy": "proxy-transport", "excluded": None}
 class Httpx:
     AsyncClient = Client
     @staticmethod
@@ -75,7 +75,7 @@ class Httpx:
     @staticmethod
     def Timeout(*args, **kwargs): return (args, kwargs)
 client = namespace['Transport']().sse(None, True, None, Httpx)['httpx_client_factory']()
-print(json.dumps({'custom_transport': 'transport' in client.kwargs, 'explicit_trust_env': client.kwargs.get('trust_env')}))
+print(json.dumps({'custom_transport': 'transport' in client.kwargs, 'explicit_trust_env': client.kwargs.get('trust_env'), 'proxy_transport': client._mounts['proxy'], 'excluded': client._mounts['excluded']}))
 `;
       const probe = () =>
         spawnSync("python3", ["-I", "-c", program, transportPath], {
@@ -87,6 +87,8 @@ print(json.dumps({'custom_transport': 'transport' in client.kwargs, 'explicit_tr
       expect(JSON.parse(managed.stdout)).toEqual({
         custom_transport: false,
         explicit_trust_env: true,
+        proxy_transport: ["capped", "proxy-transport"],
+        excluded: null,
       });
       fs.writeFileSync(transportPath, UPSTREAM_FIXTURE);
       const native = probe();
@@ -94,6 +96,8 @@ print(json.dumps({'custom_transport': 'transport' in client.kwargs, 'explicit_tr
       expect(JSON.parse(native.stdout)).toEqual({
         custom_transport: true,
         explicit_trust_env: null,
+        proxy_transport: "proxy-transport",
+        excluded: null,
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

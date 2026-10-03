@@ -940,7 +940,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 RUN /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py prepare-generated-config \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 32; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
+        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m; assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
     fi \
     && rm -rf /sandbox/.cache
 

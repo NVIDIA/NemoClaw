@@ -162,6 +162,8 @@ describe("Hermes external-supervisor restart patch", () => {
       expect(managed.status, managed.stderr).toBe(0);
       expect(lastJson(managed.stdout).events).toContainEqual(["signal", 4321, 17]);
       expect(lastJson(managed.stdout).events).not.toContainEqual(["manual-start", 0, false]);
+      expect(lastJson(managed.stdout).events.map(([event]) => event)).not.toContain("manual-stop");
+      expect(lastJson(managed.stdout).events.map(([event]) => event)).not.toContain("manual-wait");
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }

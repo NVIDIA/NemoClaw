@@ -1230,6 +1230,15 @@ def _normalize_path(raw_path, project_context, label):
 '''
 
 
+MCP_TOOLS_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+def discover_mcp_configs(*, project_context=None) -> list[Path]:
+    """Disable user and project MCP layering in the managed image."""
+    del project_context
+    return []
+'''
+
 MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
 
     if not path.exists():
@@ -1241,8 +1250,7 @@ MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
             return json.load(file_obj)
 '''
 
-MCP_CONFIG_LOAD_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
-    from deepagents_code._nemoclaw_managed import (
+MCP_CONFIG_LOAD_PATCH = '''    from deepagents_code._nemoclaw_managed import (
         managed_mcp_config_bytes,
     )
 
@@ -2035,7 +2043,9 @@ def main() -> None:
         MCP_EXPLICIT_CONFIG_PATCH,
         1,
     )
-    transformed["mcp_tools"] = transformed_mcp_tools
+    transformed["mcp_tools"] = _append_patch(
+        paths["mcp_tools"], transformed_mcp_tools, MCP_TOOLS_PATCH
+    )
     transformed_non_interactive = texts["non_interactive"].replace(
         NON_INTERACTIVE_ERROR_MARKER,
         NON_INTERACTIVE_ERROR_PATCH,

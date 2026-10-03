@@ -58,6 +58,24 @@ const HERMES_STRUCTURED_TOOL_SEARCH = {
   max_search_limit: 20,
 };
 
+const REMOTE_PLATFORM_TOOLSETS = [
+  "web",
+  "browser",
+  "terminal",
+  "file",
+  "code_execution",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+  "nemoclaw",
+  "audio",
+];
+
 let tmpDir: string;
 
 function encodeJson(value: unknown): string {
@@ -95,7 +113,10 @@ function withEnv<T>(env: Record<string, string>, fn: () => T): T {
   }
 }
 
-function readGeneratedConfig(): { config: Record<string, any>; envFile: string } {
+function readGeneratedConfig(): {
+  config: Record<string, any>;
+  envFile: string;
+} {
   const hermesDir = path.join(tmpDir, ".hermes");
   return {
     config: YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8")),
@@ -286,6 +307,12 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[] = []): void {
+  expect(Array.isArray(toolsets)).toBe(true);
+  expect(toolsets).toEqual([...REMOTE_PLATFORM_TOOLSETS, ...extraToolsets]);
+  expect(toolsets).not.toContain("no_mcp");
+}
+
 describe("agents/hermes/generate-config.ts", () => {
   it(
     "matches direct generation as a strip-types executable with an explicit gateway matrix",
@@ -327,7 +354,10 @@ describe("agents/hermes/generate-config.ts", () => {
       const { config, envFile } = readGeneratedConfig();
       expect(config).toEqual(direct.config);
       expect(envFile).toBe(direct.envFile);
-      expect(config.tts).toEqual({ provider: "fixture-audio", use_gateway: true });
+      expect(config.tts).toEqual({
+        provider: "fixture-audio",
+        use_gateway: true,
+      });
       expect(envFile).toContain("FIXTURE_AUDIO_GATEWAY_URL=https://matrix.example.test/audio\n");
       expect(config.platforms.telegram).toBeUndefined();
       // build-env.ts derives this line from the plan's credential bindings at
@@ -511,7 +541,9 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("accepts Hermes' minimum context window as model.context_length (#6760)", () => {
     const settings = readHermesBuildSettings(
-      buildHermesTestEnv({ NEMOCLAW_CONTEXT_WINDOW: String(MIN_HERMES_CONTEXT_WINDOW) }),
+      buildHermesTestEnv({
+        NEMOCLAW_CONTEXT_WINDOW: String(MIN_HERMES_CONTEXT_WINDOW),
+      }),
     );
     const config = buildHermesManagedPolicy(settings).config;
 
@@ -546,7 +578,12 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
 
     withEnv(env, () =>
-      generateHermesConfig({ env, scriptDir: SCRIPT_DIR, homeDir: tmpDir, log: () => {} }),
+      generateHermesConfig({
+        env,
+        scriptDir: SCRIPT_DIR,
+        homeDir: tmpDir,
+        log: () => {},
+      }),
     );
     const { config } = readGeneratedConfig();
     expect(config.model.context_length).toBe(65536);
@@ -561,7 +598,9 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("ignores a malformed NEMOCLAW_CONTEXT_WINDOW and lets Hermes auto-detect (#6177)", () => {
-    const { config } = runConfigScript({ NEMOCLAW_CONTEXT_WINDOW: "not-a-number" });
+    const { config } = runConfigScript({
+      NEMOCLAW_CONTEXT_WINDOW: "not-a-number",
+    });
 
     expect(config.model.context_length).toBeUndefined();
   });
@@ -712,7 +751,7 @@ describe("agents/hermes/generate-config.ts", () => {
         }),
       });
 
-      expect(config.platform_toolsets).toBeUndefined();
+      expectRemotePlatformToolsets(config.platform_toolsets.api_server);
 
       // The local Hermes CLI keeps upstream defaults.
       expect(config.platform_toolsets?.cli).toBeUndefined();
@@ -741,8 +780,11 @@ describe("agents/hermes/generate-config.ts", () => {
       use_gateway: true,
     });
     expect(config.image_gen).toEqual({ use_gateway: true });
-    expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
-    expect(config.platform_toolsets).toBeUndefined();
+    expect(config.terminal).toMatchObject({
+      backend: "modal",
+      modal_mode: "managed",
+    });
+    expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
     expect(envFile).not.toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=");
@@ -841,7 +883,7 @@ describe("agents/hermes/generate-config.ts", () => {
       channel_prompts: {},
     });
     expect(config.platforms.discord).toEqual({ enabled: true });
-    expect(config.platform_toolsets).toBeUndefined();
+    expectRemotePlatformToolsets(config.platform_toolsets.discord);
     expect(JSON.stringify(config)).not.toContain("DISCORD_BOT_TOKEN");
     expect(envFile).not.toContain("DISCORD_BOT_TOKEN=");
     expect(envFile).not.toContain("DISCORD_PROXY=");
@@ -943,8 +985,7 @@ describe("agents/hermes/generate-config.ts", () => {
       enabled: true,
       extra: { rich_blocks: true },
     });
-    expect(config.platform_toolsets).toBeUndefined();
-    expect(config.platform_toolsets).toBeUndefined();
+    expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=");
@@ -977,7 +1018,7 @@ describe("agents/hermes/generate-config.ts", () => {
       });
 
       expect(Object.keys(config.platforms)).toEqual(["api_server"]);
-      expect(config.platform_toolsets).toBeUndefined();
+      expectRemotePlatformToolsets(config.platform_toolsets.api_server);
 
       expect(envFile, credential).not.toContain(`${credential}=`);
     },
@@ -1020,7 +1061,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.wechat).toBeUndefined();
     expect(config.platforms.wechat).toBeUndefined();
     expect(config.platforms.weixin).toEqual({ enabled: true });
-    expect(config.platform_toolsets).toBeUndefined();
+    expectRemotePlatformToolsets(config.platform_toolsets.weixin);
 
     // Startup copies OpenShell's revision-scoped WECHAT_BOT_TOKEN placeholder
     // to Hermes' WEIXIN_TOKEN name. Persisting the canonical placeholder here
@@ -1041,7 +1082,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.whatsapp).toBeUndefined();
     expect(config.platforms.whatsapp).toEqual({ enabled: true });
-    expect(config.platform_toolsets).toBeUndefined();
+    expectRemotePlatformToolsets(config.platform_toolsets.whatsapp);
     expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
     // Hermes' own adapter default. self-chat reads no allowlist, so a paired
     // sandbox answers the owner's own chat with nothing else configured (#8312).
@@ -1058,7 +1099,9 @@ describe("agents/hermes/generate-config.ts", () => {
     const { envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
       NEMOCLAW_WHATSAPP_CONFIG_B64: encodeJson({ mode: "bot" }),
-      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({ whatsapp: ["15551234567"] }),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        whatsapp: ["15551234567"],
+      }),
     });
 
     expect(envFile).toContain("WHATSAPP_MODE=bot\n");
@@ -1129,7 +1172,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
-    expect(config.platform_toolsets).toBeUndefined();
+    expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
   });
 
@@ -1203,7 +1246,9 @@ describe("agents/hermes/generate-config.ts", () => {
         match: { modelIdPrefixes: ["gpt-5", "o3"] },
         effects: { hermesCompat: {} },
       });
-      const env = buildHermesTestEnv({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir });
+      const env = buildHermesTestEnv({
+        NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+      });
 
       const matches = discoverModelSpecificSetups(
         "hermes",

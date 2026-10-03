@@ -50,9 +50,11 @@ describe("Hermes native configuration choices", () => {
     });
   });
 
-  it("H08 stops seeding the API tool list when its configuration is omitted (#11763)", () => {
+  it("H08 retains the API tools required by the managed image (#11763)", () => {
     const candidate = buildHermesManagedPolicy(settings, {});
-    expect(candidate.config.platform_toolsets).toBeUndefined();
+    expect(candidate.config.platform_toolsets).toMatchObject({
+      api_server: expect.arrayContaining(["web", "terminal", "nemoclaw", "audio"]),
+    });
     expect(candidate.config.model).toMatchObject({
       default: "fixture-model",
       base_url: "https://inference.local/v1",

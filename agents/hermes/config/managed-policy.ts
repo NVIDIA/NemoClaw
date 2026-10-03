@@ -11,6 +11,8 @@ import {
   loadManagedToolGatewayMatrix,
 } from "./managed-tool-gateway.ts";
 
+import { isObjectRecord } from "./object-record.ts";
+
 export type { HermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
 export {
   applyHermesManagedRoute,
@@ -38,6 +40,24 @@ const SHADOW_MIGRATION_ENV_KEYS = [
   "FAL_QUEUE_GATEWAY_URL",
   "MODAL_GATEWAY_URL",
 ] as const;
+
+const REMOTE_PLATFORM_TOOLSETS = [
+  "web",
+  "browser",
+  "terminal",
+  "file",
+  "code_execution",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+  "nemoclaw",
+  "audio",
+];
 
 export const MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS = [
   "telegram",
@@ -136,6 +156,9 @@ export function buildHermesManagedPolicy(
     plugins: {
       enabled: ["nemoclaw"],
     },
+    platform_toolsets: {
+      api_server: buildHermesRemotePlatformToolsets(settings),
+    },
     platforms,
   };
 
@@ -171,4 +194,38 @@ export function buildHermesManagedPolicy(
       env_keys: [...SHADOW_MIGRATION_ENV_KEYS],
     },
   };
+}
+
+export function finalizeHermesPlatformToolsets(
+  config: Record<string, unknown>,
+  settings: HermesBuildSettings,
+): void {
+  addEnabledPlatformToolsets(config, buildHermesRemotePlatformToolsets(settings));
+}
+
+function buildHermesRemotePlatformToolsets(settings: HermesBuildSettings): string[] {
+  const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
+  if (
+    settings.managedToolGateways.brokerEnabled &&
+    settings.managedToolGateways.presets.includes("nous-audio")
+  ) {
+    remotePlatformToolsets.push("tts");
+  }
+  return remotePlatformToolsets;
+}
+
+function addEnabledPlatformToolsets(
+  config: Record<string, unknown>,
+  remotePlatformToolsets: readonly string[],
+): void {
+  const platformToolsets = config.platform_toolsets as Record<string, string[]>;
+  const platforms = config.platforms as Record<string, unknown>;
+  for (const [platform, platformConfig] of Object.entries(platforms)) {
+    if (platform === "api_server" || !isEnabledPlatform(platformConfig)) continue;
+    platformToolsets[platform] = [...remotePlatformToolsets];
+  }
+}
+
+function isEnabledPlatform(value: unknown): boolean {
+  return isObjectRecord(value) && value.enabled === true;
 }
