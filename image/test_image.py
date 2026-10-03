@@ -90,6 +90,12 @@ class AgentImage(unittest.TestCase):
         self.assertIsNone(importlib.util.find_spec("pip"))
         self.assertEqual(sorted(path.name for path in (prefix / "bin").glob("pip*")), [])
 
+    def test_only_javascript_harnesses_carry_node(self):
+        # OpenClaw's CLI, Hermes's TUI, and the TypeScript Pi adapter run on Node.js.
+        expected = os.environ["NEMOCLAW_TEST_HARNESS"] in {"openclaw", "hermes", "pi"}
+        self.assertEqual(shutil.which("node") is not None, expected)
+        self.assertEqual(Path("/usr/local/lib/node_modules").exists(), expected)
+
     def test_catalog_carries_installed_runtime_directories(self):
         catalog = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])
         declaration = Path("/opt/nemoclaw/runtime-files.json")
