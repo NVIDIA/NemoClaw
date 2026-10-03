@@ -137,6 +137,7 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
             .as_bytes(),
     )
     .unwrap();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let name = format!("{}-ollama-proxy-ollama-auth", document.workspace());
     let volume = format!("{name}-auth");
     let engine = Engine::connect(ENGINE).unwrap();

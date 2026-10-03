@@ -104,7 +104,16 @@ fn assert_noop(bundle: &Bundle, root: &Path) {
     let plan: Value =
         serde_json::from_slice(&tofu(bundle, root, &["show", "-json", "noop.plan"])).unwrap();
     for change in plan["resource_changes"].as_array().unwrap() {
-        assert_eq!(change["change"]["actions"], json!(["no-op"]));
+        let actions = &change["change"]["actions"];
+        // Apply-time observations refresh on every plan without changing resources.
+        if change["mode"] == "data" {
+            assert!(
+                actions == &json!(["read"]) || actions == &json!(["no-op"]),
+                "{change}"
+            );
+        } else {
+            assert_eq!(actions, &json!(["no-op"]), "{change}");
+        }
     }
 }
 
@@ -185,6 +194,28 @@ fn fixture(
     };
     for provider in graph["provider"]["docker"].as_array_mut().unwrap() {
         provider["host"] = json!(ENGINE);
+    }
+    // The gateway, sandbox image, and remote target are placeholders outside this
+    // compute fixture, so drop gateway readiness and their discovery observations.
+    let data = graph["data"].as_object_mut().unwrap();
+    for source in [
+        "nemoclaw_gateway_capabilities",
+        "nemoclaw_fabric_capabilities",
+        "nemoclaw_target_hardware",
+    ] {
+        data.remove(source).unwrap();
+    }
+    let outputs = graph["output"].as_object_mut().unwrap();
+    outputs.remove("discovery").unwrap();
+    if outputs.is_empty() {
+        graph.as_object_mut().unwrap().remove("output");
+    }
+    // Runtime image and readiness checks follow the adapted engine and limits.
+    let adapted = json!(serde_json::to_string(&spec).unwrap());
+    for source in ["nemoclaw_runtime_image", "nemoclaw_service_readiness"] {
+        for check in graph["data"][source].as_object_mut().unwrap().values_mut() {
+            check["spec"] = adapted.clone();
+        }
     }
     // Adapt only host placement and GPU-sized limits for this CPU fixture.
     // Image, command, environment, mounts, network and dependency graph remain
@@ -398,6 +429,32 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
             graph["resource"].as_object_mut().unwrap().remove(kind);
         }
         graph.as_object_mut().unwrap().remove("data");
+        // Like production teardown, keep dependencies only on retained resources.
+        let retained: std::collections::BTreeSet<String> = graph["resource"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(kind, instances)| {
+                instances
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| format!("{kind}.{name}"))
+            })
+            .collect();
+        for instances in graph["resource"].as_object_mut().unwrap().values_mut() {
+            for attrs in instances.as_object_mut().unwrap().values_mut() {
+                if let Some(dependencies) =
+                    attrs.get_mut("depends_on").and_then(Value::as_array_mut)
+                {
+                    dependencies.retain(|dependency| {
+                        dependency
+                            .as_str()
+                            .is_some_and(|address| retained.contains(address))
+                    });
+                }
+            }
+        }
         write_graph(root, &graph);
         tofu(&bundle, root, &["apply", "-auto-approve", "-input=false"]);
         assert!(engine.container(&spec.name).await.unwrap().is_none());

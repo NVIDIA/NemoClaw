@@ -26,6 +26,12 @@ def key():
   if p.returncode == 0: return p.stdout
   time.sleep(0.1)
  raise AssertionError('fixture credential did not become ready')
+def model():
+ for _ in range(100):
+  p = subprocess.run(['docker','--host',engine,'exec',name,'cat','/data/model'],capture_output=True)
+  if p.returncode == 0 and p.stdout == b'reconstructed': return
+  time.sleep(0.1)
+ raise AssertionError('fixture model was not reconstructed')
 def state(): return (root/'terraform.tfstate').read_bytes()
 def apply(*args): tofu('apply','-auto-approve','-input=false',*args)
 def noop():
@@ -43,7 +49,7 @@ try:
  assert json.loads(docker('volume','inspect',name+'-auth'))[0]['Name'] == name+'-auth'
  apply(); assert key()==original; noop()
  docker('rm','-f',name); docker('volume','rm',name+'-data'); apply('-var=revision=replaced'); assert key()==original
- assert docker('exec',name,'cat','/data/model')==b'reconstructed'
+ model()
  noop_state=state()
  # Missing bound credentials must block a pending compute replacement.
  docker('rm','-f',name); docker('volume','rm',name+'-auth')
