@@ -301,18 +301,33 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Resolve digest-pinned amd64 runtime base images",
   );
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
+    HERMES_BASE_REF:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
   });
   requireFragments(errors, bases, [
-    'docker buildx imagetools inspect "$alias" --raw',
-    '.platform.os == "linux" and .platform.architecture == "amd64"',
-    'reference="${repository}@${digest}"',
-    '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
-    "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+    'prepared_inputs="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/prepared-inputs"',
+    '[[ -f "$prepared_inputs" && ! -L "$prepared_inputs" ]]',
+    'read -r cached_revision cached_platform cached_openclaw cached_hermes cached_dcode extra < "$prepared_inputs"',
+    '[[ -z "$extra" &&',
+    '"$cached_revision" == "$CHECKOUT_SHA"',
+    '"$cached_platform" == "linux/amd64"',
+    '"$cached_hermes" == "$HERMES_BASE_REF"',
+    '"$cached_dcode" == "$DCODE_BASE_REF"',
+    '"$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode"',
+    '[[ "$cached_openclaw" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]]',
+    'openclaw_digest="${cached_openclaw##*@}"',
+    'docker buildx imagetools inspect "$cached_openclaw" --raw > "$work_dir/openclaw-exact.raw"',
+    '"sha256:$(sha256sum "$work_dir/openclaw-exact.raw" | awk \'{print $1}\')" == "$openclaw_digest"',
+    'printf \'openclaw=%s\\n\' "$cached_openclaw" >> "$GITHUB_OUTPUT"',
     'docker buildx imagetools inspect "$DCODE_BASE_REF" --raw',
     'dcode_digest="${DCODE_BASE_REF##*@}"',
     'printf \'dcode=%s\\n\' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"',
   ]);
+  if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must reuse the OpenClaw base from the prepared build cache`);
+  }
   if (text(bases?.run).includes("langchain-deepagents-code-sandbox-base:latest")) {
     errors.push(`${JOB_ID} must not resolve the DCode base from a mutable alias`);
   }

@@ -10,11 +10,11 @@ import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
   captureSandboxSshConfigCommand,
-  getInstalledOpenshellVersion,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshellCommand,
 } from "./command-execution";
+import { cliOpenShellInstalledVersionObserver } from "./installed-version-cli";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 
 type CommandArgs = string[];
@@ -199,8 +199,8 @@ export function isCommandTimeout(result: { error?: Error }) {
 
 /** Return the installed OpenShell version, or null when it cannot be determined. */
 export function getInstalledOpenshellVersionOrNull(opts: { timeout?: number } = {}): string | null {
-  return getInstalledOpenshellVersion(getOpenshellBinary(), {
-    cwd: ROOT,
-    timeout: opts.timeout,
+  const result = cliOpenShellInstalledVersionObserver.observeInstalledVersion({
+    timeoutMs: opts.timeout,
   });
+  return result.ok ? result.version : null;
 }

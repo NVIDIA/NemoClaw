@@ -8,6 +8,15 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import {
+  clearPendingHostLocalVllmRetirement,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  type HostLocalVllmRetirementResult,
+  readPendingHostLocalVllmRetirement,
+  recordPendingHostLocalVllmRetirement,
+  retireHostLocalVllmRuntime,
+} from "../../inference/local-model-profile/cleanup";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
@@ -22,6 +31,7 @@ import type {
   releaseOnboardLock,
   Session,
 } from "../../state/onboard-session";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -123,14 +133,196 @@ export function stopSandboxInferenceResources(
     // Older registry entries may not record the convention-named container.
     nim.stopNimContainer(sandboxName, { silent: true });
   }
+}
 
-  // The Ollama auth proxy is per-sandbox. GPU model unload happens during
-  // post-delete host cleanup, after the live sandbox is confirmed gone.
-  if (sandbox?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy") as {
-      killStaleProxy: () => void;
+/** Retire the shared proxy only after the caller confirms sandbox deletion. */
+export function stopDestroyedSandboxProxy(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
+  deps: {
+    killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
+  } = {},
+): void {
+  // Read remaining owners inside the proxy lifecycle lock. The destroyed
+  // sandbox's registry row still exists until post-delete cleanup completes.
+  if (
+    sandbox?.provider?.includes("ollama") ||
+    sandbox?.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
+  ) {
+    const killStaleProxyIfUnused =
+      deps.killStaleProxyIfUnused ??
+      (
+        require("../../inference/ollama/proxy") as {
+          killStaleProxyIfUnused: (hasRemainingOwner: () => boolean) => boolean;
+        }
+      ).killStaleProxyIfUnused;
+    killStaleProxyIfUnused(() =>
+      listSandboxes().sandboxes.some(
+        (entry) =>
+          entry.name !== sandboxName &&
+          (entry.provider?.includes("ollama") === true ||
+            entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV),
+      ),
+    );
+  }
+}
+
+const LOCAL_VLLM_PROVIDER = "vllm-local";
+const MANAGED_VLLM_INSPECT_HINT = `Inspect it with 'docker container inspect ${HOST_LOCAL_VLLM_CONTAINER_NAME}' before you stop it, or resolve the cause and rerun this destroy to retire it.`;
+
+export type ManagedVllmDestroyOutcome =
+  | { kind: "not-applicable" }
+  | { kind: "kept"; reason: "option" }
+  | { kind: "kept"; reason: "consumers"; consumers: number }
+  | { kind: "inventory-failed"; detail: string }
+  | ({ kind: "retirement" } & HostLocalVllmRetirementResult);
+
+export type ManagedVllmDestroyDeps = {
+  keepVllm?: boolean;
+  clearPendingRetirement?: typeof clearPendingHostLocalVllmRetirement;
+  listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
+  readPendingRetirement?: typeof readPendingHostLocalVllmRetirement;
+  recordPendingRetirement?: typeof recordPendingHostLocalVllmRetirement;
+  resolveHomeDir?: () => string;
+  retireRuntime?: typeof retireHostLocalVllmRuntime;
+  withHostLifecycleLock?: typeof withCurrentPortableHostFence;
+};
+
+function resolveDestroyHomeDir(deps: ManagedVllmDestroyDeps): string {
+  return (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
+}
+
+/** A sandbox whose runtime provider owns a host-local inference receipt retires its runtime through that provider. */
+function consumesManagedVllm(sandbox: SandboxEntry | null): sandbox is SandboxEntry {
+  return (
+    sandbox !== null &&
+    sandbox.provider === LOCAL_VLLM_PROVIDER &&
+    typeof sandbox.hostLocalInferenceReceipt !== "string"
+  );
+}
+
+/**
+ * Record the pending retirement before the registry row is removed. The row is
+ * the only proof that the sandbox used the container, so a destroy retry after
+ * an interrupted or preserved retirement needs this record to retire it.
+ */
+export function recordManagedVllmRetirementPending(
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): boolean {
+  if (deps.keepVllm === true || !consumesManagedVllm(sandbox)) return false;
+  (deps.recordPendingRetirement ?? recordPendingHostLocalVllmRetirement)(
+    sandbox.name,
+    resolveDestroyHomeDir(deps),
+  );
+  return true;
+}
+
+/** A settled outcome leaves no retirement for a retry to finish. */
+function managedVllmRetirementSettled(outcome: ManagedVllmDestroyOutcome): boolean {
+  return (
+    outcome.kind === "kept" ||
+    (outcome.kind === "retirement" &&
+      outcome.status !== "preserved" &&
+      outcome.status !== "partial")
+  );
+}
+
+/**
+ * Retire the host-global managed vLLM container after the destroyed sandbox's
+ * registry row is gone and no registered sandbox in any gateway state root
+ * still uses Local vLLM. A retry whose row is already gone owns the retirement
+ * only through the pending record for the same sandbox name.
+ */
+export async function retireManagedVllmForDestroyedSandbox(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): Promise<ManagedVllmDestroyOutcome> {
+  const home = resolveDestroyHomeDir(deps);
+  if (
+    !consumesManagedVllm(sandbox) &&
+    (deps.readPendingRetirement ?? readPendingHostLocalVllmRetirement)(home) !== sandboxName
+  ) {
+    return { kind: "not-applicable" };
+  }
+  const outcome = await decideManagedVllmRetirement(home, deps);
+  if (managedVllmRetirementSettled(outcome)) {
+    (deps.clearPendingRetirement ?? clearPendingHostLocalVllmRetirement)(home);
+  }
+  return outcome;
+}
+
+async function decideManagedVllmRetirement(
+  home: string,
+  deps: ManagedVllmDestroyDeps,
+): Promise<ManagedVllmDestroyOutcome> {
+  if (deps.keepVllm === true) return { kind: "kept", reason: "option" };
+  try {
+    return await (deps.withHostLifecycleLock ?? withCurrentPortableHostFence)(() => {
+      const consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(
+        home,
+      ).filter(({ entry }) => entry.provider === LOCAL_VLLM_PROVIDER).length;
+      if (consumers > 0) return { kind: "kept", reason: "consumers", consumers };
+      return {
+        kind: "retirement",
+        ...(deps.retireRuntime ?? retireHostLocalVllmRuntime)({ homeDir: home }),
+      };
+    });
+  } catch (error) {
+    return {
+      kind: "inventory-failed",
+      detail: error instanceof Error ? error.message : String(error),
     };
-    killStaleProxy();
+  }
+}
+
+/** Report the retirement outcome; a preserved container is a warning because the sandbox is already gone. */
+export function reportManagedVllmDestroyOutcome(
+  outcome: ManagedVllmDestroyOutcome,
+  output: { log: (message: string) => void; warn: (message: string) => void },
+): void {
+  const name = HOST_LOCAL_VLLM_CONTAINER_NAME;
+  switch (outcome.kind) {
+    case "not-applicable":
+      return;
+    case "kept":
+      output.log(
+        outcome.reason === "option"
+          ? `  Managed vLLM container '${name}' preserved (--keep-vllm).`
+          : `  Managed vLLM container '${name}' preserved: ${String(outcome.consumers)} other registered sandbox(es) use provider '${LOCAL_VLLM_PROVIDER}'.`,
+      );
+      return;
+    case "inventory-failed":
+      output.warn(
+        `Sandbox deletion succeeded, but NemoClaw could not safely confirm across the host that no sandbox still uses provider '${LOCAL_VLLM_PROVIDER}': ${outcome.detail}. The managed vLLM container '${name}' was left in place. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "retirement":
+      break;
+  }
+  switch (outcome.status) {
+    case "absent":
+      return;
+    case "kept":
+      output.log(`  Managed vLLM container '${name}' preserved: ${outcome.reason}.`);
+      return;
+    case "removed":
+      output.log(
+        `  Removed managed vLLM container '${name}' (${outcome.containerId.slice(0, 12)}); no registered sandbox uses provider '${LOCAL_VLLM_PROVIDER}'.`,
+      );
+      output.log("  Pass '--keep-vllm' or set NEMOCLAW_KEEP_VLLM=1 to keep it running next time.");
+      return;
+    case "preserved":
+      output.warn(
+        `Sandbox deletion succeeded, but the managed vLLM container '${name}' was left in place: ${outcome.reason}. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "partial":
+      output.warn(
+        `Sandbox deletion succeeded and the managed vLLM container '${name}' ${outcome.containerId ? `was removed (${outcome.containerId.slice(0, 12)})` : "is absent"}, but its private state cleanup is incomplete: ${outcome.reason}. Remaining state: ${outcome.remaining.join(", ")}. Resolve the cause, then rerun the same destroy command to finish cleanup.`,
+      );
   }
 }
 
@@ -160,6 +352,7 @@ function sessionMatchesDestroySnapshot(current: Session | null, expected: Sessio
     current.sandboxName === expected.sandboxName &&
     current.endpointUrl === expected.endpointUrl &&
     current.routerPid === expected.routerPid &&
+    current.routerPort === expected.routerPort &&
     current.routerCredentialHash === expected.routerCredentialHash
   );
 }
@@ -223,7 +416,8 @@ export async function stopModelRouterForDestroyedSandbox(
       }
       const sessionMatchesSandbox =
         session?.sandboxName === sandbox.name &&
-        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
+        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port &&
+        (session.routerPort == null || session.routerPort === port);
       destroyedSessionId = session?.sandboxName === sandbox.name ? session.sessionId : null;
 
       const listHostRegistryEntries =
@@ -244,6 +438,7 @@ export async function stopModelRouterForDestroyedSandbox(
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
       const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
+      const recordedRouterPort = sessionMatchesSandbox ? (session.routerPort ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
         : null;
@@ -294,20 +489,25 @@ export async function stopModelRouterForDestroyedSandbox(
         }
       }
 
-      // Clear when either field is set: a matching session with only a
+      // Clear when any field is set: a matching session with only a port or
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unresponsive port confirms that
-      // no router remains when no PID was found.
-      if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
+      // is gone. A completed process scan plus an unresponsive port confirms
+      // that no router remains when no PID was found.
+      if (
+        sessionMatchesSandbox &&
+        (recordedPid !== null || recordedRouterPort !== null || recordedCredentialHash !== null)
+      ) {
         deps.compareAndSwapSession(
           (current) =>
             current.sessionId === session.sessionId &&
             current.sandboxName === session.sandboxName &&
             current.endpointUrl === session.endpointUrl &&
             current.routerPid === recordedPid &&
+            (current.routerPort ?? null) === recordedRouterPort &&
             current.routerCredentialHash === recordedCredentialHash,
           (current) => {
             current.routerPid = null;
+            current.routerPort = null;
             current.routerCredentialHash = null;
             return current;
           },

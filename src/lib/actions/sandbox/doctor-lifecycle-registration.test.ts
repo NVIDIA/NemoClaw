@@ -149,7 +149,7 @@ describe("doctor lifecycle registration checks", () => {
       group: "Sandbox",
       label: "Lifecycle registration",
       status: "ok",
-      detail: expect.stringContaining("snapshot, rebuild, upgrade, recovery, and reboot"),
+      detail: expect.stringContaining("rebuild, upgrade, recovery, and reboot"),
     });
   });
 
@@ -176,7 +176,6 @@ describe("doctor lifecycle registration checks", () => {
     expect(check.detail).toContain("fromDockerfile");
     expect(check.detail).toContain("dashboardPort");
     expect(check.detail).toContain("imageTag");
-    expect(check.detail).toContain("snapshot");
     expect(check.detail).toContain("rebuild");
   });
 
@@ -196,7 +195,7 @@ describe("doctor lifecycle registration checks", () => {
 
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("invalid imageTag");
-    expect(check.detail).toContain("snapshot");
+    expect(check.detail).toContain("rebuild");
   });
 
   it("warns when registered OpenShell version metadata is null", () => {
@@ -208,7 +207,7 @@ describe("doctor lifecycle registration checks", () => {
 
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("invalid openshellVersion");
-    expect(check.detail).toContain("snapshot");
+    expect(check.detail).toContain("recovery");
   });
 
   it("reports blank managed-image version metadata only as invalid", () => {

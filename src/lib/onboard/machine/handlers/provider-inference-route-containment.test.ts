@@ -121,6 +121,7 @@ function createDeps() {
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
     reserveSandboxInferenceRoute: calls.reserveRoute,
+    hasSandboxLifecycleAuthority: vi.fn(() => false),
     registryUpdateSandbox: calls.updateSandbox,
     checkpointSandboxIdentity: vi.fn(async () => undefined),
     prepareLocalProviderForInference: vi.fn(async () => null),

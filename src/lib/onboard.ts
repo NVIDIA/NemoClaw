@@ -187,6 +187,7 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  resolveConfiguredModelRouterPort,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
@@ -507,7 +508,6 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") = require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./onboard/openshell-pin");
-
 import type { AgentDefinition } from "./agent/defs";
 import { isWebSearchEnabled } from "./inference/web-search";
 import {
@@ -1438,7 +1438,6 @@ const sandboxCreateOrchestrationRuntime = {
   assessHost,
   baseImageResolutionFlow,
   cliDisplayName,
-  cliName,
   completeOrdinaryOnboardSandboxCreation,
   confirmRecreateForSelectionDrift,
   createOnboardCreatedSandboxCompletion,
@@ -1447,6 +1446,7 @@ const sandboxCreateOrchestrationRuntime = {
   dashboardRuntime,
   dcodeAutoApprovalFlow,
   detectMessagingCredentialRotation,
+  openShellGpuDiagnostics: dockerGpuSandboxCreate.cliOpenShellGpuDiagnostics,
   get ensureAgentFixedForward() {
     return ensureAgentFixedForward;
   },
@@ -2030,12 +2030,9 @@ async function handleRemoteProviderSelection(
     );
     const compatibleNoAuth =
       selected.key === "custom" &&
-      Boolean(
-        state.endpointUrl &&
-        compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(
-          state.provider,
-          state.endpointUrl,
-        ) !== state.endpointUrl,
+      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
+        state.provider,
+        state.endpointUrl,
       );
     const useNoAuth =
       compatibleNoAuth &&
@@ -2596,7 +2593,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   onboardRuntimeBoundary.reset();
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
-    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}`,
+    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}${initialEntryOptions.requestedFromImage ? ` --from-image ${initialEntryOptions.requestedFromImage}` : ""}`,
     displayName: cliDisplayName(),
     homeDir: process.env.HOME || os.homedir(),
     loadRegistry: registry.load,
@@ -2604,23 +2601,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     sessionFile: onboardSession.SESSION_FILE,
     withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
   });
-  let portableEnvScope:
+  let portableEnvScope = null as
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
-    | null = null;
+    | null;
   const restorePortableEnvScope = () => portableEnvScope?.restore();
-  // Secure removal remains gated on successful migration of every staged legacy credential.
   let stagedLegacyKeys: string[] = [];
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
   };
-  let completed = false;
-  let preserveIncompleteSession = false;
+  let [completed, preserveIncompleteSession, preserveDeferredExitSession] = [false, false, false];
   registerIncompleteOnboardExitHandlerForSession(
     { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
     () => completed || preserveIncompleteSession,
   );
-  let preserveDeferredExitSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const entryOptions = resolveEntryOptions();
@@ -2664,12 +2658,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       });
       onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
       let selectedMessagingChannels: string[] = [];
-      let { session, fromDockerfile } =
+      let { session, fromDockerfile, fromImage } =
         await onboardSessionBootstrap.prepareOnboardSessionValidated(
           {
             resume,
             fresh,
             requestedFromDockerfile,
+            requestedFromImage: entryOptions.requestedFromImage ?? null,
             requestedSandboxName,
             cannotPrompt,
             nonInteractive: isNonInteractive(),
@@ -2785,7 +2780,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         session,
         selectedAgentName: agent?.name,
-        routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+        routerPort: resolveConfiguredModelRouterPort(),
         note,
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");
@@ -2968,6 +2963,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
+            withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
             setupNim: (
@@ -2994,14 +2990,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 revalidateSandboxIdentity,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection:
-              setupNimFlow.createHermesPortableOllamaInferenceResolver({
-                runtimeContext: lockedRuntime.portableRuntimeContext,
-                gatewayName: GATEWAY_NAME,
-                credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
-                getReservationSessionId: () => session?.sessionId,
-                runGatewayOpenshell: runCoreGatewayOpenshell,
-              }),
+            ...setupNimFlow.createHermesPortableOllamaInferenceBindings({
+              runtimeContext: lockedRuntime.portableRuntimeContext,
+              gatewayName: GATEWAY_NAME,
+              credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+              getReservationSessionId: () => session?.sessionId,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+            }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3027,6 +3022,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               hydrateCredentialEnv,
             }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+            hasSandboxLifecycleAuthority: registry.hasSandboxLifecycleAuthority,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
             promptValidatedSandboxName,
@@ -3054,7 +3050,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          rebuildPreservedEnv: opts.rebuildPreservedEnv,
           hostMounts: effectiveHostMounts,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
@@ -3126,6 +3121,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
+                  fromImage ?? null,
+                  opts.toolDisclosure ?? null,
                 ),
               ),
             ),
@@ -3181,10 +3178,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: (): import("./agent/onboard").OnboardContext => ({
+          agentSetupContext: () => ({
             step,
             sandboxCommandExecutor: sandboxExec,
-            gatewayName: GATEWAY_NAME,
+            gatewayName: GATEWAY_NAME!,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,

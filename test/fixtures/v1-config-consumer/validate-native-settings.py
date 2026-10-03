@@ -41,6 +41,10 @@ def validate_openclaw(settings_by_sandbox):
         defaults = native["agents"]["defaults"]
         heartbeat = defaults.get("heartbeat")
         gateway = native["gateway"]
+        if "diagnostics" in native:
+            assert "diagnostics-otel" in native.get("plugins", {}).get("entries", {}), (
+                f"{name}: diagnostics enabled without the diagnostics-otel plugin"
+            )
         native_settings[name] = {
             "model": {
                 "contextWindow": model["contextWindow"],
@@ -59,6 +63,14 @@ def validate_openclaw(settings_by_sandbox):
             },
             "toolDisclosure": (
                 "direct" if native["tools"]["toolSearch"] is False else "progressive"
+            ),
+            **(
+                {
+                    "diagnostics": native["diagnostics"],
+                    "diagnosticsPlugin": native["plugins"]["entries"]["diagnostics-otel"],
+                }
+                if "diagnostics" in native
+                else {}
             ),
         }
     return {

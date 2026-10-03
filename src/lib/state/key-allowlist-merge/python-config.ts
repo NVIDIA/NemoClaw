@@ -19,31 +19,25 @@ def fail(message):
     raise SystemExit(message)
 
 
-def parse_config_payload(payload, label, config_format):
+def parse_config_payload(payload, label):
     if len(payload) > MAX_CONFIG_BYTES:
         fail(f"{label} config exceeds the restore size limit")
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
         fail(f"{label} config is not valid UTF-8")
-    if config_format == "json":
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            fail(f"{label} config is not valid JSON")
-    else:
-        try:
-            parsed = tomllib.loads(text)
-        except tomllib.TOMLDecodeError:
-            fail(f"{label} config is not valid TOML")
+    try:
+        parsed = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        fail(f"{label} config is not valid TOML")
     if not isinstance(parsed, dict):
-        fail(f"{label} config must be a {config_format.upper()} object")
+        fail(f"{label} config must be a TOML object")
     return text, parsed
 
 
-def read_stdin_config(label, config_format):
+def read_stdin_config(label):
     payload = sys.stdin.buffer.read(MAX_CONFIG_BYTES + 1)
-    return parse_config_payload(payload, label, config_format)
+    return parse_config_payload(payload, label)
 
 
 def open_config_parent(base_dir, relative_path):
@@ -70,13 +64,11 @@ def open_config_parent(base_dir, relative_path):
     return fd, segments[-1]
 
 
-def read_regular_file_at(parent_fd, name, label, config_format, allow_missing):
+def read_regular_file_at(parent_fd, name, label):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(name, flags, dir_fd=parent_fd)
     except FileNotFoundError:
-        if allow_missing:
-            return "", {}, None
         fail(f"{label} config is missing or unsafe")
     except OSError:
         fail(f"{label} config is missing or unsafe")
@@ -98,7 +90,7 @@ def read_regular_file_at(parent_fd, name, label, config_format, allow_missing):
             chunks.append(chunk)
     finally:
         os.close(fd)
-    text, parsed = parse_config_payload(b"".join(chunks), label, config_format)
+    text, parsed = parse_config_payload(b"".join(chunks), label)
     return text, parsed, metadata
 
 

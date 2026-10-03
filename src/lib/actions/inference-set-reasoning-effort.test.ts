@@ -267,10 +267,11 @@ describe("inference set reasoning effort (#7659)", () => {
       deps,
     );
 
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ compatibleEndpointReasoningEffort: null })]);
   });
 
   it.each(["high", "default"] as const)(
@@ -374,9 +375,10 @@ describe("inference set reasoning effort (#7659)", () => {
       deps,
     );
 
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ compatibleEndpointReasoningEffort: null })]);
   });
 });

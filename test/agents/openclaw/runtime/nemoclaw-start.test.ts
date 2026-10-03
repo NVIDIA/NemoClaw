@@ -309,6 +309,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         readToken,
         ...(ensureToken ? ["id() { echo 0; }"] : []),
         configWriteHelperStubs,
+        `_DASHBOARD_PORT=${JSON.stringify(port)}`,
         ...(ensureToken ? [ensureGatewayToken, "ensure_gateway_token"] : []),
         exportToken,
         printDashboard,
@@ -3251,7 +3252,7 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
 describe("native configuration during simulated root startup", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("retains native settings and retired hash state while preparing gateway authentication", () => {
+  it("persists the selected gateway port while retaining native settings and retired hash state", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-root-"));
     const configDir = path.join(tmpDir, "openclaw");
     const proxyEnvFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
@@ -3311,6 +3312,7 @@ describe("native configuration during simulated root startup", () => {
         "set -euo pipefail",
         'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
         "NEMOCLAW_CMD=()",
+        "_DASHBOARD_PORT=18791",
         '_PROXY_URL=""',
         '_NO_PROXY_VAL=""',
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
@@ -3358,14 +3360,12 @@ describe("native configuration during simulated root startup", () => {
       expect(hashContents).toBe("placeholder");
       expect((fs.statSync(hashPath).mode & 0o777).toString(8)).toBe("444");
 
-      expect(fs.existsSync(proxyEnvFile)).toBe(true);
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
-      expect(proxyEnv).toMatch(/OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
       expect(proxyEnv).toContain("export OPENCLAW_GATEWAY_TOKEN");
 
       const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(updatedConfig.custom).toEqual({ retained: true });
-      expect(updatedConfig.gateway?.port).toBe(18789);
+      expect(updatedConfig.gateway?.port).toBe(18791);
       expect(fs.existsSync(path.join(configDir, "openclaw.json.nemoclaw-baseline"))).toBe(false);
       expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
       expect(proxyEnv).toContain(`OPENCLAW_GATEWAY_TOKEN='${updatedConfig.gateway.auth.token}'`);

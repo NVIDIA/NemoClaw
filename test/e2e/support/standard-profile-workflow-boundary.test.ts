@@ -89,11 +89,11 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;
     };
-    workflow.jobs["catalogue-brave-nvidia-inference"]!.with.trusted_main =
+    workflow.jobs["catalogue-nvidia-inference"]!.with.trusted_main =
       "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue-brave-nvidia-inference must pass trusted_main from the catalogue matrix",
+      "catalogue-nvidia-inference must pass trusted_main from the catalogue matrix",
     );
   });
 
@@ -319,19 +319,19 @@ describe("standard E2E execution profile", () => {
       (step) => step.name === "Write E2E evidence manifest",
     )!.run!;
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-evidence-manifest-"));
-    const artifactDirectory = path.join("e2e-artifacts", "live", "snapshot-commands");
+    const artifactDirectory = path.join("e2e-artifacts", "live", "onboard-resume");
     const environment = {
       ...process.env,
       ARTIFACT_DIRECTORY: artifactDirectory,
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
       COVERAGE_VARIANT: "default-podman",
-      EXECUTION_ID: "snapshot-commands-default-podman",
+      EXECUTION_ID: "onboard-resume-default-podman",
       JOB_STATUS: "success",
       RUNTIME_PROVIDER: "podman",
       RUN_ATTEMPT: "2",
       RUN_ID: "123",
-      TARGET_ID: "snapshot-commands",
+      TARGET_ID: "onboard-resume",
       WORKFLOW_REPOSITORY: "NVIDIA/NemoClaw",
       WORKFLOW_SHA: "b".repeat(40),
     };
@@ -354,8 +354,8 @@ describe("standard E2E execution profile", () => {
         ),
       ).toEqual({
         kind: "nemoclaw-e2e-evidence-v1",
-        targetId: "snapshot-commands",
-        executionId: "snapshot-commands-default-podman",
+        targetId: "onboard-resume",
+        executionId: "onboard-resume-default-podman",
         coverageVariant: "default-podman",
         runtimeProvider: "podman",
         candidate: { repository: "NVIDIA/NemoClaw", sha: "a".repeat(40) },

@@ -14,6 +14,7 @@ import type {
 } from "../../actions/sandbox/auto-pair-warmup";
 import { WATCHER_STATUS_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
 import { sanitizeWedgeLogLine } from "../../actions/sandbox/gateway-wedge-diagnostics";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
@@ -117,10 +118,18 @@ export const finalizationHandlerRuntime = {
 
 export async function restartNativeGatewayForInitialSetup(
   sandboxName: string,
+  gatewayName = process.env.OPENSHELL_GATEWAY || "nemoclaw",
 ): ReturnType<GatewayRestartDeps["restartSandboxGateway"]> {
-  return await finalizationHandlerRuntime
-    .loadGatewayRestart()
-    .restartSandboxGateway(sandboxName, { quiet: true });
+  return await finalizationHandlerRuntime.loadGatewayRestart().restartSandboxGateway(sandboxName, {
+    quiet: true,
+    runtimeSelection: {
+      gatewayName,
+      workspace: process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE,
+      ...(process.env.OPENSHELL_LOCAL_TLS_DIR
+        ? { localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR }
+        : {}),
+    },
+  });
 }
 
 function samePairingTarget(
@@ -376,6 +385,20 @@ export const finalizationHandlerDeps = {
             `  OpenShell readiness for '${name}' failed (${result.failure}): ${sanitizeWedgeLogLine(result.openshellError ?? "no OpenShell diagnostic returned").slice(0, 1000)}`,
           ),
       });
+  },
+  async waitForStartedOpenclawGatewayProcess(
+    name: string,
+    gatewayName: string,
+  ): Promise<boolean | null> {
+    return await finalizationHandlerRuntime
+      .loadProcessRecovery()
+      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
+  },
+  async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
+    const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
+    if (pairing.kind === "settled") return true;
+    console.error(`  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason)}`);
+    return false;
   },
   async checkAndRecoverSandboxProcesses(
     name: string,
