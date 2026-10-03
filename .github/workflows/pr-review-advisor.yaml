@@ -482,7 +482,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Download trusted advisor runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -546,7 +546,7 @@ jobs:
           node-version: "24.18.1"
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Download trusted advisor runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

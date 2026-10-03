@@ -448,7 +448,7 @@ jobs:
             nemoclaw/package-lock.json
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@bf78ffe61475b27e3c3b02a2c523b49dbd39d81a
 
       - name: Install dependencies
         run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
