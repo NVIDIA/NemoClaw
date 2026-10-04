@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
+import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
+import type {
+  OpenShellInferenceRouteObservation,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
 import { applyHermesManagedRoute } from "../hermes-managed-route";
@@ -61,11 +64,7 @@ import * as registry from "../state/registry";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { isSafeModelId } from "../validation";
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
-import {
-  InferenceSetError,
-  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-  openshellReportsProviderNotFound,
-} from "./inference-set-error";
+import { InferenceSetError } from "./inference-set-error";
 import {
   completeInferencePostCommit,
   defaultInferenceGatewayRestart,
@@ -91,6 +90,8 @@ import {
 } from "./inference-set-provider";
 import {
   buildInferenceSetFailure,
+  createDefaultInferenceSetRouteObserver,
+  createDefaultInferenceSetRouteMutator,
   queryRegisteredGatewayProviders,
 } from "./inference-set-provider-diagnostics";
 import {
@@ -193,13 +194,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   prepareRunOpenshell: () => void;
-  captureOpenshell: (
-    args: string[],
-    opts?: Pick<
-      CaptureOpenshellOptions,
-      "env" | "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
-    >,
-  ) => CaptureOpenshellResult;
+  inferenceRouteMutator: ReturnType<typeof createDefaultInferenceSetRouteMutator>;
+  inferenceRouteObserver: OpenShellInferenceRouteObserver;
   providerAdapter: InferenceSetProviderAdapter;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
@@ -325,7 +321,8 @@ function defaultDeps(): InferenceSetDeps {
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
-    captureOpenshell: (args, opts) => captureOpenshell(args, opts),
+    inferenceRouteMutator: createDefaultInferenceSetRouteMutator(captureResolvedOpenshellAsync),
+    inferenceRouteObserver: createDefaultInferenceSetRouteObserver(captureResolvedOpenshellAsync),
     providerAdapter: createDefaultInferenceSetProviderAdapter(),
     appendAuditEntry,
     log: console.log,
@@ -931,26 +928,6 @@ function assertReasoningEffortRoute(
   }
 }
 
-function openshellInferenceSetArgs(options: {
-  gatewayName: string;
-  provider: string;
-  model: string;
-  noVerify?: boolean;
-}): string[] {
-  const args = [
-    "inference",
-    "set",
-    "-g",
-    options.gatewayName,
-    "--provider",
-    options.provider,
-    "--model",
-    options.model,
-  ];
-  if (options.noVerify) args.push("--no-verify");
-  return args;
-}
-
 function assertNativeNvidiaMigrationReady(input: {
   provider: string;
   previousProvider: string;
@@ -994,55 +971,6 @@ async function prepareNativeNvidiaSelection(input: {
     expected: ensured,
   });
   return { attachment: attached.receipt, attachmentChanged: attached.changed };
-}
-
-async function applyInferenceRouteSelection(input: {
-  nativeNvidia: boolean;
-  provider: string;
-  model: string;
-  gatewayName: string;
-  noVerify: boolean;
-  retryProviderNotFound: boolean;
-  deps: InferenceSetDeps;
-}): Promise<void> {
-  if (input.nativeNvidia) {
-    input.deps.log(`  Using attached native NVIDIA provider: ${input.provider} / ${input.model}`);
-    return;
-  }
-  input.deps.log(`  Setting OpenShell inference route: ${input.provider} / ${input.model}`);
-  const setInferenceRoute = () =>
-    input.deps.captureOpenshell(
-      openshellInferenceSetArgs({
-        gatewayName: input.gatewayName,
-        provider: input.provider,
-        model: input.model,
-        noVerify: input.noVerify,
-      }),
-      {
-        ignoreError: true,
-        includeStreams: true,
-        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-      },
-    );
-  let result = setInferenceRoute();
-  if (
-    result.status !== 0 &&
-    input.retryProviderNotFound &&
-    openshellReportsProviderNotFound(
-      `${result.stderr ?? ""}\n${result.stdout ?? ""}`,
-      input.provider,
-    )
-  ) {
-    result = setInferenceRoute();
-  }
-  if (result.status === 0) return;
-  const failure = await buildInferenceSetFailure(
-    result,
-    input.provider,
-    input.gatewayName,
-    input.deps,
-  );
-  throw new InferenceSetError(failure.message, failure.exitCode);
 }
 
 async function rollbackNativeNvidiaSelection(input: {
@@ -1168,6 +1096,38 @@ export function readInSandboxConfigOrFail(
   }
 }
 
+async function observeInferenceRouteBeforeMutation(
+  deps: Pick<InferenceSetDeps, "inferenceRouteObserver">,
+  gatewayName: string,
+): Promise<OpenShellInferenceRouteObservation> {
+  const result = await deps.inferenceRouteObserver.observeInferenceRoute({
+    target: { kind: "named", gatewayName },
+  });
+  if (!result.ok) {
+    throw new InferenceSetError(
+      `Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before mutation: ${result.error.message}`,
+      1,
+    );
+  }
+  return result.value;
+}
+
+function resolveMatchingAgentConfigTarget(
+  deps: Pick<InferenceSetDeps, "resolveAgentConfig">,
+  sandboxName: string,
+  agentName: string,
+): AgentConfigTarget {
+  const target = deps.resolveAgentConfig(sandboxName);
+  const targetAgent = normalizeSandboxAgent(target.agentName);
+  if (targetAgent !== agentName) {
+    throw new InferenceSetError(
+      `Sandbox '${sandboxName}' is registered as '${agentName}' but resolved config for '${target.agentName}'.`,
+      2,
+    );
+  }
+  return target;
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1279,15 +1239,11 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-
-  const target = deps.resolveAgentConfig(sandboxName);
-  const targetAgent = normalizeSandboxAgent(target.agentName);
-  if (targetAgent !== agentName) {
-    throw new InferenceSetError(
-      `Sandbox '${sandboxName}' is registered as '${agentName}' but resolved config for '${target.agentName}'.`,
-      2,
-    );
-  }
+  const preMutationRoute = await observeInferenceRouteBeforeMutation(
+    deps,
+    preparedRoute.gatewayName,
+  );
+  const target = resolveMatchingAgentConfigTarget(deps, sandboxName, agentName);
   // Explicit custom routes may start an HTTPS-pin adapter during finalization,
   // so reject an unsupported API family before that first possible mutation.
   if (preparedRoute.preliminaryExplicitMetadata) {
@@ -1436,6 +1392,7 @@ async function runInferenceSetWithoutHostLock(
     previousAttachment: previousNativeNvidiaAttachment,
     sandboxName,
   });
+  const rollbackRoute = preMutationRoute.state === "configured" ? preMutationRoute.route : null;
   // Capture before registry writes: a retry already has the new route, while
   // the sandbox config can still carry the previous endpoint's context window.
   const retryingOpenClawConfigSync = entry.openClawConfigSyncPending === true;
@@ -1448,16 +1405,21 @@ async function runInferenceSetWithoutHostLock(
         [previousInferenceApi, preMutationInferenceApi],
         [entry.endpointUrl ?? null, registryMetadata.endpointUrl ?? null],
       ].some(([previous, next]) => previous !== next));
-  if (probeDirectSandboxBridge && !selectingNativeNvidia && (!previousProvider || !previousModel)) {
+  if (
+    !selectingNativeNvidia &&
+    (directProviderBinding || httpsPinProviderBinding || probeDirectSandboxBridge) &&
+    !rollbackRoute
+  ) {
     throw new InferenceSetError(
-      `Cannot verify the sandbox-only provider route because sandbox '${sandboxName}' does not record ` +
-        "the previous provider and model needed to restore its OpenShell inference selection.",
+      `Cannot change the provider-backed route because gateway '${preparedRoute.gatewayName}' has no configured ` +
+        "inference selection to restore if provider commit or sandbox verification fails.",
       2,
     );
   }
 
   let appliedProvider = false;
   let appliedInferenceSelection = false;
+  let ambiguousInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
@@ -1465,31 +1427,32 @@ async function runInferenceSetWithoutHostLock(
   let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
   let nativeNvidiaAttachmentChanged = false;
   let nativeNvidiaRegistryCommitted = false;
-  const restorePreviousInferenceSelection = (): string | null => {
+  const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
       appliedInferenceSelection = false;
       return null;
     }
-    let restoreResult: CaptureOpenshellResult;
-    try {
-      restoreResult = deps.captureOpenshell(
-        openshellInferenceSetArgs({
-          gatewayName: preparedRoute.gatewayName,
-          provider: previousProvider,
-          model: previousModel,
-          noVerify: true,
-        }),
-        {
-          ignoreError: true,
-          includeStreams: true,
-          maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-        },
+    if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
+    if (rollbackRoute.provider === provider && rollbackRoute.model === model) {
+      return (
+        `the route observed immediately before this attempt already selected '${provider}' / '${model}', ` +
+        "so there is no distinct prior inference selection to restore"
       );
-    } catch {
-      return "the restore command could not be invoked";
     }
-    if (restoreResult.status !== 0) {
-      return `the restore command exited with status ${restoreResult.status ?? "unknown"}`;
+    const restoreResult = await deps.inferenceRouteMutator.setInferenceRoute({
+      target: { kind: "named", gatewayName: preparedRoute.gatewayName },
+      route: rollbackRoute,
+      verification: "skip",
+    });
+    if (!restoreResult.ok) {
+      if (
+        !restoreResult.ambiguous &&
+        restoreResult.error.kind === "command" &&
+        restoreResult.error.exitCode !== null
+      ) {
+        return `the restore command exited with status ${String(restoreResult.error.exitCode)}`;
+      }
+      return restoreResult.error.message;
     }
     appliedInferenceSelection = false;
     return null;
@@ -1550,7 +1513,7 @@ async function runInferenceSetWithoutHostLock(
     }
     if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
-      if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
+      if (providerMutation.action === "update" && !rollbackRoute) {
         throw new InferenceSetError(
           `Cannot update existing ${httpsPinProviderBinding ? "HTTPS-pinned " : ""}provider '${provider}' because sandbox '${sandboxName}' ` +
             `does not record the previous provider and model needed to restore its inference selection.`,
@@ -1561,28 +1524,50 @@ async function runInferenceSetWithoutHostLock(
 
     await assertProviderCurrentBeforeSelection?.();
     if (routeImpactWarning) deps.log(`  ${routeImpactWarning}`);
-    await applyInferenceRouteSelection({
-      nativeNvidia: selectingNativeNvidia,
-      provider,
-      model,
-      gatewayName: preparedRoute.gatewayName,
-      noVerify: effectiveNoVerify,
-      retryProviderNotFound: Boolean(directProviderBinding),
-      deps,
-    });
+    if (selectingNativeNvidia) {
+      deps.log(`  Using attached native NVIDIA provider: ${provider} / ${model}`);
+    } else {
+      deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
+      const setInferenceRoute = () =>
+        deps.inferenceRouteMutator.setInferenceRoute({
+          target: { kind: "named", gatewayName: preparedRoute.gatewayName },
+          route: { provider, model },
+          verification: effectiveNoVerify ? "skip" : "required",
+        });
+      let setResult = await setInferenceRoute();
+      if (
+        !setResult.ok &&
+        !setResult.ambiguous &&
+        directProviderBinding &&
+        setResult.error.kind === "command" &&
+        setResult.error.reason === "provider_not_found"
+      ) {
+        setResult = await setInferenceRoute();
+      }
+      if (!setResult.ok) {
+        ambiguousInferenceSelection = setResult.ambiguous;
+        const failure = await buildInferenceSetFailure(
+          setResult.error,
+          setResult.ambiguous,
+          preparedRoute.gatewayName,
+          deps,
+        );
+        throw new InferenceSetError(failure.message, failure.exitCode);
+      }
+    }
     appliedInferenceSelection = true;
     if (providerMutation) {
       try {
         await providerMutation.commit();
         appliedProvider = true;
       } catch (providerError) {
-        const restoreFailure = restorePreviousInferenceSelection();
+        const restoreFailure = await restorePreviousInferenceSelection();
         restoredSelectionAfterProviderFailure = restoreFailure === null;
         throw providerCommitFailureAfterSelection({
           providerError,
           restoreFailure,
-          previousProvider,
-          previousModel,
+          previousProvider: rollbackRoute?.provider ?? previousProvider,
+          previousModel: rollbackRoute?.model ?? previousModel,
         });
       }
     }
@@ -1633,17 +1618,17 @@ async function runInferenceSetWithoutHostLock(
         };
       }
       if (!probe.ok) {
-        const restoreFailure = restorePreviousInferenceSelection();
+        const restoreFailure = await restorePreviousInferenceSelection();
         if (restoreFailure) {
           throw new InferenceSetError(
             `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
-              `Failed to restore the previous OpenShell inference selection '${previousProvider}' / ` +
-              `'${previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
+              `Failed to restore the previous OpenShell inference selection '${rollbackRoute?.provider ?? previousProvider}' / ` +
+              `'${rollbackRoute?.model ?? previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
           );
         }
         throw new InferenceSetError(
           `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
-            `The previous OpenShell inference selection was restored to '${previousProvider}' / '${previousModel}'.`,
+            `The previous OpenShell inference selection was restored to '${rollbackRoute?.provider ?? previousProvider}' / '${rollbackRoute?.model ?? previousModel}'.`,
         );
       }
     }
@@ -1875,6 +1860,7 @@ async function runInferenceSetWithoutHostLock(
       deps,
     });
     if (!providerMutation) throw error;
+    if (ambiguousInferenceSelection) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;

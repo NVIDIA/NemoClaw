@@ -43,6 +43,62 @@ describe("destroy shared Ollama proxy cleanup", () => {
     expect(killStaleProxyIfUnused.mock.calls[0]?.[0]()).toBe(true);
   });
 
+  it("keeps the proxy for an unpublished route reservation in another registry root", () => {
+    const target = { name: "alpha", provider: "ollama-local" } as SandboxEntry;
+    const pending = {
+      name: "pending-beta",
+      provider: "compatible-endpoint",
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      pendingRouteReservation: true,
+      gatewayPort: 8245,
+    } as SandboxEntry;
+    const killStaleProxyIfUnused = vi.fn((hasRemainingOwner: () => boolean) => {
+      return !hasRemainingOwner();
+    });
+
+    stopDestroyedSandboxProxy(
+      target.name,
+      target,
+      () => ({ sandboxes: [target], defaultSandbox: target.name }),
+      {
+        killStaleProxyIfUnused,
+        listInferenceRouteOwners: () => [target, pending],
+      },
+    );
+
+    expect(killStaleProxyIfUnused).toHaveBeenCalledOnce();
+    expect(killStaleProxyIfUnused.mock.calls[0]?.[0]()).toBe(true);
+  });
+
+  it("keeps the proxy for a same-named owner in another gateway root", () => {
+    const target = {
+      name: "alpha",
+      provider: "ollama-local",
+      gatewayPort: 8080,
+    } as SandboxEntry;
+    const peer = {
+      name: "alpha",
+      provider: "ollama-local",
+      gatewayPort: 8245,
+    } as SandboxEntry;
+    const killStaleProxyIfUnused = vi.fn((hasRemainingOwner: () => boolean) => {
+      return !hasRemainingOwner();
+    });
+
+    stopDestroyedSandboxProxy(
+      target.name,
+      target,
+      () => ({ sandboxes: [target], defaultSandbox: target.name }),
+      {
+        killStaleProxyIfUnused,
+        listInferenceRouteOwners: () => [target, peer],
+      },
+    );
+
+    expect(killStaleProxyIfUnused).toHaveBeenCalledOnce();
+    expect(killStaleProxyIfUnused.mock.calls[0]?.[0]()).toBe(true);
+  });
+
   it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
     "stops the shared proxy after its final %s owner is removed",
     (provider) => {

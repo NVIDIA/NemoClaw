@@ -247,7 +247,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       deps,
     );
 
-    expect(
+expect(
       deps.calls.captureOpenshell.mock.calls.filter(
         ([args]) => args[0] === "inference" && args[1] === "set",
       ),
