@@ -187,9 +187,15 @@ The managed launchers disable the following mutable or unsupported behavior:
 
 Interactive and headless sessions use Deep Agents Code's native behavior for shell allowlists, startup commands, interpreter settings, and user hooks.
 Native tool and MCP commands, Agent Client Protocol (ACP) mode, and remote asynchronous subagent configuration reach the pinned runtime.
-These interfaces remain subject to the managed credential, inference, and MCP controls below.
-These processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
+Managed inference and MCP requests retain the controls described below.
+Local agent processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
 OpenShell preserves the complete native home, and managed rebuild transfers it without interpreting `hooks.json` or selected `config.toml` keys.
+
+Remote asynchronous subagents use the URL and headers from native configuration.
+The native client sends task input and those headers to that URL, subject to OpenShell network policy.
+These requests do not use the managed inference or MCP routes; the remote service has its own tools and controls.
+Header values stored in native configuration are visible inside the sandbox and are not host-managed secrets.
+Only configure services you trust to receive the task input and header values.
 
 The managed model constructor accepts Deep Agents Code's `openai` and `openrouter` provider paths and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
