@@ -11,7 +11,7 @@ content:
 ---
 NVIDIA Endpoints routes NemoClaw to models hosted on [build.nvidia.com](https://build.nvidia.com) through an OpenAI-compatible API.
 NemoClaw attaches a least-privilege OpenShell provider to the sandbox, and the agent calls the NVIDIA endpoint directly through that provider.
-The provider allows only model discovery and Chat Completions requests from the supported agent binaries.
+The provider allows only model discovery and Chat Completions requests from the agent-runtime and readiness-verification binaries listed in its provider profile.
 
 ## Credential
 

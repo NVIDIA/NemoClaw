@@ -906,6 +906,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     hostPreparation: "hermes-swap",
     runnerComparison: true,
     shard: "native-nvidia",
+    owningPaths: [
+      "src/lib/inference/native-nvidia/index.ts",
+      "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
@@ -1159,6 +1163,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/inference/native-nvidia/index.ts",
+      "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
       "src/lib/actions/inference-set.ts",
       "src/lib/onboard.ts",
       "src/lib/onboard/machine/core-flow-phases.ts",
