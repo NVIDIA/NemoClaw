@@ -128,8 +128,25 @@ wrappers incl. `chad-self-improve`, `chad-skill-watch`, `chad-memory-curator`,
 - **Effort:** M (registry + shim routing) + L (Tier 1 isolation).
 
 ### B. Onboarding: intake → rate-limit → paywall → subscribe
-- **Now:** nothing; Cloudflare Access is a manual email list.
-- **Build:**
+
+**Built 2026-10-01 (scaffold complete, deploy-pending):**
+- **Intake:** `supachad-landing/worker.js` `POST /api/signup` → KV `signup:<email>`.
+- **Rate-limit:** `chad_rate_limit` OWUI filter — **now `is_active=1 + is_global=1`**
+  (the §F audit found it was active-but-not-global, i.e. not enforcing; fixed). Caps
+  non-exempt models at 50 msgs/user/UTC-day; chad+admins exempt.
+- **Paywall:** `worker.js` `POST /api/stripe/webhook` — HMAC-sig-verified (scheme
+  matches Stripe's `t.<body>` SHA-256, verified against a node reference),
+  `checkout.session.completed`/`invoice.paid` → `grantPremium()` → KV `premium:<email>`
+  + queued CF Access add. Wire a Stripe Payment Link → this endpoint.
+- **Premium → shim bridge (automated):** `scripts/openwebui/sync-premium-allowlist.sh`
+  GETs `/api/premium/list` (admin), set-unions emails into host
+  `CHAD_OPERATOR_ALLOWLIST`, runs `chad-ops gate-sync`. Merge logic tested
+  (case-insensitive dedup, drops malformed). Wire as a 15-min host cron.
+- **Deploy-pending:** create KV namespace, set secrets (`ADMIN_SECRET`,
+  `STRIPE_WEBHOOK_SECRET`), `wrangler deploy`; CF-Access auto-grant stays queued until
+  the token has Access:Edit (see §C).
+
+- **Original plan (for reference):**
   1. **Intake:** a tiny signup page (Cloudflare Worker or the landing site) →
      writes requests to a store (Worker KV / a `signups` table / an email to
      `supachad@proton.me`). *(You said "even if it has to be manually adding to
@@ -145,22 +162,46 @@ wrappers incl. `chad-self-improve`, `chad-skill-watch`, `chad-memory-curator`,
 - **Effort:** M (intake + rate-limit) + M (Stripe link + webhook → tier flip).
 
 ### C. One-time invite links / per-use URLs + CF Access automation
-- **Now:** not built; CF Access is edited by hand.
-- **Build:** a **Cloudflare Worker** that mints single-use tokens
-  (`/invite/<token>`); on redemption it (a) adds the email to the CF Access
-  policy via the CF API (token already in `.env`: `CF_API_TOKEN`/`CF_ACCOUNT_ID`/
-  `CF_ZONE_ID` — **note: needs Access:Edit scope added**, it currently lacks
-  cache-purge too) and (b) sets the tier in the registry. Tokens stored in Worker
-  KV with a `used` flag + TTL.
-- **Effort:** M. **Prereq:** broaden the CF API token scope (Access edit).
+
+**Built 2026-10-01 (scaffold complete, deploy-pending):** `worker.js`
+`POST /api/invite/mint` (admin, `X-Admin-Secret`) → single-use token, 14-day TTL,
+KV `invite:<token>`; `GET /invite/<token>` → consume + `addToCloudflareAccess()`
+(queued until ready) + premium recorded. See `INVITE-SETUP.md`.
+
+**CF API token scope — the one blocker (explained):**
+- The current `CF_API_TOKEN` (in `scripts/openwebui/.env`) is **too narrow** — a live
+  `purge_cache` call failed with "Authentication error", confirming no Cache-Purge,
+  and it has no Access edit either.
+- The worker's `addToCloudflareAccess()` needs exactly **`Access: Apps and Policies`
+  = Edit**, scoped to the account (`CF_ACCOUNT_ID`). No Zone perms. It calls
+  `GET`/`PUT /accounts/{acct}/access/apps/{app}/policies/{policy}` to append
+  `{email:{email}}` to the policy `include` list.
+- **Recommendation:** mint a *dedicated* token for the worker (don't widen the OWUI
+  one). Dashboard → My Profile → API Tokens → Create Custom Token → add
+  "Access: Apps and Policies: Edit" on the account. Then `wrangler secret put
+  CF_API_TOKEN` (+ `CF_ACCESS_APP_ID`/`CF_ACCESS_POLICY_ID`, found via the Access app's
+  Policies in Zero Trust), and flip `CF_ACCESS_READY="1"` in `wrangler.toml`.
+- Until then: redemptions/checkouts succeed and **queue** the grant in KV; the
+  `sync-premium-allowlist.sh` bridge still grants premium `chad` access
+  (shim allowlist) independent of CF Access — CF Access only gates whether the email
+  can *log in* to OWUI at all, which for existing users is already satisfied.
+- **Effort:** S once the token is minted (flip one var + 3 secrets).
 
 ### D. Runs app → newest smithers.sh
-- **Now:** `GATEWAY-UI-MIGRATION-PLAN.md` (behind flag, hybrid).
-- **Build:** execute Upgrade A first (live run detail/events via gateway-client)
-  behind `CHAD_RUNS_GATEWAY=1`; verify exit criteria; then Upgrade B (components +
-  Bun build). Bump `chad-smithers` to the latest `smithers-orchestrator`
-  (currently 0.26.1 per memory; check latest).
-- **Effort:** L (new build toolchain + hybrid wiring).
+
+**Research verified — 2026-10-01 (trial install + bun runtime check):**
+
+- **Version gap:** chad-smithers pins `smithers-orchestrator` + `@smithers-orchestrator/agents` at `^0.26.1`; latest is **0.32.0** (6 minors: 0.27→0.32).
+- **What we import:** `createSmithers`, `Debate`, `Loop`, `Poller`, `ScanFixVerify` — all top-level, re-exported from `@smithers-orchestrator/components` (per [[reference_smithers_composites_import]]).
+- **Compatibility: VERIFIED SAFE at the import level.** Trial-installed 0.32.0 in a throwaway copy (773 pkgs, clean, exit 0). Under **bun 1.3.13** all 5 symbols resolve; `@smithers-orchestrator/agents` resolves; `smithers --version` → 0.32.0. (Note: the core entry uses `bun:` scheme imports → must run under **bun**, not node — which is how `smithers up` already runs.) Exports are purely **additive** — 0.32.0 adds DelegationV2, Monitor/DriftDetector/DeriskLoop composites, and the full gateway surface; nothing we use was removed/renamed.
+- **Runs-UI migration is now unblocked.** `gateway-client`, `gateway-react`, `gateway-ui` ship at 0.32.0 as **subpath exports** of `smithers-orchestrator` (also as matching scoped packages) — verified `smithers-orchestrator/gateway-client` resolves. Version-skew constraint in `GATEWAY-UI-MIGRATION-PLAN.md` (gateway pkgs must match core) is satisfied by upgrading core to 0.32.0. **So the core bump is the prerequisite for Upgrade A/B.**
+- **Residual risk:** behavioral prop/semantic drift in `createSmithers` options + composite props across 6 minors. No compile step exists (JSX run via `smithers up`), so the validation gate is `DRY_RUN=1 smithers up experiments.jsx` on a branch after the bump — not catchable statically.
+
+**Upgrade plan:**
+1. Branch; bump both deps to `^0.32.0`; `npm install` in `scripts/chad-smithers/`.
+2. `DRY_RUN=1 smithers up experiments.jsx` + `node agents.js --probe` → fix any prop drift the dry-run surfaces. Gate: scaffolds parse + plan.
+3. Then execute `GATEWAY-UI-MIGRATION-PLAN.md` Upgrade A (live run detail via `smithers-orchestrator/gateway-client`, behind `CHAD_RUNS_GATEWAY=1`), verify exit criteria, then Upgrade B (gateway-ui island + Bun build).
+- **Effort:** core bump **S** (verified low-risk); Upgrade A **M**; Upgrade B **L** (new build toolchain).
 
 ### E. Upstream nemoclaw auto-sync + merge
 - **Now:** none; maintainer skills (`nemoclaw-maintainer-day/*`) are manual.
@@ -175,11 +216,25 @@ wrappers incl. `chad-self-improve`, `chad-skill-watch`, `chad-memory-curator`,
 
 ### F. Code/feature audit for full functionality
 - Terminal stack: ✅ hardened this week (WebVM + Docker + agent bridge + tools).
-- **Remaining audit targets:** the 30+ cron wrappers (which still fire? last-run
-  audit), the chad-smithers experiment loops, nvidia-proxy/liveness, the 5
-  un-gated agent launch sites noted in [[project_chad_operator_allowlist_gate]],
-  and OWUI function/tool inventory.
-- **Effort:** L, incremental. Deliver as a checklist with per-item verify.
+
+**Live audit — 2026-10-01 (post-recovery):**
+
+| Item | Status | Finding |
+|------|--------|---------|
+| Crons registered + scheduled | ✅ | 10 crons, correct schedules (email-check hourly, backup /6h, dream 03:30, prune Sun 02:00, etc.) |
+| Cron **work** executes | ✅ | Latest `workspace-backup` pushed **36 files incl. brain/chat exports, 0 errors** — the gbrain fix means the brain backs up now too |
+| Cron **delivery** (announce) | ⚠️ | All crons show `announce -> last -> no route, will fail-closed: Channel…`; `openclaw channel list` is **empty** → results never reach a chat. Work still completes; only operator notification is lost. Root cause is the tabled Moshi/channel route ([[project_moshi_approval_buttons_tabled]]). Not a functional break. |
+| `chad_rate_limit` filter | 🐛→✅ | Was `is_active=1` but `is_global=0` → **not actually enforcing** on chad-lite (filters only run on attached models unless global). **Fixed 2026-10-01: toggled global**; now caps chad-lite, chad+admins exempt via the filter's own logic. |
+| chad-shim :8901 (premium) | ✅ | Responding (404 on /health = no health route; chat path works, tiers verified earlier) |
+| LM Studio :1234 (chad-lite) | ✅ | `nvidia/nemotron-3-nano-4b` loaded. **Bonus:** `text-embedding-nomic-embed-text-v1.5` is already loaded here → the deferred nomic-embed swap (§5b follow-up) is now cheap (model already served; just needs pod→host:1234 + L7 policy). |
+| nvidia-proxy :3002 | ✅ | HTTP 200; still live for NVIDIA-hosted route |
+| searxng | ✅ | Up (web search for chad-lite tools) |
+| OWUI functions inventory | ✅ | Only `chad_rate_limit` installed (now global+active). No stray/dead functions. |
+| Un-gated launch sites (§[[project_chad_operator_allowlist_gate]]) | ✅ | Closed in prior work (shim fail-closed + gate-sync). |
+
+- **Net:** everything functional; the one latent bug (rate-limit not global) is fixed.
+  The only open gap is cron→operator delivery (no channel), which is the tabled Moshi
+  item, not a regression. **Effort remaining: S** (optional: wire a delivery channel).
 
 ### G. Skills + gbrain/gstack re-test
 - **Now:** openwebui skill updated this week.
