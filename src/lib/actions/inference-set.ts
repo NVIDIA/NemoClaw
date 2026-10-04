@@ -998,6 +998,57 @@ async function rollbackNativeNvidiaSelection(input: {
   }
 }
 
+async function detachPreviousNativeNvidiaBeforePublish(input: {
+  selectingNativeNvidia: boolean;
+  previousAttachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  deps: InferenceSetDeps;
+}): Promise<boolean> {
+  if (input.selectingNativeNvidia || !input.previousAttachment) return false;
+  await detachNativeNvidiaProvider({
+    adapter: input.deps.providerAdapter,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.previousAttachment,
+  });
+  return true;
+}
+
+function nativeNvidiaDepartureRegistryFields(
+  detached: boolean,
+): Pick<SandboxEntry, "nativeNvidiaProviderAttachment"> | Record<string, never> {
+  return detached ? { nativeNvidiaProviderAttachment: undefined } : {};
+}
+
+async function restorePreviousNativeNvidiaAfterFailedPublish(input: {
+  detached: boolean;
+  committed: boolean;
+  previousAttachment?: NativeNvidiaProviderAttachment;
+  gatewayName: string;
+  sandboxName: string;
+  error: unknown;
+  deps: InferenceSetDeps;
+}): Promise<void> {
+  if (!input.detached || input.committed || !input.previousAttachment) return;
+  try {
+    await ensureNativeNvidiaProviderAttached({
+      adapter: input.deps.providerAdapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: input.previousAttachment,
+    });
+  } catch (reattachError) {
+    const detail = input.error instanceof Error ? input.error.message : String(input.error);
+    const recoveryDetail =
+      reattachError instanceof Error ? reattachError.message : String(reattachError);
+    throw new InferenceSetError(
+      `${detail}\n  Native NVIDIA access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
+      input.error instanceof InferenceSetError ? input.error.exitCode : 1,
+    );
+  }
+}
+
 async function applyInferenceRouteSelection(input: {
   nativeNvidia: boolean;
   provider: string;
@@ -1502,6 +1553,8 @@ async function runInferenceSetWithoutHostLock(
   let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
   let nativeNvidiaAttachmentChanged = false;
   let nativeNvidiaRegistryCommitted = false;
+  let previousNativeNvidiaDetached = false;
+  let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
       appliedInferenceSelection = false;
@@ -1688,6 +1741,17 @@ async function runInferenceSetWithoutHostLock(
       }
     }
 
+    // Removing native NVIDIA access is a security gate for publishing another
+    // route. Do not commit the non-native registry/config while the sandbox can
+    // still use the credential-bearing attached provider.
+    previousNativeNvidiaDetached = await detachPreviousNativeNvidiaBeforePublish({
+      selectingNativeNvidia,
+      previousAttachment: previousNativeNvidiaAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      deps,
+    });
+
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
     const registryFields = (preferredInferenceApi: string | null) => ({
@@ -1708,6 +1772,7 @@ async function runInferenceSetWithoutHostLock(
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...nativeNvidiaDepartureRegistryFields(previousNativeNvidiaDetached),
     });
     if (
       !deps.updateSandbox(
@@ -1726,6 +1791,7 @@ async function runInferenceSetWithoutHostLock(
       );
     }
     nativeNvidiaRegistryCommitted = Boolean(nativeNvidiaProviderAttachment);
+    previousNativeNvidiaDetachCommitted = previousNativeNvidiaDetached;
 
     const preferredInferenceApi =
       explicitPreferredInferenceApi ??
@@ -1905,6 +1971,15 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    await restorePreviousNativeNvidiaAfterFailedPublish({
+      detached: previousNativeNvidiaDetached,
+      committed: previousNativeNvidiaDetachCommitted,
+      previousAttachment: previousNativeNvidiaAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      error,
+      deps,
+    });
     await rollbackNativeNvidiaSelection({
       attachmentChanged: nativeNvidiaAttachmentChanged,
       registryCommitted: nativeNvidiaRegistryCommitted,
@@ -2009,26 +2084,6 @@ export async function runInferenceSet(
     // leave its recovery marker pending if later provider cleanup fails.
     if (mutation.openClawConfigSyncPending) {
       clearOpenClawConfigSyncPending(selected.sandboxName, deps);
-    }
-    const priorNativeNvidiaAttachment = normalizeNativeNvidiaProviderAttachment(
-      lockedSelection.entry.nativeNvidiaProviderAttachment,
-    );
-    if (priorNativeNvidiaAttachment && !isNativeNvidiaProvider(mutation.result.provider)) {
-      await detachNativeNvidiaProvider({
-        adapter: deps.providerAdapter,
-        target: { kind: "named", gatewayName },
-        sandboxName: selected.sandboxName,
-        expected: priorNativeNvidiaAttachment,
-      });
-      if (
-        !deps.updateSandbox(selected.sandboxName, {
-          nativeNvidiaProviderAttachment: undefined,
-        })
-      ) {
-        throw new InferenceSetError(
-          `Native NVIDIA access was removed from sandbox '${selected.sandboxName}', but NemoClaw could not clear its attachment receipt. Retry this command before another provider change.`,
-        );
-      }
     }
     return mutation.result;
   });

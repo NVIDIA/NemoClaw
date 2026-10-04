@@ -502,6 +502,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
         probeProviderHealthImpl: () => null,
         probeSandboxInferenceGatewayHealthImpl: probeSharedRoute,
         probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => undefined,
       },
     } as never);
 
@@ -520,6 +521,56 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       95_000,
     );
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("reports a missing native NVIDIA attachment before probing inference", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    const probeProvider = vi.fn(() => null);
+    const verifyAttachment = vi.fn(async () => {
+      throw new Error(
+        "Sandbox 'alpha' does not have its native NVIDIA inference provider attached.",
+      );
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: probeProvider,
+        probeSandboxInferenceInvocationImpl: invoke,
+        verifyNativeNvidiaProviderAttachmentImpl: verifyAttachment,
+      },
+    } as never);
+
+    expect(verifyAttachment).toHaveBeenCalledOnce();
+    expect(probeProvider).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      providerLabel: "Native NVIDIA provider attachment",
+      detail: expect.stringContaining(
+        "Native NVIDIA provider attachment is unavailable for sandbox 'alpha'",
+      ),
+    });
+    expect(snapshot.inferenceHealth?.detail).toContain(
+      "Recreate the sandbox to restore native NVIDIA inference.",
+    );
   });
 
   it("reports the recorded native NVIDIA route when the shared route differs", async () => {

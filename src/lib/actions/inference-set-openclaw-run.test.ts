@@ -82,11 +82,65 @@ describe("runInferenceSet OpenClaw routing", () => {
       }),
     );
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
-    expect(deps.calls.restartSandboxGateway.mock.invocationCallOrder[0]).toBeLessThan(
-      detachProvider.mock.invocationCallOrder[0],
+    expect(detachProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.calls.restartSandboxGateway.mock.invocationCallOrder[0],
     );
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      nativeNvidiaProviderAttachment: undefined,
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeNvidiaProviderAttachment: undefined }),
+    );
+  });
+
+  it("does not publish a non-native route when native NVIDIA detach fails", async () => {
+    const providerAdapter = {
+      getProvider: vi.fn(async () => ({
+        ok: true,
+        value: {
+          name: "nemoclaw-nvidia-prod-v1",
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: {
+            id: "11111111-2222-4333-8444-555555555555",
+            resourceVersion: 1,
+          },
+        },
+      })),
+      detachProvider: vi.fn(async () => ({
+        ok: false,
+        error: { kind: "command", reason: "failed", message: "detach denied" },
+      })),
+    } as unknown as OpenShellProviderAdapter;
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
+      models: { providers: {} },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/old-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        },
+      },
+      providerAdapter,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps),
+    ).rejects.toThrow("Could not detach native NVIDIA provider from sandbox 'alpha'");
+
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(config.agents).toEqual({
+      defaults: { model: { primary: "inference/nvidia/old-model" } },
     });
   });
 
