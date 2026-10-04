@@ -225,6 +225,46 @@ describe("garbage collection across gateway registries", () => {
     expect(mocks.dockerRmi).not.toHaveBeenCalled();
   });
 
+  it("preserves an image registered while confirmation is open (#12582)", async () => {
+    writeRegistry(8080, aliceImage);
+    mocks.prompt.mockImplementation(async () => {
+      expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json.lock"))).toBe(false);
+      writeRegistry(8090, bobImage);
+      return "y";
+    });
+
+    mocks.dockerRmi.mockImplementation(() => {
+      expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json.lock", "owner"))).toBe(
+        true,
+      );
+      expect(
+        fs.existsSync(
+          path.join(home, ".nemoclaw", "gateways", "8090", "sandboxes.json.lock", "owner"),
+        ),
+      ).toBe(true);
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    await collect({});
+
+    expect(mocks.dockerRmi.mock.calls.map(([tag]) => tag)).toEqual([orphanImage]);
+  });
+
+  it("refuses deletion when sibling state becomes unsafe during confirmation (#12582)", async () => {
+    writeRegistry(8080, aliceImage);
+    mocks.prompt.mockImplementation(async () => {
+      fs.writeFileSync(writeRegistry(8090, bobImage), "{");
+      return "y";
+    });
+
+    await expect(collect({})).rejects.toThrow(/gateway state/);
+
+    expect(mocks.dockerRmi).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json.lock"))).toBe(false);
+    expect(
+      fs.existsSync(path.join(home, ".nemoclaw", "gateways", "8090", "sandboxes.json.lock")),
+    ).toBe(false);
+  });
+
   it("reports Docker deletion failures after protecting registered images (#12582)", async () => {
     writeRegistry(8080, aliceImage);
     writeRegistry(8090, bobImage);
