@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
+  listHostGatewayRegistryEntries: vi.fn(),
   getSandbox: vi.fn(),
   recordSandboxStopIntent: vi.fn(),
   updateSandbox: vi.fn(),
@@ -55,6 +56,10 @@ vi.mock("../state/registry", () => ({
   getSandbox: mocks.getSandbox,
   recordSandboxStopIntent: mocks.recordSandboxStopIntent,
   updateSandbox: mocks.updateSandbox,
+}));
+vi.mock("../state/gateway-registry", async () => ({
+  resolveHome: (await import("../state/state-root")).resolveHome,
+  listHostGatewayRegistryEntries: mocks.listHostGatewayRegistryEntries,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -1474,13 +1479,10 @@ describe("garbageCollectImages", () => {
         ? "nemoclaw-sandbox-local:gc-test-orphan-111\t3GB\nnemoclaw-sandbox-local:live-222\t2GB"
         : "openshell/sandbox-from:in-use\t1GB",
     );
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [
-        { imageTag: "nemoclaw-sandbox-local:live-222" },
-        { imageTag: "openshell/sandbox-from:in-use" },
-      ],
-      defaultSandbox: null,
-    });
+    mocks.listHostGatewayRegistryEntries.mockReturnValue([
+      { entry: { imageTag: "nemoclaw-sandbox-local:live-222" } },
+      { entry: { imageTag: "openshell/sandbox-from:in-use" } },
+    ]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await garbageCollectImages({ dryRun: true });
@@ -1488,8 +1490,6 @@ describe("garbageCollectImages", () => {
     const out = logSpy.mock.calls.flat().join("\n");
     logSpy.mockRestore();
 
-    // The local orphan is reported, the still-registered local image is not,
-    // and both repos are scanned.
     expect(out).toContain("nemoclaw-sandbox-local:gc-test-orphan-111");
     expect(out).not.toContain("nemoclaw-sandbox-local:live-222");
     const scannedRepos = mocks.dockerListImagesFormat.mock.calls.map((call) => call[0]);
