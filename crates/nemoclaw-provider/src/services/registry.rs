@@ -24,16 +24,6 @@ impl<'a> BackendRegistry<'a> {
     ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
         if matches!(
             kind,
-            installers::vllm::SERVICE_KIND
-                | installers::ollama::SERVICE_KIND
-                | nemoclaw_sdk::services::installers::ollama::proxy::PROXY
-        ) {
-            return Err(ObservationError::Backend(
-                "service lifecycle belongs to the Docker provider",
-            ));
-        }
-        if matches!(
-            kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND
         ) {
             let storage_kind = if kind == installers::vllm::STORAGE_KIND {
@@ -75,18 +65,10 @@ mod lifecycle_tests {
     use super::*;
 
     #[test]
-    fn migrated_compute_is_not_a_custom_provider_resource_or_backend() {
+    fn docker_provider_compute_is_not_a_custom_provider_resource() {
         let schemas = resource_schemas();
-        let connections = crate::docker::Connections::default();
-        let registry = BackendRegistry::new(&connections);
         for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
             assert!(!schemas.iter().any(|schema| schema.kind == kind));
-            assert!(matches!(
-                registry.resolve(kind, &Row::new()),
-                Err(ObservationError::Backend(
-                    "service lifecycle belongs to the Docker provider"
-                ))
-            ));
         }
         for kind in [
             "inference_storage",

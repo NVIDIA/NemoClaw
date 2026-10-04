@@ -198,14 +198,10 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
 }
 
 pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()> {
-    let nextest = pins
-        .nextest
-        .as_deref()
-        .ok_or("versions.json must pin nextest for cargo ci")?;
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,
-        nextest,
+        nextest: &pins.nextest,
     };
     let steps = match selected {
         None => Step::ALL.to_vec(),

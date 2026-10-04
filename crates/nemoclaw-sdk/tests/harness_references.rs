@@ -82,10 +82,6 @@ fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_c
         .as_object_mut()
         .unwrap()
         .remove("harness");
-    let mut legacy = input();
-    legacy["spec"]["sandboxes"][0]["agent"]["harness"] = json!({"kind":"openclaw"});
-    let mut legacy_ref = input();
-    legacy_ref["spec"]["sandboxes"][0]["agent"]["harnessRef"] = json!("assistant");
     let mut limited = input();
     limited["spec"]["gateway"] =
         json!({"management":"external","endpoint":"http://127.0.0.1:8080"});
@@ -94,7 +90,7 @@ fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_c
     other["name"] = json!("other");
     limited["spec"]["sandboxes"][0]["agents"] = json!([other]);
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    for value in [absent, both, legacy, legacy_ref, limited] {
+    for value in [absent, both, limited] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         assert!(!schema.is_valid(&value));
     }

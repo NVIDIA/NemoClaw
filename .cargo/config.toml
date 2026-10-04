@@ -7,3 +7,5 @@ coverage = ["llvm-cov", "--workspace", "--locked", "--html", "--exclude-from-rep
 # without the SDK, in its own target directory, so it can install protoc first
 # and is never overwritten by the workspace build it runs.
 ci = ["run", "--locked", "--quiet", "--target-dir", "target/ci-runner", "-p", "nemoclaw-build", "--no-default-features", "--", "ci"]
+# Build or qualify agent images; see docs/build.md. Needs Docker, not the SDK.
+images = ["run", "--locked", "--quiet", "--target-dir", "target/ci-runner", "-p", "nemoclaw-build", "--no-default-features", "--", "images"]

@@ -8,6 +8,8 @@ on:
     branches: [v1]
     paths:
       - image/**
+      - crates/nemoclaw-ollama-proxy/**
+      - Cargo.lock
       - docker-bake.hcl
       - .dockerignore
       - ruff.toml
@@ -41,24 +43,25 @@ jobs:
           persist-credentials: false
       - name: Validate image selection and Dockerfile instructions
         run: |
-          python3 -B -m unittest discover -s image -p test_builds.py
+          cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test bake
           docker buildx bake --check dummy agents ollama-proxy
+      # cargo images builds the tool without the SDK, so the image job needs no protoc.
       - name: Build and qualify the reference contract image
         run: |
-          python3 image/build_fabric.py --platform "$AGENT_PLATFORM" dummy
-          python3 image/qualify_contract.py nc-fabric:dummy
+          cargo images build --platform "$AGENT_PLATFORM" dummy
+          cargo images qualify nc-fabric:dummy
       - name: Check packaging and generic Fabric lifecycle
         run: docker buildx bake check
       - name: Build local images with installed Fabric metadata
         run: |
-          python3 image/build_fabric.py --platform "$AGENT_PLATFORM" agents
+          cargo images build --platform "$AGENT_PLATFORM" agents
           docker buildx bake ollama-proxy --load
       - name: Verify installed discovery and retained source hashes
         run: |
           docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
           test -s .build-image-list
           while read -r harness image; do
-            python3 image/qualify_contract.py "$image"
+            cargo images qualify "$image"
             catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
             docker run --rm --runtime=runc --network none \
               -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \

@@ -75,7 +75,6 @@ pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
         .map(String::from)
         .to_vec(),
         health_checks: vec![],
-        input_sources: vec!["file".into(), "stdin".into()],
     });
     let mut runtime = binding("fixture").runtime;
     runtime.binaries = catalog
