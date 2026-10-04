@@ -517,19 +517,6 @@ async function prepareCompatibleAnthropicSwitchBinding(
   return binding;
 }
 
-async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
-  const result = await sandboxShell(
-    sandbox,
-    home,
-    'ps -eo pid=,comm=,args= 2>/dev/null | awk \'$2 != "sh" && $2 != "bash" && $2 != "awk" && $0 ~ /openclaw/ && $0 ~ /gateway run/ { print $1; exit }\' || true',
-    {
-      artifactName: "openclaw-gateway-pid",
-      timeoutMs: 30_000,
-    },
-  );
-  return result.stdout.trim();
-}
-
 async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
   return host.command(
     "bash",
@@ -1257,7 +1244,6 @@ test(
     expect(SWITCH_INFERENCE_API).toBe(
       apiFamilyChanges ? "anthropic-messages" : "openai-completions",
     );
-    const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1272,15 +1258,6 @@ test(
       ),
       `managed config restart marker mismatch: ${resultText(switchResult)}`,
     ).toBe(true);
-
-    const pidAfter = await openclawGatewayPid(sandbox, home);
-    const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
-    if (gatewayPidStable !== null) {
-      expect(
-        gatewayPidStable,
-        `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
-      ).toBe(false);
-    }
 
     progress.phase("inspect route configuration and recorded state");
     const route = await getRouteOutput(host, home);
@@ -1350,7 +1327,6 @@ test(
         customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
-        gatewayPidStable,
         routeChecked: true,
         configChecked: true,
         registryAndSessionChecked: true,

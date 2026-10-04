@@ -78,23 +78,27 @@ enable_openshell_audit_logs() {
 openshell_audit_logs_since_epoch() {
   local start_epoch="$1"
   local output=""
+  local filtered=""
 
   if ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>&1)"; then
     printf 'AUDIT_LOG_READ:0\n%s\n' "$output"
     return 0
   fi
 
-  printf 'AUDIT_LOG_READ:1\n'
-  printf '%s\n' "$output" | awk -v start="$start_epoch" '
+  if ! filtered="$(printf '%s\n' "$output" | awk -v start="$start_epoch" '
     /^\[[0-9]+(\.[0-9]+)?\]/ {
-      close = index($0, "]");
-      ts = substr($0, 2, close - 2) + 0;
+      bracket_end = index($0, "]");
+      ts = substr($0, 2, bracket_end - 2) + 0;
       keep = ts >= start;
       if (keep) print;
       next;
     }
     keep { print; }
-  '
+  ')"; then
+    printf 'AUDIT_LOG_READ:0\n'
+    return 0
+  fi
+  printf 'AUDIT_LOG_READ:1\n%s\n' "$filtered"
 }
 
 restore_env_file() {
@@ -177,6 +181,12 @@ assert_no_rejected_interval_audit_logs() {
 
 PASSED=0
 FAILED=0
+
+if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "audit-logs" ]; then
+  audit_logs="$(openshell_audit_logs_since_epoch 100 || true)"
+  assert_no_rejected_interval_audit_logs "self-test" "$audit_logs"
+  exit "$FAILED"
+fi
 
 if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "probe-command-shape" ]; then
   sandbox_exec() {
