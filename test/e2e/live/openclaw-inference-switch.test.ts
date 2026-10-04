@@ -57,12 +57,14 @@ import {
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
+  classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   readPublicNvidiaSwitchAttachmentEvidence,
@@ -604,7 +606,7 @@ async function assertRegistryAndSession(
           NVIDIA_HOSTED_NATIVE_ENDPOINT,
           "NVIDIA_INFERENCE_API_KEY",
           "openai-completions",
-          "inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1;provider-id=present",
+          PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
         ].join("\n"),
       );
       break;
@@ -1224,14 +1226,20 @@ test(
       },
     );
     const onboardText = resultText(onboard);
-    if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
+    const providerValidationUnavailable =
+      onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText);
+    const unavailable = classifyUnavailableInitialProviderEvidence({
+      required: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      detail: onboardText,
+    });
+    if (providerValidationUnavailable && unavailable.outcome === "skipped") {
       await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: "external-provider-validation-unavailable-before-inference-switch",
         onboardExitCode: onboard.exitCode,
       });
-      skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
+      skip(unavailable.reason);
     }
     expect(onboard.exitCode, onboardText).toBe(0);
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);

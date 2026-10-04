@@ -8,6 +8,7 @@ import {
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
+  classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
@@ -119,6 +120,30 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
       outcome: "skipped",
       reason:
         "Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
+    });
+  });
+
+  it("fails closed when required native-provider validation is unavailable during onboarding", () => {
+    expect(
+      classifyUnavailableInitialProviderEvidence({
+        required: true,
+        detail: "HTTP 429: rate limited",
+      }),
+    ).toEqual({
+      outcome: "failed",
+      message:
+        "Required native provider evidence failed: External provider validation was unavailable during onboarding: HTTP 429: rate limited",
+    });
+
+    expect(
+      classifyUnavailableInitialProviderEvidence({
+        required: false,
+        detail: "HTTP 429: rate limited",
+      }),
+    ).toEqual({
+      outcome: "skipped",
+      reason:
+        "External provider validation was unavailable during onboarding: HTTP 429: rate limited",
     });
   });
 });
