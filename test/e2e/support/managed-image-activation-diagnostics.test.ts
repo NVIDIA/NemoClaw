@@ -15,7 +15,8 @@ import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
-  collectOnboardFailureDockerDiagnostics,
+  collectManagedImageFailureDiagnostics,
+  withManagedImageFailureDiagnostics,
   externalImageActivationAgents,
   externalImageActivationMatches,
   externalImageActivationOnboardArgs,
@@ -23,7 +24,7 @@ import {
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
-  ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
+  MANAGED_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
   summarizeOnboardFailureStartupSignals,
   waitForManagedActivationSandboxDeletion,
@@ -606,7 +607,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
   });
 
   it("retains redacted Docker logs for failed startup diagnosis", () => {
-    expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
+    expect(MANAGED_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
   });
 
   it("redacts a copied failed-startup log before artifact publication", async () => {
@@ -630,10 +631,9 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     });
 
     try {
-      await collectOnboardFailureDockerDiagnostics(
+      await collectManagedImageFailureDiagnostics(
         artifacts,
         { command } as never,
-        "openclaw",
         "managed-openclaw",
         {},
         [secret],
@@ -641,7 +641,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
 
       const published = fs.readFileSync(
         artifacts.pathFor(
-          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
+          "managed-activation-failure-managed-openclaw-container-1-nemoclaw-start.log",
         ),
         "utf8",
       );
@@ -650,6 +650,75 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it.each(["mi-act-openclaw", "ext-img-openclaw"])(
+    "captures failed lifecycle diagnostics before propagating the error for %s",
+    async (sandboxName) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-diagnostics-"));
+      const artifacts = new ArtifactSink(directory);
+      const failure = new Error("public start failed");
+      const command = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+      try {
+        await expect(
+          withManagedImageFailureDiagnostics(
+            { artifacts, host: { command } as never, sandboxName, env: {} },
+            async () => {
+              throw failure;
+            },
+          ),
+        ).rejects.toBe(failure);
+        expect(command).toHaveBeenCalledWith("tail", expect.any(Array), expect.any(Object));
+        expect(command).toHaveBeenCalledWith(
+          "docker",
+          expect.arrayContaining([`label=openshell.ai/sandbox-name=${sandboxName}`]),
+          expect.objectContaining({
+            artifactName: `managed-activation-failure-${sandboxName}-container-inventory`,
+          }),
+        );
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("preserves the lifecycle error when diagnostics cannot run", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-diagnostics-"));
+    const failure = new Error("public start failed");
+    const command = vi.fn().mockRejectedValue(new Error("diagnostic command unavailable"));
+    try {
+      await expect(
+        withManagedImageFailureDiagnostics(
+          {
+            artifacts: new ArtifactSink(directory),
+            host: { command } as never,
+            sandboxName: "mi-act-openclaw",
+            env: {},
+          },
+          async () => {
+            throw failure;
+          },
+        ),
+      ).rejects.toBe(failure);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns successful activation evidence without collecting failure diagnostics", async () => {
+    const evidence = { verified: true };
+    const command = vi.fn();
+    const result = await withManagedImageFailureDiagnostics(
+      {
+        artifacts: {} as never,
+        host: { command } as never,
+        sandboxName: "ext-img-hermes",
+        env: {},
+      },
+      async () => evidence,
+    );
+    expect(result).toBe(evidence);
+    expect(command).not.toHaveBeenCalled();
   });
 
   it("installs activation proof plugins through native OpenClaw ownership", () => {

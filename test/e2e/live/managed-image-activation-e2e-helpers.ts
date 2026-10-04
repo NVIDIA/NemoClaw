@@ -58,7 +58,7 @@ const MANAGED_ACTIVATION_DELETE_SETTLEMENT_DELAYS_MS = [1_000, 1_000, 1_000] as 
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
-export const ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS = Object.freeze({
+export const MANAGED_FAILURE_LOG_ARTIFACT_OPTIONS = Object.freeze({
   persistArtifacts: true as const,
 });
 type OnboardFailureStartupSignal = keyof typeof ONBOARD_FAILURE_STARTUP_SIGNALS;
@@ -721,10 +721,9 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-export async function collectOnboardFailureDockerDiagnostics(
+export async function collectManagedImageFailureDiagnostics(
   artifacts: ArtifactSink,
   host: HostCliClient,
-  agent: ShippedManagedImageAgent,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
   artifactRedactionValues: readonly string[] = [API_KEY],
@@ -746,7 +745,7 @@ export async function collectOnboardFailureDockerDiagnostics(
         }),
       ],
       {
-        artifactName: `managed-activation-onboard-failure-${agent}-gateway-log`,
+        artifactName: `managed-activation-failure-${sandboxName}-gateway-log`,
         captureLimitBytes: 65536,
         env,
         redactionValues: [API_KEY],
@@ -767,7 +766,7 @@ export async function collectOnboardFailureDockerDiagnostics(
         "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
       ],
       {
-        artifactName: `managed-activation-onboard-failure-${agent}-container-inventory`,
+        artifactName: `managed-activation-failure-${sandboxName}-container-inventory`,
         env,
         redactionValues: [API_KEY],
         timeoutMs: 30_000,
@@ -788,7 +787,7 @@ export async function collectOnboardFailureDockerDiagnostics(
             containerId,
           ],
           {
-            artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-state`,
+            artifactName: `managed-activation-failure-${sandboxName}-container-${index + 1}-state`,
             env,
             redactionValues: [API_KEY],
             timeoutMs: 30_000,
@@ -799,17 +798,17 @@ export async function collectOnboardFailureDockerDiagnostics(
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
         const logs = await host.command(containerEngine, ["logs", "--tail", "1000", containerId], {
-          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
+          artifactName: `managed-activation-failure-${sandboxName}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
-          ...ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
+          ...MANAGED_FAILURE_LOG_ARTIFACT_OPTIONS,
           redactionValues: [API_KEY],
           timeoutMs: 30_000,
         });
         if (logs.exitCode !== 0) return;
         const output = `${logs.stdout}\n${logs.stderr}`;
         await artifacts.writeJson(
-          `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
+          `managed-activation-failure-${sandboxName}-container-${index + 1}-startup-signals.json`,
           summarizeOnboardFailureStartupSignals(output),
         );
         const copyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-log-"));
@@ -819,7 +818,7 @@ export async function collectOnboardFailureDockerDiagnostics(
             containerEngine,
             ["cp", `${containerId}:/tmp/nemoclaw-start.log`, copiedLog],
             {
-              artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-log-copy`,
+              artifactName: `managed-activation-failure-${sandboxName}-container-${index + 1}-startup-log-copy`,
               env,
               redactionValues: [API_KEY],
               timeoutMs: 30_000,
@@ -829,7 +828,7 @@ export async function collectOnboardFailureDockerDiagnostics(
           const stat = fs.lstatSync(copiedLog);
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
           await artifacts.writeText(
-            `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
+            `managed-activation-failure-${sandboxName}-container-${index + 1}-nemoclaw-start.log`,
             fs.readFileSync(copiedLog, "utf8"),
           );
         } finally {
@@ -838,7 +837,29 @@ export async function collectOnboardFailureDockerDiagnostics(
       }),
     );
   } catch {
-    // Preserve the onboarding failure as the primary error when diagnostics are unavailable.
+    // Preserve the activation failure when diagnostics are unavailable.
+  }
+}
+
+export async function withManagedImageFailureDiagnostics<T>(
+  context: {
+    readonly artifacts: ArtifactSink;
+    readonly host: HostCliClient;
+    readonly sandboxName: string;
+    readonly env: NodeJS.ProcessEnv;
+  },
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    await collectManagedImageFailureDiagnostics(
+      context.artifacts,
+      context.host,
+      context.sandboxName,
+      context.env,
+    );
+    return Promise.reject(error);
   }
 }
 
@@ -850,7 +871,7 @@ async function qualifyAgent(
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
 ): Promise<void> {
-  const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
+  const { cleanup, host, lifecycle, progress, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
   const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
@@ -871,7 +892,6 @@ async function qualifyAgent(
   );
   if (onboard.exitCode !== 0) {
     await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
-    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   if (agent === "openclaw") {
@@ -974,7 +994,7 @@ async function qualifyExternalImage(
   readonly rebuilt: boolean;
   readonly verified: boolean;
 }> {
-  const { artifacts, cleanup, host, lifecycle, sandbox } = fixtures;
+  const { cleanup, host, lifecycle, sandbox } = fixtures;
   const sandboxName = EXTERNAL_IMAGE_SANDBOX_NAMES[agent];
   const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete external-image sandbox ${sandboxName}`, () =>
@@ -994,7 +1014,6 @@ async function qualifyExternalImage(
   );
   if (onboard.exitCode !== 0) {
     await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
-    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
     return Promise.reject(
       new Error(`external image onboard ${agent} failed:\n${resultText(onboard)}`),
     );
@@ -1168,13 +1187,15 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   });
 
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-    await qualifyAgent(
-      fixtures,
-      guard,
-      catalogPath,
-      inference.baseUrl,
-      agent,
-      contracts.get(agent)!,
+    await withManagedImageFailureDiagnostics(
+      {
+        artifacts,
+        host,
+        sandboxName: SANDBOX_NAMES[agent],
+        env: commandEnv(guard, catalogPath, inference.baseUrl),
+      },
+      () =>
+        qualifyAgent(fixtures, guard, catalogPath, inference.baseUrl, agent, contracts.get(agent)!),
     );
   }
 
@@ -1184,13 +1205,22 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   const externalImages = [];
   for (const agent of externalImageActivationAgents(containerEngine)) {
     externalImages.push(
-      await qualifyExternalImage(
-        fixtures,
-        guard,
-        catalogPath,
-        inference.baseUrl,
-        agent,
-        contracts.get(agent)!,
+      await withManagedImageFailureDiagnostics(
+        {
+          artifacts,
+          host,
+          sandboxName: EXTERNAL_IMAGE_SANDBOX_NAMES[agent],
+          env: commandEnv(guard, catalogPath, inference.baseUrl),
+        },
+        () =>
+          qualifyExternalImage(
+            fixtures,
+            guard,
+            catalogPath,
+            inference.baseUrl,
+            agent,
+            contracts.get(agent)!,
+          ),
       ),
     );
   }
