@@ -14,7 +14,7 @@ import type {
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
 import { DirectSandboxContainerNotFoundError } from "../runtime-provider/privileged-sandbox-control-errors";
-import { sleepMs } from "../readiness-wait";
+import { waitUntil } from "../readiness-wait";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -103,22 +103,30 @@ function resolveCreatedContainerTarget(
   timing: ProviderManagedStartupRootApplyTiming,
 ) {
   let missing: DirectSandboxContainerNotFoundError | undefined;
-  const sleep = timing.sleep ?? sleepMs;
-  for (let attempt = 1; attempt <= CREATED_CONTAINER_DISCOVERY_ATTEMPTS; attempt += 1) {
-    try {
-      return runtime.control.resolveTarget({
-        registeredSandboxNames: [input.sandboxName],
-        sandbox: input.sandbox,
-        sandboxName: input.sandboxName,
-      });
-    } catch (error) {
-      if (!(error instanceof DirectSandboxContainerNotFoundError)) throw error;
-      missing = error;
-      if (attempt < CREATED_CONTAINER_DISCOVERY_ATTEMPTS) {
-        sleep(CREATED_CONTAINER_DISCOVERY_INTERVAL_MS);
+  let target: ReturnType<RuntimeProviderPrivilegedSandboxControl["resolveTarget"]> | undefined;
+  waitUntil(
+    () => {
+      try {
+        target = runtime.control.resolveTarget({
+          registeredSandboxNames: [input.sandboxName],
+          sandbox: input.sandbox,
+          sandboxName: input.sandboxName,
+        });
+        return true;
+      } catch (error) {
+        if (!(error instanceof DirectSandboxContainerNotFoundError)) throw error;
+        missing = error;
+        return false;
       }
-    }
-  }
+    },
+    {
+      initialIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
+      maxAttempts: CREATED_CONTAINER_DISCOVERY_ATTEMPTS,
+      maxIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
+      ...(timing.sleep ? { sleep: timing.sleep } : {}),
+    },
+  );
+  if (target) return target;
   throw new DirectSandboxContainerNotFoundError(
     `${missing?.message ?? "The direct OpenShell sandbox container was not found."} ` +
       `The exact container remained absent after ${CREATED_CONTAINER_DISCOVERY_ATTEMPTS} ` +
