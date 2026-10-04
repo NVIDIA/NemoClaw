@@ -268,7 +268,8 @@ async function captureFailedGpuContainer(
 ): Promise<void> {
   const sandboxFilter = `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`;
   const runtimeInvocation = runtimeProvider.hostInvocation([]);
-  const script = String.raw`set -u
+  const runtimeCommand = '"${runtime_command[@]}"';
+  const script = String.raw`set -eu
 sandbox_filter="$1"
 diagnostics_dir="$2"
 shift 2
@@ -289,18 +290,18 @@ if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
 else
   printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
 fi
-ids="$("\${runtime_command[@]}" container ps --all --quiet --filter "$sandbox_filter")"
+ids="$(${runtimeCommand} container ps --all --quiet --filter "$sandbox_filter")"
 if [ -z "$ids" ]; then
   printf '%s\n' "no runtime container found for $sandbox_filter"
   exit 0
 fi
 for id in $ids; do
   printf '%s\n' "== container $id inspect =="
-  "\${runtime_command[@]}" container inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
+  ${runtimeCommand} container inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
   printf '%s\n' "== container $id top =="
-  "\${runtime_command[@]}" container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
+  ${runtimeCommand} container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
   printf '%s\n' "== container $id logs =="
-  "\${runtime_command[@]}" container logs --tail 300 "$id" 2>&1 || true
+  ${runtimeCommand} container logs --tail 300 "$id" 2>&1 || true
 done`;
   await captureDiagnosticsBestEffort(() =>
     host.command(

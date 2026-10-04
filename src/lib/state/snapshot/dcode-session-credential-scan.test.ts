@@ -94,4 +94,35 @@ describe("DCode session database credential scan", () => {
       inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
     ).toBe(false);
   });
+
+  it("preserves the pinned QuickJS diagnostic embedded in interpreter checkpoints", () => {
+    const fixture = createDatabase();
+    fixture.database.exec("CREATE TABLE writes (channel TEXT, value BLOB)");
+    fixture.database
+      .prepare("INSERT INTO writes VALUES (?, ?)")
+      .run("_quickjs_snapshot_payload", Buffer.from("\0unexpected token: '%.*s'\0"));
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["changed diagnostic value", "\0unexpected token: 'private-value'\0"],
+    ["missing diagnostic delimiter", "\0unexpected token: '%.*s'"],
+    ["adjacent provider credential", `\0unexpected token: '%.*s'\0ghp_${"0123456789abcdef"}`],
+    ["adjacent opaque credential", '\0unexpected token: \'%.*s\'\0{"API_KEY":"private-value"}'],
+  ])("rejects %s in interpreter checkpoints", (_label, content) => {
+    const fixture = createDatabase();
+    fixture.database.exec("CREATE TABLE writes (channel TEXT, value BLOB)");
+    fixture.database
+      .prepare("INSERT INTO writes VALUES (?, ?)")
+      .run("_quickjs_snapshot_payload", Buffer.from(content));
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(true);
+  });
 });
