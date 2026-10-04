@@ -726,9 +726,10 @@ export async function collectManagedImageFailureDiagnostics(
   host: HostCliClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
-  artifactRedactionValues: readonly string[] = [API_KEY],
+  artifactRedactionValues: readonly string[] = [],
 ): Promise<void> {
-  artifacts.addRedactionValues(artifactRedactionValues);
+  const redactionValues = [API_KEY, HERMES_BOUNDARY_SENTINEL, ...artifactRedactionValues];
+  artifacts.addRedactionValues(redactionValues);
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   const managedLabel =
     containerEngine === "podman" ? "openshell.managed=true" : "openshell.ai/managed-by=openshell";
@@ -748,7 +749,7 @@ export async function collectManagedImageFailureDiagnostics(
         artifactName: `managed-activation-failure-${sandboxName}-gateway-log`,
         captureLimitBytes: 65536,
         env,
-        redactionValues: [API_KEY],
+        redactionValues,
         timeoutMs: 5_000,
       },
     );
@@ -768,7 +769,7 @@ export async function collectManagedImageFailureDiagnostics(
       {
         artifactName: `managed-activation-failure-${sandboxName}-container-inventory`,
         env,
-        redactionValues: [API_KEY],
+        redactionValues,
         timeoutMs: 30_000,
       },
     );
@@ -789,7 +790,7 @@ export async function collectManagedImageFailureDiagnostics(
           {
             artifactName: `managed-activation-failure-${sandboxName}-container-${index + 1}-state`,
             env,
-            redactionValues: [API_KEY],
+            redactionValues,
             timeoutMs: 30_000,
           },
         ),
@@ -802,7 +803,7 @@ export async function collectManagedImageFailureDiagnostics(
           captureLimitBytes: 2 * 1024 * 1024,
           env,
           ...MANAGED_FAILURE_LOG_ARTIFACT_OPTIONS,
-          redactionValues: [API_KEY],
+          redactionValues,
           timeoutMs: 30_000,
         });
         if (logs.exitCode !== 0) return;
@@ -820,7 +821,7 @@ export async function collectManagedImageFailureDiagnostics(
             {
               artifactName: `managed-activation-failure-${sandboxName}-container-${index + 1}-startup-log-copy`,
               env,
-              redactionValues: [API_KEY],
+              redactionValues,
               timeoutMs: 30_000,
             },
           );

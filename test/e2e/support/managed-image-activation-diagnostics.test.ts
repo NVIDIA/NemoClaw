@@ -13,6 +13,10 @@ import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.t
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ADMIN_APPROVAL_TEST_CLI_SH } from "../../support/admin-approval-connect-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
   collectManagedImageFailureDiagnostics,
@@ -652,32 +656,80 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     }
   });
 
-  it.each(["mi-act-openclaw", "ext-img-openclaw"])(
-    "captures failed lifecycle diagnostics before propagating the error for %s",
-    async (sandboxName) => {
-      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-diagnostics-"));
-      const artifacts = new ArtifactSink(directory);
+  it.each([
+    { engine: "docker", sandboxName: "mi-act-hermes" },
+    { engine: "podman", sandboxName: "mi-act-hermes" },
+    { engine: "docker", sandboxName: "ext-img-hermes" },
+  ])(
+    "retains redacted lifecycle diagnostics for $engine $sandboxName",
+    async ({ engine, sandboxName }) => {
+      const fixture = createHostProcessWorkspace("nemoclaw-lifecycle-diagnostics-");
+      const artifacts = new ArtifactSink(fixture.path("artifacts"));
+      const progress = startTestProgress(
+        "Lifecycle failure diagnostics",
+        ["collect diagnostics", "verify artifacts"],
+        {
+          logLine: () => undefined,
+        },
+      );
+      const sentinel = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
+      const apiKey = "nemoclaw-managed-activation-e2e-key";
+      const output = `lifecycle diagnostic ${sentinel} ${apiKey}\n`;
+      const containerId = "a".repeat(64);
+      fixture.writeCommand("tail", [{ argsPrefix: ["-c"], stdout: output }]);
+      fixture.writeExecutable(
+        engine,
+        `#!${process.execPath}
+const fs = require("node:fs");
+const output = ${JSON.stringify(output)};
+switch (process.argv[2]) {
+  case "ps": process.stdout.write(${JSON.stringify(containerId)} + "\\tmanaged-container\\timage\\tExited\\n"); break;
+  case "inspect": process.stdout.write("exited\\n"); break;
+  case "logs": process.stdout.write(output); break;
+  case "cp": fs.writeFileSync(process.argv[4], output); break;
+  default: process.exit(97);
+}
+`,
+      );
+      const host = new HostCliClient(
+        new ShellProbe({
+          artifacts,
+          progress,
+          redact: redactString,
+          signal: new AbortController().signal,
+        }),
+      );
       const failure = new Error("public start failed");
-      const command = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
       try {
         await expect(
           withManagedImageFailureDiagnostics(
-            { artifacts, host: { command } as never, sandboxName, env: {} },
+            {
+              artifacts,
+              host,
+              sandboxName,
+              env: fixture.environment({ NEMOCLAW_GATEWAY_RUNTIME: engine }),
+            },
             async () => {
               throw failure;
             },
           ),
         ).rejects.toBe(failure);
-        expect(command).toHaveBeenCalledWith("tail", expect.any(Array), expect.any(Object));
-        expect(command).toHaveBeenCalledWith(
-          "docker",
-          expect.arrayContaining([`label=openshell.ai/sandbox-name=${sandboxName}`]),
-          expect.objectContaining({
-            artifactName: `managed-activation-failure-${sandboxName}-container-inventory`,
-          }),
-        );
+        const prefix = `managed-activation-failure-${sandboxName}`;
+        const retained = [
+          `shell/${prefix}-gateway-log.stdout.txt`,
+          `shell/${prefix}-container-inventory.stdout.txt`,
+          `shell/${prefix}-container-1-logs.stdout.txt`,
+          `${prefix}-container-1-nemoclaw-start.log`,
+        ]
+          .map((name) => fs.readFileSync(artifacts.pathFor(name), "utf8"))
+          .join("\n");
+        expect(retained).toContain("lifecycle diagnostic [REDACTED] [REDACTED]");
+        expect(retained).toContain(containerId);
+        expect(retained).not.toContain(sentinel);
+        expect(retained).not.toContain(apiKey);
       } finally {
-        fs.rmSync(directory, { recursive: true, force: true });
+        progress.stop();
+        fixture.remove();
       }
     },
   );

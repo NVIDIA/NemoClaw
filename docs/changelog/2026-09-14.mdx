@@ -64,7 +64,8 @@ It also restores interactive Deep Agents Code execution features and improves ag
   An unverified sibling state prevents model unload and makes `stop` exit nonzero.
   Related changes: [PR #11550](https://github.com/NVIDIA/NemoClaw/pull/11550) and [PR #11656](https://github.com/NVIDIA/NemoClaw/pull/11656).
 - Managed Deep Agents Code interactive sessions restore native local shell, startup-command, and interpreter behavior inside the OpenShell sandbox.
-  Headless shell execution remains disabled, and headless non-shell tools retain automatic approval.
+  In v0.0.124, headless shell execution remained disabled, and headless non-shell tools retained automatic approval.
+  For current execution and approval behavior, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
   Non-interactive reply handling and pre-session inference verification also improve.
   Related changes: [PR #11683](https://github.com/NVIDIA/NemoClaw/pull/11683), [PR #11276](https://github.com/NVIDIA/NemoClaw/pull/11276), and [PR #11546](https://github.com/NVIDIA/NemoClaw/pull/11546).
 - Agent message dispatch preserves piped input and avoids waiting on idle standard input when a message is already supplied.
