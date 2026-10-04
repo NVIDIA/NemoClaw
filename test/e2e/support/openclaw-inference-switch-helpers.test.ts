@@ -99,6 +99,13 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
 });
 
 describe("openclaw-inference-switch agent reply matching", () => {
+  it.each([
+    { reply: "PONG", accepted: true },
+    { reply: "ok", accepted: false },
+  ])("requires the baseline reply token ($reply)", ({ reply, accepted }) => {
+    expect(agentReplyContainsToken(reply, "PONG")).toBe(accepted);
+  });
+
   it("tolerates wrapped PONG", () => {
     expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
     expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(false);

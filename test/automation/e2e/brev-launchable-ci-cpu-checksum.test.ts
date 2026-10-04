@@ -33,6 +33,7 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
+  nodeArchiveChecksum?: "match" | "mismatch";
   reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
@@ -60,6 +61,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   launchLog: string;
   sudoLog: string;
   npmTmpLog: string;
+  npmTree: string;
   tarLog: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
@@ -71,6 +73,10 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const sudoLog = path.join(root, "sudo.log");
   const npmTmpLog = path.join(root, "npm-tmp.log");
   const tarLog = path.join(root, "tar.log");
+  const npmTree = path.join(root, "npm-tree");
+  const nodeInstalled = path.join(root, "node-installed");
+  fs.mkdirSync(path.join(npmTree, "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(npmTree, "node_modules", "stale.js"), "old npm dependency");
   fs.mkdirSync(fakeBin);
 
   linkSystemCommands(
@@ -125,7 +131,14 @@ exec bash -c "\${1:-}"
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : `v${REVIEWED_NODE_VERSION}`}\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then
+  if [ ${JSON.stringify(options.nodeArchiveChecksum !== undefined || options.nodeSourceChecksumTool === false)} = true ] && [ ! -f ${JSON.stringify(nodeInstalled)} ]; then
+    printf 'v22.19.0\\n'
+  else
+    printf 'v${REVIEWED_NODE_VERSION}\\n'
+  fi
+  exit 0
+fi
 exit 0
 `,
   );
@@ -180,6 +193,16 @@ exec /usr/bin/tar "$@"
     path.join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(sudoLog)}
+if [ "$*" = "rm -rf /usr/local/lib/node_modules/npm" ]; then
+  /bin/rm -rf ${JSON.stringify(npmTree)}
+  exit 0
+fi
+if [ "\${1:-}" = "tar" ] && [ "\${2:-}" = "-xzf" ]; then
+  mkdir -p ${JSON.stringify(npmTree)}
+  printf 'new npm' > ${JSON.stringify(path.join(npmTree, "package.json"))}
+  : > ${JSON.stringify(nodeInstalled)}
+  exit 0
+fi
 if [[ "$*" == *setup-reviewed-npm/verify-and-install-npm.sh* ]]; then
   printf '%s\\n' "$*" | sed -n 's/.*RUNNER_TEMP=\\([^ ]*\\).*/\\1/p' > ${JSON.stringify(npmTmpLog)}
   exit ${options.reviewedNpmFailure ? 42 : 0}
@@ -255,6 +278,10 @@ if [ "\${1:-}" = "-c" ]; then
   printf '%s: OK\\n' ${JSON.stringify(ASSET)}
   exit 0
 fi
+if [ ${JSON.stringify(options.nodeArchiveChecksum !== undefined)} = true ]; then
+  printf '%s  %s\\n' '${options.nodeArchiveChecksum === "mismatch" ? "0".repeat(64) : "9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"}' "$1"
+  exit 0
+fi
 exec /usr/bin/sha256sum "$@"
 `,
   );
@@ -268,6 +295,7 @@ exec /usr/bin/sha256sum "$@"
     launchLog,
     sudoLog,
     npmTmpLog,
+    npmTree,
     tarLog,
   };
 }
@@ -314,6 +342,25 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       fake.cleanup();
     }
   });
+
+  it.each(["match", "mismatch"] as const)(
+    "replaces the old npm tree only after the Node archive checksum %s",
+    (nodeArchiveChecksum) => {
+      const { fake, result } = runLaunchable({ checksum: "match", nodeArchiveChecksum });
+      try {
+        const verified = nodeArchiveChecksum === "match";
+        expect(result.status, combinedLaunchableOutput(result, fake.launchLog)).toBe(
+          verified ? 0 : 1,
+        );
+        expect({
+          staleDependency: fs.existsSync(path.join(fake.npmTree, "node_modules", "stale.js")),
+          replacementPackage: fs.existsSync(path.join(fake.npmTree, "package.json")),
+        }).toEqual({ staleDependency: !verified, replacementPackage: verified });
+      } finally {
+        fake.cleanup();
+      }
+    },
+  );
 
   it("pins both reviewed Node.js archives and installs the canonical reviewed npm", () => {
     const source = fs.readFileSync(SCRIPT, "utf8");
