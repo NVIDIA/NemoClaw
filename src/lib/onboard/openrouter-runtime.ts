@@ -1,18 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { compactText } from "../core/url-utils";
+import type { OpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { ensureOpenRouterRuntimeAdapter } from "../inference/openrouter-runtime-adapter";
-import { redact } from "../runner";
 import * as registry from "../state/registry";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
 import type { UpsertProvider } from "./inference-providers/types";
-
-type RunOpenshell = (
-  args: string[],
-  options?: { ignoreError?: boolean; suppressOutput?: boolean; timeout?: number },
-) => { status: number | null; stdout?: unknown; stderr?: unknown };
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -36,7 +30,8 @@ export async function setupOpenRouterRuntimeInference(
     reuseGatewayCredentialWithoutLocalKey?: boolean;
     skipHostInferenceSmoke?: boolean;
     isNonInteractive: () => boolean;
-    runOpenshell: RunOpenshell;
+    gatewayName: string;
+    inferenceRouteMutator: OpenShellInferenceRouteMutator;
     upsertProvider: UpsertProvider;
     verifyInferenceRoute: (provider: string, model: string) => void;
     verifyOnboardInferenceSmoke: (options: {
@@ -92,26 +87,25 @@ export async function setupOpenRouterRuntimeInference(
     `  OpenRouter Runtime adapter ready: sandbox route ${adapter.baseUrl}, host log ${adapter.logPath}`,
   );
 
-  const applyResult = options.runOpenshell(
-    [
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      options.provider,
-      "--model",
-      options.model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ],
-    { ignoreError: true },
-  );
-  if (applyResult.status !== 0) {
-    const message =
-      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
-      `Failed to configure inference provider '${options.provider}'.`;
-    error(`  ${message}`);
-    if (options.isNonInteractive()) return exitProcess(applyResult.status || 1);
+  const applyResult = await options.inferenceRouteMutator.setInferenceRoute({
+    target: { kind: "named", gatewayName: options.gatewayName },
+    route: { provider: options.provider, model: options.model },
+    verification: "skip",
+    verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS,
+  });
+  if (!applyResult.ok) {
+    error(`  ${applyResult.error.message}`);
+    if (applyResult.ambiguous) {
+      error(
+        `  The route update result is unknown. Inspect gateway '${options.gatewayName}' before retrying onboarding.`,
+      );
+      return exitProcess(1);
+    }
+    if (options.isNonInteractive()) {
+      return exitProcess(
+        applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+      );
+    }
     return { handled: true, result: { retry: "selection" } };
   }
 

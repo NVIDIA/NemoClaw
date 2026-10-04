@@ -7,6 +7,7 @@ import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import {
   getRegisteredAgent,
+  resolveRegisteredAgentDefinition,
   resolveRegisteredSandboxAgent,
   resolveSessionAgentDefinition,
 } from "./runtime";
@@ -38,6 +39,16 @@ describe("getRegisteredAgent", () => {
       expect(getRegisteredAgent({ agent })).toBeNull();
     },
   );
+});
+
+describe("resolveRegisteredAgentDefinition", () => {
+  it("loads OpenClaw when a lifecycle needs its manifest-owned paths", () => {
+    expect(resolveRegisteredAgentDefinition({ agent: "openclaw" })?.name).toBe("openclaw");
+  });
+
+  it("fails closed for an unknown registry value", () => {
+    expect(resolveRegisteredAgentDefinition({ agent: "missing-agent" })).toBeNull();
+  });
 });
 
 describe("resolveRegisteredSandboxAgent", () => {

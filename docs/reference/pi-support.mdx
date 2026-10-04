@@ -15,8 +15,7 @@ content:
   type: "reference"
 agent-variants: ["pi"]
 ---
-
-Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, snapshot, recovery, or cleanup behaviour.
+Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, backup or snapshot, recovery, or cleanup behaviour.
 
 <Warning>
   The Pi runtime remains a release candidate until final activation adds it to the supported
@@ -91,13 +90,13 @@ The supported baseline includes Pi's built-in `read`, `bash`, `edit`, and `write
 
 Interactive users may trust project-local skills, extensions, prompts, and packages explicitly. Those resources are user-owned and outside release qualification. Pi loads `AGENTS.md` and `CLAUDE.md` context files before the project-trust decision; `--no-context-files` disables them. Headless `--no-approve` ignores project-local executable resources but does not disable context files. OpenShell policy continues to govern filesystem, process, network, and credential access in both modes.
 
-Pi uses a saved per-path project-trust decision from `trust.json` when one exists and otherwise falls back to the native `defaultProjectTrust` setting. Per-path decisions are not transferable backup state because `trust.json` is excluded. The global default remains in the sanitized `settings.json` backup, so restoring `"always"` can trust a path that has no saved decision without transferring a per-path decision.
+A project-trust decision is agent-native state. Whole-home rebuild transfer preserves the native files that record it; NemoClaw does not reinterpret or elevate that decision.
 
 ## Persistent and Reconstructed State
 
-Sessions, prompts, themes, and the sanitized native `settings.json` file are persistent user state. NemoClaw does not filter Pi setting names, but the snapshot credential sanitizer removes or replaces credential-shaped content before restore. Tools, executable resources, model configuration, authentication, managed route credentials, caches, and per-path project trust from `trust.json` are reconstructed or excluded.
+The complete Pi native home/workspace is persistent user state. Rebuild transfer does not filter `settings.json`, sessions, prompts, themes, tools, executable resources, model configuration, caches, project trust, or unknown future files by path. OpenShell-owned credentials remain outside the transferred tree.
 
-Pi starts with `umask 077`, so newly generated configuration and session files are owner-only. Restored persistent files use NemoClaw's restricted sandbox-state permissions. Runtime setup sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
+Pi starts with `umask 077`, so generated configuration and session files are private to the sandbox user. Runtime setup sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 
 ## Qualification Evidence
 
@@ -109,7 +108,7 @@ The target records:
 - provider, model, API, route, and policy digest;
 - buildless onboarding through `nemoclaw onboard --agent pi`;
 - one interactive session and versioned headless structured-tool tasks;
-- native session and settings preservation across rebuild, including the global project-trust default while excluding per-path trust state;
+- session preservation across rebuild;
 - recovery after an OpenShell gateway restart;
 - denial of undeclared network and container-runtime access;
 - absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
