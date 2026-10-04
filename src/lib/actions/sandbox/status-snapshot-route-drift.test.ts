@@ -521,4 +521,39 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     );
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
   });
+
+  it("reports the recorded native NVIDIA route when the shared route differs", async () => {
+    liveGatewayInference("compatible-endpoint", "other/model");
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-123",
+      },
+    } as SandboxEntry;
+    const options = snapshotDeps(sandbox);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      getGatewayPresets: async () => [],
+    } as never);
+
+    expect(report.provider).toBe("nvidia-prod");
+    expect(report.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(report.recordedRoute).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+    expect(report.liveRoute).toEqual({
+      provider: "compatible-endpoint",
+      model: "other/model",
+    });
+    expect(report.routeDrift).toBeNull();
+  });
 });

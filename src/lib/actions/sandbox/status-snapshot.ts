@@ -872,6 +872,9 @@ async function buildSandboxStatusReport(
   const livePolicies =
     sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const nativeNvidia = Boolean(
+    normalizeNativeNvidiaProviderAttachment(sb?.nativeNvidiaProviderAttachment),
+  );
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -881,11 +884,11 @@ async function buildSandboxStatusReport(
     agentRuntime: agent.agentRuntime,
     dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
-    // Keep schema v1's established live-first fields for existing consumers.
-    // The explicit route fields separate durable sandbox intent from the one
-    // gateway-global route without changing those legacy meanings.
-    model: liveRoute?.model ?? currentModel,
-    provider: liveRoute?.provider ?? currentProvider,
+    // Native NVIDIA inference is sandbox-attached and independent of the
+    // gateway-global route. Other schema-v1 consumers keep the established
+    // live-first fields, with explicit route fields separating both views.
+    model: nativeNvidia ? currentModel : (liveRoute?.model ?? currentModel),
+    provider: nativeNvidia ? currentProvider : (liveRoute?.provider ?? currentProvider),
     servingProfileProvenance: sb?.servingProfileProvenance ?? null,
     llamaCpp,
     recordedRoute,

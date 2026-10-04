@@ -11,8 +11,8 @@ import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshe
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
+  ensureNativeNvidiaProviderAttached,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
-  verifyNativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia";
 import {
   messagingCredentialProviderProfilePath,
@@ -81,7 +81,7 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
       `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
     );
   }
-  await verifyNativeNvidiaProviderAttachment({
+  await ensureNativeNvidiaProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,

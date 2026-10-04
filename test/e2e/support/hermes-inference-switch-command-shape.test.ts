@@ -32,6 +32,7 @@ import {
   runHermesCliPongWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
+  sandboxInferenceCommand,
 } from "../live/hermes-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
@@ -79,6 +80,14 @@ describe("Hermes inference switch command shape", () => {
       "inspection=0;attached=true;schema=1;profile=nemoclaw-nvidia-inference-v1;provider=nemoclaw-nvidia-prod-v1;provider-id=present",
     );
     expect(openshell).toHaveBeenCalledOnce();
+  });
+
+  it("probes native NVIDIA through its sandbox-attached provider route (#12558)", () => {
+    const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
+
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).not.toContain("inference.local");
   });
 
   it.each([

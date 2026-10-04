@@ -80,11 +80,37 @@ describe("native NVIDIA post-create provider verification", () => {
     ).resolves.toBeUndefined();
 
     expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
-      "verifying native NVIDIA provider attachment for sandbox 'alpha'",
+      "attaching and verifying native NVIDIA provider for sandbox 'alpha'",
     );
     expect(adapter.listProviderAttachments).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName: "alpha" }),
     );
+  });
+
+  it("attaches the recorded provider after verified sandbox creation", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    vi.mocked(adapter.listProviderAttachments)
+      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { names: ["nemoclaw-nvidia-prod-v1"] },
+      });
+    adapter.attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>(async () => ({
+      ok: true,
+      value: { changed: true },
+    }));
+    const boundary = nativeProviderBoundary(adapter);
+
+    await expect(
+      boundary.runAfterVerifiedCreate?.(verifiedCreateContext()),
+    ).resolves.toBeUndefined();
+
+    expect(adapter.attachProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      sandboxName: "alpha",
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a replaced provider before inspecting its sandbox attachments", async () => {

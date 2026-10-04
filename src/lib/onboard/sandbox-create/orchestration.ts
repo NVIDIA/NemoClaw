@@ -1434,10 +1434,12 @@ export function createProviderEffectBoundary(input: {
       input.preparationInput,
       input.preparationDeps,
     );
-  const verifyNativeNvidiaAttachment = async (context: VerifiedSandboxCreateEffectsContext) => {
+  const attachAndVerifyNativeNvidiaProvider = async (
+    context: VerifiedSandboxCreateEffectsContext,
+  ) => {
     if (!usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)) return;
     context.revalidateSandboxIdentity(
-      `verifying native NVIDIA provider attachment for sandbox '${input.sandboxName}'`,
+      `attaching and verifying native NVIDIA provider for sandbox '${input.sandboxName}'`,
     );
     await verifyNativeNvidiaAttachmentAfterCreate({
       sandboxName: input.sandboxName,
@@ -1455,7 +1457,7 @@ export function createProviderEffectBoundary(input: {
         await publish();
       },
       runAfterVerifiedCreate: usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)
-        ? verifyNativeNvidiaAttachment
+        ? attachAndVerifyNativeNvidiaProvider
         : undefined,
     };
   }
@@ -1477,7 +1479,7 @@ export function createProviderEffectBoundary(input: {
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
       await publish();
-      await verifyNativeNvidiaAttachment(context);
+      await attachAndVerifyNativeNvidiaProvider(context);
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );

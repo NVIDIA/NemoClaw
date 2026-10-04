@@ -259,6 +259,18 @@ export async function ensureNativeNvidiaProviderAttached(input: {
   sandboxName: string;
   expected: NativeNvidiaProviderAttachment;
 }): Promise<{ receipt: NativeNvidiaProviderAttachment; changed: boolean }> {
+  const provider = await inspectNativeProvider(input.adapter, input.target);
+  if (!provider) {
+    throw new NativeNvidiaProviderError(
+      `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' is missing. Recreate the sandbox to restore native NVIDIA inference.`,
+    );
+  }
+  const receipt = attachmentFromMetadata(provider);
+  if (receipt.providerId !== input.expected.providerId) {
+    throw new NativeNvidiaProviderError(
+      `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity. Recreate the sandbox before using native NVIDIA inference.`,
+    );
+  }
   const before = await input.adapter.listProviderAttachments({
     target: input.target,
     sandboxName: input.sandboxName,
