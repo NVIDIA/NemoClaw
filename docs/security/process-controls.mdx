@@ -194,13 +194,16 @@ The sandbox boundary limits where commands run and what external resources they 
 Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
 Headless `dcode -n` is an explicit automation boundary with no approval UI.
 
-The managed headless path automatically approves non-shell tool requests such as file writes and edits, while still disabling shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP files, nested remote sandboxes, remote async subagents, and alternate model routes.
+Headless mode automatically approves non-shell tool requests such as file writes and edits.
+Native shell allowlists control shell commands: no list disables shell execution, an explicit list permits matching commands, and `all` permits any command.
+Startup commands and hooks can also run without an approval prompt.
+Managed credentials, inference routing, MCP validation, and nested-sandbox restrictions remain active.
 
 | Aspect | Detail |
 |---|---|
-| Default | Interactive `dcode` prompts for destructive tools. Headless `dcode -n` auto-approves non-shell tools and keeps shell execution disabled. |
-| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits are acceptable. The interactive `thread-opt-in` capability does not change this headless boundary. |
-| Risk if relaxed | Treating headless mode like an interactive approval session can let file edits happen without a human prompt. |
+| Default | Interactive `dcode` prompts for destructive tools. Headless `dcode -n` auto-approves non-shell tools. Shell execution is disabled unless a native shell allowlist permits it. |
+| What you can change | Choose interactive `dcode` when you need to review tool calls. Use `dcode -n` only for tasks where unattended file edits and any configured command execution are acceptable. The interactive `thread-opt-in` capability does not change this headless boundary. |
+| Risk if relaxed | Headless file edits, allowed shell commands, startup commands, and hooks can change workspace data without a human prompt. |
 | Recommendation | Use the interactive TUI for sensitive repositories or destructive tasks. Reserve `dcode -n` for bounded automation with a reviewed workspace and policy. |
 
 </AgentOnly>

@@ -116,25 +116,6 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "msteams", pluginId: "msteams" },
   { channelId: "googlechat", pluginId: "googlechat" },
 ] as const;
-// OpenClaw also ships channel plugins outside NemoClaw's currently supported
-// messaging manifests. Keep those bundled entrypoints explicitly inert without
-// representing them as activatable managed-image capabilities.
-export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "a2a", pluginId: "a2a" },
-  { channelId: "reef", pluginId: "reef" },
-] as const;
-const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
-  ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
-  ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
-] as const;
-// The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
-// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
-// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
-const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
-  ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
-  "diagnostics-otel",
-  "brave",
-] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
@@ -977,18 +958,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
 
   const pluginEntries: JsonObject = {
-    bonjour: { enabled: false },
     nemoclaw: { enabled: true },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,
     "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
   );
-  if (managedImageCapabilityUnion) {
-    for (const pluginId of MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS) {
-      pluginEntries[pluginId] = { enabled: false };
-    }
-  }
   const openclawOtel = buildOpenClawOtelConfig(env);
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
@@ -1039,11 +1014,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
   }
 
   const channels: JsonObject = { defaults: {} };
-  if (managedImageCapabilityUnion) {
-    for (const { channelId } of MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
-      channels[channelId] = { enabled: false };
-    }
-  }
 
   const config: JsonObject = {
     agents: {

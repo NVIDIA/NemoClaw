@@ -525,9 +525,6 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     { args: ["update"], posture: "dependency update posture" },
     { args: ["install", "anthropic"], posture: "dependency update posture" },
     { args: ["auth", "set", "langsmith"], posture: "credential posture" },
-    { args: ["tools", "install"], posture: "managed tool set posture" },
-    { args: ["tools", "add"], posture: "managed tool set posture" },
-    { args: ["mcp"], posture: "MCP posture" },
   ])("rejects upstream managed-mutation command $args", ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-command-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);

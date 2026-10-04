@@ -621,7 +621,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     return runGuardedShell(setup, [shellOpenclawCommand(args)]);
   }
 
-  it("allows native OpenClaw configuration commands while retaining unrelated command guards", () => {
+  it("forwards native OpenClaw configuration and local-agent commands", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const envFile = fs.readFileSync(setup.proxyEnv, "utf-8");
@@ -635,9 +635,8 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(configSet.status).toBe(0);
 
       const localAgent = runGuardedOpenclaw(setup, ["agent", "--local"]);
-      expect(localAgent.status).toBe(1);
-      expect(localAgent.stderr).toContain("--local");
-      expect(localAgent.stderr).toContain("openclaw agent --agent main");
+      expect(localAgent.status, localAgent.stderr).toBe(0);
+      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("ARGS=agent --local");
 
       expect(runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["config", "get", "foo"]).status).toBe(0);

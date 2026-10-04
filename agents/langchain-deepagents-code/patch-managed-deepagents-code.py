@@ -4,8 +4,8 @@
 
 # Source-of-truth review for this pinned third-party patch boundary:
 # invalidState: upstream entrypoints can independently enable credential stores,
-# ambient MCP discovery, update/install flows, first-run model selection,
-# optional LangGraph CLI analytics, or child-process config paths that bypass
+# update/install flows, optional LangGraph CLI analytics, or child-process
+# config paths that bypass
 # NemoClaw's managed inference, policy, and integrity-bound MCP boundaries.
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
@@ -105,12 +105,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     if nemoclaw_headless and not nemoclaw_non_interactive_message.strip():
         parser.error("empty managed headless prompt; provide prompt text")
     blocked_command = getattr(args, "command", None)
-    if blocked_command == "mcp":
-        parser.error("MCP commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if blocked_command in {"auth", "install", "update"}:
         parser.error(f"{blocked_command} commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if blocked_command == "tools" and getattr(args, "tools_command", None) not in (None, "list", "help"):
-        parser.error(f"tools {getattr(args, 'tools_command', '?')} is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "update", False):
         parser.error("--update is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "auto_update", False):
@@ -119,14 +115,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         parser.error("--install is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "model_params", None) is not None:
         parser.error("--model-params is disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if getattr(args, "rubric_model", None) is not None:
-        parser.error("--rubric-model is disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if nemoclaw_headless and getattr(args, "startup_cmd", None) is not None:
-        parser.error("--startup-cmd is disabled for managed headless Deep Agents Code")
-    if nemoclaw_headless and getattr(args, "interpreter_tools", None) is not None:
-        parser.error("--interpreter-tools is disabled for managed headless Deep Agents Code")
-    if nemoclaw_headless and getattr(args, "interpreter", None) is True:
-        parser.error("--interpreter is disabled for managed headless Deep Agents Code")
     if getattr(args, "auto_approve", False) and (
         nemoclaw_headless or not nemoclaw_auto_approval_enabled
     ):
@@ -135,8 +123,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         nemoclaw_headless or not nemoclaw_auto_approval_enabled
     ):
         parser.error("--yolo is disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if getattr(args, "acp", False):
-        parser.error("--acp is disabled in NemoClaw-managed Deep Agents Code sandboxes")
 
     if hasattr(args, "sandbox"):
         args.sandbox = "none"
@@ -159,10 +145,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.trust_project_mcp = False
     if hasattr(args, "auto_approve") and not nemoclaw_auto_approval_enabled:
         args.auto_approve = False
-    if hasattr(args, "rubric_model"):
-        args.rubric_model = None
-    if hasattr(args, "acp"):
-        args.acp = False
     # Preserve the sandbox owner's explicit disabled capability while allowing
     # the pinned native manual/auto/yolo behavior when thread opt-in is enabled.
     if hasattr(args, "startup_mode") and not nemoclaw_auto_approval_enabled:
@@ -193,28 +175,18 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
     normalized = command.lower().strip()
     tokens = normalized.split()
     root = tokens[0] if tokens else ""
-    blocked_model_params = root == "/model" and "--model-params" in normalized
-    blocked_grader_model = (
-        len(tokens) >= 2
-        and tokens[1] == "model"
-        and (
-            root in {"/rubric", "/criteria"}
-            or (root == "/goal" and len(tokens) <= 3)
-        )
-    )
     blocked_managed_command = root in {
         "/auth",
         "/connect",
         "/update",
         "/auto-update",
         "/install",
-        "/mcp",
     }
     if root in {"/mode", "/auto", "/yolo"}:
         from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
 
         blocked_managed_command = not managed_auto_approval_enabled()
-    if blocked_model_params or blocked_grader_model or blocked_managed_command:
+    if blocked_managed_command or (root == "/model" and "--model-params" in normalized):
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
@@ -314,43 +286,8 @@ async def _nemoclaw_action_toggle_auto_approve(self) -> None:
     await _nemoclaw_original_action_toggle_auto_approve(self)
 
 
-async def _nemoclaw_block_rubric_model(self, model_spec: str | None) -> None:
-    self._rubric_model = None
-    if getattr(self, "_server_kwargs", None) is not None:
-        self._server_kwargs["rubric_model"] = None
-    if model_spec is not None:
-        self.notify(
-            "Custom rubric models are disabled; the managed chat model is used.",
-            severity="warning",
-            markup=False,
-        )
-
-
 async def _nemoclaw_skip_launch_tavily(self) -> None:
     return None
-
-
-async def _nemoclaw_skip_launch_model(
-    self,
-) -> "tuple[bool, tuple[str, str] | None]":
-    """Skip model picker during first-run; NemoClaw owns model configuration."""
-    return (False, None)
-
-
-def _nemoclaw_skip_launch_dependencies_prompt(self):
-    """Return a pre-resolved dependency result that skips the model picker.
-
-    The mount path pre-builds the model screen and passes it as
-    continue_screen to the name prompt, bypassing
-    _prompt_launch_dependencies_then_model. This override returns None
-    as the screen (so no model picker is pushed after the name prompt)
-    and a pre-resolved future with (False, None).
-    """
-    import asyncio
-    loop = asyncio.get_running_loop()
-    result_future = loop.create_future()
-    result_future.set_result((False, None))
-    return None, result_future
 
 
 async def _nemoclaw_block_model_auth(self, model_spec: str) -> bool:
@@ -392,10 +329,7 @@ DeepAgentsApp._handle_install_package = _nemoclaw_block_install_package
 DeepAgentsApp._handle_auto_update_toggle = _nemoclaw_block_auto_update
 DeepAgentsApp._on_auto_approve_enabled = _nemoclaw_on_auto_approve_enabled
 DeepAgentsApp.action_toggle_auto_approve = _nemoclaw_action_toggle_auto_approve
-DeepAgentsApp._set_rubric_model = _nemoclaw_block_rubric_model
 DeepAgentsApp._prompt_launch_tavily = _nemoclaw_skip_launch_tavily
-DeepAgentsApp._prompt_launch_dependencies_then_model = _nemoclaw_skip_launch_model
-DeepAgentsApp._build_launch_dependencies_prompt = _nemoclaw_skip_launch_dependencies_prompt
 DeepAgentsApp._prompt_model_auth_if_needed = _nemoclaw_block_model_auth
 DeepAgentsApp._show_auth_manager = _nemoclaw_block_auth_manager
 DeepAgentsApp._enter_service_api_key = _nemoclaw_block_service_key
@@ -625,8 +559,6 @@ if _nemoclaw_original_create_deep_agent is not None:
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
     """Keep managed graph posture, disclosure, and observability boundaries."""
-    kwargs["rubric_model"] = None
-    kwargs["async_subagents"] = None
     from deepagents_code.progressive_tool_disclosure import (
         assert_unique_callable_tool_names,
     )
@@ -685,12 +617,6 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     return agent, backend
 
 
-def load_async_subagents(config_path=None):
-    """Disable mutable remote subagents and their arbitrary HTTP headers."""
-    del config_path
-    return []
-
-
 _nemoclaw_original_build_model_identity_section = build_model_identity_section
 
 
@@ -712,35 +638,6 @@ def build_model_identity_section(
     )
 '''
 
-HOOK_MANAGER_PATCH = r'''
-
-# NemoClaw-managed Deep Agents Code hardening v2.
-import os as _nemoclaw_os
-
-_nemoclaw_original_hooks_manager_create = HooksManager.create.__func__
-
-
-def _nemoclaw_hooks_manager_create(cls, *args, **kwargs):
-    """Keep executable hooks out of managed headless sessions."""
-    if _nemoclaw_os.environ.get("NEMOCLAW_DCODE_HEADLESS_INTERNAL") == "1":
-        return cls.inert()
-    return _nemoclaw_original_hooks_manager_create(cls, *args, **kwargs)
-
-
-HooksManager.create = classmethod(_nemoclaw_hooks_manager_create)
-'''
-
-SUBAGENTS_PATCH = r'''
-
-# NemoClaw-managed Deep Agents Code hardening v2.
-_nemoclaw_original_list_subagents = list_subagents
-
-
-def list_subagents(*args, **kwargs):
-    """Ignore project/user subagent model overrides while preserving prompts."""
-    subagents = _nemoclaw_original_list_subagents(*args, **kwargs)
-    return [{**subagent, "model": None} for subagent in subagents]
-'''
 
 NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
         logger.exception("Unexpected error during non-interactive execution")
@@ -1227,8 +1124,6 @@ async def run_non_interactive(*args, **kwargs):
     _nemoclaw_os.environ["NEMOCLAW_DCODE_HEADLESS_INTERNAL"] = "1"
     output_format = kwargs.pop("output_format", "text")
     timeout_seconds = kwargs.pop("timeout_seconds", None)
-    settings.shell_allow_list = None
-    kwargs["startup_cmd"] = None
     from deepagents_code.config import CLI_MAX_RETRIES_KEY
 
     model_params = kwargs.get("model_params")
@@ -1237,7 +1132,6 @@ async def run_non_interactive(*args, **kwargs):
         if isinstance(model_params, dict) and CLI_MAX_RETRIES_KEY in model_params
         else None
     )
-    kwargs["profile_override"] = None
     kwargs["sandbox_type"] = "none"
     from deepagents_code._nemoclaw_managed import managed_mcp_config_path
 
@@ -1246,9 +1140,6 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["mcp_config_path"] = managed_mcp_config if has_managed_mcp else None
     kwargs["no_mcp"] = not has_managed_mcp
     kwargs["trust_project_mcp"] = False
-    kwargs["enable_interpreter"] = False
-    kwargs["interpreter_ptc"] = None
-    kwargs["rubric_model"] = None
     if output_format == "json":
         kwargs["quiet"] = True
         kwargs["stream"] = True
@@ -1260,9 +1151,6 @@ async def run_non_interactive(*args, **kwargs):
     return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
 
 
-async def _run_startup_command(command, console, *, quiet: bool) -> None:
-    """Disable the unapproved startup shell subprocess backend."""
-    del command, console, quiet
 '''
 
 APPROVAL_PATCH = r'''
@@ -1340,6 +1228,7 @@ def _normalize_path(raw_path, project_context, label):
         raise ValueError("NemoClaw managed MCP descriptor path is invalid")
     return _nemoclaw_original_normalize_path(raw_path, project_context, label)
 '''
+
 
 MCP_TOOLS_PATCH = r'''
 
@@ -1775,7 +1664,6 @@ def main() -> None:
         "tools": root / "tools.py",
         "model_config": root / "model_config.py",
         "agent": root / "agent.py",
-        "hooks_manager": root / "hooks" / "manager.py",
         "update_check": root / "update_check.py",
         "openai_codex": root / "integrations" / "openai_codex.py",
         "auth_ui": root / "tui" / "widgets" / "auth.py",
@@ -1787,7 +1675,6 @@ def main() -> None:
         "server": root / "client" / "launch" / "server.py",
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
-        "subagents": root / "subagents.py",
         "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
@@ -1854,7 +1741,6 @@ def main() -> None:
             ("app", APP_PATCH),
             ("approval", APPROVAL_PATCH),
             ("agent", AGENT_PATCH),
-            ("hooks_manager", HOOK_MANAGER_PATCH),
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
             ("server", SERVER_PATCH),
@@ -1968,12 +1854,6 @@ def main() -> None:
             "build_model_identity_section",
         },
     )
-    _require_methods(
-        paths["hooks_manager"],
-        texts["hooks_manager"],
-        "HooksManager",
-        {"create", "inert"},
-    )
     update_tree = _require_functions(
         paths["update_check"],
         texts["update_check"],
@@ -2037,7 +1917,6 @@ def main() -> None:
         texts["mcp_tools"],
         {"discover_mcp_configs", "load_mcp_config"},
     )
-    _require_functions(paths["subagents"], texts["subagents"], {"list_subagents"})
     _require_functions(
         paths["non_interactive"],
         texts["non_interactive"],
@@ -2102,11 +1981,6 @@ def main() -> None:
         paths["model_config"], texts["model_config"], MODEL_CONFIG_PATCH
     )
     transformed["agent"] = _append_patch(paths["agent"], texts["agent"], AGENT_PATCH)
-    transformed["hooks_manager"] = _append_patch(
-        paths["hooks_manager"],
-        texts["hooks_manager"],
-        HOOK_MANAGER_PATCH,
-    )
     transformed["update_check"] = _append_patch(
         paths["update_check"], texts["update_check"], UPDATE_CHECK_PATCH
     )
@@ -2171,9 +2045,6 @@ def main() -> None:
     )
     transformed["mcp_tools"] = _append_patch(
         paths["mcp_tools"], transformed_mcp_tools, MCP_TOOLS_PATCH
-    )
-    transformed["subagents"] = _append_patch(
-        paths["subagents"], texts["subagents"], SUBAGENTS_PATCH
     )
     transformed_non_interactive = texts["non_interactive"].replace(
         NON_INTERACTIVE_ERROR_MARKER,

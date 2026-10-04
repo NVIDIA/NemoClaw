@@ -69,8 +69,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "client/launch/server.py",
       "_server_config.py",
       "mcp_tools.py",
-      "subagents.py",
-      "hooks/manager.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
     ].forEach((relativePath) => {
@@ -90,11 +88,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "agent",
       "agent.py",
       "_nemoclaw_original_build_model_identity_section = build_model_identity_section",
-    ],
-    [
-      "hooks_manager",
-      "hooks/manager.py",
-      "_nemoclaw_original_hooks_manager_create = HooksManager.create.__func__",
     ],
     [
       "status",
@@ -180,8 +173,6 @@ else:
     ["update"],
     ["auth"],
     ["install"],
-    ["mcp"],
-    ["tools", "install"],
     ["--update"],
     ["--upd"],
     ["--auto-update"],
@@ -190,12 +181,9 @@ else:
     ["--inst", "nvidia"],
     ["--model-params", '{"api_key":"secret"}'],
     ['--model-p={"api_key":"secret"}'],
-    ["--rubric-model", "anthropic:test"],
-    ["--rubric-m=anthropic:test"],
     ["-y"],
     ["--auto-approve"],
     ["--yolo"],
-    ["--acp"],
   ])("rejects direct-module mutation arguments: %s", (...args) => {
     const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
@@ -227,15 +215,18 @@ else:
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
     ["--startup-cmd", "printf unsafe"],
-  ])("rejects native local execution argument in direct headless mode: %s", (...args) => {
+  ])("preserves native local execution argument in the headless parser: %s", (...args) => {
     const tempDir = createPatchedPackageFixture();
-    const result = spawnSync("python3", ["-m", "deepagents_code", "-n", "message", ...args], {
-      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      "python3",
+      ["-c", "from deepagents_code.main import parse_args; parse_args()", "-n", "message", ...args],
+      {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      },
+    );
 
-    expect(result.status).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("managed headless");
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it.each([["-n", ""], ["--non-interactive="]])(
@@ -504,12 +495,57 @@ check("disabled", False)
     const tempDir = createPatchedPackageFixture();
     const run = (candidateName: string, candidateValue: string) =>
       spawnSync("python3", ["-m", "deepagents_code"], {
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          [candidateName]: candidateValue,
+        },
         encoding: "utf8",
       });
     const result = run(name, value);
     expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
     expect(result.stderr).toContain("invalid OpenShell credential placeholder");
+  });
+
+  it("excludes user and project MCP files from managed discovery", () => {
+    const tempDir = createPatchedPackageFixture();
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import asyncio
+import json
+import os
+from pathlib import Path
+from deepagents_code import mcp_tools
+
+home = Path.cwd() / "home"
+project = Path.cwd() / "project"
+os.environ["HOME"] = str(home)
+for config_path in (
+    home / ".deepagents" / ".mcp.json",
+    project / ".deepagents" / ".mcp.json",
+    project / ".mcp.json",
+):
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"mcpServers": {
+        "unmanaged": {"command": "unmanaged-command", "args": []}
+    }}))
+os.chdir(project)
+assert mcp_tools.discover_mcp_configs() == []
+assert asyncio.run(mcp_tools.resolve_and_load_mcp_tools()) == []
+print("unmanaged MCP servers excluded")
+`,
+      ],
+      {
+        cwd: tempDir,
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("unmanaged MCP servers excluded");
   });
 
   it("loads only strict HTTPS-only managed MCP configuration", () => {
@@ -549,7 +585,9 @@ check("disabled", False)
 
     const valid = validate({ mcpServers: { github: validServer } });
     expect(valid.status, valid.stderr).toBe(0);
-    expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
+    expect(JSON.parse(valid.stdout)).toEqual({
+      mcpServers: { github: validServer },
+    });
 
     [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
@@ -561,7 +599,10 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, headers: { Authorization: "Bearer raw-secret-value" } },
+          github: {
+            ...validServer,
+            headers: { Authorization: "Bearer raw-secret-value" },
+          },
         },
       },
       {
@@ -581,17 +622,26 @@ check("disabled", False)
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com:443/mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com:443/mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/a/../mcp/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/a/../mcp/",
+          },
         },
       },
       {
         mcpServers: {
-          github: { ...validServer, url: "https://api.githubcopilot.com/mcp path/" },
+          github: {
+            ...validServer,
+            url: "https://api.githubcopilot.com/mcp path/",
+          },
         },
       },
       ...[
@@ -683,7 +733,9 @@ check("disabled", False)
         },
       };
 
-      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, {
+        mode: 0o600,
+      });
 
       const result = spawnSync(
         "python3",
@@ -889,11 +941,7 @@ async def validate():
         "/auto-update",
         "/auth",
         "/connect",
-        "/mcp login server",
         '/model openai:test --model-params {"api_key":"secret"}',
-        "/rubric model anthropic:test",
-        "/criteria model anthropic:test",
-        "/goal model anthropic:test",
     ):
         await instance._handle_command(command)
     assert len(instance.original_commands) == 0, instance.original_commands
@@ -925,16 +973,16 @@ async def validate():
     assert instance._status_bar.auto_approve is False
     assert instance._session_state.auto_approve is False
     await instance._set_rubric_model("anthropic:test")
-    assert instance._rubric_model is None
-    assert instance._server_kwargs["rubric_model"] is None
+    assert instance._rubric_model == "anthropic:test"
+    assert instance._server_kwargs["rubric_model"] == "attacker:model"
     await instance._prompt_launch_tavily()
     dep_continued, dep_result = await instance._prompt_launch_dependencies_then_model()
-    assert dep_continued is False
-    assert dep_result is None
+    assert dep_continued is True
+    assert dep_result == ("openai:gpt-4", "openai")
     dep_screen, dep_future = instance._build_launch_dependencies_prompt()
-    assert dep_screen is None
+    assert dep_screen is not None
     assert dep_future.done()
-    assert dep_future.result() == (False, None)
+    assert dep_future.result() == (True, ("openai:gpt-4", "openai"))
     assert await instance._prompt_model_auth_if_needed("provider:model") is False
     await instance._show_auth_manager(initial_provider="provider")
     await instance._enter_service_api_key(None, None)
@@ -1029,16 +1077,16 @@ async def validate():
     assert agent._resolve_ptc_option(
         ["execute"], tools=[], acknowledge_unsafe=True, auto_approve=True
     ) == ["execute"]
-    assert agent.load_async_subagents(Path("/tmp/attacker-config.toml")) == []
+    assert agent.load_async_subagents(Path("/tmp/attacker-config.toml")) == [{"name": "remote", "url": "https://attacker.example", "headers": {"x-key": "secret"}}]
     graph_kwargs = agent.create_cli_agent(
         object(),
         "assistant",
         rubric_model="anthropic:attacker",
         async_subagents=[{"url": "https://attacker.example"}],
     )
-    assert graph_kwargs["rubric_model"] is None
-    assert graph_kwargs["async_subagents"] is None
-    assert subagents.list_subagents()[0]["model"] is None
+    assert graph_kwargs["rubric_model"] == "anthropic:attacker"
+    assert graph_kwargs["async_subagents"] == [{"url": "https://attacker.example"}]
+    assert subagents.list_subagents()[0]["model"] == "anthropic:attacker"
     hook_config_dir = Path(${JSON.stringify(path.join(tempDir, "hook-config"))})
     hook_config_dir.mkdir()
     session_hook_marker = Path(${JSON.stringify(path.join(tempDir, "session-hook-ran"))})
@@ -1072,18 +1120,18 @@ async def validate():
         interpreter_ptc=["execute"],
         rubric_model="anthropic:attacker",
     )
-    assert headless_kwargs["startup_cmd"] is None
+    assert headless_kwargs["startup_cmd"] == "touch /tmp/unsafe"
     assert headless_kwargs["model_params"] is None
-    assert headless_kwargs["profile_override"] is None
+    assert headless_kwargs["profile_override"] == {"attacker": True}
     assert headless_kwargs["sandbox_type"] == "none"
     assert headless_kwargs["mcp_config_path"] is None
     assert headless_kwargs["no_mcp"] is True
     assert headless_kwargs["trust_project_mcp"] is False
-    assert headless_kwargs["enable_interpreter"] is False
-    assert headless_kwargs["interpreter_ptc"] is None
-    assert headless_kwargs["rubric_model"] is None
-    assert non_interactive.settings.shell_allow_list is None
-    assert not headless_hook_marker.exists()
+    assert headless_kwargs["enable_interpreter"] is True
+    assert headless_kwargs["interpreter_ptc"] == ["execute"]
+    assert headless_kwargs["rubric_model"] == "anthropic:attacker"
+    assert non_interactive.settings.shell_allow_list == ["bash"]
+    assert headless_hook_marker.exists()
     os.environ.pop("DCODE_FIXTURE_HOOK_MARKER")
     if sys.platform == "linux":
         _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})

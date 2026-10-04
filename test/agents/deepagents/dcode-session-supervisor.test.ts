@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stopTestProcess } from "../../support/model-router-process-test-helpers.ts";
 
 const supervisor = path.join(
   process.cwd(),
@@ -70,6 +71,43 @@ describe("managed DCode session supervisor platform boundary", () => {
 });
 
 describe.runIf(canRun)("managed DCode session supervisor", () => {
+  it("D17 leaves a background child alive when the supervisor is omitted (#11763)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-native-lifetime-"));
+    const marker = path.join(directory, "child.pid");
+    const session = path.join(directory, "session.py");
+    fs.writeFileSync(
+      session,
+      [
+        "import pathlib, subprocess, sys",
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid))",
+      ].join("\n"),
+    );
+    let nativePid: number | null = null;
+    let managedPid: number | null = null;
+    try {
+      const native = spawnSync("python3", [session, marker], { encoding: "utf8", timeout: 5000 });
+      expect(native.status, native.stderr).toBe(0);
+      const nativeChildPid = Number(fs.readFileSync(marker, "utf8"));
+      nativePid = nativeChildPid;
+      expect(() => process.kill(nativeChildPid, 0)).not.toThrow();
+      const managed = spawnSync("python3", [supervisor, "python3", session, marker], {
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      expect(managed.status, managed.stderr).toBe(0);
+      const managedChildPid = Number(fs.readFileSync(marker, "utf8"));
+      managedPid = managedChildPid;
+      expect(() => process.kill(managedChildPid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    } finally {
+      await stopTestProcess(nativePid);
+      await stopTestProcess(managedPid);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("queues rapid pre-spawn disconnect signals and forwards them in order", () => {
     const probe = [
       "import importlib.util",

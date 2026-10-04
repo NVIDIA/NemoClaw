@@ -97,6 +97,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Reviewed neutral-union validation for OpenClaw 2026.9.1's bundled a2a,
   // reef, and Telegram channel inventory.
   "6727034f71f9fadce7d076d0e9518c288f904b13b2be8037565b61a87b1dfbb0",
+  // The same inventory check with native channel defaults; regeneration still
+  // preserves the requested dashboard binding and the checks do not rewrite it.
+  "8d52b7c04b0f72b7ec51f3ccba11720c36e7bd106fd19c6cad1bb5c216b98db0",
   // Reviewed 2026.9.1 legacy-state migration hardening, obsolete exec-approval
   // cleanup, and canonical SQLite ownership repair. This exact instruction
   // preserves the generated openclaw.json dashboard binding.

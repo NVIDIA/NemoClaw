@@ -48,6 +48,40 @@ function runPatcher(fixture: string) {
 }
 
 describe("Hermes writable gateway runtime metadata", () => {
+  it("H13 moves metadata back to the native home when the path patch is omitted (#11763)", () => {
+    const { result, statusPath, tmp } = runPatcher(UPSTREAM_FIXTURE);
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      const managed = spawnSync("python3", ["-I", statusPath], { encoding: "utf8", timeout: 5000 });
+      expect(managed.status, managed.stderr).toBe(0);
+      fs.writeFileSync(statusPath, UPSTREAM_FIXTURE);
+      const native = spawnSync("python3", ["-I", statusPath], { encoding: "utf8", timeout: 5000 });
+      expect(native.status, native.stderr).toBe(0);
+      expect(
+        managed.stdout
+          .trim()
+          .split("\n")
+          .map((entry) => path.relative(tmp, entry)),
+      ).toEqual([
+        "hermes-home/runtime/gateway.pid",
+        "hermes-home/runtime/gateway.lock",
+        "hermes-home/runtime/gateway_state.json",
+      ]);
+      expect(
+        native.stdout
+          .trim()
+          .split("\n")
+          .map((entry) => path.relative(tmp, entry)),
+      ).toEqual([
+        "hermes-home/gateway.pid",
+        "hermes-home/gateway.lock",
+        "hermes-home/gateway_state.json",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("relocates every central gateway metadata reader and remains idempotent", () => {
     const { result, statusPath, tmp } = runPatcher(UPSTREAM_FIXTURE);
     try {

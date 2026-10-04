@@ -150,6 +150,25 @@ function lastJson(stdout: string) {
 }
 
 describe("Hermes external-supervisor restart patch", () => {
+  it("H14 changes external restart from a signal to native stop and start when unpatched (#11763)", () => {
+    const { gatewayPath, temporaryRoot } = writeFixture();
+    try {
+      const native = run(gatewayPath, "external");
+      expect(native.status, native.stderr).toBe(0);
+      expect(lastJson(native.stdout).events).toContainEqual(["manual-stop"]);
+      expect(lastJson(native.stdout).events).toContainEqual(["manual-start", 0, false]);
+      expect(patch(gatewayPath).status).toBe(0);
+      const managed = run(gatewayPath, "external");
+      expect(managed.status, managed.stderr).toBe(0);
+      expect(lastJson(managed.stdout).events).toContainEqual(["signal", 4321, 17]);
+      expect(lastJson(managed.stdout).events).not.toContainEqual(["manual-start", 0, false]);
+      expect(lastJson(managed.stdout).events.map(([event]) => event)).not.toContain("manual-stop");
+      expect(lastJson(managed.stdout).events.map(([event]) => event)).not.toContain("manual-wait");
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
   it("routes an externally supervised gateway through SIGUSR1 and remains idempotent", () => {
     const { gatewayPath, temporaryRoot } = writeFixture();
     try {

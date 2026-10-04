@@ -1662,10 +1662,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.auth.token).toBe("");
   });
 
-  it("disables bundled bonjour in sandbox config by default", () => {
+  it("leaves bundled Bonjour activation to OpenClaw", () => {
     const config = runConfigScript();
-    expect(config.plugins.entries.bonjour.enabled).toBe(false);
-    expect(config.plugins.entries.bonjour.config).toBeUndefined();
+    expect(config.plugins.entries.bonjour).toBeUndefined();
   });
 
   it("keeps the selected bundled provider plugin available", () => {

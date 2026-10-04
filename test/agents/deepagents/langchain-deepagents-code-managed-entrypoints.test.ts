@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { makeWrapperFixture } from "../../helpers/langchain-deepagents-code-image.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 vi.setConfig({ maxConcurrency: 4 });
@@ -55,69 +56,19 @@ function runCommand(
   });
 }
 
-const MANAGED_MCP_VALIDATOR_INVOCATION = [
-  'managed_mcp_config="$(',
-  "  /opt/venv/bin/python3 -I -c \\",
-  "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
-  ')"',
-].join("\n");
-
-function writeAutoApprovalCapability(path: string, content?: string): void {
-  const configuredContents = content === undefined ? [] : [content];
-  for (const configuredContent of configuredContents) {
-    fs.writeFileSync(path, configuredContent, { mode: 0o444 });
-    fs.chmodSync(path, 0o444);
-  }
-}
-
-function makeWrapperFixture(
-  tempDir: string,
-  autoApprovalContent?: string,
-): { wrapperPath: string; ranMarker: string; autoApprovalPath: string } {
-  const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
-  const ranMarker = path.join(tempDir, "dcode-ran");
-  const autoApprovalPath = path.join(tempDir, "dcode-auto-approval");
-  const envFile = path.join(tempDir, ".env");
-  const authFile = path.join(tempDir, "auth.json");
-  const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
-  const source = readAgentFile("dcode-wrapper.sh");
-  expect(
-    source,
-    "managed MCP descriptors must be opened by the long-lived Python process",
-  ).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
-  const fixture = source
-    .replace(
-      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
-      `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
-    )
-    .replace(
-      'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
-      `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
-    )
-    .replace(
-      'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
-      `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
-      `readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="${autoApprovalPath}"`,
-    )
-    .replace(
-      "readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0",
-      `readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
-    .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
-    .replace(
-      "exec /opt/venv/bin/python3 -I -m deepagents_code",
-      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s approval-mode=%s startup-mode=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}" "\${DEEPAGENTS_CODE_APPROVAL_MODE-__unset__}" "\${DEEPAGENTS_CODE_STARTUP_MODE-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
-    );
-  fs.writeFileSync(envFile, "", "utf8");
-  writeAutoApprovalCapability(autoApprovalPath, autoApprovalContent);
-  fs.writeFileSync(wrapperPath, fixture, { mode: 0o755 });
-  return { wrapperPath, ranMarker, autoApprovalPath };
-}
-
 describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
+  it("rejects wrapper fixture construction when a required binding is missing", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fixture-drift-"));
+    const read = vi.spyOn(fs, "readFileSync").mockReturnValueOnce("#!/bin/bash\nexit 0\n");
+    try {
+      expect(() => makeWrapperFixture(tempDir)).toThrow("fixture drift: expected exactly one");
+      expect(fs.existsSync(path.join(tempDir, "dcode-wrapper.sh"))).toBe(false);
+    } finally {
+      read.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses loopback with a canonical DNS URL when the build validator has no route", async () => {
     const validator = path.join(agentDir, "validate-read-only-mcp-call.py");
     const probe = await runCommand(
@@ -151,7 +102,6 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     const command = readAgentFile("nemoclaw_read_only_mcp.py");
     const validator = readAgentFile("validate-read-only-mcp-call.py");
 
-    expect(wrapper).toContain("list | call-read-only | help");
     expect(wrapper).toContain("dcode tools call-read-only TOOL --json");
     expect(wrapper).toContain(
       'exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null',
@@ -312,11 +262,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   it.each([
     { args: ["--model-params", '{"api_key":"secret"}'], posture: "model parameter" },
     { args: ['--model-p={"api_key":"secret"}'], posture: "model parameter" },
-    { args: ["--rubric-model", "anthropic:test"], posture: "rubric model" },
-    { args: ["--rubric-m=anthropic:test"], posture: "rubric model" },
     { args: ["-y"], posture: "tool approval" },
     { args: ["--auto-approve"], posture: "tool approval" },
-    { args: ["--acp"], posture: "ACP approval" },
   ])("rejects managed runtime override $args", async ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-override-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -331,6 +278,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   });
 
   it.each([
+    ["--rubric-model", "openai:fixture"],
+    ["--acp"],
     ["--shell-allow-list", "recommended"],
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
@@ -374,7 +323,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
       encoding: "utf8",
     });
     expect(headless.status, headless.stderr).toBe(0);
-    expect(headless.stdout).toContain("shell-allow-list=__unset__");
+    expect(headless.stdout).toContain("shell-allow-list=recommended");
   });
 
   it.each([
@@ -390,7 +339,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     "allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)",
     async (arg) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
-      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
       const result = await runCommand("bash", [wrapperPath, arg], {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -406,7 +355,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
 
   it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
     const enabled = await runCommand("bash", [wrapperPath, "-n", "hi", "--auto-approve"], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
@@ -439,21 +388,20 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
     ["--startup-cmd", "printf unsafe"],
-  ])("keeps native local execution disabled for managed headless runs: %s", async (...args) => {
+  ])("preserves native local execution for managed headless runs: %s", async (...args) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-local-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, undefined, "thread-opt-in\n");
     const result = await runCommand("bash", [wrapperPath, "-n", "hi", ...args], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
     });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("headless");
-    expect(fs.existsSync(ranMarker)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
   it.each([["--non", "hi"], ["--non-", "hi"], ["--non-int", "hi"], ["--non-interactive=hi"]])(
-    "applies headless restrictions for unambiguous non-interactive prefix %s",
+    "preserves native interpreter execution for unambiguous non-interactive prefix %s",
     async (...args) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-prefix-"));
       const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -462,9 +410,8 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
         encoding: "utf8",
       });
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("headless interpreter");
-      expect(fs.existsSync(ranMarker)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(ranMarker)).toBe(true);
     },
   );
 
