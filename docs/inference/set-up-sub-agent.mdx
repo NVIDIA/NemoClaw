@@ -278,8 +278,7 @@ The Omni demo helper stores the real provider key in two persistent sandbox file
 OpenClaw and any other process running as the sandbox user can read these files.
 Container root and administrators of the Docker host can also read them.
 The files remain across gateway restarts and for the life of the current sandbox container until you replace the key, remove the provider, or delete the sandbox.
-They do not survive a NemoClaw rebuild or snapshot restore: those flows strip credential values from `openclaw.json` and omit `auth-profiles.json`.
-Re-provision both copies before using the auxiliary provider after a rebuild or restore.
+A rebuild inspects the complete native home and fails before replacement when it finds these credential values; it does not strip them from an otherwise published transfer. Remove both copies or move the credential into supported OpenShell storage before rebuilding, then provision the auxiliary provider again after rebuild. The retired selective snapshot restore flow is not available.
 
 When you remove `vision-operator`, first remove it from `agents.list`.
 Then remove the provider and the retired agent's credential file, and restart the gateway:
