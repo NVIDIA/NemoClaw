@@ -86,6 +86,10 @@ The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitH
 
 </AgentOnly>
 
+When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1` provider to the sandbox instead of using `inference.local`.
+Its provider profile permits `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
+The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
+
 All endpoints use TLS termination and are enforced at port 443.
 
 <AgentOnly variant="openclaw">
