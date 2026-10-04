@@ -14,6 +14,7 @@ import type {
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
 import { DirectSandboxContainerNotFoundError } from "../runtime-provider/privileged-sandbox-control-errors";
+import { sleepMs } from "../readiness-wait";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -60,11 +61,6 @@ export interface ProviderManagedStartupRootApplyTiming {
   readonly sleep?: (milliseconds: number) => void;
 }
 
-function sleepForCreatedContainer(milliseconds: number): void {
-  const buffer = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buffer, 0, 0, milliseconds);
-}
-
 function requireRuntimeProvider(bundle: RuntimeProviderBundle): {
   readonly control: RuntimeProviderPrivilegedSandboxControl;
   readonly capture: (args: readonly string[], timeoutMs?: number) => RuntimeProviderCommandCapture;
@@ -107,7 +103,7 @@ function resolveCreatedContainerTarget(
   timing: ProviderManagedStartupRootApplyTiming,
 ) {
   let missing: DirectSandboxContainerNotFoundError | undefined;
-  const sleep = timing.sleep ?? sleepForCreatedContainer;
+  const sleep = timing.sleep ?? sleepMs;
   for (let attempt = 1; attempt <= CREATED_CONTAINER_DISCOVERY_ATTEMPTS; attempt += 1) {
     try {
       return runtime.control.resolveTarget({
