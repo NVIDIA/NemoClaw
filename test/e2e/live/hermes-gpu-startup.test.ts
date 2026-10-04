@@ -261,7 +261,7 @@ async function preCleanHermes(
   await expectGatewayPortAvailable(host, runtimeProvider, label);
 }
 
-async function captureFailedGpuContainer(
+export async function captureFailedGpuContainer(
   host: HostCliClient,
   runtimeProvider: RuntimeProviderPrerequisite,
   preRollbackDiagnosticsDir: string,

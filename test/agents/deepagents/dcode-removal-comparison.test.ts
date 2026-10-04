@@ -20,9 +20,9 @@ afterEach(cleanupPackageFixtures);
 const cases = [
   { id: "D01", args: ["-n", "hello from the native harness", "--interpreter"] },
   { id: "D03", args: ["tools", "configure"] },
-  { id: "D05", args: ["--rubric-model", "openai:fixture"] },
+  { id: "D05", args: ["-n", "check the result", "--rubric-model", "openai:fixture"] },
   { id: "D08", args: ["--acp"] },
-  { id: "D11", args: ["mcp", "list"] },
+  { id: "D11", args: ["mcp", "config"] },
 ] as const;
 
 function runWrapper(wrapperPath: string, args: readonly string[], env = {}) {
@@ -34,8 +34,33 @@ function runWrapper(wrapperPath: string, args: readonly string[], env = {}) {
 }
 
 describe("Deep Agents native command forwarding", () => {
+  it.each([[], ["--mcp-config", "/tmp/unmanaged-mcp.json"]])(
+    "rejects MCP OAuth login before dispatch with config arguments %j (#11763)",
+    (...configArgs) => {
+      const directory = createPackageFixture();
+      patchFixture(directory);
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          "from deepagents_code.main import parse_args; parse_args(); print('dispatched')",
+          "mcp",
+          "login",
+          "fixture",
+          ...configArgs,
+        ],
+        { encoding: "utf8", timeout: 5000, env: { PATH: process.env.PATH, PYTHONPATH: directory } },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "MCP OAuth login is disabled in NemoClaw-managed Deep Agents Code sandboxes",
+      );
+      expect(result.stdout).not.toContain("dispatched");
+    },
+  );
+
   it.each(cases)(
-    "$id preserves native parser options with credential handling installed (#11763)",
+    "$id passes the managed argument guard with credential handling installed (#11763)",
     ({ args }) => {
       const directory = createPackageFixture();
       const probe = () =>

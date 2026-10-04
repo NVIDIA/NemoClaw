@@ -278,13 +278,13 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   });
 
   it.each([
-    ["--rubric-model", "openai:fixture"],
+    ["-n", "check the result", "--rubric-model", "openai:fixture"],
     ["--acp"],
     ["--shell-allow-list", "recommended"],
     ["--interpreter"],
     ["--interpreter-tools", "execute"],
     ["--startup-cmd", "printf ready"],
-  ])("passes native interactive local execution argument %s", async (...args) => {
+  ])("forwards native local execution arguments starting with %s", async (...args) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-local-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
     const result = await runCommand("bash", [wrapperPath, ...args], {

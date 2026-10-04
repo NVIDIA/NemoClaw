@@ -21,9 +21,14 @@ const UNCONFIGURED: OpenClawTelegramState = {
 };
 
 describe("channels-add-remove Telegram configuration predicate", () => {
-  it("treats bundled disabled channel and plugin entries as unconfigured (#9361)", () => {
-    expect(openClawHasConfiguredTelegram(UNCONFIGURED)).toBe(false);
-  });
+  it.each([true, false])(
+    "treats inactive entries as unconfigured when present=%s (#11763)",
+    (present) => {
+      const state = { ...UNCONFIGURED, channelPresent: present, pluginPresent: present };
+      expect(openClawHasConfiguredTelegram(state)).toBe(false);
+      expect(openClawHasConfiguredTelegram({ ...state, credentialPresent: true })).toBe(true);
+    },
+  );
 
   it.each([
     ["enabled channel without plugin activation", { channelEnabled: true }],

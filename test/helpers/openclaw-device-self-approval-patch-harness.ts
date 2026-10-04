@@ -70,7 +70,14 @@ async function executeGatewayRequestWithScopes(params) {
   });
 }
 function gatewayClientOptions(opts) {
-  return executeGatewayRequestWithScopes({ opts, deviceIdentity: forcedDeviceIdentity });
+  const omitDeviceIdentity = shouldOmitDeviceIdentityForGatewayCall({
+    opts,
+    authMode: "token",
+    token: opts.token,
+    url: opts.url
+  });
+  const deviceIdentity = omitDeviceIdentity ? null : resolveDeviceIdentityForGatewayCall();
+  return executeGatewayRequestWithScopes({ opts, deviceIdentity });
 }
 function setForceDevicePairing(value) {
   if (value) process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";

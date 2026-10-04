@@ -107,6 +107,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     blocked_command = getattr(args, "command", None)
     if blocked_command in {"auth", "install", "update"}:
         parser.error(f"{blocked_command} commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if blocked_command == "mcp" and getattr(args, "mcp_command", None) == "login":
+        parser.error("MCP OAuth login is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "update", False):
         parser.error("--update is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "auto_update", False):
