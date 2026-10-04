@@ -13,6 +13,7 @@ import type {
   RuntimeProviderPrivilegedSandboxControl,
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
+import { DirectSandboxContainerNotFoundError } from "../runtime-provider/privileged-sandbox-control-errors";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -23,6 +24,13 @@ import {
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
+// The managed-startup handoff owns this read-only wait because OpenShell can
+// publish its verified sandbox identity just before the engine exposes the
+// matching container row. Retry only the exact missing-container signal. An
+// ambiguous, stopped, or changed identity still fails immediately, and the
+// terminal error records the complete bounded observation budget.
+const CREATED_CONTAINER_DISCOVERY_ATTEMPTS = 21;
+const CREATED_CONTAINER_DISCOVERY_INTERVAL_MS = 250;
 const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
 const FIXED_ROOT_ENV = [
   "HOME=/root",
@@ -47,6 +55,15 @@ type ProviderManagedStartupRuntime = Readonly<{
   sandbox: SandboxEntry;
   transaction: ProviderManagedStartupTransaction;
 }>;
+
+export interface ProviderManagedStartupRootApplyTiming {
+  readonly sleep?: (milliseconds: number) => void;
+}
+
+function sleepForCreatedContainer(milliseconds: number): void {
+  const buffer = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buffer, 0, 0, milliseconds);
+}
 
 function requireRuntimeProvider(bundle: RuntimeProviderBundle): {
   readonly control: RuntimeProviderPrivilegedSandboxControl;
@@ -81,12 +98,48 @@ function commandDetail(result: {
     .slice(-1200);
 }
 
-function inspectExactCreatedRuntime(input: {
-  readonly bundle: RuntimeProviderBundle;
-  readonly sandboxName: string;
-  readonly sandboxId: string;
-  readonly expectedContainerId?: string;
-}): ProviderManagedStartupRuntime {
+function resolveCreatedContainerTarget(
+  runtime: ReturnType<typeof requireRuntimeProvider>,
+  input: {
+    readonly sandbox: SandboxEntry;
+    readonly sandboxName: string;
+  },
+  timing: ProviderManagedStartupRootApplyTiming,
+) {
+  let missing: DirectSandboxContainerNotFoundError | undefined;
+  const sleep = timing.sleep ?? sleepForCreatedContainer;
+  for (let attempt = 1; attempt <= CREATED_CONTAINER_DISCOVERY_ATTEMPTS; attempt += 1) {
+    try {
+      return runtime.control.resolveTarget({
+        registeredSandboxNames: [input.sandboxName],
+        sandbox: input.sandbox,
+        sandboxName: input.sandboxName,
+      });
+    } catch (error) {
+      if (!(error instanceof DirectSandboxContainerNotFoundError)) throw error;
+      missing = error;
+      if (attempt < CREATED_CONTAINER_DISCOVERY_ATTEMPTS) {
+        sleep(CREATED_CONTAINER_DISCOVERY_INTERVAL_MS);
+      }
+    }
+  }
+  throw new DirectSandboxContainerNotFoundError(
+    `${missing?.message ?? "The direct OpenShell sandbox container was not found."} ` +
+      `The exact container remained absent after ${CREATED_CONTAINER_DISCOVERY_ATTEMPTS} ` +
+      `observations over ${(CREATED_CONTAINER_DISCOVERY_ATTEMPTS - 1) * CREATED_CONTAINER_DISCOVERY_INTERVAL_MS}ms.`,
+    { cause: missing },
+  );
+}
+
+function inspectExactCreatedRuntime(
+  input: {
+    readonly bundle: RuntimeProviderBundle;
+    readonly sandboxName: string;
+    readonly sandboxId: string;
+    readonly expectedContainerId?: string;
+  },
+  timing: ProviderManagedStartupRootApplyTiming = {},
+): ProviderManagedStartupRuntime {
   const runtime = requireRuntimeProvider(input.bundle);
   const sandbox: SandboxEntry = {
     name: input.sandboxName,
@@ -94,11 +147,7 @@ function inspectExactCreatedRuntime(input: {
   };
   const target = input.expectedContainerId
     ? { resourceHandle: input.expectedContainerId }
-    : runtime.control.resolveTarget({
-        registeredSandboxNames: [input.sandboxName],
-        sandbox,
-        sandboxName: input.sandboxName,
-      });
+    : resolveCreatedContainerTarget(runtime, { sandbox, sandboxName: input.sandboxName }, timing);
   const inspected = runtime.capture(
     ["inspect", "--type", "container", target.resourceHandle],
     30_000,
@@ -267,24 +316,30 @@ function sharedStateStatusCommand(
   ];
 }
 
-export function applyProviderManagedStartupRootRequest(input: {
-  readonly runtimeProvider: RuntimeProviderBundle;
-  readonly sandboxName: string;
-  readonly sandboxId: string;
-  readonly bootstrapIdentity: string;
-  readonly request: ManagedStartupRootApplyRequest;
-  readonly expectedContainerId?: string;
-  readonly environment?: NodeJS.ProcessEnv;
-}): ProviderManagedStartupTransaction | null {
+export function applyProviderManagedStartupRootRequest(
+  input: {
+    readonly runtimeProvider: RuntimeProviderBundle;
+    readonly sandboxName: string;
+    readonly sandboxId: string;
+    readonly bootstrapIdentity: string;
+    readonly request: ManagedStartupRootApplyRequest;
+    readonly expectedContainerId?: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  },
+  timing: ProviderManagedStartupRootApplyTiming = {},
+): ProviderManagedStartupTransaction | null {
   if (!/^[a-f0-9]{64}$/u.test(input.bootstrapIdentity)) {
     throw new Error("Managed startup requires one exact bootstrap identity.");
   }
-  const pinned = inspectExactCreatedRuntime({
-    bundle: input.runtimeProvider,
-    sandboxName: input.sandboxName,
-    sandboxId: input.sandboxId,
-    ...(input.expectedContainerId ? { expectedContainerId: input.expectedContainerId } : {}),
-  });
+  const pinned = inspectExactCreatedRuntime(
+    {
+      bundle: input.runtimeProvider,
+      sandboxName: input.sandboxName,
+      sandboxId: input.sandboxId,
+      ...(input.expectedContainerId ? { expectedContainerId: input.expectedContainerId } : {}),
+    },
+    timing,
+  );
   const runtime: ProviderManagedStartupRuntime = {
     ...pinned,
     transaction: {
