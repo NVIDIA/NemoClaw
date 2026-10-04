@@ -539,6 +539,7 @@ export function registerSandbox(
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      dashboardExternalUrl: entry.dashboardExternalUrl ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,

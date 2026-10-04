@@ -18,7 +18,6 @@ import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import type { HermesOperatorConfigRestoreReport } from "./rebuild-durable-config";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -26,6 +25,7 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
@@ -92,7 +92,6 @@ export interface RebuildPostRestorePhaseInput {
   ) => Promise<void>;
   restoreSucceeded: boolean;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
-  hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
   versionCheck: sandboxVersion.VersionCheckResult;
@@ -157,17 +156,6 @@ function printRebuildVersionFailureRecovery(
     );
   }
   return failureMessage;
-}
-
-export function printHermesOperatorConfigRestoreReport(
-  targetAgentName: string,
-  report: HermesOperatorConfigRestoreReport | undefined,
-): void {
-  if (targetAgentName !== "hermes" || !report) return;
-  const restored = report.restoredKeys.join(", ") || "none";
-  const dropped = report.droppedKeys.join(", ") || "none";
-  console.log(`    Restored Hermes operator config keys: ${restored}`);
-  console.log(`    Dropped Hermes operator config keys: ${dropped}`);
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -244,7 +232,6 @@ export async function runRebuildPostRestorePhase(
     mcpRuntimeSelection,
     restoreSucceeded,
     openClawDoctorWindow: preparedOpenClawDoctorWindow,
-    hermesOperatorConfigRestore,
     hermesCronRestoreIdentity,
     preparedBackupRecovery,
     versionCheck,
@@ -356,21 +343,17 @@ export async function runRebuildPostRestorePhase(
       return;
     }
 
-    // The managed image owns the ordinary Hermes process lifecycle. Only an
-    // active cron-restore gate requires the bounded replacement transaction that
-    // keeps dispatch drained across a process identity change.
-    hermesGatewayRestartState = hermesCronRestoreIdentity
-      ? await restartHermesGatewayAfterStateRestore(
-          sandboxName,
-          targetAgentName,
-          hermesPostRestoreGatewayDeps,
-        )
-      : "not-applicable";
-    mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
-      sandboxName,
-      mcpEntries,
-      mcpRuntimeSelection,
-    ));
+    // Recreation starts Hermes before restore replaces its durable home. Rebind
+    // every Hermes gateway to that restored state before MCP restoration; the
+    // cron-gated path additionally proves the replacement process identity.
+    hermesGatewayRestartState =
+      targetAgentName === "hermes"
+        ? await restartHermesGatewayAfterStateRestore(
+            sandboxName,
+            targetAgentName,
+            hermesPostRestoreGatewayDeps,
+          )
+        : "not-applicable";
     if (targetAgentName === "openclaw") {
       if (!openClawDoctorWindow) {
         bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
@@ -388,6 +371,14 @@ export async function runRebuildPostRestorePhase(
       openClawDoctorWindow = null;
       console.log(`  ${G}\u2713${R} OpenClaw native final start passed`);
     }
+    // OpenClaw's final start regenerates the local gateway auth removed from
+    // the archive before MCP restoration performs its acknowledged reload.
+    // Hermes has already rebound its process to restored state above.
+    mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+      sandboxName,
+      mcpEntries,
+      mcpRuntimeSelection,
+    ));
   } finally {
     if (openClawDoctorWindow) {
       await abortOpenClawPostRestoreWindowAfterFailure(openClawDoctorWindow, log);
@@ -401,7 +392,17 @@ export async function runRebuildPostRestorePhase(
         hermesCronRestoreIdentity,
         hermesPostRestoreGatewayDeps,
       )
-    : { state: "not-applicable" as const, replacementIdentity: undefined };
+    : targetAgentName === "hermes"
+      ? {
+          state: await verifyHermesGatewayAfterStateRestore(
+            sandboxName,
+            targetAgentName,
+            hermesGatewayRestartState,
+            hermesPostRestoreGatewayDeps,
+          ),
+          replacementIdentity: undefined,
+        }
+      : { state: "not-applicable" as const, replacementIdentity: undefined };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   const reportMcpRestoreFailure = mcpBridgeRestoreUnverified
@@ -555,10 +556,12 @@ export async function runRebuildPostRestorePhase(
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
   const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
-  if (preparedBackupRecovery && postRestoreComplete && targetAgentName === "openclaw") {
-    // Legacy recovery can recreate a pairing-only device after onboarding's
-    // finalization was deferred. Settle its normal write scope before the
-    // prepared recovery transaction retires its backup handoff.
+  if (postRestoreComplete && targetAgentName === "openclaw") {
+    // Complete-home restoration rotates the replacement sandbox's machine-local
+    // device identity. Settle its normal write scope before reporting rebuild
+    // success so the first user command cannot race the background approver.
+    // Prepared legacy recovery needs the same gate before retiring its backup
+    // handoff.
     const portableRequired = portableLifecycleReceiptMatchesGeneration(
       classifyPortableLifecycleReceipt(sandboxName),
       recreatedEntry.lifecycleGeneration,
@@ -569,14 +572,12 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(
-        `  OpenClaw pairing remains incomplete after prepared recovery: ${pairing.reason}`,
-      );
+      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
       );
-      bail("OpenClaw pairing remained incomplete after prepared recovery.");
+      bail("OpenClaw pairing remained incomplete after rebuild.");
       return;
     }
   }
@@ -602,7 +603,6 @@ export async function runRebuildPostRestorePhase(
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
   }
-  printHermesOperatorConfigRestoreReport(targetAgentName, hermesOperatorConfigRestore);
   if (!restoreSucceeded) {
     console.error(
       `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,

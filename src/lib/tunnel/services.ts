@@ -97,14 +97,6 @@ function ensurePidDir(pidDir: string): void {
   chmodSync(pidDir, 0o700);
 }
 
-function readPid(pidDir: string, name: string): number | null {
-  const pidFile = join(pidDir, `${name}.pid`);
-  if (!existsSync(pidFile)) return null;
-  const raw = readFileSync(pidFile, "utf-8").trim();
-  const pid = Number(raw);
-  return Number.isFinite(pid) && pid > 0 ? pid : null;
-}
-
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -114,15 +106,9 @@ function isAlive(pid: number): boolean {
   }
 }
 
-function isRunning(pidDir: string, name: string): boolean {
-  const pid = readPid(pidDir, name);
-  if (pid === null) return false;
-  return isAlive(pid);
-}
-
 // ---------------------------------------------------------------------------
-// Cloudflared state — finer-grained than isRunning() so callers (status,
-// doctor) can distinguish stopped / stale-pid-file / stale-pid-process and
+// Cloudflared state combines liveness and process identity so callers (status,
+// doctor, start) agree on stopped / stale-pid-file / stale-pid-process and can
 // emit a targeted remediation. Issue #2604.
 // ---------------------------------------------------------------------------
 
@@ -130,19 +116,50 @@ export type CloudflaredState =
   | { kind: "running"; pid: number }
   | { kind: "stopped" }
   | { kind: "stale-pid-file" }
-  | { kind: "stale-pid-process"; pid: number };
+  | { kind: "stale-pid-process"; pid: number }
+  | { kind: "unverified-pid-process"; pid: number };
+
+type CommandLineCapture = (command: string, args: readonly string[]) => string;
+
+const captureCommandLine: CommandLineCapture = (command, args) =>
+  execFileSync(command, [...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1000,
+  });
+
+/** Read a Windows process identity through the built-in CIM provider. */
+export function readWindowsProcessCommandLine(
+  pid: number,
+  capture: CommandLineCapture = captureCommandLine,
+): string | null {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${String(pid)}'`,
+    "if ($null -eq $p) { exit 3 }",
+    "@($p.Name, $p.ExecutablePath, $p.CommandLine) -join [Environment]::NewLine",
+  ].join("; ");
+  try {
+    const commandLine = capture("powershell.exe", [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ]).trim();
+    return commandLine.length > 0 ? commandLine : null;
+  } catch {
+    return null;
+  }
+}
 
 function readProcessCommandLine(pid: number): string | null {
-  if (process.platform === "win32") return null;
+  if (process.platform === "win32") return readWindowsProcessCommandLine(pid);
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
   } catch {
     try {
-      return execFileSync("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 1000,
-      });
+      return captureCommandLine("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="]);
     } catch {
       return null;
     }
@@ -150,10 +167,31 @@ function readProcessCommandLine(pid: number): string | null {
 }
 
 function commandLineNamesCloudflared(commandLine: string): boolean {
-  return commandLine
-    .split(/\0|\s+/)
-    .filter(Boolean)
-    .some((token) => basename(token) === "cloudflared");
+  const records = commandLine.includes("\0")
+    ? commandLine.split("\0").filter(Boolean)
+    : commandLine.split(/\s+/).filter(Boolean);
+  const namesExecutable = (token: string | undefined, name: RegExp): boolean =>
+    token !== undefined && name.test(basename(token.replaceAll("\\", "/")));
+  return namesExecutable(records[0]?.trim(), /^(?:cloudflared)(?:\.exe)?$/i);
+}
+
+function commandLineMayWrapCloudflared(commandLine: string): boolean {
+  const records = commandLine.includes("\0")
+    ? commandLine.split("\0").filter(Boolean)
+    : commandLine.split(/\s+/).filter(Boolean);
+  const executableNames = records.map((token) =>
+    basename(token.trim().replaceAll("\\", "/")).toLowerCase(),
+  );
+  let startIndex = 0;
+  // `ps -o comm= -o args=` reports the executable before argv, so the first
+  // name can appear twice. /proc cmdline does not include that prefix.
+  if (executableNames[0] === executableNames[1]) startIndex += 1;
+  if (executableNames[startIndex] === "env") startIndex += 1;
+
+  return (
+    /^(?:ba|da|z)?sh$/i.test(executableNames[startIndex] ?? "") &&
+    executableNames[startIndex + 1] === "cloudflared"
+  );
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -162,15 +200,213 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
 export interface ProcessControl {
   isAlive(pid: number): boolean;
   commandLine(pid: number): string | null;
-  signal(pid: number, sig: NodeJS.Signals): void;
+  signalCloudflared(pid: number, sig: "SIGTERM" | "SIGKILL"): IdentityBoundSignalOutcome;
+}
+
+type IdentityBoundSignalOutcome = "signaled" | "not-running" | "not-cloudflared" | "unavailable";
+
+const PIDFD_SIGNAL_SCRIPT = String.raw`
+import os
+import signal
+import sys
+
+if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    print("unavailable")
+    raise SystemExit(0)
+
+pid = int(sys.argv[1])
+signal_name = sys.argv[2]
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    print("not-running")
+    raise SystemExit(0)
+except (OSError, PermissionError):
+    print("unavailable")
+    raise SystemExit(0)
+
+try:
+    try:
+        executable = os.readlink(f"/proc/{pid}/exe")
+    except FileNotFoundError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+
+    # Linux appends this suffix when an upgrade unlinks the running executable.
+    # Its identity is uncertain, not evidence that the tunnel has stopped.
+    if executable.endswith(" (deleted)"):
+        print("unavailable")
+        raise SystemExit(0)
+
+    if os.path.basename(executable) != "cloudflared":
+        print("not-cloudflared")
+        raise SystemExit(0)
+
+    try:
+        signal.pidfd_send_signal(pidfd, getattr(signal, signal_name))
+    except ProcessLookupError:
+        print("not-running")
+        raise SystemExit(0)
+    except (OSError, PermissionError):
+        print("unavailable")
+        raise SystemExit(0)
+    print("signaled")
+finally:
+    os.close(pidfd)
+`;
+
+const MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT = String.raw`
+ObjC.bindFunction("malloc", ["void*", ["int"]]);
+ObjC.bindFunction("free", ["void", ["void*"]]);
+ObjC.bindFunction("proc_pidinfo", ["int", ["int", "int", "Int64", "void*", "int"]]);
+ObjC.bindFunction("proc_pidpath_audittoken", ["int", ["void*", "void*", "uint32_t"]]);
+ObjC.bindFunction("proc_signal_with_audittoken", ["int", ["void*", "int"]]);
+
+function writeUint32LittleEndian(buffer, offset, value) {
+  for (let index = 0; index < 4; index += 1) {
+    buffer[offset + index] = value % 256;
+    value = Math.floor(value / 256);
+  }
+}
+
+function readUint32LittleEndian(buffer, offset) {
+  let value = 0;
+  for (let index = 3; index >= 0; index -= 1) {
+    value = value * 256 + buffer[offset + index];
+  }
+  return value;
+}
+
+function run(argv) {
+  // Apple XNU defines PROC_PIDUNIQIDENTIFIERINFO as selector 17. Its 56-byte
+  // result stores p_idversion at byte 32; audit_token_t stores PID and
+  // pidversion at uint32 slots 5 and 7 respectively.
+  const uniqueInfoSelector = 17;
+  const uniqueInfoSize = 56;
+  const uniqueInfoIdVersionOffset = 32;
+  const auditTokenPidOffset = 20;
+  const auditTokenIdVersionOffset = 28;
+  const pid = Number(argv[0]);
+  const signalNumber = argv[1] === "SIGKILL" ? 9 : 15;
+  const uniqueInfo = $.malloc(56);
+  const auditToken = $.malloc(32);
+  const processPath = $.malloc(4096);
+
+  try {
+    if ($.proc_pidinfo(pid, uniqueInfoSelector, 0, uniqueInfo, uniqueInfoSize) !== uniqueInfoSize) {
+      return "unavailable";
+    }
+
+    for (let index = 0; index < 32; index += 1) auditToken[index] = 0;
+    writeUint32LittleEndian(auditToken, auditTokenPidOffset, pid);
+    writeUint32LittleEndian(
+      auditToken,
+      auditTokenIdVersionOffset,
+      readUint32LittleEndian(uniqueInfo, uniqueInfoIdVersionOffset),
+    );
+
+    const pathLength = $.proc_pidpath_audittoken(auditToken, processPath, 4096);
+    if (pathLength <= 0) return "unavailable";
+
+    let executablePath = "";
+    for (let index = 0; index < pathLength; index += 1) {
+      executablePath += String.fromCharCode(processPath[index]);
+    }
+    const pathParts = executablePath.split("/");
+    if (pathParts[pathParts.length - 1] !== "cloudflared") return "not-cloudflared";
+
+    const result = $.proc_signal_with_audittoken(auditToken, signalNumber);
+    if (result === 0) return "signaled";
+    if (result === 3) return "not-running";
+    return "unavailable";
+  } finally {
+    $.free(uniqueInfo);
+    $.free(auditToken);
+    $.free(processPath);
+  }
+}
+`;
+
+function signalCloudflaredWithPidfd(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "linux") return "unavailable";
+  try {
+    const result = execFileSync("python3", ["-I", "-c", PIDFD_SIGNAL_SCRIPT, String(pid), sig], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
+function signalCloudflaredWithAuditToken(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+): IdentityBoundSignalOutcome {
+  if (process.platform !== "darwin") return "unavailable";
+  try {
+    const result = execFileSync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", MACOS_AUDIT_TOKEN_SIGNAL_SCRIPT, String(pid), sig],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 2000,
+      },
+    ).trim();
+    if (
+      result === "signaled" ||
+      result === "not-running" ||
+      result === "not-cloudflared" ||
+      result === "unavailable"
+    ) {
+      return result;
+    }
+  } catch {
+    // Never fall back to a raw PID signal when the identity-bound helper fails.
+  }
+  return "unavailable";
+}
+
+/**
+ * Signal cloudflared only when the operating system exposes an identity-bound
+ * process handle. Linux uses pidfd; macOS uses an audit token carrying the
+ * kernel process-version identity. Hosts without either primitive fail closed.
+ */
+export function signalCloudflaredForPlatform(
+  pid: number,
+  sig: "SIGTERM" | "SIGKILL",
+  platform: NodeJS.Platform = process.platform,
+  macSignal: (
+    pid: number,
+    sig: "SIGTERM" | "SIGKILL",
+  ) => IdentityBoundSignalOutcome = signalCloudflaredWithAuditToken,
+): IdentityBoundSignalOutcome {
+  if (platform === "linux") return signalCloudflaredWithPidfd(pid, sig);
+  if (platform === "darwin") return macSignal(pid, sig);
+  return "unavailable";
 }
 
 const REAL_PROCESS_CONTROL: ProcessControl = {
   isAlive,
   commandLine: readProcessCommandLine,
-  signal: (pid, sig) => {
-    process.kill(pid, sig);
-  },
+  signalCloudflared: signalCloudflaredForPlatform,
 };
 
 function extractTryCloudflareUrl(log: string): string | null {
@@ -275,7 +511,10 @@ export function getTunnelUrl(pidDir: string, dashboardPort: number): string {
   return extractNamedCloudflareUrl(log, dashboardPort) ?? extractTryCloudflareUrl(log) ?? "";
 }
 
-export function readCloudflaredState(pidDir: string): CloudflaredState {
+export function readCloudflaredState(
+  pidDir: string,
+  pc: ProcessControl = REAL_PROCESS_CONTROL,
+): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
   let raw: string;
@@ -287,13 +526,17 @@ export function readCloudflaredState(pidDir: string): CloudflaredState {
   if (raw.length === 0) return { kind: "stopped" };
   const pid = Number(raw);
   if (!Number.isFinite(pid) || pid <= 0) return { kind: "stale-pid-file" };
-  try {
-    process.kill(pid, 0);
-  } catch {
+  if (!pc.isAlive(pid)) {
     return { kind: "stale-pid-process", pid };
   }
-  const cmdline = readProcessCommandLine(pid);
-  if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
+  const commandLine = pc.commandLine(pid);
+  if (commandLine === null) {
+    return { kind: "unverified-pid-process", pid };
+  }
+  if (commandLineMayWrapCloudflared(commandLine)) {
+    return { kind: "unverified-pid-process", pid };
+  }
+  if (!commandLineNamesCloudflared(commandLine)) {
     return { kind: "stale-pid-process", pid };
   }
   return { kind: "running", pid };
@@ -332,11 +575,18 @@ function startService(
   command: string,
   args: string[],
   env?: Record<string, string>,
-): void {
-  if (isRunning(pidDir, name)) {
-    const pid = readPid(pidDir, name);
-    info(`${name} already running (PID ${String(pid)})`);
-    return;
+  pc: ProcessControl = REAL_PROCESS_CONTROL,
+): boolean {
+  const state = readCloudflaredState(pidDir, pc);
+  if (state.kind === "running") {
+    info(`${name} already running (PID ${String(state.pid)})`);
+    return true;
+  }
+  if (state.kind === "unverified-pid-process") {
+    warn(
+      `${name} process identity is unavailable for PID ${String(state.pid)}; refusing to start another tunnel`,
+    );
+    return false;
   }
 
   // Open a single fd for the log file — mirrors bash `>log 2>&1`.
@@ -359,24 +609,13 @@ function startService(
   const pid = subprocess.pid;
   if (pid === undefined) {
     warn(`${name} failed to start`);
-    return;
+    return false;
   }
 
   subprocess.unref();
   writePid(pidDir, name, pid);
   info(`${name} started (PID ${String(pid)})`);
-}
-
-/**
- * The recorded process may have exited and had its PID recycled by the OS to an
- * unrelated (possibly system) process. Signalling it would terminate a
- * bystander, so only report a live PID as ours when its command line still
- * names cloudflared. A null/unreadable command line stays conservative and is
- * treated as ours, matching readCloudflaredState.
- */
-function pidIsOurs(pid: number, pc: ProcessControl): boolean {
-  const cmdline = pc.commandLine(pid);
-  return cmdline === null || commandLineNamesCloudflared(cmdline);
+  return true;
 }
 
 /** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
@@ -384,29 +623,47 @@ function stopService(
   pidDir: string,
   name: ServiceName,
   pc: ProcessControl = REAL_PROCESS_CONTROL,
-): void {
-  const pid = readPid(pidDir, name);
-  if (pid === null) {
-    info(`${name} was not running`);
-    return;
-  }
-
-  // A dead PID, or a live PID recycled to a non-cloudflared process, means our
-  // service is not running. Drop the stale pid file without signalling.
-  if (!pc.isAlive(pid) || !pidIsOurs(pid, pc)) {
+): boolean {
+  const warnManualRecovery = (pid: number): void => {
+    warn(
+      `Independently verify PID ${String(pid)} is cloudflared with the host process manager, stop it, keep the PID record until it exits, then retry cleanup`,
+    );
+  };
+  const state = readCloudflaredState(pidDir, pc);
+  if (state.kind === "stopped" || state.kind === "stale-pid-file") {
     info(`${name} was not running`);
     removePid(pidDir, name);
-    return;
+    return true;
   }
 
-  // Send SIGTERM
-  try {
-    pc.signal(pid, "SIGTERM");
-  } catch {
-    // Already dead between the check and the signal
+  if (state.kind === "stale-pid-process") {
+    info(`${name} was not running`);
     removePid(pidDir, name);
-    info(`${name} stopped (PID ${String(pid)})`);
-    return;
+    return true;
+  }
+
+  if (state.kind === "unverified-pid-process") {
+    warn(
+      `${name} PID ${String(state.pid)} was not stopped because its process identity is unavailable`,
+    );
+    warnManualRecovery(state.pid);
+    return false;
+  }
+
+  const pid = state.pid;
+
+  const termOutcome = pc.signalCloudflared(pid, "SIGTERM");
+  if (termOutcome === "unavailable") {
+    warn(
+      `${name} PID ${String(pid)} was not stopped because identity-bound signaling is unavailable`,
+    );
+    warnManualRecovery(pid);
+    return false;
+  }
+  if (termOutcome === "not-running" || termOutcome === "not-cloudflared") {
+    removePid(pidDir, name);
+    info(`${name} was not running`);
+    return true;
   }
 
   // Poll for exit (up to 3 seconds)
@@ -419,23 +676,40 @@ function stopService(
     }
   }
 
-  // Escalate to SIGKILL if still alive. Re-verify identity first: the PID could
-  // have exited and been recycled to an unrelated process during the poll.
   if (pc.isAlive(pid)) {
-    if (!pidIsOurs(pid, pc)) {
+    const killOutcome = pc.signalCloudflared(pid, "SIGKILL");
+    if (killOutcome === "unavailable") {
+      warn(
+        `${name} PID ${String(pid)} was not force-stopped because identity-bound signaling is unavailable`,
+      );
+      warnManualRecovery(pid);
+      return false;
+    }
+    if (killOutcome === "not-running" || killOutcome === "not-cloudflared") {
       removePid(pidDir, name);
       info(`${name} was not running`);
-      return;
+      return true;
     }
-    try {
-      pc.signal(pid, "SIGKILL");
-    } catch {
-      /* already dead */
+
+    // A successful signal delivery is not proof that the process exited.
+    // Retain the PID record until liveness independently confirms termination.
+    const killDeadline = Date.now() + 1000;
+    while (Date.now() < killDeadline && pc.isAlive(pid)) {
+      const start = Date.now();
+      while (Date.now() - start < 100) {
+        /* spin */
+      }
+    }
+    if (pc.isAlive(pid)) {
+      warn(`${name} PID ${String(pid)} remained live after the force-stop signal`);
+      warnManualRecovery(pid);
+      return false;
     }
   }
 
   removePid(pidDir, name);
   info(`${name} stopped (PID ${String(pid)})`);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +738,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   ensurePidDir(pidDir);
 
   console.log("");
-  const state = readCloudflaredState(pidDir);
+  const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
   // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
   // surface the matching remediation. The previous "(stopped)" line was
   // emitted in all three failure modes with no recovery hint.
@@ -486,6 +760,14 @@ export function showStatus(opts: ServiceOptions = {}): void {
       console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID ${String(state.pid)})`);
       console.log(
         `      no cloudflared process (PID ${String(state.pid)} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
+    case "unverified-pid-process":
+      console.log(
+        `  ${YELLOW}●${NC} cloudflared  (PID ${String(state.pid)}, identity unavailable)`,
+      );
+      console.log(
+        "      process identity is unavailable; restore process inspection access, then retry",
       );
       break;
   }
@@ -573,8 +855,14 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       warn(ollamaCleanupError.message);
     }
   }
-  const finishOllamaCleanup = (): OllamaUnloadResult | void => {
+  let cloudflaredCleanupComplete = true;
+  const finishCleanup = (): OllamaUnloadResult | void => {
     if (ollamaCleanupError) throw ollamaCleanupError;
+    if (!cloudflaredCleanupComplete) {
+      throw new Error(
+        "Cloudflared cleanup is incomplete. Keep the PID record until the process exits, then retry cleanup.",
+      );
+    }
     return ollamaCleanup;
   };
 
@@ -582,7 +870,11 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // derived from a trusted sandbox name. An invalid requested sandbox must not
   // fall through to the default sandbox's PID directory.
   if (pidDir) {
-    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+    cloudflaredCleanupComplete = stopService(
+      pidDir,
+      "cloudflared",
+      opts.processControl ?? REAL_PROCESS_CONTROL,
+    );
   } else {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
@@ -607,21 +899,31 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn(
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
-    info("Host services stopped; managed gateway not released.");
-    return finishOllamaCleanup();
+    info(
+      cloudflaredCleanupComplete
+        ? "Host services stopped; managed gateway not released."
+        : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway was not released.",
+    );
+    return finishCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
-    info("Host services stopped; managed gateway release was not confirmed.");
-    return finishOllamaCleanup();
+    info(
+      cloudflaredCleanupComplete
+        ? "Host services stopped; managed gateway release was not confirmed."
+        : "Host service cleanup remains incomplete; cloudflared was not stopped and the managed gateway release was not confirmed.",
+    );
+    return finishCleanup();
   }
 
-  if (ollamaCleanupIncomplete) {
+  if (!cloudflaredCleanupComplete) {
+    info("Host service cleanup remains incomplete; cloudflared was not stopped.");
+  } else if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
   } else {
     info("All services stopped.");
   }
-  return finishOllamaCleanup();
+  return finishCleanup();
 }
 
 /**
@@ -640,10 +942,10 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
  * and unloads Ollama); enrollment that auto-started a tunnel needs a tunnel-only
  * stop to clean up without tearing down other services.
  */
-export function stopCloudflared(opts: ServiceOptions = {}): void {
+export function stopCloudflared(opts: ServiceOptions = {}): boolean {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
-  stopService(pidDir, "cloudflared");
+  return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
 }
 
 /**
@@ -665,6 +967,8 @@ function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+  const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
+  let cloudflaredReady = true;
 
   ensurePidDir(pidDir);
 
@@ -683,22 +987,42 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       stdio: ["ignore", "ignore", "ignore"],
     });
     if (tunnelToken) {
-      startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
-        TUNNEL_TOKEN: tunnelToken,
-      });
+      cloudflaredReady = startService(
+        pidDir,
+        "cloudflared",
+        "cloudflared",
+        ["tunnel", "run"],
+        {
+          TUNNEL_TOKEN: tunnelToken,
+        },
+        processControl,
+      );
     } else {
-      startService(pidDir, "cloudflared", "cloudflared", [
-        "tunnel",
-        "--url",
-        `http://localhost:${String(dashboardPort)}`,
-      ]);
+      cloudflaredReady = startService(
+        pidDir,
+        "cloudflared",
+        "cloudflared",
+        ["tunnel", "--url", `http://localhost:${String(dashboardPort)}`],
+        undefined,
+        processControl,
+      );
     }
   } catch {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
+  if (!cloudflaredReady) {
+    const blockedState = readCloudflaredState(pidDir, processControl);
+    if (blockedState.kind === "unverified-pid-process") {
+      throw new Error(
+        `cloudflared process identity is unavailable for PID ${String(blockedState.pid)}; restore process inspection access, then retry`,
+      );
+    }
+    return;
+  }
+
   // Wait for cloudflared URL
-  if (isRunning(pidDir, "cloudflared")) {
+  if (readCloudflaredState(pidDir, processControl).kind === "running") {
     info("Waiting for tunnel URL...");
     for (let i = 0; i < 15; i++) {
       if (getTunnelUrl(pidDir, dashboardPort)) {
@@ -711,7 +1035,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   let tunnelUrl = "";
-  if (isRunning(pidDir, "cloudflared")) {
+  if (readCloudflaredState(pidDir, processControl).kind === "running") {
     tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
   }
 
@@ -754,11 +1078,12 @@ export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   return SERVICE_NAMES.map((name) => {
-    const running = isRunning(pidDir, name);
+    const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
+    const running = state.kind === "running";
     return {
       name,
       running,
-      pid: running ? readPid(pidDir, name) : null,
+      pid: running ? state.pid : null,
     };
   });
 }

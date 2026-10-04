@@ -17,6 +17,11 @@ import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import { LLAMA_CPP_PORT } from "../../../inference/llama-cpp/contract";
+import {
+  probeHostServiceSandboxReachability,
+  type HostServiceReachabilityResult,
+} from "../../host-service-reachability";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
@@ -240,6 +245,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<boolean>;
+    probeLlamaCppSandboxReachability?(): Promise<HostServiceReachabilityResult>;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -749,9 +755,31 @@ async function ensureLegacyManagedLlamaCppResumeReady(
     provider: string | null | undefined,
     sandboxName: string | null | undefined,
   ) => Promise<boolean>,
+): Promise<boolean> {
+  if (selection?.setupOptions.hostLocalInference) return true;
+  return ensure(provider, sandboxName);
+}
+
+async function ensureAttachedLlamaCppReachable(
+  provider: string,
+  managed: boolean,
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "error" | "exitProcess" | "probeLlamaCppSandboxReachability"
+  >,
 ): Promise<void> {
-  if (selection?.setupOptions.hostLocalInference) return;
-  await ensure(provider, sandboxName);
+  if (provider !== "llama-cpp-local" || managed) return;
+  const result = await (deps.probeLlamaCppSandboxReachability?.() ??
+    probeHostServiceSandboxReachability({ port: LLAMA_CPP_PORT }));
+  if (result.ok || result.reason !== "tcp_failed") return;
+  deps.error(
+    `  Sandbox containers cannot reach Local llama.cpp at host.openshell.internal:${LLAMA_CPP_PORT}.`,
+  );
+  deps.error(
+    `  Keep host-loopback access and bind or publish port ${LLAMA_CPP_PORT} on ${result.gatewayIp ?? "the Docker gateway address"} for the sandbox network.`,
+  );
+  deps.error("  Retain API-key authentication, check the host firewall, then retry onboarding.");
+  deps.exitProcess(1);
 }
 
 function endpointSourceForCurrentUrl(
@@ -1396,6 +1424,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     // route. Do not let a coincidentally ready gateway route skip setup.
     forceInferenceSetup ||=
       completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
+    let managedLlamaCppRecovered = false;
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
@@ -1410,7 +1439,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // gateway-owned llama.cpp lifecycle before the selection shortcut can
       // skip setup. The dependency is a no-op for operator-attached llama.cpp
       // routes because those routes have no matching managed owner state.
-      await ensureLegacyManagedLlamaCppResumeReady(
+      managedLlamaCppRecovered = await ensureLegacyManagedLlamaCppResumeReady(
         earlyManagedHostLocalLifecycleSelection,
         provider,
         sandboxName,
@@ -1702,6 +1731,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     sandboxName = hostLocalResume.sandboxName;
     const resumeHostLocalInferenceSetupOptions = hostLocalResume.setupOptions;
+    // Fresh selection and resume share this check; managed runtimes retain their own proof.
+    await ensureAttachedLlamaCppReachable(
+      selectedProvider,
+      managedLlamaCppRecovered ||
+        Boolean(resumeHostLocalInferenceSetupOptions.hostLocalInference) ||
+        servingProfileProvenance?.recipe?.backend === "install-llama-cpp",
+      deps,
+    );
     const resumedHostLocalPolicyRouteEvidence = resolvedHostLocalPolicyRouteEvidence(
       resumeHostLocalInferenceSetupOptions,
       selectedProvider,

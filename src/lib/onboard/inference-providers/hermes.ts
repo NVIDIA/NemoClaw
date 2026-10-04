@@ -71,6 +71,8 @@ export async function setupHermesProviderInference(
   }
   const {
     runOpenshell,
+    inferenceRouteMutator,
+    gatewayName,
     upsertProvider: _upsertProvider, // intentionally unused; matches inline branch
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
@@ -92,8 +94,6 @@ export async function setupHermesProviderInference(
       HERMES_AUTH_METHOD_OAUTH,
     },
     requireValue,
-    redact,
-    compactText,
   } = deps;
   void _upsertProvider;
 
@@ -158,16 +158,24 @@ export async function setupHermesProviderInference(
     }
   }
 
-  const applyResult = runOpenshell(
-    ["inference", "set", "--no-verify", "--provider", provider, "--model", model],
-    { ignoreError: true },
-  );
-  if (applyResult.status !== 0) {
-    const message =
-      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
-      `Failed to configure inference provider '${provider}'.`;
-    error(`  ${message}`);
-    if (isNonInteractive()) return exitProcess(applyResult.status || 1);
+  const applyResult = await inferenceRouteMutator.setInferenceRoute({
+    target: { kind: "named", gatewayName },
+    route: { provider, model },
+    verification: "skip",
+  });
+  if (!applyResult.ok) {
+    error(`  ${applyResult.error.message}`);
+    if (applyResult.ambiguous) {
+      error(
+        `  The route update result is unknown. Inspect gateway '${gatewayName}' before retrying onboarding.`,
+      );
+      return exitProcess(1);
+    }
+    if (isNonInteractive()) {
+      return exitProcess(
+        applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+      );
+    }
     return { retry: "selection" };
   }
 
