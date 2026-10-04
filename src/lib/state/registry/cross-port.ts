@@ -209,6 +209,13 @@ export function listPublishedSandboxesAcrossGatewayRoots(
   return listEntriesAcrossGatewayRoots(true, home);
 }
 
+/** All route owners across registry roots, including unpublished reservations. */
+export function listInferenceRouteOwnersAcrossGatewayRoots(
+  home: string = resolveHome(),
+): SandboxEntry[] {
+  return listSandboxHitsAcrossGatewayRoots(home).map(({ entry }) => entry);
+}
+
 /** Published sandbox names across every registry root, base root first, then ports ascending. */
 export function listPublishedSandboxNamesAcrossGatewayRoots(
   home: string = resolveHome(),
