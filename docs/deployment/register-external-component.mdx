@@ -253,7 +253,7 @@ NemoClaw classifies the activation result as follows:
 
 | Result | Onboarding behavior |
 |---|---|
-| `activated` with matching evidence | Clears operation-local activation evidence and completes onboarding after the repeated identity and policy check. |
+| `activated` with matching evidence | Records that this component participated in onboarding the verified sandbox, clears the temporary activation attempt, and completes onboarding. |
 | `rejected` | Records a `failed` activation and preserves the sandbox. |
 | Timeout, disconnect, malformed response, non-`200` status, oversized response, extra response data, or evidence mismatch | Records an `ambiguous` activation and preserves the sandbox. |
 
@@ -271,6 +271,26 @@ Version 1 has no supported recovery operation for this state.
 Preserve the onboarding session, sandbox registry, sandbox, and component diagnostics for an identity-verified recovery decision.
 Do not delete or recover the sandbox from its mutable name alone.
 NemoClaw does not store a policy copy or durable policy authority in the incomplete state.
+
+## Export a Component Requirement
+
+After successful activation using the external component's version 1 protocol on a hosted OpenClaw sandbox, `$$nemoclaw config export` includes the component ID under `spec.gateway`:
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:8080
+    externalComponentRef: policy-governance
+```
+
+The reference names the component required by this sandbox. It does not include socket paths, credentials, component policy, or an activation request. An operator recreating the setup would need to supply and register the component separately. This export is descriptive; NemoClaw does not yet offer a component-aware import or apply workflow.
+
+NemoClaw records the component's participation only after it returns `activated` and the sandbox evidence still matches. This lets export distinguish a component used during onboarding from one registered later.
+At export, NemoClaw compares that record with the live sandbox identity, gateway configuration, and current component declaration.
+If a component is configured without matching activation evidence, export stops without a document.
+Changing the component, gateway, or sandbox identity also stops export.
+Export for the external component's version 2 protocol is not qualified.
 
 ## Keep Credentials Outside the Contract
 
