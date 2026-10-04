@@ -998,6 +998,75 @@ async function rollbackNativeNvidiaSelection(input: {
   }
 }
 
+async function applyInferenceRouteSelection(input: {
+  nativeNvidia: boolean;
+  provider: string;
+  model: string;
+  gatewayName: string;
+  noVerify: boolean;
+  retryProviderNotFound: boolean;
+  onAmbiguousFailure: () => void;
+  deps: InferenceSetDeps;
+}): Promise<boolean> {
+  if (input.nativeNvidia) {
+    input.deps.log(`  Using attached native NVIDIA provider: ${input.provider} / ${input.model}`);
+    return false;
+  }
+  input.deps.log(`  Setting OpenShell inference route: ${input.provider} / ${input.model}`);
+  const setInferenceRoute = () =>
+    input.deps.inferenceRouteMutator.setInferenceRoute({
+      target: { kind: "named", gatewayName: input.gatewayName },
+      route: { provider: input.provider, model: input.model },
+      verification: input.noVerify ? "skip" : "required",
+    });
+  let setResult = await setInferenceRoute();
+  if (
+    !setResult.ok &&
+    !setResult.ambiguous &&
+    input.retryProviderNotFound &&
+    setResult.error.kind === "command" &&
+    setResult.error.reason === "provider_not_found"
+  ) {
+    setResult = await setInferenceRoute();
+  }
+  if (setResult.ok) return true;
+  if (setResult.ambiguous) input.onAmbiguousFailure();
+  const failure = await buildInferenceSetFailure(
+    setResult.error,
+    setResult.ambiguous,
+    input.gatewayName,
+    input.deps,
+  );
+  throw new InferenceSetError(failure.message, failure.exitCode);
+}
+
+function observeInferenceRouteForSelection(input: {
+  nativeNvidia: boolean;
+  gatewayName: string;
+  deps: InferenceSetDeps;
+}): Promise<OpenShellInferenceRouteObservation> {
+  if (input.nativeNvidia) return Promise.resolve({ state: "unconfigured" });
+  return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
+}
+
+function providerBackedRouteLacksRollbackTarget(input: {
+  nativeNvidia: boolean;
+  directProviderBinding: boolean;
+  httpsPinProviderBinding: boolean;
+  probeDirectSandboxBridge: boolean;
+  rollbackRoute: boolean;
+  previousNativeNvidiaAttachment: boolean;
+}): boolean {
+  return (
+    !input.nativeNvidia &&
+    (input.directProviderBinding ||
+      input.httpsPinProviderBinding ||
+      input.probeDirectSandboxBridge) &&
+    !input.rollbackRoute &&
+    !input.previousNativeNvidiaAttachment
+  );
+}
+
 function recordedDirectProviderBindingMismatches(options: {
   entry: SandboxEntry;
   provider: string;
@@ -1239,10 +1308,11 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const preMutationRoute = await observeInferenceRouteBeforeMutation(
+  const preMutationRoute = await observeInferenceRouteForSelection({
+    nativeNvidia: selectingNativeNvidia,
+    gatewayName: preparedRoute.gatewayName,
     deps,
-    preparedRoute.gatewayName,
-  );
+  });
   const target = resolveMatchingAgentConfigTarget(deps, sandboxName, agentName);
   // Explicit custom routes may start an HTTPS-pin adapter during finalization,
   // so reject an unsupported API family before that first possible mutation.
@@ -1406,9 +1476,14 @@ async function runInferenceSetWithoutHostLock(
         [entry.endpointUrl ?? null, registryMetadata.endpointUrl ?? null],
       ].some(([previous, next]) => previous !== next));
   if (
-    !selectingNativeNvidia &&
-    (directProviderBinding || httpsPinProviderBinding || probeDirectSandboxBridge) &&
-    !rollbackRoute
+    providerBackedRouteLacksRollbackTarget({
+      nativeNvidia: selectingNativeNvidia,
+      directProviderBinding: Boolean(directProviderBinding),
+      httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
+      probeDirectSandboxBridge,
+      rollbackRoute: Boolean(rollbackRoute),
+      previousNativeNvidiaAttachment: Boolean(previousNativeNvidiaAttachment),
+    })
   ) {
     throw new InferenceSetError(
       `Cannot change the provider-backed route because gateway '${preparedRoute.gatewayName}' has no configured ` +
@@ -1524,38 +1599,18 @@ async function runInferenceSetWithoutHostLock(
 
     await assertProviderCurrentBeforeSelection?.();
     if (routeImpactWarning) deps.log(`  ${routeImpactWarning}`);
-    if (selectingNativeNvidia) {
-      deps.log(`  Using attached native NVIDIA provider: ${provider} / ${model}`);
-    } else {
-      deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-      const setInferenceRoute = () =>
-        deps.inferenceRouteMutator.setInferenceRoute({
-          target: { kind: "named", gatewayName: preparedRoute.gatewayName },
-          route: { provider, model },
-          verification: effectiveNoVerify ? "skip" : "required",
-        });
-      let setResult = await setInferenceRoute();
-      if (
-        !setResult.ok &&
-        !setResult.ambiguous &&
-        directProviderBinding &&
-        setResult.error.kind === "command" &&
-        setResult.error.reason === "provider_not_found"
-      ) {
-        setResult = await setInferenceRoute();
-      }
-      if (!setResult.ok) {
-        ambiguousInferenceSelection = setResult.ambiguous;
-        const failure = await buildInferenceSetFailure(
-          setResult.error,
-          setResult.ambiguous,
-          preparedRoute.gatewayName,
-          deps,
-        );
-        throw new InferenceSetError(failure.message, failure.exitCode);
-      }
-    }
-    appliedInferenceSelection = true;
+    appliedInferenceSelection = await applyInferenceRouteSelection({
+      nativeNvidia: selectingNativeNvidia,
+      provider,
+      model,
+      gatewayName: preparedRoute.gatewayName,
+      noVerify: effectiveNoVerify,
+      retryProviderNotFound: Boolean(directProviderBinding),
+      onAmbiguousFailure: () => {
+        ambiguousInferenceSelection = true;
+      },
+      deps,
+    });
     if (providerMutation) {
       try {
         await providerMutation.commit();

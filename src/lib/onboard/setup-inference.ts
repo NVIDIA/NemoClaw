@@ -677,16 +677,16 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
-          target: { kind: "named", gatewayName },
-        });
-        if (!observedRoute.ok) {
-          deps.error(
-            `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
-          );
-          return deps.exitProcess(1);
-        }
         if (!isNativeNvidiaProvider(provider)) {
+          const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
+            target: { kind: "named", gatewayName },
+          });
+          if (!observedRoute.ok) {
+            deps.error(
+              `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
+            );
+            return deps.exitProcess(1);
+          }
           const compatibility = deps.checkGatewayRouteCompatibility({
             gatewayName,
             sandboxName,
