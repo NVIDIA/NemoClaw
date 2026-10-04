@@ -1123,6 +1123,7 @@ test(
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
+          chatContent: "PONG",
           host: "0.0.0.0",
           model: MOCK_BASELINE_MODEL,
           publicHost: "host.openshell.internal",

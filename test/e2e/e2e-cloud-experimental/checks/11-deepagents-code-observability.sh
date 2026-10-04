@@ -24,6 +24,7 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
+OBSERVABILITY_THREADS=()
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -88,6 +89,17 @@ cleanup() {
       "$PREFIX" "$SANDBOX_NAME" >&2
     exit_status=1
   fi
+  # These conversations include the synthetic redaction credential. Remove
+  # only the IDs returned by our own turns before a later rebuild scans state.
+  local thread deletion_output
+  for thread in ${OBSERVABILITY_THREADS[@]+"${OBSERVABILITY_THREADS[@]}"}; do
+    if ! deletion_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads delete "$thread" --json)" \
+      || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread"; then
+      printf '%s: could not remove an observability test conversation\n' "$PREFIX" >&2
+      exit_status=1
+    fi
+  done
   if [ -n "$COLLECTOR_PID" ] && kill -0 "$COLLECTOR_PID" 2>/dev/null; then
     kill "$COLLECTOR_PID" 2>/dev/null || true
     wait "$COLLECTOR_PID" 2>/dev/null || true
@@ -281,16 +293,15 @@ run_dcode_direct() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode -n \
-    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." 2>&1
+    dcode --json -n \
+    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
 }
 
 run_dcode_login() {
   local prompt
   prompt="Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -lc \
-    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode -n ${prompt@Q}" \
-    2>&1
+    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode --json -n ${prompt@Q}"
 }
 
 tool_trace_source() {
@@ -388,11 +399,17 @@ marker_output="$(observability_marker_value)" \
 pass "host observability policy is restored before positive trace checks"
 
 direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
+direct_thread="$(printf '%s\n' "$direct_output" | "$TSX" "$CONTRACT_HELPER" thread-id)" \
+  || fail "direct-exec dcode omitted its conversation identity"
+OBSERVABILITY_THREADS+=("$direct_thread")
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"
 
 login_output="$(run_dcode_login)" || fail "login-shell dcode observability turn failed: $login_output"
+login_thread="$(printf '%s\n' "$login_output" | "$TSX" "$CONTRACT_HELPER" thread-id)" \
+  || fail "login-shell dcode omitted its conversation identity"
+OBSERVABILITY_THREADS+=("$login_thread")
 printf '%s\n' "$login_output" | grep -Fq "$LOGIN_RESPONSE" \
   || fail "login-shell dcode response omitted its requested marker"
 pass "login-shell dcode completed with observability enabled"

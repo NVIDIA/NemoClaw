@@ -119,12 +119,11 @@ export function assertDeepAgentsTraceContract(
   bodies: readonly Uint8Array[],
   expectations: DeepAgentsTraceExpectations,
 ): { requestCount: number; spanCount: number } {
-  if (bodies.length === 0) throw new Error("no managed OTLP trace requests were captured");
   const canary = Buffer.from(expectations.ambientCanary);
   const rawCredential = Buffer.from(expectations.redaction.rawCredential);
   const redactionMarker = Buffer.from(expectations.redaction.marker);
   let redactionMarkerObserved = false;
-  const spans = bodies.flatMap((body, index) => {
+  const spans = bodies.flatMap((body) => {
     const encoded = Buffer.from(body);
     if (encoded.includes(canary)) {
       throw new Error("ambient exporter configuration reached OTLP");
@@ -133,13 +132,7 @@ export function assertDeepAgentsTraceContract(
       throw new Error("credential-shaped prompt content reached OTLP");
     }
     redactionMarkerObserved ||= encoded.includes(redactionMarker);
-    try {
-      return decodeExportTraceServiceRequest(body);
-    } catch (error) {
-      throw new Error(
-        `captured OTLP request ${index + 1} is not a valid ExportTraceServiceRequest: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    return decodeExportTraceServiceRequest(body);
   });
   if (!redactionMarkerObserved) {
     throw new Error("credential-shaped OTLP content lacks the redaction marker");
@@ -167,17 +160,49 @@ export function observabilityPresetState(output: string): string {
   return parsePolicyPresetState(output, "observability-otlp-local");
 }
 
+function sessionRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid dcode session evidence");
+  }
+  return value as Record<string, unknown>;
+}
+
+/** Identify only the conversation created by this observability invocation. */
+export function observabilityThreadId(output: string): string {
+  const envelope = sessionRecord(JSON.parse(output));
+  const data = sessionRecord(envelope.data);
+  const completion = sessionRecord(data.completion);
+  const threadId = completion.thread_id;
+  if (
+    envelope.schema_version !== 1 ||
+    envelope.command !== "non-interactive" ||
+    data.status !== "success" ||
+    data.exit_code !== 0 ||
+    typeof threadId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+  ) {
+    throw new Error("dcode observability turn has no valid completed thread identity");
+  }
+  return threadId;
+}
+
+export function assertObservabilityThreadDeleted(output: string, threadId: string): void {
+  const envelope = sessionRecord(JSON.parse(output));
+  const data = sessionRecord(envelope.data);
+  if (
+    envelope.schema_version !== 1 ||
+    envelope.command !== "threads delete" ||
+    data.thread_id !== threadId ||
+    data.deleted !== true
+  ) {
+    throw new Error("dcode did not confirm deletion of the observability conversation");
+  }
+}
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`required environment variable ${name} is missing`);
   return value;
-}
-
-function captureMetadata(value: unknown, filename: string): CaptureMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${filename} does not contain a capture metadata object`);
-  }
-  return value as CaptureMetadata;
 }
 
 export function validateCaptureDirectory(
@@ -194,10 +219,9 @@ export function validateCaptureDirectory(
   let allowedProbeCount = 0;
 
   for (const metadataFile of metadataFiles) {
-    const metadata = captureMetadata(
-      JSON.parse(fs.readFileSync(path.join(captureDir, metadataFile), "utf8")),
-      metadataFile,
-    );
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(captureDir, metadataFile), "utf8"),
+    ) as CaptureMetadata;
     if (metadata.accepted !== true) {
       throw new Error(`${metadataFile} records a rejected request: ${String(metadata.rejection)}`);
     }
@@ -240,6 +264,14 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (command === "thread-id") {
+    process.stdout.write(`${observabilityThreadId(input)}\n`);
+    return;
+  }
+  if (command === "thread-deleted" && argument) {
+    assertObservabilityThreadDeleted(input, argument);
+    return;
+  }
   if (command === "validate-captures" && argument) {
     const result = validateCaptureDirectory(
       argument,
@@ -276,7 +308,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    "usage: deepagents-observability-contract.ts <policy-state|denial-state|validate-captures> [capture-dir]",
+    "usage: deepagents-observability-contract.ts <policy-state|denial-state|thread-id|thread-deleted|validate-captures> [argument]",
   );
 }
 

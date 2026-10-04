@@ -6,11 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertDeepAgentsTraceContract,
+  assertObservabilityThreadDeleted,
   hasConfirmedOpenShellPolicyDenial,
   observabilityPresetState,
+  observabilityThreadId,
+  validateCaptureDirectory,
 } from "../live/deepagents-observability-contract.ts";
 import {
   isPrivateBridgeIpv4,
@@ -40,6 +43,46 @@ const TOOL_RESULT = "TOOL_RESULT";
 const AMBIENT_CANARY = "AMBIENT_CANARY";
 const RAW_CREDENTIAL = "sk-EXAMPLE0000000000000000000000";
 const REDACTION_MARKER = "<redacted-secret>";
+
+describe("observability conversation cleanup", () => {
+  const threadId = "01a10459-84ba-7651-9938-7386f41cdbfe";
+  const completed = {
+    schema_version: 1,
+    command: "non-interactive",
+    data: { status: "success", exit_code: 0, completion: { thread_id: threadId } },
+  };
+
+  it("selects the completed turn and requires native confirmation for that exact ID", () => {
+    expect(observabilityThreadId(JSON.stringify(completed))).toBe(threadId);
+    const deletion = {
+      schema_version: 1,
+      command: "threads delete",
+      data: { thread_id: threadId, deleted: true },
+    };
+    expect(() =>
+      assertObservabilityThreadDeleted(JSON.stringify(deletion), threadId),
+    ).not.toThrow();
+    expect(() =>
+      assertObservabilityThreadDeleted(JSON.stringify(deletion), "an-unrelated-thread"),
+    ).toThrow();
+    expect(() =>
+      assertObservabilityThreadDeleted(
+        JSON.stringify({ ...deletion, data: { ...deletion.data, deleted: false } }),
+        threadId,
+      ),
+    ).toThrow();
+  });
+
+  it.each([
+    { ...completed, schema_version: 2 },
+    { ...completed, command: "threads list" },
+    { ...completed, data: { ...completed.data, status: "error", exit_code: 1 } },
+    { ...completed, data: { ...completed.data, completion: { thread_id: "--all" } } },
+    { ...completed, data: { ...completed.data, completion: {} } },
+  ])("rejects evidence that cannot identify the test-owned conversation", (evidence) => {
+    expect(() => observabilityThreadId(JSON.stringify(evidence))).toThrow();
+  });
+});
 
 function validSpans(): TestSpan[] {
   return [
@@ -116,6 +159,7 @@ describe("Deep Agents OTLP trace contract", () => {
   });
 
   it("requires input and output markers on the same managed LLM and TOOL spans", () => {
+    expect(() => assertDeepAgentsTraceContract([], expectations)).toThrow();
     expect(assertDeepAgentsTraceContract([traceRequest(validSpans())], expectations)).toEqual({
       requestCount: 1,
       spanCount: 3,
@@ -173,7 +217,7 @@ describe("Deep Agents OTLP trace contract", () => {
   it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {
     expect(() =>
       assertDeepAgentsTraceContract([Buffer.from([0x0a, 0x05, 0x01])], expectations),
-    ).toThrow(/not a valid ExportTraceServiceRequest/);
+    ).toThrow(/truncated protobuf length-delimited field/);
     expect(() =>
       assertDeepAgentsTraceContract(
         [traceRequest(validSpans(), "unmanaged-service")],
@@ -299,6 +343,42 @@ describe("Deep Agents observability policy proof", () => {
     expect(interleavedCurlDenial.status, interleavedCurlDenial.stderr).toBe(0);
     expect(interleavedCurlDenial.stdout.trim()).toBe("policy-denied");
   });
+});
+
+describe("captured OTLP request validation", () => {
+  let captureDir: string;
+  beforeEach(() => {
+    captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-metadata-test-"));
+    const metadata = {
+      accepted: true,
+      port: 4318,
+      method: "POST",
+      path: "/v1/traces",
+      contentType: "application/x-protobuf",
+    };
+    fs.writeFileSync(path.join(captureDir, "probe.json"), JSON.stringify(metadata));
+    fs.writeFileSync(path.join(captureDir, "probe.body"), "allow probe");
+    fs.writeFileSync(path.join(captureDir, "trace.body"), traceRequest(validSpans()));
+    fs.writeFileSync(path.join(captureDir, "trace.json"), JSON.stringify(metadata));
+  });
+  afterEach(() => fs.rmSync(captureDir, { recursive: true, force: true }));
+
+  it("accepts complete probe and trace captures", () => {
+    expect(validateCaptureDirectory(captureDir, 4318, "allow probe", expectations)).toEqual({
+      requestCount: 1,
+      spanCount: 3,
+    });
+  });
+
+  it.each([null, [], "text", 1, true, {}, { accepted: true }])(
+    "rejects malformed metadata through the required accepted-request and route fields: %j",
+    (invalid) => {
+      fs.writeFileSync(path.join(captureDir, "trace.json"), JSON.stringify(invalid));
+      expect(() =>
+        validateCaptureDirectory(captureDir, 4318, "allow probe", expectations),
+      ).toThrow();
+    },
+  );
 });
 
 describe("bounded private OTLP capture server", () => {

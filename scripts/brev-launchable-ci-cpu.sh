@@ -285,6 +285,9 @@ else
     rm -f "$node_tmp"
     fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
+  # Replace npm's private dependency tree: overlaying a newer archive can leave
+  # incompatible packages from the previous npm installation in node_modules.
+  sudo rm -rf /usr/local/lib/node_modules/npm
   sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
   rm -f "$node_tmp"
   [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
