@@ -185,21 +185,11 @@ impl ServiceDefinition {
             Self::Vllm(service) => (service.published_placement()?, service.serving.port),
             Self::OllamaProxy(_) => return Ok(None),
         };
-        let (engine, network_cidr, bind_address) = match placement {
-            Some(explicit) => (
-                &explicit.placement.engine,
-                &explicit.placement.network_cidr,
-                explicit.publication.bind_address.clone(),
-            ),
-            None => {
-                let gateway = gateway.managed()?;
-                (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
-            }
-        };
+        let placed = super::placement::ResolvedPlacement::resolve(placement, gateway, port)?;
         Ok(Some(NetworkAllocation {
-            engine: engine.clone(),
-            network_cidr: network_cidr.clone(),
-            bind_address,
+            engine: placed.engine,
+            network_cidr: placed.network_cidr,
+            bind_address: placed.bind_address,
             port,
         }))
     }
@@ -237,14 +227,12 @@ impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
             ServiceDefinition::Ollama(service) => ResolvedInference {
-                endpoint: match &service.publication {
-                    Some(publication) => publication.endpoint.clone(),
-                    None => format!(
-                        "http://{}:{}/v1",
-                        document.spec.gateway.managed()?.bridge()?,
-                        service.serving.port
-                    ),
-                },
+                endpoint: super::placement::ResolvedPlacement::resolve(
+                    service.published_placement()?,
+                    &document.spec.gateway,
+                    service.serving.port,
+                )?
+                .endpoint,
                 served_model: service.model.name.clone(),
                 requires_authentication: false,
                 resource_dependencies: Vec::new(),
@@ -256,14 +244,12 @@ impl ServiceDefinition {
                 resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
             },
             ServiceDefinition::Vllm(service) => ResolvedInference {
-                endpoint: match &service.publication {
-                    Some(publication) => publication.endpoint.clone(),
-                    None => format!(
-                        "http://{}:{}/v1",
-                        document.spec.gateway.managed()?.bridge()?,
-                        service.serving.port
-                    ),
-                },
+                endpoint: super::placement::ResolvedPlacement::resolve(
+                    service.published_placement()?,
+                    &document.spec.gateway,
+                    service.serving.port,
+                )?
+                .endpoint,
                 served_model: service.served_model().into(),
                 requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
