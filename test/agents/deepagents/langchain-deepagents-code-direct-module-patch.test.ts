@@ -101,6 +101,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    ["mcp_tools", "mcp_tools.py", "additional_configs = ()"],
     ["app", "app.py", "blocked_managed_command = root in {"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
@@ -507,47 +508,6 @@ check("disabled", False)
     expect(result.stderr).toContain("invalid OpenShell credential placeholder");
   });
 
-  it("excludes user and project MCP files from managed discovery", () => {
-    const tempDir = createPatchedPackageFixture();
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        `
-import asyncio
-import json
-import os
-from pathlib import Path
-from deepagents_code import mcp_tools
-
-home = Path.cwd() / "home"
-project = Path.cwd() / "project"
-os.environ["HOME"] = str(home)
-for config_path in (
-    home / ".deepagents" / ".mcp.json",
-    project / ".deepagents" / ".mcp.json",
-    project / ".mcp.json",
-):
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps({"mcpServers": {
-        "unmanaged": {"command": "unmanaged-command", "args": []}
-    }}))
-os.chdir(project)
-assert mcp_tools.discover_mcp_configs() == []
-assert asyncio.run(mcp_tools.resolve_and_load_mcp_tools()) == []
-print("unmanaged MCP servers excluded")
-`,
-      ],
-      {
-        cwd: tempDir,
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-        encoding: "utf8",
-      },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("unmanaged MCP servers excluded");
-  });
-
   it("loads only strict HTTPS-only managed MCP configuration", () => {
     const tempDir = createPatchedPackageFixture();
     const configPath = path.join(tempDir, ".mcp.json");
@@ -821,6 +781,10 @@ async def exercise():
     resolved_configs = await mcp_tools.resolve_and_load_mcp_tools(
         explicit_config_path=snapshot_path,
         project_context=RejectingProjectContext(),
+        additional_configs=({"mcpServers": {
+            "plugin_process": {"command": "unmanaged-command", "args": []},
+            "plugin_network": {"type": "http", "url": "https://unmanaged.example/mcp/"},
+        }},),
     )
     assert resolved_configs == [expected_config]
     await server.start()

@@ -55,8 +55,12 @@ async def resolve_and_load_mcp_tools(
     *,
     explicit_config_path=None,
     project_context=None,
+    additional_configs=(),
+    no_mcp=False,
 ):
-    configs = []
+    if no_mcp:
+        return [], None, []
+    configs = list(additional_configs)
     if explicit_config_path:
         config_path = (
             str(project_context.resolve_user_path(explicit_config_path))

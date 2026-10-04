@@ -1241,6 +1241,16 @@ def discover_mcp_configs(*, project_context=None) -> list[Path]:
     return []
 '''
 
+MCP_LAYERING_MARKER = '''    if no_mcp:
+        return [], None, []
+'''
+
+MCP_LAYERING_PATCH = '''    # Plugin MCP layers are outside the validated host projection.
+    additional_configs = ()
+    if no_mcp:
+        return [], None, []
+'''
+
 MCP_CONFIG_LOAD_MARKER = '''    path = Path(config_path)
 
     if not path.exists():
@@ -1746,6 +1756,7 @@ def main() -> None:
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
             ("server", SERVER_PATCH),
+            ("mcp_tools", MCP_LAYERING_PATCH),
             ("non_interactive", NON_INTERACTIVE_PATCH),
         ):
             if texts[name].count(patch.lstrip()) != 1:
@@ -1917,7 +1928,7 @@ def main() -> None:
     _require_functions(
         paths["mcp_tools"],
         texts["mcp_tools"],
-        {"discover_mcp_configs", "load_mcp_config"},
+        {"discover_mcp_configs", "load_mcp_config", "resolve_and_load_mcp_tools"},
     )
     _require_functions(
         paths["non_interactive"],
@@ -1941,6 +1952,11 @@ def main() -> None:
     if texts["mcp_tools"].count(MCP_EXPLICIT_CONFIG_MARKER) != 1:
         raise RuntimeError(
             "Expected one Deep Agents Code explicit MCP config marker in "
+            f"{paths['mcp_tools']}"
+        )
+    if texts["mcp_tools"].count(MCP_LAYERING_MARKER) != 1:
+        raise RuntimeError(
+            "Expected one Deep Agents Code MCP layering marker in "
             f"{paths['mcp_tools']}"
         )
     if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_MARKER) != 1:
@@ -2037,6 +2053,10 @@ def main() -> None:
         SERVER_CONFIG_PATCH,
     )
     transformed_mcp_tools = texts["mcp_tools"].replace(
+        MCP_LAYERING_MARKER,
+        MCP_LAYERING_PATCH,
+        1,
+    ).replace(
         MCP_CONFIG_LOAD_MARKER,
         MCP_CONFIG_LOAD_PATCH,
         1,
