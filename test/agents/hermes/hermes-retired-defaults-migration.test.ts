@@ -54,6 +54,15 @@ const previousDefaults = {
   },
 };
 
+function readDatabaseSnapshot(filename: string) {
+  const fd = fs.openSync(filename, "r");
+  try {
+    return { inode: fs.fstatSync(fd).ino, bytes: fs.readFileSync(fd) };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-retired-defaults-"));
   const home = path.join(directory, "home");
@@ -182,12 +191,10 @@ describe("Hermes prior generated-default migration", () => {
         expect(interrupted.stderr).toContain("the legacy copy could not be retired");
         expect(fs.existsSync(sourceDatabase)).toBe(true);
         expect(fs.existsSync(record)).toBe(true);
-        const publishedBytes = fs.readFileSync(publishedDatabase);
-        const publishedInode = fs.statSync(publishedDatabase).ino;
+        const published = readDatabaseSnapshot(publishedDatabase);
         const resumed = f.run();
         expect(resumed.status, resumed.stderr).toBe(0);
-        expect(fs.statSync(publishedDatabase).ino).toBe(publishedInode);
-        expect(fs.readFileSync(publishedDatabase)).toEqual(publishedBytes);
+        expect(readDatabaseSnapshot(publishedDatabase)).toEqual(published);
         expect(fs.existsSync(f.legacy)).toBe(false);
         expect(fs.existsSync(record)).toBe(false);
         expect(fs.readdirSync(runtime)).toEqual(["state.db"]);
