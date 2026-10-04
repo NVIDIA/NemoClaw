@@ -186,7 +186,8 @@ The managed launchers disable the following mutable or unsupported behavior:
 - Native LangSmith tracing and ambient OpenTelemetry exporter configuration
 
 Interactive and headless sessions use Deep Agents Code's native behavior for shell allowlists, startup commands, interpreter settings, and user hooks.
-Native tool and MCP commands, Agent Client Protocol (ACP) mode, and remote asynchronous subagent configuration reach the pinned runtime.
+Native tool commands, `dcode mcp config`, Agent Client Protocol (ACP) mode, and remote asynchronous subagent configuration reach the pinned runtime.
+MCP OAuth login through `dcode mcp login` remains disabled to preserve host credential handling.
 Managed inference and MCP requests retain the controls described below.
 Local agent processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
 OpenShell preserves the complete native home, and managed rebuild transfers it without interpreting `hooks.json` or selected `config.toml` keys.
