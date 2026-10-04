@@ -256,7 +256,7 @@ It stops without writing output when required identity, policy, inference, or wo
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
-For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
+For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
 If OpenShell cannot supply the required evidence, the command stops without writing output.
 
@@ -3705,6 +3705,10 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
 Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
+
+When the native NVIDIA provider is attached to a sandbox, reset stops without detaching or deleting it.
+Rotate its credential in place by setting `NVIDIA_INFERENCE_API_KEY` and rerunning `$$nemoclaw onboard --name <sandbox>`.
+To remove it completely, preserve required sandbox state, destroy every attached sandbox, and then retry reset.
 
 ```bash
 $$nemoclaw credentials reset nvidia-prod

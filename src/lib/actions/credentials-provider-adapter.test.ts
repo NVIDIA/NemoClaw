@@ -847,6 +847,41 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
   });
 
+  it("preserves attached native NVIDIA providers during credential reset", async () => {
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        message: "provider remains attached",
+        attachedSandboxes: ["alpha"],
+      },
+    }));
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(deleteProvider).toHaveBeenCalledOnce();
+    expect(deleteProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+      timeoutMs: 30_000,
+    });
+    expect(detachProvider).not.toHaveBeenCalled();
+    expect(result.failureLines).toContain("  No provider attachment was changed.");
+    expect(result.failureLines).toContain(
+      "  To rotate the credential in place, set NVIDIA_INFERENCE_API_KEY and rerun 'nemoclaw onboard --name <sandbox>'.",
+    );
+    expect(result.failureLines).toContain("    nemoclaw alpha destroy");
+    expect(result.failureLines.join("\n")).not.toContain("rebuild");
+    expect(result.failureLines.join("\n")).not.toContain("openshell sandbox provider detach");
+  });
+
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()

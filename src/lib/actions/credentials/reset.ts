@@ -15,6 +15,7 @@ import {
 } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
 import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
 } from "../../inference/native-nvidia";
@@ -125,7 +126,9 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+    detachAttached: key !== NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  });
 
   if (
     !recovery.ok &&
@@ -184,6 +187,19 @@ export function formatResetOutcome(
       ...validatedAttachedSandboxes(recovery.error),
     ]),
   ];
+  if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER && stuckSandboxes.length > 0) {
+    lines.push(
+      "",
+      `  '${key}' remains attached to sandbox(es): ${stuckSandboxes.join(", ")}.`,
+      "  No provider attachment was changed.",
+      `  To rotate the credential in place, set ${NVIDIA_HOSTED_CREDENTIAL_ENV} and rerun '${CLI_NAME} onboard --name <sandbox>'.`,
+      "  To remove the provider completely, preserve any required sandbox state, destroy every attached sandbox,",
+      `  then rerun '${CLI_NAME} credentials reset ${key}'.`,
+      ...stuckSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} destroy`),
+    );
+    if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
+    return { ok: false, lines };
+  }
   if (stuckSandboxes.length > 0) {
     const stuck = stuckSandboxes.join(", ");
     lines.push(
@@ -218,6 +234,7 @@ async function deleteProviderWithRecovery(
   providerName: string,
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
+  options: Readonly<{ detachAttached: boolean }> = { detachAttached: true },
 ): Promise<CredentialsProviderDeleteWithRecoveryResult> {
   const request = {
     target,
@@ -235,6 +252,9 @@ async function deleteProviderWithRecovery(
 
   const attachedSandboxes = validatedAttachedSandboxes(result.error);
   if (attachedSandboxes.length === 0) {
+    return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
+  }
+  if (!options.detachAttached) {
     return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
