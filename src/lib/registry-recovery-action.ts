@@ -72,11 +72,9 @@ function buildRecoveredSandboxEntry(
     credentialEnv: metadata.credentialEnv ?? null,
     preferredInferenceApi: metadata.preferredInferenceApi ?? null,
   };
-  // Only assert `agent` when recovery actually knows it. Object.assign in
-  // updateSandbox would otherwise overwrite a persisted agent (e.g. "hermes")
-  // with null whenever the recovery seed has no source of truth — the live
-  // OpenShell gateway does not surface NemoClaw's agent type, and a session
-  // sandbox seed never set this field, so the existing entry must win.
+  // Only assert `agent` when recovery actually knows it. The live OpenShell
+  // gateway does not surface NemoClaw's agent type, and a session seed may omit
+  // it, so a new or display-only entry must not get an invented agent.
   if (metadata.agent !== undefined && metadata.agent !== null) {
     entry.agent = metadata.agent;
   }
@@ -88,8 +86,8 @@ function buildRecoveredSandboxEntry(
 
 /**
  * Persist a recovered sandbox into the registry, registering a new entry or
- * merging into an existing one. Returns true only when a new entry was created.
- * Invalid sandbox names are skipped (returns false).
+ * filling only the fields an existing one lacks. Returns true only when a new
+ * entry was created; invalid sandbox names are skipped (returns false).
  */
 function upsertRecoveredSandbox(
   name: string,
@@ -136,7 +134,12 @@ function upsertRecoveredSandbox(
     }
   }
   if (existing) {
-    registry.updateSandbox(validName, entry);
+    // Session metadata can be older than the persisted row, so recovery only
+    // fills fields the row lacks.
+    const missingFields = Object.fromEntries(
+      Object.entries(entry).filter(([key]) => existing[key as keyof SandboxEntry] === undefined),
+    );
+    if (Object.keys(missingFields).length > 0) registry.updateSandbox(validName, missingFields);
     return false;
   }
   registry.registerSandbox(entry);
