@@ -95,7 +95,10 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
-  const providerName = key === NVIDIA_HOSTED_LOGICAL_PROVIDER ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
+  const nativeNvidiaProvider =
+    key === NVIDIA_HOSTED_LOGICAL_PROVIDER || key === NVIDIA_HOSTED_NATIVE_PROVIDER;
+  const providerName = nativeNvidiaProvider ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
+  const publicKey = nativeNvidiaProvider ? NVIDIA_HOSTED_LOGICAL_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
     return fail([
       "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
@@ -127,7 +130,7 @@ export async function runCredentialsResetAction(
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
   const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: key !== NVIDIA_HOSTED_LOGICAL_PROVIDER,
+    detachAttached: !nativeNvidiaProvider,
   });
 
   if (
@@ -146,10 +149,10 @@ export async function runCredentialsResetAction(
     ]);
   }
 
-  const outcome = formatResetOutcome(key, recovery, target.gatewayName);
+  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
-  forgetExtraProvider(key);
+  forgetExtraProvider(publicKey);
   return ok(outcome.lines);
 }
 

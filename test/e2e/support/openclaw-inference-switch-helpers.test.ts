@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentReplyContainsToken,
   anthropicToolCount,
+  classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
@@ -95,6 +96,30 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
         output: "invalid JSON after timeout",
       }),
     ).toEqual({ outcome: "failed", failureClass: "malformed-input" });
+  });
+
+  it("fails closed when required native-provider evidence exhausts retries", () => {
+    expect(
+      classifyExhaustedPostSwitchEvidence({
+        required: true,
+        lastFailure: "HTTP 503: unavailable",
+      }),
+    ).toEqual({
+      outcome: "failed",
+      message:
+        "Required native provider evidence failed: Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
+    });
+
+    expect(
+      classifyExhaustedPostSwitchEvidence({
+        required: false,
+        lastFailure: "HTTP 503: unavailable",
+      }),
+    ).toEqual({
+      outcome: "skipped",
+      reason:
+        "Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
+    });
   });
 });
 

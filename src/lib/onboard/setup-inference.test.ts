@@ -184,21 +184,23 @@ describe("createProviderReviewDeps", () => {
 
 describe("native NVIDIA onboarding", () => {
   it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        name: "nemoclaw-nvidia-prod-v1",
+        type: "nemoclaw-nvidia-inference-v1",
+        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: "provider-id", resourceVersion: 4 },
+      },
+    }));
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>(async () => ({
       ok: true,
     }));
     const providerAdapter = {
-      importProviderProfile: vi.fn(async () => ({ ok: true })),
-      getProvider: vi.fn(async () => ({
-        ok: true,
-        value: {
-          name: "nemoclaw-nvidia-prod-v1",
-          type: "nemoclaw-nvidia-inference-v1",
-          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
-          configKeys: [],
-          revision: { id: "provider-id", resourceVersion: 4 },
-        },
-      })),
+      importProviderProfile,
+      getProvider,
       updateProvider,
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
@@ -212,7 +214,7 @@ describe("native NVIDIA onboarding", () => {
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
       step: vi.fn(),
-      getGatewayName: () => "nemoclaw",
+      getGatewayName: () => "onboarding-gateway",
       runOpenshell,
       updateSandbox,
       getSandbox: () => null,
@@ -245,8 +247,18 @@ describe("native NVIDIA onboarding", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
+    expect(importProviderProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+      }),
+    );
+    expect(getProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "onboarding-gateway" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
     expect(updateProvider).toHaveBeenCalledWith(
       expect.objectContaining({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
         providerName: "nemoclaw-nvidia-prod-v1",
         credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-credential" }],
         config: [],

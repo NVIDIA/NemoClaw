@@ -982,7 +982,7 @@ export function createSetupInference(
             }
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,
-              target: { kind: "selected" },
+              target: { kind: "named", gatewayName },
               credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(recordedAttachment ? { expected: recordedAttachment } : {}),

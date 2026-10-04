@@ -21,6 +21,21 @@ export type OpenClawPostSwitchInferenceClassification =
   | { outcome: "passed" }
   | { outcome: "failed"; failureClass: RetryFailureClass };
 
+export type ExhaustedPostSwitchEvidence =
+  | { outcome: "failed"; message: string }
+  | { outcome: "skipped"; reason: string };
+
+/** Required provider evidence fails closed after bounded transient retries. */
+export function classifyExhaustedPostSwitchEvidence(input: {
+  required: boolean;
+  lastFailure: string;
+}): ExhaustedPostSwitchEvidence {
+  const detail = `Sandbox inference transient failure after switch; route/config checks already passed: ${input.lastFailure}`;
+  return input.required
+    ? { outcome: "failed", message: `Required native provider evidence failed: ${detail}` }
+    : { outcome: "skipped", reason: detail };
+}
+
 export function classifyOpenClawPostSwitchInferenceAttempt(
   attempt: OpenClawPostSwitchInferenceAttempt,
 ): OpenClawPostSwitchInferenceClassification {

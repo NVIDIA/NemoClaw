@@ -55,6 +55,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
   anthropicToolCount,
+  classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
@@ -823,9 +824,13 @@ async function checkSandboxInference(
   if (execution.outcome === "passed") return "ok";
   const lastFailure = execution.value?.lastFailure ?? "probe failed without a result";
   if (execution.evidence.outcome === "exhausted") {
-    return {
-      skipped: `Sandbox inference transient failure after switch; route/config checks already passed: ${lastFailure}`,
-    };
+    const exhausted = classifyExhaustedPostSwitchEvidence({
+      required: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      lastFailure,
+    });
+    return exhausted.outcome === "failed"
+      ? Promise.reject(new Error(exhausted.message))
+      : { skipped: exhausted.reason };
   }
   throw new Error(`Sandbox inference did not work after switch: ${lastFailure}`);
 }
